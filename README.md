@@ -1,0 +1,11 @@
+# 移远通信QSM368ZP-WF 开发套件
+
+QSM368ZP-WF 是移远通信推出的新一代Linux/ Android 智能产品，集成瑞芯微IoT 芯片RK3568，包括高性能四核ARM Cortex-A55 CPU、ARM Mali G52 GPU、8M ISP HDR 、1 TOPS NPU 算力。产品支持Wi-Fi 5、蓝牙4.2 ，性能强大，可满足客户对工业类应用中的高自动化以及消费类应用中的高算力和多媒体功能的需求。
+
+QSM368ZP-WF 集成了丰富的外围接口，支持4K 视频解码，具备1 TOPS NPU 算力，可运行完整的深度学习算法，可满足智慧工厂和工控领域边缘设备的应用需求。
+
+同时，产品内置Linux/ Android LTE Cat 1/ 4Wi-Fi 6 GNSS M2M NASNVR/ DVR NVR 
+
+![](media/QSM368ZP.png)
+
+![](media/specs.png)
