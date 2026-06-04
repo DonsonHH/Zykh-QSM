@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>药柜详情 - 智药康护</title>
+  <link rel="stylesheet" href="/cabinet.css">
+</head>
+<body>
+  <main class="cabinet-page">
+    <header class="topbar">
+      <a href="/" class="back">返回首页</a>
+      <div>
+        <h1>23 仓药柜布局</h1>
+        <p>大仓 8 个 / 中仓 6 个 / 小仓 9 个，点击仓位查看药品信息</p>
+      </div>
+      <div class="summary">
+        <strong id="summaryText">读取中</strong>
+        <span>共 23 仓</span>
+      </div>
+    </header>
+
+    <section class="cabinet-board" id="cabinetBoard" aria-label="23仓药柜"></section>
+
+    <aside class="detail" id="detailPanel">
+      <h2>选择一个仓位</h2>
+      <p>这里会显示药品名称、余量、有效期和仓位尺寸。</p>
+    </aside>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script src="/cabinet.js"></script>
+</body>
+</html>

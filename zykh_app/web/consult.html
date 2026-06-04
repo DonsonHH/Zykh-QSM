@@ -1,0 +1,163 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI 问诊 - 智药康护</title>
+  <link rel="stylesheet" href="/consult.css">
+</head>
+<body>
+  <main class="consult-shell">
+    <header class="consult-top">
+      <a href="/" class="brand-link" aria-label="返回首页">
+        <span class="brand-mark">+</span>
+        <span>
+          <strong>智药康护</strong>
+          <small>AI 健康咨询终端</small>
+        </span>
+      </a>
+      <div class="top-meta">
+        <span id="dateText">--</span>
+        <span id="clockText">--:--</span>
+        <b>网络正常</b>
+      </div>
+      <button class="emergency-btn">紧急呼叫</button>
+    </header>
+
+    <section class="workspace">
+      <aside class="context-panel">
+        <section class="patient-card">
+          <div class="patient-head">
+            <div class="avatar">张</div>
+            <div>
+              <div class="patient-title">
+                <input id="profileName" autocomplete="off" aria-label="姓名">
+                <span id="profileGenderText">男</span>
+                <span id="profileAgeText">72 岁</span>
+              </div>
+              <p>ID：ZYKH-000123 <em>本机用户</em></p>
+            </div>
+          </div>
+          <div class="hidden-fields">
+            <input id="profileGender" autocomplete="off">
+            <input id="profileAge" type="number" min="0">
+            <input id="profileHeight" autocomplete="off">
+            <input id="profileWeight" autocomplete="off">
+          </div>
+          <div class="patient-section">
+            <h2>慢性疾病</h2>
+            <textarea id="profileConditions" rows="2"></textarea>
+          </div>
+          <div class="patient-section danger">
+            <h2>过敏史</h2>
+            <textarea id="profileAllergies" rows="2"></textarea>
+          </div>
+          <div class="patient-section">
+            <h2>最新体征 <span id="profileTime">--</span></h2>
+            <div class="vital-rows">
+              <div><span>体温</span><strong id="lastTemp">-- ℃</strong><em>正常</em></div>
+              <div><span>心率</span><strong id="lastHr">-- 次/分</strong><em>正常</em></div>
+              <div><span>血氧</span><strong id="lastSpo2">-- %</strong><em>正常</em></div>
+            </div>
+          </div>
+          <div class="patient-section medicine-section">
+            <h2>药柜库存（可用）</h2>
+            <ul id="medicineList" class="medicine-list"></ul>
+          </div>
+          <label class="notes-field">护理备注<textarea id="profileNotes" rows="2"></textarea></label>
+          <button id="saveProfileBtn" class="quiet-save">保存档案</button>
+        </section>
+
+        <section class="measure-card">
+          <div class="block-title">
+            <h2>本次体征</h2>
+            <span>自动写入上下文</span>
+          </div>
+          <div class="vital-inputs">
+            <label>体温<input id="vitalTemp" inputmode="decimal" placeholder="36.6"></label>
+            <label>心率<input id="vitalHr" inputmode="numeric" placeholder="75"></label>
+            <label>血氧<input id="vitalSpo2" inputmode="numeric" placeholder="96"></label>
+            <label>收缩压<input id="vitalSys" inputmode="numeric" placeholder="136"></label>
+            <label>舒张压<input id="vitalDia" inputmode="numeric" placeholder="82"></label>
+          </div>
+          <div class="vital-actions">
+            <button id="readVitalsBtn">读取体征</button>
+            <button id="saveVitalsBtn">记录体征</button>
+          </div>
+          <ul id="vitalsList" class="compact-list"></ul>
+        </section>
+      </aside>
+
+      <section class="chat-panel">
+        <div class="chat-status">
+          <div class="assistant-head">
+            <div class="bot-avatar"></div>
+            <div>
+              <strong id="contextName">智药康护 AI 助手</strong>
+              <span id="contextHint">我可以为您提供用药指导、健康咨询、指标解读等服务</span>
+            </div>
+          </div>
+          <div class="chat-tools">
+            <span id="streamState">在线</span>
+            <button id="speakLastBtn">重播</button>
+          </div>
+        </div>
+
+        <section id="messages" class="messages">
+          <article class="msg assistant">
+            <div class="msg-avatar bot-avatar"></div>
+            <div class="bubble markdown-body">
+              <p>您好，演示用户先生！我是智药康护 AI 助手，很高兴为您服务。您可以咨询用药问题、症状建议、检查指标解读等健康相关问题。</p>
+              <time>现在</time>
+            </div>
+          </article>
+        </section>
+
+        <section class="composer">
+          <button id="micBtn" class="mic-btn" aria-label="点击说话"><span></span><small>点击说话</small></button>
+          <div class="input-wrap">
+            <textarea id="messageInput" rows="2" maxlength="500" placeholder="请输入您的问题，例如：头晕怎么办？"></textarea>
+            <small><span id="charCount">0</span>/500</small>
+          </div>
+          <button id="sendBtn" class="send-btn"><span>发送</span></button>
+        </section>
+      </section>
+
+      <aside class="quick-panel">
+        <section class="panel-block">
+          <div class="block-title">
+            <h2>常见咨询</h2>
+            <span>换一换</span>
+          </div>
+          <div class="quick-list">
+            <button data-question="老人头晕头痛怎么办？"><i class="blue"></i>头晕头痛怎么办？</button>
+            <button data-question="血压偏高，今天应该怎么调理？"><i class="indigo"></i>血压高如何调理？</button>
+            <button data-question="血糖偏高，今天饮食要注意什么？"><i class="amber"></i>血糖高注意事项</button>
+            <button data-question="今天这些药应该怎么吃？"><i class="teal"></i>今天该吃哪些药？</button>
+            <button data-question="药品可能有哪些副作用需要观察？"><i class="purple"></i>药品副作用咨询</button>
+            <button data-question="体检指标应该怎么看？"><i class="blue"></i>体检指标怎么看？</button>
+            <button data-question="感冒咳嗽怎么办？"><i class="orange"></i>感冒咳嗽怎么办？</button>
+            <button data-question="最近睡眠不好怎么办？"><i class="cyan"></i>睡眠不好怎么办？</button>
+          </div>
+        </section>
+
+        <section class="safety-block">
+          <h2>安全提示</h2>
+          <p><span></span>本机提供的建议仅供参考，不能替代医生诊断。</p>
+          <p><span></span>如出现胸痛、呼吸困难、意识不清等紧急情况，请立即呼叫急救或联系家人。</p>
+          <p><span></span>用药前请确认无过敏史、无禁忌症，如有不适请及时就医。</p>
+          <p><span></span>请定期监测血压、血糖等指标，保持健康生活方式。</p>
+        </section>
+      </aside>
+    </section>
+
+    <footer class="disclaimer">
+      <span>本系统内容不构成医疗诊断，仅供参考。健康问题请咨询专业医生</span>
+      <span>设备编号：ZYKH-000123</span>
+      <span>版本：V2.1.0</span>
+    </footer>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script src="/consult.js"></script>
+</body>
+</html>
