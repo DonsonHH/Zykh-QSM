@@ -1,11 +1,10 @@
-# 移远通信QSM368ZP-WF 开发套件
+# Zykh-QSM
 
-QSM368ZP-WF 是移远通信推出的新一代Linux/ Android 智能产品，集成瑞芯微IoT 芯片RK3568，包括高性能四核ARM Cortex-A55 CPU、ARM Mali G52 GPU、8M ISP HDR 、1 TOPS NPU 算力。产品支持Wi-Fi 5、蓝牙4.2 ，性能强大，可满足客户对工业类应用中的高自动化以及消费类应用中的高算力和多媒体功能的需求。
+智药康护 QSM368ZP-WF / RK3568 本地终端项目。
 
-QSM368ZP-WF 集成了丰富的外围接口，支持4K 视频解码，具备1 TOPS NPU 算力，可运行完整的深度学习算法，可满足智慧工厂和工控领域边缘设备的应用需求。
+本仓库包含：
 
-同时，产品内置Linux/ Android LTE Cat 1/ 4Wi-Fi 6 GNSS M2M NASNVR/ DVR NVR 
+- `zykh_app/`：板端 Perl 后端、Go 原生 HDMI UI、Web 调试页、启动脚本
+- `智药康护-QSM368ZP-WF-项目调试记录.md`：项目调试记录和部署说明
 
-![](media/QSM368ZP.png)
-
-![](media/specs.png)
+敏感信息不写入仓库。Wi-Fi 密码、AI API Key 等请在板端通过环境变量或 `/userdata` 下的本地文件配置。
