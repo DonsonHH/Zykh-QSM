@@ -1180,6 +1180,29 @@ type scanMedicineResp struct {
 	Error string `json:"error"`
 }
 
+type medicineLookupResp struct {
+	OK       bool `json:"ok"`
+	Found    bool `json:"found"`
+	Medicine struct {
+		Name         string `json:"name"`
+		Dosage       string `json:"dosage"`
+		Manufacturer string `json:"manufacturer"`
+		BatchNo      string `json:"batch_no"`
+		ExpireDate   string `json:"expire_date"`
+		TraceCode    string `json:"trace_code"`
+		Note         string `json:"note"`
+	} `json:"medicine"`
+	Detail string `json:"detail"`
+	Error  string `json:"error"`
+}
+
+type localScanResp struct {
+	OK     bool   `json:"ok"`
+	Code   string `json:"code"`
+	Format string `json:"format"`
+	Error  string `json:"error"`
+}
+
 type autoAddResp struct {
 	OK       bool `json:"ok"`
 	Found    bool `json:"found"`
@@ -1453,10 +1476,21 @@ type app struct {
 	cameraExpire        string
 	cameraFrame         *image.RGBA
 	cameraFrameAt       time.Time
+	cameraJPEG          []byte
+	cameraJPEGAt        time.Time
 	cameraStreamCancel  context.CancelFunc
 	cameraStreamRunning bool
 	cameraStreamID      int
 	cameraFPS           int
+	cameraAutoScan      bool
+	cameraScanBusy      bool
+	cameraPendingAdd    bool
+	cameraPendingCode   string
+	cameraPendingName   string
+	cameraPendingExpire string
+	cameraPendingDetail string
+	cameraIgnoredCode   string
+	cameraLastScan      time.Time
 	aiQuestion          string
 	aiReply             string
 	aiStatus            string
@@ -1482,26 +1516,27 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		return nil, err
 	}
 	a := &app{
-		width:        width,
-		height:       height,
-		appDir:       appDir,
-		api:          api,
-		fontData:     data,
-		font:         tt,
-		faces:        map[int]font.Face{},
-		page:         getenv("ZYKH_START_PAGE", "home"),
-		pageChanged:  time.Now(),
-		selectedSlot: 1,
-		cameraStatus: "实时预览准备中",
-		cameraName:   "尚未识别",
-		cameraMeta:   "条形码 / 溯源码",
-		cameraNote:   "进入本页后自动打开摄像头实时画面，点击扫码后拍照识别。",
-		cameraCode:   "待扫描",
-		cameraExpire: "待识别",
-		aiQuestion:   "我早上起来有点头晕，血压有点高，怎么办？",
-		aiReply:      "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
-		aiStatus:     "在线",
-		aiVoice:      "麦克风就绪",
+		width:          width,
+		height:         height,
+		appDir:         appDir,
+		api:            api,
+		fontData:       data,
+		font:           tt,
+		faces:          map[int]font.Face{},
+		page:           getenv("ZYKH_START_PAGE", "home"),
+		pageChanged:    time.Now(),
+		selectedSlot:   1,
+		cameraStatus:   "实时预览准备中",
+		cameraName:     "尚未识别",
+		cameraMeta:     "条形码 / 溯源码",
+		cameraNote:     "进入本页后自动打开摄像头实时画面，点击扫码后拍照识别。",
+		cameraCode:     "待扫描",
+		cameraExpire:   "待识别",
+		cameraAutoScan: true,
+		aiQuestion:     "我早上起来有点头晕，血压有点高，怎么办？",
+		aiReply:        "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
+		aiStatus:       "在线",
+		aiVoice:        "麦克风就绪",
 	}
 	a.loadAIHistory()
 	a.fetch()
@@ -1596,10 +1631,9 @@ func (a *app) maybeRefreshWiFi() {
 }
 
 func (a *app) refreshWiFi() {
-	statusRaw, _ := exec.Command("wpa_cli", "-i", "wlan0", "-p", "/var/run/wpa_supplicant", "status").Output()
-	signalRaw, _ := exec.Command("wpa_cli", "-i", "wlan0", "-p", "/var/run/wpa_supplicant", "signal_poll").Output()
-	state := valueFromLines(string(statusRaw), "wpa_state")
-	ssid := valueFromLines(string(statusRaw), "ssid")
+	iface, status, signalRaw := wifiStatus()
+	state := valueFromLines(status, "wpa_state")
+	ssid := valueFromLines(status, "ssid")
 	signal := -100
 	if v := valueFromLines(string(signalRaw), "RSSI"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
@@ -1612,11 +1646,35 @@ func (a *app) refreshWiFi() {
 	}
 	a.mu.Lock()
 	a.wifiState = state
-	a.wifiSSID = ssid
+	if iface != "" && ssid != "" {
+		a.wifiSSID = ssid
+	} else {
+		a.wifiSSID = ""
+	}
 	a.wifiSignal = signal
 	a.wifiUpdated = time.Now()
 	a.wifiRefreshing = false
 	a.mu.Unlock()
+}
+
+func wifiStatus() (string, string, string) {
+	for _, iface := range []string{"wlan0", "wlan1"} {
+		statusRaw, _ := exec.Command("wpa_cli", "-i", iface, "-p", "/var/run/wpa_supplicant", "status").Output()
+		status := string(statusRaw)
+		if valueFromLines(status, "wpa_state") == "COMPLETED" {
+			signalRaw, _ := exec.Command("wpa_cli", "-i", iface, "-p", "/var/run/wpa_supplicant", "signal_poll").Output()
+			return iface, status, string(signalRaw)
+		}
+	}
+	for _, iface := range []string{"wlan0", "wlan1"} {
+		statusRaw, _ := exec.Command("wpa_cli", "-i", iface, "-p", "/var/run/wpa_supplicant", "status").Output()
+		status := string(statusRaw)
+		if strings.TrimSpace(status) != "" {
+			signalRaw, _ := exec.Command("wpa_cli", "-i", iface, "-p", "/var/run/wpa_supplicant", "signal_poll").Output()
+			return iface, status, string(signalRaw)
+		}
+	}
+	return "", "", ""
 }
 
 func valueFromLines(raw, key string) string {
@@ -1886,11 +1944,19 @@ func (a *app) renderCamera(img *image.RGBA) {
 	line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
 	line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
 	roundRect(img, 42, 462, 168, 48, 12, hex(0x008d7d), hex(0x008d7d), 1)
-	a.textCenter(img, 126, 493, 19, "扫码识别", hex(0xffffff), true)
+	if a.cameraAutoScan {
+		a.textCenter(img, 126, 493, 18, "暂停识别", hex(0xffffff), true)
+	} else {
+		a.textCenter(img, 126, 493, 18, "开始识别", hex(0xffffff), true)
+	}
 	roundRect(img, 226, 462, 168, 48, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
-	a.textCenter(img, 310, 493, 19, "重新扫码", hex(0x1c66d4), true)
+	a.textCenter(img, 310, 493, 19, "清除结果", hex(0x1c66d4), true)
 	roundRect(img, 410, 462, 198, 48, 12, hex(0xfff8ea), hex(0xf0c781), 1)
-	a.textCenter(img, 509, 493, 19, "自动录入药柜", hex(0xd96f00), true)
+	if a.cameraPendingAdd {
+		a.textCenter(img, 509, 493, 19, "录入当前药品", hex(0xd96f00), true)
+	} else {
+		a.textCenter(img, 509, 493, 18, "等待识别到码", hex(0xd96f00), true)
+	}
 
 	roundRect(img, 650, 82, 354, 430, 12, hex(0xffffff), hex(0xd8e4e9), 1)
 	a.text(img, 672, 122, 23, "识别结果", hex(0x142333), true)
@@ -1906,7 +1972,26 @@ func (a *app) renderCamera(img *image.RGBA) {
 	}
 
 	roundRect(img, 20, 528, 984, 42, 10, hex(0xe8f5f2), hex(0xe8f5f2), 1)
-	a.text(img, 46, 555, 17, "流程：摄像头拍照 -> 溯源码识别 -> 查询本地药品目录 -> 自动写入药柜", hex(0x00786f), true)
+	a.text(img, 46, 555, 17, "流程：实时画面自动识别 -> 识别到码后弹窗确认 -> 用户确认后写入药柜", hex(0x00786f), true)
+	if a.cameraPendingAdd {
+		a.renderCameraConfirmDialog(img)
+	}
+}
+
+func (a *app) renderCameraConfirmDialog(img *image.RGBA) {
+	fillRectAlpha(img, 0, 0, a.width, a.height, color.RGBA{R: 18, G: 35, B: 48, A: 132})
+	roundRect(img, 250, 150, 524, 296, 16, hex(0xffffff), hex(0xbce5dc), 2)
+	circle(img, 306, 210, 31, hex(0xe7f8f4))
+	a.textCenter(img, 306, 221, 26, "码", hex(0x008d7d), true)
+	a.text(img, 356, 198, 26, "识别到药品码", hex(0x142333), true)
+	a.text(img, 358, 230, 16, "请核对药盒实物，确认后再录入药柜", hex(0x657586), false)
+	a.kvColor(img, 286, 282, "药品名称", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 12), hex(0x142333))
+	a.kvColor(img, 286, 326, "药品码", clipText(a.cameraPendingCode, 16), hex(0x405268))
+	a.kvColor(img, 286, 370, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
+	roundRect(img, 300, 398, 180, 42, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
+	a.textCenter(img, 390, 425, 18, "取消", hex(0x1c66d4), true)
+	roundRect(img, 540, 398, 180, 42, 12, hex(0x008d7d), hex(0x008d7d), 1)
+	a.textCenter(img, 630, 425, 18, "录入药柜", hex(0xffffff), true)
 }
 
 func (a *app) renderChatHistory(img *image.RGBA, x, y, w, h int) {
@@ -1915,30 +2000,51 @@ func (a *app) renderChatHistory(img *image.RGBA, x, y, w, h int) {
 	if len(messages) == 0 {
 		messages = []aiMessage{{Role: "assistant", Text: "您好，我可以提供用药指导、症状建议和体征解读。", Time: time.Now().Format("15:04")}}
 	}
-	maxVisible := 5
-	start := max(0, len(messages)-maxVisible-a.aiScroll)
-	end := min(len(messages), start+maxVisible)
-	if a.aiScroll > 0 && end < len(messages) {
-		a.textCenter(img, x+w/2, y+20, 13, "下面还有新消息，触摸下半部返回", hex(0x8fa0b2), false)
+	limit := len(messages) - a.aiScroll
+	if limit < 0 {
+		limit = 0
 	}
-	yy := y + 28
-	for _, m := range messages[start:end] {
-		lines := markdownLines(m.Text, 22, 4)
+	if limit > len(messages) {
+		limit = len(messages)
+	}
+	type bubble struct {
+		msg   aiMessage
+		lines []string
+		w     int
+		h     int
+	}
+	var visible []bubble
+	used := 0
+	for i := limit - 1; i >= 0; i-- {
+		m := messages[i]
+		lines := markdownLines(m.Text, 22, 9)
 		if m.Role == "user" {
-			lines = markdownLines(m.Text, 18, 3)
+			lines = markdownLines(m.Text, 18, 6)
 		}
-		bh := 34 + len(lines)*20
-		if yy+bh > y+h-16 {
+		bh := max(52, 34+len(lines)*22)
+		gap := 12
+		if used+bh+gap > h-42 && len(visible) > 0 {
 			break
 		}
 		if m.Role == "user" {
-			bw := a.bubbleWidth(lines, 132, 292)
-			a.drawUserBubble(img, x+w-bw-42, yy, bw+34, bh, lines, m.Time)
+			visible = append(visible, bubble{msg: m, lines: lines, w: a.bubbleWidth(lines, 132, 292) + 34, h: bh})
 		} else {
-			bw := a.bubbleWidth(lines, 148, 328)
-			a.drawAssistantBubble(img, x+18, yy, bw+36, bh, lines, m.Time)
+			visible = append(visible, bubble{msg: m, lines: lines, w: a.bubbleWidth(lines, 148, 328) + 36, h: bh})
 		}
-		yy += bh + 12
+		used += bh + gap
+	}
+	if a.aiScroll > 0 {
+		a.textCenter(img, x+w/2, y+20, 13, "正在查看历史，向上滑回到最新消息", hex(0x8fa0b2), false)
+	}
+	yy := y + 26
+	for i := len(visible) - 1; i >= 0; i-- {
+		b := visible[i]
+		if b.msg.Role == "user" {
+			a.drawUserBubble(img, x+w-b.w-42, yy, b.w, b.h, b.lines, b.msg.Time)
+		} else {
+			a.drawAssistantBubble(img, x+18, yy, b.w, b.h, b.lines, b.msg.Time)
+		}
+		yy += b.h + 12
 	}
 	if a.aiStatus == "思考中" {
 		circle(img, x+32, y+h-28, 15, hex(0x008d7d))
@@ -1947,12 +2053,13 @@ func (a *app) renderChatHistory(img *image.RGBA, x, y, w, h int) {
 		a.text(img, x+72, y+h-26, 13, "正在输入", hex(0x657586), false)
 		drawTypingDots(img, x+150, y+h-32, time.Now())
 	}
-	if len(messages) > maxVisible {
-		barH := max(32, h*maxVisible/len(messages))
+	if len(messages) > len(visible) {
+		barH := max(32, h*max(1, len(visible))/len(messages))
 		trackY := y + 20
 		trackH := h - 40
-		maxScroll := max(1, len(messages)-maxVisible)
-		barY := trackY + (trackH-barH)*(maxScroll-a.aiScroll)/maxScroll
+		maxScroll := max(1, len(messages)-max(1, len(visible)))
+		scroll := min(maxScroll, max(0, a.aiScroll))
+		barY := trackY + (trackH-barH)*(maxScroll-scroll)/maxScroll
 		roundRect(img, x+w-10, trackY, 4, trackH, 2, hex(0xe5edf1), hex(0xe5edf1), 1)
 		roundRect(img, x+w-11, barY, 6, barH, 3, hex(0x9fb4c6), hex(0x9fb4c6), 1)
 	}
@@ -2216,12 +2323,31 @@ func (a *app) handleTouch(t touchEvent) {
 			a.setPage("home")
 			return
 		}
-		if inside(t, 42, 462, 168, 48) || inside(t, 226, 462, 168, 48) {
-			go a.captureAndRecognize()
+		a.mu.Lock()
+		pending := a.cameraPendingAdd
+		a.mu.Unlock()
+		if pending {
+			if inside(t, 300, 398, 180, 42) {
+				a.dismissPendingMedicine()
+				return
+			}
+			if inside(t, 540, 398, 180, 42) {
+				go a.confirmPendingMedicine()
+				return
+			}
+		}
+		if inside(t, 42, 462, 168, 48) {
+			a.toggleCameraAutoScan()
+			return
+		}
+		if inside(t, 226, 462, 168, 48) {
+			a.clearCameraResult()
 			return
 		}
 		if inside(t, 410, 462, 198, 48) {
-			go a.action("药品信息已准备录入", func() error { return nil })
+			if pending {
+				go a.confirmPendingMedicine()
+			}
 			return
 		}
 	case "ai":
@@ -2374,6 +2500,92 @@ func (a *app) captureAndRecognize() {
 	a.mu.Unlock()
 }
 
+func (a *app) toggleCameraAutoScan() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cameraAutoScan = !a.cameraAutoScan
+	if a.cameraAutoScan {
+		a.cameraStatus = "自动识别中"
+		a.cameraNote = "请将药品码放入画面，识别到后会弹窗确认录入。"
+		a.cameraIgnoredCode = ""
+	} else {
+		a.cameraStatus = "识别已暂停"
+		a.cameraNote = "已暂停自动识别，点击“开始识别”恢复。"
+	}
+}
+
+func (a *app) clearCameraResult() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cameraStatus = "自动识别中"
+	a.cameraName = "尚未识别"
+	a.cameraMeta = "条形码 / 溯源码"
+	a.cameraNote = "已清除结果，请重新对准药品码。"
+	a.cameraCode = "待扫描"
+	a.cameraExpire = "待识别"
+	a.cameraPendingAdd = false
+	a.cameraPendingCode = ""
+	a.cameraPendingName = ""
+	a.cameraPendingExpire = ""
+	a.cameraPendingDetail = ""
+	a.cameraIgnoredCode = ""
+	a.cameraAutoScan = true
+}
+
+func (a *app) dismissPendingMedicine() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cameraIgnoredCode = a.cameraPendingCode
+	a.cameraPendingAdd = false
+	a.cameraPendingCode = ""
+	a.cameraPendingName = ""
+	a.cameraPendingExpire = ""
+	a.cameraPendingDetail = ""
+	a.cameraAutoScan = true
+	a.cameraStatus = "继续识别中"
+	a.cameraNote = "已取消本次录入。移开当前码或点击清除结果后，可继续识别其他药品。"
+}
+
+func (a *app) confirmPendingMedicine() {
+	a.mu.Lock()
+	code := a.cameraPendingCode
+	if !a.cameraPendingAdd || strings.TrimSpace(code) == "" {
+		a.mu.Unlock()
+		return
+	}
+	a.cameraStatus = "正在录入药柜"
+	a.cameraNote = "正在根据识别码写入药柜，请稍候。"
+	a.mu.Unlock()
+
+	var add autoAddResp
+	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{"1"}}, &add)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil || !add.OK {
+		a.cameraStatus = "录入失败"
+		if err != nil {
+			a.cameraNote = err.Error()
+		} else {
+			a.cameraNote = firstNonEmpty(add.Error, "录入失败，请先补充药品目录")
+		}
+		return
+	}
+	a.cameraStatus = "已录入药柜"
+	a.cameraName = firstNonEmpty(add.Medicine.Name, a.cameraPendingName, "未知药品")
+	a.cameraExpire = firstNonEmpty(add.Medicine.ExpireDate, a.cameraPendingExpire, "待确认")
+	a.cameraMeta = fmt.Sprintf("仓位 %02d / 自动识别", add.Slot)
+	a.cameraNote = "药品信息已写入药柜。请核对仓位、余量和有效期。"
+	a.cameraPendingAdd = false
+	a.cameraPendingCode = ""
+	a.cameraPendingName = ""
+	a.cameraPendingExpire = ""
+	a.cameraPendingDetail = ""
+	a.cameraAutoScan = true
+	a.message = "药品已录入药柜"
+	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+	a.lastFetch = time.Time{}
+}
+
 func (a *app) askAI(question string) {
 	a.mu.Lock()
 	a.aiQuestion = question
@@ -2442,6 +2654,11 @@ func (a *app) streamAI(question string, replyIndex int) error {
 			break
 		}
 	}
+	if strings.TrimSpace(reply) != "" {
+		a.finishAIReply(replyIndex, reply)
+		go a.speakText(reply)
+		return nil
+	}
 	return nil
 }
 
@@ -2498,6 +2715,18 @@ func (a *app) applyAIStreamEvent(event, raw string, replyIndex int, reply *strin
 		return true
 	}
 	return false
+}
+
+func (a *app) finishAIReply(replyIndex int, reply string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.aiStatus = "在线"
+	a.aiReply = reply
+	if replyIndex < len(a.aiMessages) {
+		a.aiMessages[replyIndex].Text = reply
+		a.aiMessages[replyIndex].Time = time.Now().Format("15:04")
+	}
+	a.saveAIHistoryLocked()
 }
 
 func (a *app) recordVoice() {
@@ -2584,6 +2813,7 @@ func (a *app) startCameraStream() {
 	a.cameraStatus = "实时预览中"
 	a.cameraNote = "实时画面来自 /api/camera/stream；点击扫码会暂停预览并拍照识别。"
 	a.mu.Unlock()
+	go a.autoScanCameraLoop(ctx)
 
 	defer func() {
 		a.mu.Lock()
@@ -2605,10 +2835,10 @@ func (a *app) startCameraStream() {
 }
 
 func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
-	width := getenv("ZYKH_CAMERA_WIDTH", "640")
-	height := getenv("ZYKH_CAMERA_HEIGHT", "360")
-	fps := getenv("ZYKH_CAMERA_FPS", "24")
-	quality := getenv("ZYKH_CAMERA_QUALITY", "70")
+	width := getenv("ZYKH_CAMERA_WIDTH", "424")
+	height := getenv("ZYKH_CAMERA_HEIGHT", "240")
+	fps := getenv("ZYKH_CAMERA_FPS", "20")
+	quality := getenv("ZYKH_CAMERA_QUALITY", "60")
 	device := getenv("ZYKH_CAMERA_DEVICE", "/dev/video5")
 	rawCaps := fmt.Sprintf("video/x-raw,format=NV12,width=%s,height=%s", width, height)
 	cmd := exec.CommandContext(ctx, "gst-launch-1.0", "-q",
@@ -2652,7 +2882,7 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 		if err != nil {
 			return
 		}
-		a.acceptCameraImage(img, &frameCount, &tick)
+		a.acceptCameraImage(frame, img, &frameCount, &tick)
 	})
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
@@ -2672,7 +2902,7 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 }
 
 func (a *app) streamCameraFromHTTP(ctx context.Context) {
-	streamURL := a.api.base + "/api/camera/stream?width=640&height=480&fps=30&quality=70"
+	streamURL := a.api.base + "/api/camera/stream?width=424&height=240&fps=20&quality=60"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
 	if err != nil {
 		a.setCameraStreamError(err)
@@ -2713,11 +2943,11 @@ func (a *app) streamCameraFromHTTP(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		a.acceptCameraImage(img, &frameCount, &tick)
+		a.acceptCameraImage(nil, img, &frameCount, &tick)
 	}
 }
 
-func (a *app) acceptCameraImage(img image.Image, frameCount *int, tick *time.Time) {
+func (a *app) acceptCameraImage(jpg []byte, img image.Image, frameCount *int, tick *time.Time) {
 	rgba := image.NewRGBA(img.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
 	*frameCount = *frameCount + 1
@@ -2738,9 +2968,126 @@ func (a *app) acceptCameraImage(img image.Image, frameCount *int, tick *time.Tim
 	}
 	a.cameraFrame = rgba
 	a.cameraFrameAt = now
+	if len(jpg) > 0 {
+		a.cameraJPEG = append(a.cameraJPEG[:0], jpg...)
+		a.cameraJPEGAt = now
+	}
 	if a.cameraStatus == "预览已停止" || a.cameraStatus == "实时预览准备中" {
 		a.cameraStatus = "实时预览中"
 	}
+}
+
+func (a *app) autoScanCameraLoop(ctx context.Context) {
+	ticker := time.NewTicker(850 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.tryAutoScanFrame()
+		}
+	}
+}
+
+func (a *app) tryAutoScanFrame() {
+	a.mu.Lock()
+	if a.page != "camera" || !a.cameraAutoScan || a.cameraScanBusy || a.cameraPendingAdd || time.Since(a.cameraJPEGAt) > 2*time.Second || len(a.cameraJPEG) == 0 {
+		a.mu.Unlock()
+		return
+	}
+	if time.Since(a.cameraLastScan) < 800*time.Millisecond {
+		a.mu.Unlock()
+		return
+	}
+	frame := append([]byte(nil), a.cameraJPEG...)
+	a.cameraScanBusy = true
+	a.cameraLastScan = time.Now()
+	a.cameraStatus = "自动识别中"
+	a.cameraNote = "请将条形码/溯源码保持清晰，识别到后会弹窗确认录入。"
+	a.mu.Unlock()
+
+	go func() {
+		defer func() {
+			a.mu.Lock()
+			a.cameraScanBusy = false
+			a.mu.Unlock()
+		}()
+		code, format, err := a.decodeFrameCode(frame)
+		if err != nil || strings.TrimSpace(code) == "" {
+			return
+		}
+		a.onAutoCodeDetected(code, format)
+	}()
+}
+
+func (a *app) decodeFrameCode(frame []byte) (string, string, error) {
+	tmp := filepath.Join(os.TempDir(), "zykh-autoscan.jpg")
+	if err := os.WriteFile(tmp, frame, 0600); err != nil {
+		return "", "", err
+	}
+	scanner := getenv("ZYKH_SCAN_CODE", filepath.Join(a.appDir, "bin", "zykh-scan-code"))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, scanner, "-json", tmp).Output()
+	if err != nil {
+		return "", "", err
+	}
+	var resp localScanResp
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", "", err
+	}
+	if !resp.OK {
+		return "", "", errors.New(firstNonEmpty(resp.Error, "未识别到码"))
+	}
+	return strings.TrimSpace(resp.Code), resp.Format, nil
+}
+
+func (a *app) onAutoCodeDetected(code, format string) {
+	a.mu.Lock()
+	if code == a.cameraIgnoredCode {
+		a.mu.Unlock()
+		return
+	}
+	a.cameraAutoScan = false
+	a.cameraPendingAdd = true
+	a.cameraPendingCode = code
+	a.cameraPendingName = "目录查询中"
+	a.cameraPendingExpire = "待查询"
+	a.cameraStatus = "识别到码"
+	a.cameraCode = code
+	a.cameraMeta = firstNonEmpty(format, "barcode")
+	a.cameraNote = "已识别到药品码，正在查询本地药品目录。"
+	a.mu.Unlock()
+
+	var lookup medicineLookupResp
+	err := a.api.getJSON("/api/medicine/lookup?code="+url.QueryEscape(code), &lookup)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil || !lookup.OK {
+		a.cameraPendingName = "目录查询失败"
+		a.cameraPendingExpire = "待人工确认"
+		a.cameraPendingDetail = firstNonEmpty(lookup.Error, "查询失败")
+		a.cameraName = "待人工核对"
+		a.cameraExpire = "待人工确认"
+		a.cameraNote = "识别到码，但本地目录查询失败。可取消后重新识别。"
+		return
+	}
+	if !lookup.Found {
+		a.cameraPendingName = "目录未收录"
+		a.cameraPendingExpire = "待人工确认"
+		a.cameraPendingDetail = lookup.Detail
+		a.cameraName = "待人工核对"
+		a.cameraExpire = "待人工确认"
+		a.cameraNote = "识别到码，但本地药品目录未收录。请先补充药品目录。"
+		return
+	}
+	a.cameraPendingName = lookup.Medicine.Name
+	a.cameraPendingExpire = lookup.Medicine.ExpireDate
+	a.cameraPendingDetail = lookup.Medicine.Dosage
+	a.cameraName = lookup.Medicine.Name
+	a.cameraExpire = lookup.Medicine.ExpireDate
+	a.cameraNote = "已识别到药品并查到目录信息，请核对后确认是否录入药柜。"
 }
 
 func (a *app) stopCameraStream() {
@@ -2868,7 +3215,7 @@ func wrapRunes(s string, n, maxLines int) []string {
 }
 
 func markdownLines(s string, n, maxLines int) []string {
-	var cleaned []string
+	var out []string
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -2883,13 +3230,17 @@ func markdownLines(s string, n, maxLines int) []string {
 		line = strings.ReplaceAll(line, "__", "")
 		line = strings.ReplaceAll(line, "`", "")
 		if line != "" {
-			cleaned = append(cleaned, line)
+			wrapped := wrapRunes(line, n, max(1, maxLines-len(out)))
+			out = append(out, wrapped...)
+			if len(out) >= maxLines {
+				break
+			}
 		}
 	}
-	if len(cleaned) == 0 {
-		cleaned = []string{strings.TrimSpace(s)}
+	if len(out) == 0 {
+		out = wrapRunes(strings.TrimSpace(s), n, maxLines)
 	}
-	return wrapRunes(strings.Join(cleaned, "\n"), n, maxLines)
+	return out
 }
 
 func firstNonEmpty(values ...string) string {
@@ -2940,6 +3291,24 @@ func fillRect(img *image.RGBA, x, y, w, h int, c color.RGBA) {
 	for yy := rect.Min.Y; yy < rect.Max.Y; yy++ {
 		for xx := rect.Min.X; xx < rect.Max.X; xx++ {
 			img.SetRGBA(xx, yy, c)
+		}
+	}
+}
+
+func fillRectAlpha(img *image.RGBA, x, y, w, h int, c color.RGBA) {
+	if w <= 0 || h <= 0 || c.A == 0 {
+		return
+	}
+	rect := image.Rect(x, y, x+w, y+h).Intersect(img.Bounds())
+	alpha := int(c.A)
+	inv := 255 - alpha
+	for yy := rect.Min.Y; yy < rect.Max.Y; yy++ {
+		for xx := rect.Min.X; xx < rect.Max.X; xx++ {
+			i := img.PixOffset(xx, yy)
+			img.Pix[i+0] = uint8((int(c.R)*alpha + int(img.Pix[i+0])*inv) / 255)
+			img.Pix[i+1] = uint8((int(c.G)*alpha + int(img.Pix[i+1])*inv) / 255)
+			img.Pix[i+2] = uint8((int(c.B)*alpha + int(img.Pix[i+2])*inv) / 255)
+			img.Pix[i+3] = 255
 		}
 	}
 }

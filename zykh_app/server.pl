@@ -999,8 +999,11 @@ sub capture_camera {
         $cmd .= ' ' . shell_quote($out);
     } else {
         my $device = detect_camera_device();
-        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=5 ' .
-               '! video/x-raw,format=NV12,width=640,height=480,framerate=30/1 ' .
+        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
+        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
+        my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
+        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . $buffers . ' ' .
+               '! video/x-raw,format=NV12,width=' . $width . ',height=' . $height . ',framerate=30/1 ' .
                '! videoconvert ! jpegenc ! filesink location=' . shell_quote($out);
     }
 
@@ -1175,8 +1178,11 @@ sub capture_camera_to {
         $cmd .= ' ' . shell_quote($out);
     } else {
         my $device = detect_camera_device();
-        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=5 ' .
-               '! video/x-raw,format=NV12,width=640,height=480,framerate=30/1 ' .
+        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
+        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
+        my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
+        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . $buffers . ' ' .
+               '! video/x-raw,format=NV12,width=' . $width . ',height=' . $height . ',framerate=30/1 ' .
                '! videoconvert ! jpegenc ! filesink location=' . shell_quote($out);
     }
 

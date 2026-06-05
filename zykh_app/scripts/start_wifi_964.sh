@@ -2,10 +2,18 @@
 
 set -u
 
-SSID="${WIFI_SSID:-LAPTOP-BSM79J69 1593}"
+SSID="${WIFI_SSID:-}"
 PASSWORD="${WIFI_PASSWORD:-}"
-CONF=/userdata/wpa_laptop_bsm79j69.conf
+CONF=/userdata/wpa_zykh.conf
 RUN_DIR=/var/run/wpa_supplicant
+
+if [ -z "$SSID" ] && [ -s /userdata/wifi_ssid.txt ]; then
+  SSID=$(cat /userdata/wifi_ssid.txt)
+fi
+
+if [ -z "$SSID" ]; then
+  SSID="964"
+fi
 
 if [ -z "$PASSWORD" ] && [ -s /userdata/wifi_password.txt ]; then
   PASSWORD=$(cat /userdata/wifi_password.txt)
@@ -40,8 +48,12 @@ chmod 600 "$CONF"
 IFACE=""
 for dev in wlan0 wlan1; do
   if ifconfig "$dev" >/dev/null 2>&1; then
-    IFACE="$dev"
-    break
+    ifconfig "$dev" up 2>/dev/null || true
+    if iw dev "$dev" scan 2>/dev/null | grep -F "SSID: $SSID" >/dev/null 2>&1; then
+      IFACE="$dev"
+      break
+    fi
+    [ -z "$IFACE" ] && IFACE="$dev"
   fi
 done
 
@@ -67,11 +79,15 @@ while [ "$i" -lt 25 ]; do
 done
 
 echo "===== Request DHCP ====="
-udhcpc -i "$IFACE" -n -q
+udhcpc -i "$IFACE" -q -n -t 10 -T 3 || udhcpc -i "$IFACE" -q -n -t 10 -T 3 || true
 
 echo "===== Fix route and DNS ====="
 route del default dev usb1 2>/dev/null || true
 route del default dev usb0 2>/dev/null || true
+IP=$(ifconfig "$IFACE" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p' | head -1)
+[ -z "$IP" ] && IP=$(wpa_cli -i "$IFACE" -p "$RUN_DIR" status 2>/dev/null | grep '^ip_address=' | cut -d= -f2)
+GW=$(echo "$IP" | sed 's/\.[0-9]*$/.1/')
+[ -n "$GW" ] && route add default gw "$GW" dev "$IFACE" 2>/dev/null || true
 printf 'nameserver 223.5.5.5\nnameserver 114.114.114.114\nnameserver 8.8.8.8\n' > /tmp/resolv.conf
 
 echo "===== Sync Beijing time ====="
@@ -90,3 +106,6 @@ route -n
 
 echo "===== resolv.conf ====="
 cat /etc/resolv.conf 2>/dev/null || cat /tmp/resolv.conf
+
+echo "===== ping test ====="
+ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && echo "internet=ok" || echo "internet=fail"

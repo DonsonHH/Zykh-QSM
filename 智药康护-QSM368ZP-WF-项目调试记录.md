@@ -2552,3 +2552,295 @@ POST /api/medicine/scan
 ```
 
 后续每次重启板子后仍建议执行一次时间同步，否则 HTTPS 和 AI 接口可能受证书时间影响。
+
+### 第十七步：摄像头卡顿、AI 气泡高度和 Wi-Fi 修复
+
+#### 摄像头预览与扫码
+
+用户反馈：
+
+```text
+摄像头对焦不稳定，扫不上码
+摄像头画面卡顿
+可以适当降低摄像头分辨率
+```
+
+板端排查：
+
+```text
+v4l2-ctl -d /dev/video5 --list-ctrls
+```
+
+结果：
+
+```text
+没有发现 autofocus / focus_absolute 等对焦控制项
+可用控制项主要是 exposure、horizontal_flip、vertical_flip、analogue_gain
+```
+
+判断：
+
+```text
+当前摄像头更可能是固定焦距模组，软件侧不能直接调焦。
+扫不上码时优先调整物距和光照：让码面清晰、无遮挡、占画面宽度 1/3 到 1/2。
+```
+
+本轮代码调整：
+
+```text
+Go HDMI UI 实时预览默认从 640x360@24fps 调低为 424x240@20fps
+JPEG quality 从 70 降为 60，减少 Go 端 JPEG 解码压力
+后端 HTTP 备用视频流也改为 424x240@20fps
+扫码拍照仍单独使用较高分辨率，默认 1280x720，num-buffers=10
+```
+
+说明：
+
+```text
+预览低分辨率用于降低卡顿
+扫码抓拍高分辨率用于保留条码细节
+如果 1280x720 在某些情况下不稳定，可通过 CAMERA_CAPTURE_WIDTH / CAMERA_CAPTURE_HEIGHT 降回 640x480
+```
+
+已部署文件：
+
+```text
+/userdata/zykh_app/bin/zykh-go-ui
+/userdata/zykh_app/server.pl
+/userdata/zykh_app/scripts/start_go_hdmi_ui.sh
+```
+
+UI 启动日志：
+
+```text
+camera: 424x240@20
+```
+
+#### AI 问诊气泡和流式
+
+用户反馈：
+
+```text
+气泡长度和高度没有随着文字多少变化
+流式传输显示仍不理想
+```
+
+问题原因：
+
+```text
+旧逻辑中助手气泡最多只显示 4 行，用户气泡最多 3 行。
+长回复会被截断，因此看起来高度不随内容增长。
+```
+
+本轮修复：
+
+```text
+助手气泡最多显示 9 行
+用户气泡最多显示 6 行
+气泡高度按实际行数动态计算
+聊天区按可用高度从最新消息向上排布，避免长回复挤掉最新消息
+Markdown 换行按段落单独换行，不再把所有段落粗暴拼成一个字符串
+```
+
+流式容错：
+
+```text
+如果 SSE 最后没有收到 done，但已经收到了 delta，UI 仍会把已有回复保存为一次完成回复。
+避免网络中断或服务端提前断开时界面一直停在“生成中/中断”状态。
+```
+
+后端验证：
+
+```text
+POST /api/ai/chat/stream
+返回 event: meta
+随后连续返回多个 event: delta
+```
+
+说明流式后端链路正常，当前主要优化的是 Go UI 的显示和容错。
+
+#### Wi-Fi 修复
+
+用户反馈：
+
+```text
+Wi-Fi 连接好像有问题
+```
+
+排查发现：
+
+```text
+断网时默认路由落在 usb1
+wpa_cli 没有看到 wlan0/wlan1 的 COMPLETED 状态
+```
+
+重新执行：
+
+```text
+/userdata/medical_assistant/scripts/start_wifi.sh
+```
+
+验证结果：
+
+```text
+wpa_state=COMPLETED
+ssid=LAPTOP-BSM79J69 1593
+ip_address=192.168.137.251
+default route: wlan0 -> 192.168.137.1
+RSSI=-55
+internet=ok
+```
+
+本轮脚本改进：
+
+```text
+仓库版本不保存 Wi-Fi 密码
+脚本从 WIFI_PASSWORD 或 /userdata/wifi_password.txt 读取密码
+自动检查 wlan0 / wlan1
+优先选择能扫描到目标 SSID 的无线网卡
+连接后删除 usb0/usb1 默认路由，避免走错出口
+追加 ping 测试输出 internet=ok / internet=fail
+```
+
+Go UI Wi-Fi 图标改进：
+
+```text
+不再只检查 wlan0
+自动检查 wlan0 / wlan1，找到 COMPLETED 的接口后读取 SSID 和 RSSI
+```
+
+注意：
+
+```text
+/userdata/wifi_password.txt 是板端本地运行配置，不进入 Git 仓库。
+```
+
+### 第十八步：自动扫码交互与 Wi-Fi Watchdog
+
+#### 摄像头文档处理
+
+用户补充了摄像头驱动文档和 RKNN 文档。PDF 文件为加密 PDF，尝试空密码解密后仍需要 `cryptography` 支持才能完整提取文本；已安装临时依赖到工作区，但 `pypdf` 仍未稳定解出正文。
+
+结合板端实际命令验证，本轮采用可直接验证的摄像头链路：
+
+```text
+v4l2-ctl -d /dev/video5 --list-ctrls
+v4l2-ctl -d /dev/video5 --list-formats-ext
+gst-launch-1.0 v4l2src device=/dev/video5 ...
+```
+
+关键结论：
+
+```text
+当前 /dev/video5 没有 autofocus / focus_absolute 控制项
+摄像头更像固定焦距模组
+扫码识别不建议走 RKNN，条码/二维码/溯源码应优先使用专用解码器
+RKNN 后续更适合做药盒外观识别、药片/包装分类等视觉模型
+```
+
+#### 扫码交互重做
+
+用户反馈：
+
+```text
+扫码识别、重新扫码、自动录入药柜三个按钮割裂，不符合实际使用流程
+```
+
+旧流程：
+
+```text
+用户点击扫码识别 -> 停预览 -> 拍照 -> 解码 -> 再点自动录入
+```
+
+问题：
+
+```text
+停预览和高分辨率拍照会造成明显卡顿
+用户不知道什么时候识别到了码
+自动录入缺少确认，容易误写药柜
+```
+
+新流程：
+
+```text
+进入摄像头页后自动扫描实时视频帧
+每隔约 850ms 取一帧 JPEG 调用 /userdata/zykh_app/bin/zykh-scan-code
+识别到码后暂停重复扫描
+查询本地 medicine_catalog
+弹窗显示药品名称、药品码、有效期
+用户点击“录入药柜”后才调用 /api/medicine/auto_add
+用户点击“取消”则忽略本次码并继续识别
+```
+
+摄像头页按钮改为：
+
+```text
+暂停识别 / 开始识别
+清除结果
+录入当前药品（只有识别到码后生效）
+```
+
+新 UI 状态：
+
+```text
+自动识别中
+识别到码
+目录查询中
+目录未收录
+正在录入药柜
+已录入药柜
+录入失败
+```
+
+说明：
+
+```text
+实时预览仍保持 424x240@20fps，避免显示卡顿
+自动扫码直接使用实时帧，不再每次点击都强制停流拍照
+如果码面太小或虚焦，仍需要调整物距、光照和码面占比
+```
+
+#### Wi-Fi 自动重连
+
+新增脚本：
+
+```text
+/userdata/zykh_app/scripts/start_wifi_watchdog.sh
+```
+
+逻辑：
+
+```text
+默认每 20 秒检查一次 Wi-Fi
+检查 wlan0 / wlan1 是否 wpa_state=COMPLETED
+再 ping 223.5.5.5 或网关
+失败则自动调用 /userdata/medical_assistant/scripts/start_wifi.sh 重连
+日志写入 /userdata/zykh_app/data/wifi-watchdog.log
+```
+
+Wi-Fi 脚本进一步调整：
+
+```text
+SSID 从 WIFI_SSID 或 /userdata/wifi_ssid.txt 读取
+密码从 WIFI_PASSWORD 或 /userdata/wifi_password.txt 读取
+默认 SSID 为 964
+DHCP 改为 -t 10 -T 3，并失败后再重试一次
+拿到 IP 后按网段补默认网关
+```
+
+本轮现场验证：
+
+```text
+当前可扫描到 964，但扫描不到 LAPTOP-BSM79J69 1593
+因此板端运行配置切换到 964
+wpa_state=COMPLETED
+ssid=964
+ip_address=192.168.31.237
+default route: 192.168.31.1 via wlan0
+```
+
+注意：
+
+```text
+/userdata/wifi_ssid.txt 和 /userdata/wifi_password.txt 是板端本地运行配置，不进入 Git 仓库。
+```
