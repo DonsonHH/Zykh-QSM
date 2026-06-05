@@ -3454,3 +3454,125 @@ OCR 未配置或识别失败时，UI 进入“待人工确认”
 用户仍可完成商品条码查询和药品录入
 有效期后续可人工核对或通过 OCR 命令补齐
 ```
+
+### 第二十二步：条码识别能力与摄像头画面质量验证
+
+#### 用户现象
+
+```text
+用户已把药盒条码放到摄像头前，但 HDMI UI 没有扫出来。
+用户另外用手机拍了一张较清晰的条码图片，希望确认是算法问题还是摄像头问题。
+```
+
+#### 手机清晰图验证
+
+测试图片：
+
+```text
+C:/Users/Donson/Documents/WeChat Files/wxid_nzrjpu4f1bn112/FileStorage/Temp/513fff13a6d6413b0248aa0d2ef6a8e.jpg
+```
+
+电脑端用现有 Go 解码器测试：
+
+```powershell
+cd zykh_app/tools/scan-code
+go run . -json "C:\Users\Donson\Documents\WeChat Files\wxid_nzrjpu4f1bn112\FileStorage\Temp\513fff13a6d6413b0248aa0d2ef6a8e.jpg"
+```
+
+结果：
+
+```json
+{
+  "ok": true,
+  "code": "6901070384745",
+  "format": "EAN_13"
+}
+```
+
+板端 arm64 二进制测试：
+
+```powershell
+adb -s ? push "C:\Users\Donson\Documents\WeChat Files\wxid_nzrjpu4f1bn112\FileStorage\Temp\513fff13a6d6413b0248aa0d2ef6a8e.jpg" /userdata/zykh_app/data/test-barcode-phone.jpg
+adb -s ? shell "/userdata/zykh_app/bin/zykh-scan-code -json /userdata/zykh_app/data/test-barcode-phone.jpg"
+```
+
+结果：
+
+```json
+{
+  "ok": true,
+  "code": "6901070384745",
+  "format": "EAN_13"
+}
+```
+
+结论：
+
+```text
+条码解码算法没有问题。
+板端 zykh-scan-code 也没有问题。
+清晰 EAN-13 商品条码可以被识别。
+```
+
+#### 板端摄像头当前抓拍验证
+
+执行：
+
+```powershell
+adb -s ? shell "wget -q -O - --post-data='' http://127.0.0.1:8080/api/camera/capture; echo; /userdata/zykh_app/bin/zykh-scan-code -json /userdata/zykh_app/web/camera/latest.jpg"
+adb -s ? pull /userdata/zykh_app/web/camera/latest.jpg camera-latest-barcode-test.jpg
+```
+
+抓拍命令成功：
+
+```json
+{
+  "ok": true,
+  "image_url": "/camera/latest.jpg",
+  "command": "gst-launch-1.0 -q v4l2src device='/dev/video5' num-buffers=10 ! video/x-raw,format=NV12,width=1280,height=720,framerate=30/1 ! videoconvert ! jpegenc ! filesink location='/userdata/zykh_app/web/camera/latest.jpg'"
+}
+```
+
+但解码结果：
+
+```json
+{
+  "ok": false,
+  "error": "NotFoundException"
+}
+```
+
+人工查看抓拍图：
+
+```text
+camera-latest-barcode-test.jpg
+```
+
+现象：
+
+```text
+画面中没有清晰、居中、足够大的药盒商品条码。
+画面主要拍到了桌面/侧板/瓶身，条形码区域很小或不在有效位置。
+前景物体也有明显虚焦/景深问题。
+```
+
+结论：
+
+```text
+当前无法扫出来主要不是算法问题，而是摄像头实际输入质量问题：
+1. 条码没有在画面中心
+2. 条码占画面比例太小
+3. 摄像头可能固定焦距，近距离或斜面容易虚
+4. 低分辨率实时流自动扫码比高清单帧更容易失败
+```
+
+现场建议：
+
+```text
+1. 在 HDMI 预览里确认条码确实出现在画面中间
+2. 让条码尽量横平竖直，不要贴在弧面瓶身上
+3. 条码宽度至少占画面宽度的 30%-60%
+4. 距离摄像头从 10cm、15cm、20cm、25cm 逐步试，找到固定焦距清晰点
+5. 增加正面光照，避免反光和阴影
+6. 如果仍然无法在预览里看到清晰竖线，后续应更换自动对焦或更适合近距离扫码的摄像头模组
+```
