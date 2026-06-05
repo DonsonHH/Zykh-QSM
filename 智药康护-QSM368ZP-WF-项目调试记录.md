@@ -2388,3 +2388,167 @@ hdmi-home-final2.png
 hdmi-cabinet-layout.png
 hdmi-ai-stream-md.png
 ```
+
+### 第十六步：TTS 播报与药品扫码解码
+
+#### DeepSeek 能力边界
+
+查询 DeepSeek 官方 API 文档后，当前项目可稳定使用的是文本 Chat Completions 和流式文本输出。
+
+结论：
+
+```text
+DeepSeek 当前不作为本项目的 TTS 引擎
+DeepSeek 当前不直接承担图片/条码视觉识别
+DeepSeek 适合用于：
+1. AI 问诊文本生成
+2. 根据已解码出来的药品条码/溯源码做信息结构化补全
+3. 结合老人档案、体征、病例记忆和药柜库存生成定制化问诊回复
+```
+
+#### TTS 播报接口
+
+新增后端接口：
+
+```text
+POST /api/audio/speak
+参数：text
+```
+
+实现策略：
+
+```text
+优先使用环境变量 TTS_CMD 指定的真实 TTS 命令
+其次检测 espeak / flite
+如果没有中文 TTS 引擎，则生成短提示音 WAV，并用 aplay 播放，验证喇叭链路
+```
+
+板端音频情况：
+
+```text
+存在 arecord
+存在 aplay
+存在 mpg123
+存在 /dev/snd
+声卡 0：rockchip,rk809-codec
+声卡 1：rockchip_hdmi
+```
+
+本轮修复：
+
+```text
+aplay 默认设备会走 PulseAudio，报 Connection refused
+已改为显式 ALSA 设备
+默认播放设备：plughw:0,0
+如需 HDMI 音频，可启动服务时设置 AUDIO_PLAY_DEVICE=plughw:1,0
+```
+
+验证结果：
+
+```json
+{
+  "ok": true,
+  "exit_code": 0,
+  "mode": "notice-tone",
+  "detail": "当前板端缺少中文 TTS 引擎，已用喇叭提示音验证播放链路；后续设置 TTS_CMD 可替换为真实语音合成。"
+}
+```
+
+Go HDMI UI 已接入：
+
+```text
+AI 流式回复完成后自动调用 /api/audio/speak
+底部麦克风/语音状态会显示播报状态
+当前没有中文 TTS 引擎时，会提示“已验证喇叭播放；需接入中文 TTS 引擎”
+```
+
+后续真实中文 TTS 推荐路线：
+
+```text
+短期：外接一个 TTS_CMD 脚本，调用可用的云 TTS 或本地 TTS 二进制后播放 wav/mp3
+中期：在板端集成 sherpa-onnx / piper / eSpeak NG 中文语音包
+比赛演示：若只要求证明喇叭链路，当前 notice-tone 已可验证播放链路
+```
+
+#### 药品扫码解码
+
+新增纯 Go 扫码工具：
+
+```text
+/userdata/zykh_app/bin/zykh-scan-code
+源码：zykh_app/tools/scan-code
+```
+
+支持格式：
+
+```text
+QR Code
+Data Matrix
+Aztec
+EAN-13 / EAN-8
+UPC-A / UPC-E
+Code128 / Code39 / Code93
+ITF
+```
+
+后端扫码流程已调整为：
+
+```text
+POST /api/medicine/scan
+1. 摄像头拍照生成 /userdata/zykh_app/web/camera/latest.jpg
+2. 优先调用 zykh-scan-code -json 解码
+3. 如果存在 zbarimg，则回退调用 zbarimg
+4. 如果真实画面里没有码，则使用演示溯源码跑通查目录和自动录入链路
+5. 查 medicine_catalog
+6. 可继续调用 /api/medicine/auto_add 自动写入药柜
+```
+
+板端验证：
+
+```text
+/userdata/zykh_app/bin/zykh-scan-code -json /userdata/zykh_app/web/camera/latest.jpg
+返回 {"ok":false,"error":"NotFoundException"}
+```
+
+说明当前摄像头画面里没有有效条码/二维码，不代表解码器不可用。
+
+接口验证：
+
+```json
+{
+  "ok": true,
+  "scanner": "demo-no-zbar",
+  "detail": "真实扫码未识别到条码/二维码：NotFoundException",
+  "code": "TRACE6901234567890"
+}
+```
+
+这说明：
+
+```text
+真实扫码工具已被后端调用
+当前画面没有识别出码
+系统回退到演示溯源码，继续完成本地药品目录查询流程
+```
+
+后续真实扫码测试方法：
+
+```text
+进入“拍照识别药品”页面
+把药盒条形码、药品追溯码或二维码放在摄像头前
+保持码面清晰、占画面宽度 1/3 到 1/2
+点击“扫码识别”
+如果本地 medicine_catalog 有对应 code / trace_code，会自动显示药名、批号、有效期并写入药柜
+```
+
+#### 时间校准
+
+本轮发现板子重启后时间又回到 2006 年。已用电脑 UTC 时间校准，后端 `TZ=CST-8` 后返回北京时间：
+
+```json
+{
+  "time": "2026-06-05 14:27:47"
+}
+```
+
+后续每次重启板子后仍建议执行一次时间同步，否则 HTTPS 和 AI 接口可能受证书时间影响。

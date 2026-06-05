@@ -396,6 +396,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/audio/record') {
         return send_json($client, 200, record_audio($req->{params}));
     }
+    if ($method eq 'POST' && $path eq '/api/audio/speak') {
+        return send_json($client, 200, speak_text($req->{params}));
+    }
 
     return send_json($client, 404, { ok => JSON::PP::false, error => 'API not found' });
 }
@@ -502,7 +505,14 @@ sub scan_medicine_code {
     my $scanner = '';
     my $detail = '';
 
-    if (trim(`which zbarimg 2>/dev/null`) ne '') {
+    my $decoded = decode_medicine_image($image);
+    if ($decoded->{ok}) {
+        $code = normalize_code($decoded->{code});
+        $scanner = $decoded->{scanner};
+        $detail = '已从摄像头图像识别到条码/溯源码，格式：' . ($decoded->{format} || 'unknown');
+    }
+
+    if ($code eq '' && trim(`which zbarimg 2>/dev/null`) ne '') {
         my $log = "$DATA_DIR/medicine-scan.log";
         my $cmd = 'zbarimg --raw ' . shell_quote($image) . ' >' . shell_quote($log) . ' 2>&1';
         my $rc;
@@ -519,7 +529,7 @@ sub scan_medicine_code {
     if ($code eq '') {
         $code = normalize_code($p->{code} || $p->{trace_code} || $ENV{DEMO_TRACE_CODE} || 'TRACE6901234567890');
         $scanner = 'demo-no-zbar';
-        $detail = '板端当前未安装 zbarimg，使用演示溯源码跑通扫码、查目录、自动录入流程；安装 zbar 后可替换为真实图像解码。';
+        $detail = $decoded->{error} || '板端当前没有可用条码解码器，使用演示溯源码跑通扫码、查目录、自动录入流程；部署 zykh-scan-code 或安装 zbar 后可替换为真实图像解码。';
     }
 
     my $lookup = lookup_medicine({ code => $code });
@@ -531,6 +541,42 @@ sub scan_medicine_code {
         image_url => $capture->{image_url},
         lookup => $lookup,
     };
+}
+
+sub decode_medicine_image {
+    my ($image) = @_;
+    my @candidates;
+    push @candidates, $ENV{BARCODE_DECODER} if $ENV{BARCODE_DECODER};
+    push @candidates, "$HOME_DIR/bin/zykh-scan-code";
+
+    for my $decoder (@candidates) {
+        next unless $decoder && -x $decoder;
+        my $log = "$DATA_DIR/medicine-scan-code.log";
+        my $cmd = shell_quote($decoder) . ' -json ' . shell_quote($image) . ' >' . shell_quote($log) . ' 2>&1';
+        my $rc;
+        {
+            local $SIG{CHLD} = 'DEFAULT';
+            $rc = system('timeout', '8', 'sh', '-c', $cmd);
+        }
+        my $raw = read_text_file($log);
+        my $obj = eval { decode_json($raw || '') };
+        if ($obj && $obj->{ok} && normalize_code($obj->{code}) ne '') {
+            return {
+                ok => JSON::PP::true,
+                code => normalize_code($obj->{code}),
+                format => $obj->{format} || '',
+                scanner => basename($decoder),
+            };
+        }
+        my $exit = $rc == -1 ? -1 : ($rc >> 8);
+        return {
+            ok => JSON::PP::false,
+            error => '真实扫码未识别到条码/二维码：' . substr(($obj && $obj->{error}) || $raw || "exit=$exit", 0, 160),
+            scanner => basename($decoder),
+        };
+    }
+
+    return { ok => JSON::PP::false, error => '没有找到 zykh-scan-code 或 zbarimg 解码器' };
 }
 
 sub first_empty_slot {
@@ -589,6 +635,81 @@ sub record_audio {
         command => $cmd,
         exit_code => $exit,
     };
+}
+
+sub speak_text {
+    my ($p) = @_;
+    my $text = trim($p->{text} || '');
+    return { ok => JSON::PP::false, error => '播报文本为空' } if $text eq '';
+    $text = substr($text, 0, 500);
+
+    my $dir = "$DATA_DIR/audio";
+    make_path($dir) unless -d $dir;
+    my $log = "$DATA_DIR/audio-speak.log";
+    my $cmd = '';
+    my $mode = '';
+
+    if ($ENV{TTS_CMD}) {
+        $cmd = $ENV{TTS_CMD};
+        $cmd =~ s/\{text\}/shell_quote($text)/eg;
+        $mode = 'custom-tts';
+    } elsif (trim(`which espeak 2>/dev/null`) ne '') {
+        $cmd = 'espeak -v zh -s 145 ' . shell_quote($text);
+        $mode = 'espeak';
+    } elsif (trim(`which flite 2>/dev/null`) ne '') {
+        my $out = "$dir/tts.wav";
+        $cmd = 'flite -t ' . shell_quote($text) . ' -o ' . shell_quote($out) . ' && ' . aplay_cmd($out);
+        $mode = 'flite';
+    } elsif (trim(`which aplay 2>/dev/null`) ne '') {
+        my $tone = "$dir/tts-notice.wav";
+        write_notice_wav($tone);
+        $cmd = aplay_cmd($tone);
+        $mode = 'notice-tone';
+    } else {
+        return { ok => JSON::PP::false, error => '板端未找到 TTS 或 aplay 播放命令', mode => 'none' };
+    }
+
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '20', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $ok = $exit == 0 ? JSON::PP::true : JSON::PP::false;
+    my $detail = $mode eq 'notice-tone'
+        ? '当前板端缺少中文 TTS 引擎，已用喇叭提示音验证播放链路；后续设置 TTS_CMD 可替换为真实语音合成。'
+        : '语音播报命令已执行。';
+    return {
+        ok => $ok,
+        mode => $mode,
+        detail => $ok ? $detail : '语音播报失败：' . substr(read_text_file($log) || '', 0, 300),
+        exit_code => $exit,
+    };
+}
+
+sub aplay_cmd {
+    my ($file) = @_;
+    my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
+    return 'aplay -q -D ' . shell_quote($device) . ' ' . shell_quote($file);
+}
+
+sub write_notice_wav {
+    my ($file) = @_;
+    my $rate = 16000;
+    my $samples = int($rate * 0.42);
+    my $data = '';
+    my $pi = 3.141592653589793;
+    for my $i (0 .. $samples - 1) {
+        my $freq = $i < $samples / 2 ? 880 : 1174;
+        my $amp = int(9000 * sin(2 * $pi * $freq * $i / $rate));
+        $amp += 65536 if $amp < 0;
+        $data .= pack('v', $amp);
+    }
+    my $data_len = length($data);
+    my $header = 'RIFF' . pack('V', 36 + $data_len) . 'WAVEfmt ' .
+        pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16) .
+        'data' . pack('V', $data_len);
+    write_raw_file($file, $header . $data);
 }
 
 sub list_memories {

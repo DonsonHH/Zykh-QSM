@@ -1209,6 +1209,14 @@ type audioRecordResp struct {
 	Error    string `json:"error"`
 }
 
+type audioSpeakResp struct {
+	OK       bool   `json:"ok"`
+	Mode     string `json:"mode"`
+	Detail   string `json:"detail"`
+	Error    string `json:"error"`
+	ExitCode int    `json:"exit_code"`
+}
+
 type apiClient struct {
 	base   string
 	client *http.Client
@@ -2484,6 +2492,9 @@ func (a *app) applyAIStreamEvent(event, raw string, replyIndex int, reply *strin
 		}
 		a.saveAIHistoryLocked()
 		a.mu.Unlock()
+		if strings.TrimSpace(*reply) != "" {
+			go a.speakText(*reply)
+		}
 		return true
 	}
 	return false
@@ -2516,6 +2527,34 @@ func (a *app) recordVoice() {
 	a.saveAIHistoryLocked()
 	a.message = "麦克风录音完成"
 	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+}
+
+func (a *app) speakText(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	a.mu.Lock()
+	a.aiVoice = "正在播报 AI 回复..."
+	a.mu.Unlock()
+
+	var resp audioSpeakResp
+	err := a.api.postFormJSON("/api/audio/speak", url.Values{"text": []string{text}}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.aiVoice = "播报失败：" + err.Error()
+		return
+	}
+	if !resp.OK {
+		a.aiVoice = firstNonEmpty(resp.Error, resp.Detail, "播报失败")
+		return
+	}
+	if resp.Mode == "notice-tone" {
+		a.aiVoice = "已验证喇叭播放；需接入中文 TTS 引擎"
+	} else {
+		a.aiVoice = "AI 回复已播报"
+	}
 }
 
 func (a *app) setPage(page string) {
