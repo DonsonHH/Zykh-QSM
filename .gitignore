@@ -1,8 +1,12 @@
 .tools/
+Linux/
+examples/
+media/
+LICENSE
+QSM368WF开发板操作注意事项.pdf
 *.png
 *.jpg
 *.jpeg
 *.log
 hdmi-*.png
 zykh-*.png
-
