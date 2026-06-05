@@ -6,6 +6,10 @@ LOG=$APP_DIR/data/go-ui.log
 
 mkdir -p $APP_DIR/data
 
+if [ -x "$APP_DIR/scripts/ensure_wifi_watchdog.sh" ]; then
+    sh "$APP_DIR/scripts/ensure_wifi_watchdog.sh" >/dev/null 2>&1 || true
+fi
+
 echo "Starting desktop display service..."
 killall zykh-go-ui 2>/dev/null || true
 killall gst-launch-1.0 2>/dev/null || true

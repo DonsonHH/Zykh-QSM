@@ -2806,6 +2806,7 @@ RKNN 后续更适合做药盒外观识别、药片/包装分类等视觉模型
 
 ```text
 /userdata/zykh_app/scripts/start_wifi_watchdog.sh
+/userdata/zykh_app/scripts/ensure_wifi_watchdog.sh
 ```
 
 逻辑：
@@ -2817,6 +2818,14 @@ RKNN 后续更适合做药盒外观识别、药片/包装分类等视觉模型
 失败则自动调用 /userdata/medical_assistant/scripts/start_wifi.sh 重连
 日志写入 /userdata/zykh_app/data/wifi-watchdog.log
 ```
+
+`ensure_wifi_watchdog.sh` 使用 pidfile 管理：
+
+```text
+/userdata/zykh_app/data/wifi-watchdog.pid
+```
+
+并改用 `setsid` 启动，避免 ADB shell 退出时后台进程被清理。`start_go_hdmi_ui.sh` 已接入该启动器，每次启动 HDMI UI 时会自动确保 Wi-Fi watchdog 存在。
 
 Wi-Fi 脚本进一步调整：
 
@@ -2837,6 +2846,9 @@ wpa_state=COMPLETED
 ssid=964
 ip_address=192.168.31.237
 default route: 192.168.31.1 via wlan0
+watchdog=running
+ping 223.5.5.5 成功
+ping 192.168.31.1 成功
 ```
 
 注意：
