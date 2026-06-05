@@ -2856,3 +2856,601 @@ ping 192.168.31.1 成功
 ```text
 /userdata/wifi_ssid.txt 和 /userdata/wifi_password.txt 是板端本地运行配置，不进入 Git 仓库。
 ```
+
+### 第十九步：Wi-Fi 多热点优先级、取药子界面和 RKNN 药盒识别入口
+
+#### Wi-Fi Watchdog 与热点优先级
+
+用户反馈：
+
+```text
+Wi-Fi watchdog 貌似没生效
+尽量连接 LAPTOP-BSM79J69 1593
+```
+
+本轮排查：
+
+```text
+watchdog 进程存在，但板端运行配置之前只写了 964
+因此 watchdog 只会反复连接 964，不会主动切换到 LAPTOP-BSM79J69 1593
+```
+
+脚本调整：
+
+```text
+/userdata/zykh_app/scripts/start_wifi_964.sh
+```
+
+改为多热点 profile 机制：
+
+```text
+优先读取 WIFI_SSID / WIFI_PASSWORD
+其次读取 /userdata/wifi_profiles.conf
+最后兼容 /userdata/wifi_ssid.txt 和 /userdata/wifi_password.txt
+```
+
+板端本地 profile 示例：
+
+```text
+LAPTOP-BSM79J69 1593|<密码>
+964|<密码>
+```
+
+脚本行为：
+
+```text
+先扫描周围 SSID
+按 profile 顺序优先尝试可见热点
+LAPTOP-BSM79J69 1593 可见时优先连接
+认证或 DHCP 失败时继续尝试下一个 profile
+连接后清理旧默认路由，只保留当前无线接口的默认网关
+```
+
+现场验证：
+
+```text
+ssid=LAPTOP-BSM79J69 1593
+wpa_state=COMPLETED
+ip_address=192.168.137.66
+default route: 192.168.137.1 via wlan0
+ping 223.5.5.5 成功
+```
+
+说明：
+
+```text
+/userdata/wifi_profiles.conf 是板端本地配置，不进入 Git 仓库。
+```
+
+#### 开始取药子界面
+
+用户要求：
+
+```text
+开始取药应该进入子界面
+用户可自选药柜或药物
+需要搜索功能
+确认后打开对应药柜
+```
+
+旧逻辑：
+
+```text
+首页点击“开始取药”后直接按下一条计划调用 /api/dispense
+```
+
+新逻辑：
+
+```text
+首页点击“开始取药”进入 dispense 页面
+左侧显示药品列表
+右侧显示 23 个仓位按钮
+顶部提供触屏筛选搜索：全部 / 降压 / 阿司匹林 / 二甲 / 低库存
+用户可点药品或点仓位选择
+点击确认后弹出确认框
+确认后才调用 /api/dispense
+```
+
+库存保护：
+
+```text
+空仓不能取药
+库存小于等于 0 不能取药
+库存不足时确认按钮置灰，显示“库存不足，不能取药”
+```
+
+验证截图：
+
+```text
+hdmi-dispense-final.png
+```
+
+#### RKNN 药盒外观识别入口
+
+用户提出：
+
+```text
+条码/二维码解码如果官方文档里找不到更好方案，可以做 RKNN 药盒外观识别
+```
+
+当前仓库 RKNN 示例：
+
+```text
+examples/rknn/rknn_yolov5_demo
+examples/rknn/rknn_yolov8_pose_demo
+examples/rknn/rknn_LPRNet_demo
+examples/rknn/rknn_whisper_demo
+```
+
+结论：
+
+```text
+这些示例能证明 RKNN 运行链路
+但没有药盒分类/检测模型
+不能直接识别具体药盒名称
+需要后续采集药盒图片数据，训练分类或检测模型，再转成 .rknn
+```
+
+本轮新增后端接口：
+
+```text
+POST /api/medicine/visual_recognize
+```
+
+行为：
+
+```text
+先拍摄当前摄像头图片
+如果配置了 RKNN_MEDICINE_CMD，则调用该命令
+命令可用 {image} 占位符接收图片路径
+如果未配置，则返回 rknn-not-configured
+```
+
+接口验证结果：
+
+```json
+{
+  "ok": true,
+  "found": false,
+  "source": "rknn-not-configured"
+}
+```
+
+Go HDMI UI 摄像头页：
+
+```text
+第三个按钮在未识别到条码时显示“外观识别”
+点击后调用 /api/medicine/visual_recognize
+当前会提示未配置 RKNN 药盒模型
+后续接入 RKNN_MEDICINE_CMD 后即可复用该入口
+```
+
+### 第二十步：药品入库三步向导、有效期 OCR 插拔口、摄像头限帧前移和触摸反馈
+
+#### 用户新需求
+
+```text
+药品识别不再优先扫溯源码
+流程改为：
+1. 引导用户扫描商品条形码，用于读取完整药盒药品信息
+2. 引导用户把药盒侧面有效期/保质日期面对摄像头识别，或人工确认
+3. 引导用户确认药品信息，后端自动录入药柜
+
+希望寻找 Hugging Face 上适合本板子的文字识别模型
+摄像头仍存在严重卡顿，需要继续检查
+整体 UI 可用，但触摸后缺少反馈，需要更像触控设备
+```
+
+#### Hugging Face OCR 模型结论
+
+使用 Hugging Face 模型搜索查找：
+
+```text
+Chinese OCR ONNX mobile PP-OCR text recognition
+Chinese OCR ONNX mobile text recognition
+trocr ocr printed
+```
+
+结果：
+
+```text
+没有搜到可直接落地到 RK3568 Buildroot 的中文 OCR ONNX/mobile 模型包
+TrOCR 类模型可以搜到，但主要是 Transformers/PyTorch，体积和运行时都不适合当前板子：
+- 当前系统无 Python3 / pip3 / Node
+- 没有 ONNX Runtime
+- 没有现成 .rknn OCR 模型
+- TrOCR 对英文/印刷文本更常见，不适合作为药盒中文有效期识别的板端首选
+```
+
+当前采用方案：
+
+```text
+后端预留 OCR_EXPIRY_CMD 插拔口
+如果后续拿到 PaddleOCR/PP-OCR mobile、RKNN DBNet+CRNN、或其他板端可执行 OCR 命令，只需要设置 OCR_EXPIRY_CMD
+UI 和数据库流程不需要重写
+```
+
+#### 后端新增接口
+
+新增：
+
+```text
+POST /api/medicine/expiry_ocr
+```
+
+行为：
+
+```text
+1. 如果传入 manual_expire 或 expire_date，则尝试解析人工输入日期
+2. 否则调用摄像头拍照，图片仍为 /userdata/zykh_app/web/camera/latest.jpg
+3. 如果未配置 OCR_EXPIRY_CMD，返回 ok:true / found:false / source:ocr-not-configured
+4. 如果配置了 OCR_EXPIRY_CMD，则用 {image} 替换当前图片路径并执行
+5. 从 OCR 输出中解析 YYYY-MM-DD、YYYY/MM/DD、YYYY.MM.DD、YYYY年MM月DD日、YYYYMMDD、EXP/有效期至/保质期 等日期格式
+```
+
+板端验证：
+
+```json
+{
+  "ok": true,
+  "found": false,
+  "source": "ocr-not-configured",
+  "detail": "已拍摄药盒侧面，但当前未配置 OCR_EXPIRY_CMD。可先在确认页人工核对有效期，后续接入 PaddleOCR/PP-OCR 或 RKNN OCR 命令。"
+}
+```
+
+自动录入接口增强：
+
+```text
+POST /api/medicine/auto_add
+```
+
+新增支持：
+
+```text
+expire_date 参数
+```
+
+说明：
+
+```text
+如果确认页带入 expire_date，则优先使用用户/OCR 确认的有效期写入 medicines 表
+这样同一商品条形码不同批次有效期可以正确记录
+```
+
+#### Go HDMI UI 药品入库流程
+
+摄像头页标题从：
+
+```text
+扫码识别药品 / 扫描药品溯源码
+```
+
+改为：
+
+```text
+录入药品 / 先扫商品条形码，再识别药盒侧面有效期，确认后自动写入药柜
+```
+
+新增三步状态：
+
+```text
+1 扫商品条形码
+2 识别有效期
+3 确认录入
+```
+
+交互逻辑：
+
+```text
+进入页面后默认处于 barcode 步骤
+自动扫码只在 barcode 步骤运行
+识别到商品条形码后：
+  - 停止自动扫码
+  - 查询 /api/medicine/lookup
+  - 进入 expiry 步骤
+  - 提示用户把药盒侧面有效期/保质期文字面对摄像头
+
+点击“识别有效期”后：
+  - 暂停实时预览
+  - 调用 /api/medicine/expiry_ocr
+  - 识别到日期则带入确认页
+  - 未配置 OCR 或未识别到日期时，进入“待人工确认”
+
+点击“跳过日期”：
+  - 直接进入确认页
+  - 有效期显示“待人工确认”
+
+确认录入：
+  - 调用 /api/medicine/auto_add
+  - 带入 code、stock=1、expire_date
+```
+
+#### 摄像头卡顿优化
+
+旧 GStreamer 直连 caps：
+
+```text
+video/x-raw,format=NV12,width=424,height=240
+```
+
+问题：
+
+```text
+Go 端虽然按 FPS sleep，但采集端没有 framerate caps
+上游可能持续输出并堆积旧帧，表现为卡顿和延迟
+```
+
+新 caps：
+
+```text
+video/x-raw,format=NV12,width=424,height=240,framerate=20/1
+```
+
+说明：
+
+```text
+限帧前移到 v4l2src caps
+Go 端仍保留最小帧间隔保护
+这主要降低堆积延迟，不保证传感器本身一定能稳定 20/25/30fps
+```
+
+当前启动输出：
+
+```text
+camera: 424x240@20
+```
+
+如果后续仍只有 3-4fps：
+
+```text
+优先排查摄像头模组、光照、曝光时间、驱动 video 节点模式、media-ctl pipeline
+也可以换摄像头模组验证是否为模组固定焦距/曝光导致
+```
+
+#### 触摸反馈
+
+参考触控 UI 的常见做法：
+
+```text
+按钮需要有即时按压反馈
+触摸目标应保持足够大，适老化界面至少接近 48dp 等级
+```
+
+当前实现：
+
+```text
+Go 原生 UI 在每次触摸事件处记录坐标
+渲染层绘制 180ms 的半透明主色涟漪
+不依赖浏览器、CSS 或组件库
+首页、取药、摄像头、AI 问诊等页面都会获得统一触摸反馈
+```
+
+#### 本轮部署
+
+部署到目标设备：
+
+```text
+adb -s ? push zykh_app\bin\zykh-go-ui /userdata/zykh_app/bin/zykh-go-ui
+adb -s ? push zykh_app\server.pl /userdata/zykh_app/server.pl
+adb -s ? shell "chmod +x /userdata/zykh_app/bin/zykh-go-ui; perl -c /userdata/zykh_app/server.pl"
+```
+
+板端验证：
+
+```text
+/userdata/zykh_app/server.pl syntax OK
+ZYKH server daemon pid: 7109
+Go HDMI UI started
+pid: 7312
+render: wayland
+page: home
+touch: /dev/input/event4
+camera: 424x240@20
+```
+
+注意：
+
+```text
+本轮没有上传 GitHub
+ADB 上有两个设备，其中 serial 为 ? 的设备才是 QSM368ZP-WF Buildroot 板子
+后续 adb 命令必须显式使用 adb -s ?
+```
+
+### 第二十一步：商品条码实际操作、ShowAPI 条码查询、非 964 Wi-Fi 与 OCR 边界
+
+#### 商品条码扫码功能是否已做
+
+结论：
+
+```text
+已做。
+Go HDMI UI 的“录入药品/拍照识别药品”页面会自动读取摄像头实时 JPEG 帧。
+后台每隔一段时间取当前帧，调用 /userdata/zykh_app/bin/zykh-scan-code 解码。
+zykh-scan-code 基于 Go gozxing，支持 EAN-13、EAN-8、UPC、Code128、Code39、二维码、DataMatrix 等。
+药盒常见的 69 开头商品条形码属于 EAN-13，当前解码器支持。
+```
+
+现场操作方法：
+
+```text
+1. HDMI 触屏首页点击“拍照识别药品/录入药品”
+2. 进入摄像头页面后，默认处于“1 扫商品条形码”
+3. 把药盒上的 69 开头商品条形码放到画面中间
+4. 建议距离摄像头 10-20cm，条码尽量横平竖直，保持清晰和充足光照
+5. 识别到条码后，页面会自动进入“2 识别有效期”
+6. 再把药盒侧面有效期/保质期文字面对摄像头，点击“识别有效期”
+7. 如果 OCR 未配置或未识别到日期，可点击“跳过日期”，确认页会显示“待人工确认”
+8. 最后在弹窗中确认药名、商品条码、有效期，然后录入药柜
+```
+
+UI 文案已补充：
+
+```text
+操作：将 69 开头商品条码放进画面中间，保持 10-20cm；识别后再把有效期那一侧对准摄像头。
+```
+
+#### ShowAPI 药品条码查询
+
+用户提供接口：
+
+```text
+https://route.showapi.com/66-24?appKey={your_appKey}
+content-type: application/x-www-form-urlencoded
+POST body: code=6906618188014
+```
+
+实现方式：
+
+```text
+appKey 不写入 server.pl、Markdown、HTML、JS 或 Git
+后端优先读取环境变量 SHOWAPI_APP_KEY
+如果没有环境变量，则读取板端本地文件：
+/userdata/zykh_app/data/showapi-app-key.txt
+```
+
+后端流程：
+
+```text
+lookup_medicine(code)
+  1. 先查本地 medicine_catalog
+  2. 如果本地没有，并且 code 是 69 开头 13 位商品条码，则调用 ShowAPI
+  3. ShowAPI 返回成功后，把 name、spec、dosage、manuName、validity、approval、note 等整理为本地 medicine_catalog 记录
+  4. 后续再扫同一个条码时优先走本地缓存，不重复依赖外网
+```
+
+新增/复用配置：
+
+```text
+SHOWAPI_APP_KEY
+SHOWAPI_APP_KEY_FILE
+/userdata/zykh_app/data/showapi-app-key.txt
+```
+
+板端验证：
+
+```powershell
+adb -s ? forward tcp:8080 tcp:8080
+curl.exe -s "http://127.0.0.1:8080/api/medicine/lookup?code=6906618188014"
+```
+
+验证结果要点：
+
+```json
+{
+  "ok": true,
+  "found": true,
+  "source": "showapi",
+  "medicine": {
+    "code": "6906618188014",
+    "name": "皇后牌片仔癀珍珠膏",
+    "manufacturer": "福建片仔癀化妆品有限公司",
+    "dosage": "20g；早晚两次，洁肤后适量使用并略加按摩至皮肤吸收。"
+  }
+}
+```
+
+注意：
+
+```text
+通过 adb shell 直接 wget 输出中文时，Windows 端可能显示乱码。
+这不是接口真实乱码。
+用 adb forward 后在电脑 curl.exe 访问，中文正常。
+```
+
+#### Wi-Fi：不再使用 964
+
+用户要求：
+
+```text
+注意别用 964 的 Wi-Fi
+新增热点：名称为 emoji 热点，密码为用户提供值
+```
+
+处理：
+
+```text
+/userdata/wifi_profiles.conf 已改为只保留两个非 964 热点
+start_wifi_964.sh 新增 WIFI_SKIP_SSIDS，默认跳过 964
+即使 profile 文件中误留 964，也会被脚本过滤
+```
+
+板端本地 profile：
+
+```text
+LAPTOP-BSM79J69 1593|<密码>
+emoji 热点|<密码>
+```
+
+脚本同步路径：
+
+```text
+/userdata/zykh_app/scripts/start_wifi_964.sh
+/userdata/medical_assistant/scripts/start_wifi.sh
+```
+
+本轮还修复了特殊热点网关问题：
+
+```text
+之前脚本默认把网关猜成 x.x.x.1
+emoji 热点 DHCP 实际可用网关为 10.209.211.193
+脚本现在会尝试 DHCP 写入的 nameserver、x.x.x.1、x.x.x.193
+并且只有 ping 223.5.5.5 成功才算 Wi-Fi 连接成功
+只 ping 通网关不再算成功
+```
+
+板端验证：
+
+```text
+wpa_state=COMPLETED
+ip_address=10.209.211.196
+default route: 10.209.211.193 via wlan0
+internet=ok
+```
+
+#### 轻量 OCR 说明
+
+当前系统现实条件：
+
+```text
+Buildroot 2018.02-rc3
+无 Python3 / pip3 / Node
+无 ONNX Runtime
+无 Tesseract
+无现成 RKNN OCR 模型
+Hugging Face 搜到的 TrOCR 类模型主要是 Transformers/PyTorch，不适合直接在当前板端运行
+```
+
+因此本轮没有假装实现“通用 OCR”。
+
+已完成的工程接口：
+
+```text
+POST /api/medicine/expiry_ocr
+OCR_EXPIRY_CMD
+```
+
+后续只要拿到一个板端可执行 OCR 命令，例如：
+
+```text
+OCR_EXPIRY_CMD='/userdata/zykh_app/bin/ocr-expiry {image}'
+```
+
+该命令输出 JSON 或文本，后端即可解析常见日期格式：
+
+```text
+YYYY-MM-DD
+YYYY/MM/DD
+YYYY.MM.DD
+YYYY年MM月DD日
+YYYYMMDD
+EXP / 有效期至 / 保质期 + 日期
+```
+
+当前可用兜底：
+
+```text
+OCR 未配置或识别失败时，UI 进入“待人工确认”
+用户仍可完成商品条码查询和药品录入
+有效期后续可人工核对或通过 OCR 命令补齐
+```

@@ -1181,8 +1181,9 @@ type scanMedicineResp struct {
 }
 
 type medicineLookupResp struct {
-	OK       bool `json:"ok"`
-	Found    bool `json:"found"`
+	OK       bool   `json:"ok"`
+	Found    bool   `json:"found"`
+	Source   string `json:"source"`
 	Medicine struct {
 		Name         string `json:"name"`
 		Dosage       string `json:"dosage"`
@@ -1213,6 +1214,31 @@ type autoAddResp struct {
 		ExpireDate string `json:"expire_date"`
 	} `json:"medicine"`
 	Error string `json:"error"`
+}
+
+type expiryOCRResp struct {
+	OK         bool   `json:"ok"`
+	Found      bool   `json:"found"`
+	ExpireDate string `json:"expire_date"`
+	Source     string `json:"source"`
+	ImageURL   string `json:"image_url"`
+	Detail     string `json:"detail"`
+	Raw        string `json:"raw"`
+	Error      string `json:"error"`
+}
+
+type visualRecognizeResp struct {
+	OK       bool   `json:"ok"`
+	Found    bool   `json:"found"`
+	Source   string `json:"source"`
+	ImageURL string `json:"image_url"`
+	Detail   string `json:"detail"`
+	Raw      string `json:"raw"`
+	Error    string `json:"error"`
+	Medicine struct {
+		Name       string  `json:"name"`
+		Confidence float64 `json:"confidence"`
+	} `json:"medicine"`
 }
 
 type aiChatResp struct {
@@ -1452,21 +1478,24 @@ type app struct {
 	font     *opentype.Font
 	faces    map[int]font.Face
 
-	mu             sync.Mutex
-	page           string
-	pageChanged    time.Time
-	message        string
-	messageUntil   time.Time
-	selectedSlot   int
-	status         statusResp
-	medicines      []medicine
-	plans          []plan
-	lastFetch      time.Time
-	wifiSSID       string
-	wifiState      string
-	wifiSignal     int
-	wifiUpdated    time.Time
-	wifiRefreshing bool
+	mu              sync.Mutex
+	page            string
+	pageChanged     time.Time
+	message         string
+	messageUntil    time.Time
+	selectedSlot    int
+	dispenseSlot    int
+	dispenseFilter  string
+	dispenseConfirm bool
+	status          statusResp
+	medicines       []medicine
+	plans           []plan
+	lastFetch       time.Time
+	wifiSSID        string
+	wifiState       string
+	wifiSignal      int
+	wifiUpdated     time.Time
+	wifiRefreshing  bool
 
 	cameraStatus        string
 	cameraName          string
@@ -1490,6 +1519,7 @@ type app struct {
 	cameraPendingExpire string
 	cameraPendingDetail string
 	cameraIgnoredCode   string
+	cameraWorkflowStep  string
 	cameraLastScan      time.Time
 	aiQuestion          string
 	aiReply             string
@@ -1497,6 +1527,9 @@ type app struct {
 	aiVoice             string
 	aiMessages          []aiMessage
 	aiScroll            int
+	pressX              int
+	pressY              int
+	pressUntil          time.Time
 }
 
 type aiMessage struct {
@@ -1516,27 +1549,30 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		return nil, err
 	}
 	a := &app{
-		width:          width,
-		height:         height,
-		appDir:         appDir,
-		api:            api,
-		fontData:       data,
-		font:           tt,
-		faces:          map[int]font.Face{},
-		page:           getenv("ZYKH_START_PAGE", "home"),
-		pageChanged:    time.Now(),
-		selectedSlot:   1,
-		cameraStatus:   "实时预览准备中",
-		cameraName:     "尚未识别",
-		cameraMeta:     "条形码 / 溯源码",
-		cameraNote:     "进入本页后自动打开摄像头实时画面，点击扫码后拍照识别。",
-		cameraCode:     "待扫描",
-		cameraExpire:   "待识别",
-		cameraAutoScan: true,
-		aiQuestion:     "我早上起来有点头晕，血压有点高，怎么办？",
-		aiReply:        "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
-		aiStatus:       "在线",
-		aiVoice:        "麦克风就绪",
+		width:              width,
+		height:             height,
+		appDir:             appDir,
+		api:                api,
+		fontData:           data,
+		font:               tt,
+		faces:              map[int]font.Face{},
+		page:               getenv("ZYKH_START_PAGE", "home"),
+		pageChanged:        time.Now(),
+		selectedSlot:       1,
+		dispenseSlot:       1,
+		dispenseFilter:     "全部",
+		cameraStatus:       "实时预览准备中",
+		cameraName:         "尚未识别",
+		cameraMeta:         "商品条形码",
+		cameraNote:         "第一步：请将药盒商品条形码放入画面，系统会自动识别。",
+		cameraCode:         "待扫描",
+		cameraExpire:       "待识别",
+		cameraAutoScan:     true,
+		cameraWorkflowStep: "barcode",
+		aiQuestion:         "我早上起来有点头晕，血压有点高，怎么办？",
+		aiReply:            "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
+		aiStatus:           "在线",
+		aiVoice:            "麦克风就绪",
 	}
 	a.loadAIHistory()
 	a.fetch()
@@ -1713,13 +1749,37 @@ func (a *app) render() *image.RGBA {
 	if a.message != "" && time.Now().Before(a.messageUntil) {
 		a.toast(img, a.message)
 	}
+	a.renderTouchFeedback(img)
 	return img
+}
+
+func (a *app) renderTouchFeedback(img *image.RGBA) {
+	if a.pressX <= 0 || a.pressY <= 0 {
+		return
+	}
+	left := time.Until(a.pressUntil)
+	if left <= 0 {
+		return
+	}
+	progress := 1 - float64(left)/float64(180*time.Millisecond)
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	radius := 18 + int(progress*26)
+	alpha := uint8(74 - int(progress*48))
+	circleAlpha(img, a.pressX, a.pressY, radius, color.RGBA{R: 0, G: 141, B: 125, A: alpha})
+	circleAlpha(img, a.pressX, a.pressY, max(8, radius-12), color.RGBA{R: 255, G: 255, B: 255, A: alpha / 2})
 }
 
 func (a *app) renderPage(img *image.RGBA) {
 	switch a.page {
 	case "cabinet":
 		a.renderCabinet(img)
+	case "dispense":
+		a.renderDispense(img)
 	case "camera":
 		a.renderCamera(img)
 	case "ai":
@@ -1865,6 +1925,137 @@ func (a *app) renderCabinet(img *image.RGBA) {
 	a.text(img, 782, 518, 17, "触摸仓位可查看详情", hex(0x657586), false)
 }
 
+func (a *app) renderDispense(img *image.RGBA) {
+	a.pageHeader(img, "选择取药", "按药品或仓位选择，确认后打开对应药柜")
+	filters := []string{"全部", "降压", "阿司匹林", "二甲", "低库存"}
+	for i, f := range filters {
+		x := 36 + i*118
+		bg, fg := hex(0xf7fbff), hex(0x405268)
+		if a.dispenseFilter == f {
+			bg, fg = hex(0x008d7d), hex(0xffffff)
+		}
+		roundRect(img, x, 86, 102, 38, 12, bg, hex(0xbcd8e8), 1)
+		a.textCenter(img, x+51, 111, 17, f, fg, true)
+	}
+	roundRect(img, 650, 86, 330, 38, 12, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.text(img, 672, 111, 16, "搜索：触摸左侧分类或右侧仓位快速定位药品", hex(0x657586), false)
+
+	roundRect(img, 24, 142, 598, 382, 12, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.text(img, 48, 178, 23, "药品列表", hex(0x142333), true)
+	filtered := a.filteredMedicines()
+	if len(filtered) == 0 {
+		a.text(img, 56, 230, 18, "没有匹配药品，请切换筛选条件。", hex(0x657586), false)
+	}
+	for i, m := range filtered {
+		if i >= 6 {
+			break
+		}
+		y := 198 + i*52
+		selected := m.Slot == a.dispenseSlot
+		bg := colorFor(selected, hex(0xe7f8f4), hex(0xfbfdfe))
+		st := colorFor(selected, hex(0x008d7d), hex(0xd8e4e9))
+		roundRect(img, 48, y, 548, 44, 10, bg, st, 1)
+		a.text(img, 66, y+28, 18, fmt.Sprintf("%02d仓  %s", m.Slot, clipText(m.Name, 12)), hex(0x142333), true)
+		a.textRight(img, 456, y+28, 15, clipText(m.Dosage, 8), hex(0x657586), false)
+		status, _, fg := stockStatus(&m)
+		roundRect(img, 500, y+10, 72, 24, 12, hex(0xf3f8fa), hex(0xd8e4e9), 1)
+		a.textCenter(img, 536, y+28, 14, fmt.Sprintf("%s/%d", status, m.Stock), fg, true)
+	}
+
+	roundRect(img, 646, 142, 350, 382, 12, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.text(img, 670, 178, 23, "按仓位选择", hex(0x142333), true)
+	for i := 1; i <= 23; i++ {
+		col := (i - 1) % 6
+		row := (i - 1) / 6
+		x := 668 + col*52
+		y := 196 + row*48
+		item := a.medBySlot(i)
+		bg := hex(0xfbfdfe)
+		st := hex(0xd8e4e9)
+		fg := hex(0x142333)
+		if item == nil {
+			fg = hex(0x95a3b2)
+		}
+		if i == a.dispenseSlot {
+			bg, st, fg = hex(0x008d7d), hex(0x008d7d), hex(0xffffff)
+		}
+		roundRect(img, x, y, 42, 36, 8, bg, st, 1)
+		a.textCenter(img, x+21, y+24, 15, fmt.Sprintf("%02d", i), fg, true)
+	}
+	item := a.medBySlot(a.dispenseSlot)
+	roundRect(img, 670, 406, 304, 94, 12, hex(0xf8fcfc), hex(0xcfe1ef), 1)
+	if item == nil {
+		a.text(img, 694, 444, 20, fmt.Sprintf("%02d 仓为空", a.dispenseSlot), hex(0x657586), true)
+		a.text(img, 694, 474, 15, "请选择有药品的仓位。", hex(0x95a3b2), false)
+	} else {
+		a.text(img, 694, 438, 21, clipText(item.Name, 12), hex(0x142333), true)
+		a.text(img, 694, 468, 15, fmt.Sprintf("%02d仓 / 余量 %d / 有效期 %s", item.Slot, item.Stock, clipText(item.ExpireDate, 8)), hex(0x657586), false)
+	}
+
+	roundRect(img, 24, 542, 470, 42, 12, hex(0xe8f5f2), hex(0xe8f5f2), 1)
+	a.text(img, 48, 569, 17, "建议先核对药名、仓位和余量，再确认打开药柜。", hex(0x00786f), true)
+	canDispense := item != nil && item.Stock > 0
+	btnBg := colorFor(canDispense, hex(0x008d7d), hex(0xc8d4dc))
+	roundRect(img, 688, 538, 292, 48, 14, btnBg, btnBg, 1)
+	btnText := "库存不足，不能取药"
+	if canDispense {
+		btnText = "确认取出当前药品"
+	}
+	a.textCenter(img, 834, 569, 20, btnText, hex(0xffffff), true)
+	if a.dispenseConfirm {
+		a.renderDispenseConfirm(img)
+	}
+}
+
+func (a *app) filteredMedicines() []medicine {
+	var out []medicine
+	for _, m := range a.medicines {
+		if a.matchDispenseFilter(m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (a *app) matchDispenseFilter(m medicine) bool {
+	f := a.dispenseFilter
+	name := m.Name + " " + m.Dosage
+	switch f {
+	case "", "全部":
+		return true
+	case "降压":
+		return strings.Contains(name, "平") || strings.Contains(name, "沙坦") || strings.Contains(name, "普利") || strings.Contains(name, "地平")
+	case "阿司匹林":
+		return strings.Contains(name, "阿司匹林")
+	case "二甲":
+		return strings.Contains(name, "二甲") || strings.Contains(name, "双胍")
+	case "低库存":
+		return m.Stock > 0 && m.Stock <= 10
+	default:
+		return strings.Contains(name, f) || fmt.Sprintf("%02d", m.Slot) == f
+	}
+}
+
+func (a *app) renderDispenseConfirm(img *image.RGBA) {
+	item := a.medBySlot(a.dispenseSlot)
+	fillRectAlpha(img, 0, 0, a.width, a.height, color.RGBA{R: 18, G: 35, B: 48, A: 132})
+	roundRect(img, 286, 172, 452, 248, 16, hex(0xffffff), hex(0xbce5dc), 2)
+	a.text(img, 334, 220, 27, "确认打开药柜", hex(0x142333), true)
+	if item == nil {
+		a.text(img, 334, 266, 18, fmt.Sprintf("%02d 仓为空，不能取药。", a.dispenseSlot), hex(0xe52f34), true)
+	} else if item.Stock <= 0 {
+		a.text(img, 334, 266, 18, fmt.Sprintf("%02d 仓库存不足，不能取药。", a.dispenseSlot), hex(0xe52f34), true)
+	} else {
+		a.text(img, 334, 262, 21, clipText(item.Name, 14), hex(0x142333), true)
+		a.text(img, 334, 296, 17, fmt.Sprintf("%02d 仓 / 余量 %d / %s", item.Slot, item.Stock, item.Dosage), hex(0x657586), false)
+		a.text(img, 334, 326, 15, "确认后将触发对应仓位出药控制。", hex(0xe77800), false)
+	}
+	roundRect(img, 334, 356, 150, 42, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
+	a.textCenter(img, 409, 383, 18, "取消", hex(0x1c66d4), true)
+	roundRect(img, 548, 356, 150, 42, 12, hex(0x008d7d), hex(0x008d7d), 1)
+	a.textCenter(img, 623, 383, 18, "确认取药", hex(0xffffff), true)
+}
+
 func (a *app) renderAI(img *image.RGBA) {
 	a.pageHeader(img, "AI 健康咨询终端", "语音问诊、档案记忆和用药建议")
 
@@ -1917,7 +2108,7 @@ func (a *app) renderAI(img *image.RGBA) {
 }
 
 func (a *app) renderCamera(img *image.RGBA) {
-	a.pageHeader(img, "扫码识别药品", "扫描药品溯源码，识别药品信息和有效期")
+	a.pageHeader(img, "录入药品", "先扫商品条形码，再识别药盒侧面有效期，确认后自动写入药柜")
 
 	roundRect(img, 20, 82, 610, 430, 12, hex(0xffffff), hex(0xd8e4e9), 1)
 	a.text(img, 42, 122, 23, "摄像头画面", hex(0x142333), true)
@@ -1943,19 +2134,45 @@ func (a *app) renderCamera(img *image.RGBA) {
 	scanY := 170 + int(time.Now().UnixMilli()/22)%244
 	line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
 	line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
-	roundRect(img, 42, 462, 168, 48, 12, hex(0x008d7d), hex(0x008d7d), 1)
-	if a.cameraAutoScan {
-		a.textCenter(img, 126, 493, 18, "暂停识别", hex(0xffffff), true)
-	} else {
-		a.textCenter(img, 126, 493, 18, "开始识别", hex(0xffffff), true)
+
+	step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
+	stepLabels := []string{"1 扫商品条形码", "2 识别有效期", "3 确认录入"}
+	stepActive := map[string]int{"barcode": 0, "expiry": 1, "confirm": 2}[step]
+	for i, label := range stepLabels {
+		x := 42 + i*188
+		fill := hex(0xf4f9ff)
+		stroke := hex(0xcfe1ef)
+		textColor := hex(0x405268)
+		if i == stepActive {
+			fill = hex(0xe7f8f4)
+			stroke = hex(0x00a590)
+			textColor = hex(0x008d7d)
+		}
+		roundRect(img, x, 450, 170, 30, 15, fill, stroke, 1)
+		a.textCenter(img, x+85, 471, 14, label, textColor, true)
 	}
-	roundRect(img, 226, 462, 168, 48, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
-	a.textCenter(img, 310, 493, 19, "清除结果", hex(0x1c66d4), true)
-	roundRect(img, 410, 462, 198, 48, 12, hex(0xfff8ea), hex(0xf0c781), 1)
-	if a.cameraPendingAdd {
-		a.textCenter(img, 509, 493, 19, "录入当前药品", hex(0xd96f00), true)
+
+	roundRect(img, 42, 484, 168, 38, 12, hex(0x008d7d), hex(0x008d7d), 1)
+	if step == "barcode" && a.cameraAutoScan {
+		a.textCenter(img, 126, 509, 17, "暂停扫条码", hex(0xffffff), true)
+	} else if step == "barcode" {
+		a.textCenter(img, 126, 509, 17, "开始扫条码", hex(0xffffff), true)
 	} else {
-		a.textCenter(img, 509, 493, 18, "等待识别到码", hex(0xd96f00), true)
+		a.textCenter(img, 126, 509, 17, "重扫条码", hex(0xffffff), true)
+	}
+	roundRect(img, 226, 484, 168, 38, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
+	if step == "expiry" {
+		a.textCenter(img, 310, 509, 17, "跳过日期", hex(0x1c66d4), true)
+	} else {
+		a.textCenter(img, 310, 509, 17, "重新开始", hex(0x1c66d4), true)
+	}
+	roundRect(img, 410, 484, 198, 38, 12, hex(0xfff8ea), hex(0xf0c781), 1)
+	if step == "expiry" {
+		a.textCenter(img, 509, 509, 17, "识别有效期", hex(0xd96f00), true)
+	} else if a.cameraPendingAdd {
+		a.textCenter(img, 509, 509, 17, "录入当前药品", hex(0xd96f00), true)
+	} else {
+		a.textCenter(img, 509, 509, 17, "等待条码", hex(0xd96f00), true)
 	}
 
 	roundRect(img, 650, 82, 354, 430, 12, hex(0xffffff), hex(0xd8e4e9), 1)
@@ -1963,7 +2180,7 @@ func (a *app) renderCamera(img *image.RGBA) {
 	roundRect(img, 672, 150, 284, 42, 10, hex(0xe7f8f4), hex(0xbce5dc), 1)
 	a.text(img, 692, 177, 17, a.cameraStatus, hex(0x008d7d), true)
 	a.kvColor(img, 672, 226, "药品名称", clipText(a.cameraName, 12), hex(0x142333))
-	a.kvColor(img, 672, 270, "溯源码", clipText(a.cameraCode, 14), hex(0x405268))
+	a.kvColor(img, 672, 270, "商品条码", clipText(a.cameraCode, 14), hex(0x405268))
 	a.kvColor(img, 672, 314, "识别信息", clipText(a.cameraMeta, 13), hex(0x405268))
 	a.kvColor(img, 672, 358, "有效期", clipText(a.cameraExpire, 12), hex(0xe77800))
 	a.kvColor(img, 672, 402, "建议仓位", "自动选择空仓", hex(0x142333))
@@ -1972,7 +2189,7 @@ func (a *app) renderCamera(img *image.RGBA) {
 	}
 
 	roundRect(img, 20, 528, 984, 42, 10, hex(0xe8f5f2), hex(0xe8f5f2), 1)
-	a.text(img, 46, 555, 17, "流程：实时画面自动识别 -> 识别到码后弹窗确认 -> 用户确认后写入药柜", hex(0x00786f), true)
+	a.text(img, 46, 555, 16, "操作：将 69 开头商品条码放进画面中间，保持 10-20cm；识别后再把有效期那一侧对准摄像头。", hex(0x00786f), true)
 	if a.cameraPendingAdd {
 		a.renderCameraConfirmDialog(img)
 	}
@@ -1983,10 +2200,10 @@ func (a *app) renderCameraConfirmDialog(img *image.RGBA) {
 	roundRect(img, 250, 150, 524, 296, 16, hex(0xffffff), hex(0xbce5dc), 2)
 	circle(img, 306, 210, 31, hex(0xe7f8f4))
 	a.textCenter(img, 306, 221, 26, "码", hex(0x008d7d), true)
-	a.text(img, 356, 198, 26, "识别到药品码", hex(0x142333), true)
-	a.text(img, 358, 230, 16, "请核对药盒实物，确认后再录入药柜", hex(0x657586), false)
+	a.text(img, 356, 198, 26, "确认录入药品", hex(0x142333), true)
+	a.text(img, 358, 230, 16, "请核对商品条码、药名和有效期，确认后写入药柜", hex(0x657586), false)
 	a.kvColor(img, 286, 282, "药品名称", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 12), hex(0x142333))
-	a.kvColor(img, 286, 326, "药品码", clipText(a.cameraPendingCode, 16), hex(0x405268))
+	a.kvColor(img, 286, 326, "商品条码", clipText(a.cameraPendingCode, 16), hex(0x405268))
 	a.kvColor(img, 286, 370, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
 	roundRect(img, 300, 398, 180, 42, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
 	a.textCenter(img, 390, 425, 18, "取消", hex(0x1c66d4), true)
@@ -2303,6 +2520,9 @@ func (a *app) medBySlot(slot int) *medicine {
 func (a *app) handleTouch(t touchEvent) {
 	a.mu.Lock()
 	page := a.page
+	a.pressX = t.X
+	a.pressY = t.Y
+	a.pressUntil = time.Now().Add(180 * time.Millisecond)
 	a.mu.Unlock()
 	switch page {
 	case "cabinet":
@@ -2318,6 +2538,70 @@ func (a *app) handleTouch(t touchEvent) {
 				return
 			}
 		}
+	case "dispense":
+		if inside(t, 18, 14, 100, 50) {
+			a.setPage("home")
+			return
+		}
+		a.mu.Lock()
+		confirm := a.dispenseConfirm
+		a.mu.Unlock()
+		if confirm {
+			if inside(t, 334, 356, 150, 42) {
+				a.mu.Lock()
+				a.dispenseConfirm = false
+				a.mu.Unlock()
+				return
+			}
+			if inside(t, 548, 356, 150, 42) {
+				go a.confirmDispense()
+				return
+			}
+		}
+		filters := []string{"全部", "降压", "阿司匹林", "二甲", "低库存"}
+		for i, f := range filters {
+			if inside(t, 36+i*118, 86, 102, 38) {
+				a.mu.Lock()
+				a.dispenseFilter = f
+				a.dispenseConfirm = false
+				filtered := a.filteredMedicines()
+				if len(filtered) > 0 {
+					a.dispenseSlot = filtered[0].Slot
+				}
+				a.mu.Unlock()
+				return
+			}
+		}
+		filtered := a.filteredMedicines()
+		for i, m := range filtered {
+			if i >= 6 {
+				break
+			}
+			if inside(t, 48, 198+i*52, 548, 44) {
+				a.mu.Lock()
+				a.dispenseSlot = m.Slot
+				a.dispenseConfirm = false
+				a.mu.Unlock()
+				return
+			}
+		}
+		for i := 1; i <= 23; i++ {
+			col := (i - 1) % 6
+			row := (i - 1) / 6
+			if inside(t, 668+col*52, 196+row*48, 42, 36) {
+				a.mu.Lock()
+				a.dispenseSlot = i
+				a.dispenseConfirm = false
+				a.mu.Unlock()
+				return
+			}
+		}
+		if inside(t, 688, 538, 292, 48) {
+			a.mu.Lock()
+			a.dispenseConfirm = true
+			a.mu.Unlock()
+			return
+		}
 	case "camera":
 		if inside(t, 18, 14, 100, 50) {
 			a.setPage("home")
@@ -2325,6 +2609,7 @@ func (a *app) handleTouch(t touchEvent) {
 		}
 		a.mu.Lock()
 		pending := a.cameraPendingAdd
+		step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
 		a.mu.Unlock()
 		if pending {
 			if inside(t, 300, 398, 180, 42) {
@@ -2336,17 +2621,32 @@ func (a *app) handleTouch(t touchEvent) {
 				return
 			}
 		}
-		if inside(t, 42, 462, 168, 48) {
-			a.toggleCameraAutoScan()
+		if inside(t, 42, 484, 168, 38) {
+			if step == "barcode" {
+				a.toggleCameraAutoScan()
+			} else {
+				a.clearCameraResult()
+			}
 			return
 		}
-		if inside(t, 226, 462, 168, 48) {
-			a.clearCameraResult()
+		if inside(t, 226, 484, 168, 38) {
+			if step == "expiry" {
+				a.skipExpiryDate()
+			} else {
+				a.clearCameraResult()
+			}
 			return
 		}
-		if inside(t, 410, 462, 198, 48) {
-			if pending {
+		if inside(t, 410, 484, 198, 38) {
+			if step == "expiry" {
+				go a.recognizeExpiryDate()
+			} else if pending {
 				go a.confirmPendingMedicine()
+			} else {
+				a.mu.Lock()
+				a.message = "请先让摄像头识别商品条形码"
+				a.messageUntil = time.Now().Add(1800 * time.Millisecond)
+				a.mu.Unlock()
 			}
 			return
 		}
@@ -2391,9 +2691,14 @@ func (a *app) handleTouch(t touchEvent) {
 	default:
 		if inside(t, 20, 236, 326, 122) {
 			next := a.nextPlan()
-			go a.action("正在取药", func() error {
-				return a.api.postForm("/api/dispense", url.Values{"slot": []string{strconv.Itoa(next.Slot)}})
-			})
+			a.mu.Lock()
+			if next.Slot > 0 {
+				a.dispenseSlot = next.Slot
+			}
+			a.dispenseFilter = "全部"
+			a.dispenseConfirm = false
+			a.mu.Unlock()
+			a.setPage("dispense")
 			return
 		}
 		if inside(t, 360, 236, 310, 122) {
@@ -2428,6 +2733,38 @@ func (a *app) action(success string, fn func() error) {
 		a.lastFetch = time.Time{}
 	}
 	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+}
+
+func (a *app) confirmDispense() {
+	a.mu.Lock()
+	slot := a.dispenseSlot
+	item := a.medBySlot(slot)
+	a.dispenseConfirm = false
+	if item == nil || item.Stock <= 0 {
+		if item == nil {
+			a.message = fmt.Sprintf("%02d 仓为空，不能取药", slot)
+		} else {
+			a.message = fmt.Sprintf("%02d 仓库存不足，不能取药", slot)
+		}
+		a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+		a.mu.Unlock()
+		return
+	}
+	name := item.Name
+	a.message = "正在打开 " + name
+	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+	a.mu.Unlock()
+
+	err := a.api.postForm("/api/dispense", url.Values{"slot": []string{strconv.Itoa(slot)}})
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.message = "取药失败：" + err.Error()
+	} else {
+		a.message = fmt.Sprintf("已触发 %02d 仓：%s", slot, clipText(name, 10))
+		a.lastFetch = time.Time{}
+	}
+	a.messageUntil = time.Now().Add(3000 * time.Millisecond)
 }
 
 func (a *app) captureAndRecognize() {
@@ -2503,24 +2840,35 @@ func (a *app) captureAndRecognize() {
 func (a *app) toggleCameraAutoScan() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if firstNonEmpty(a.cameraWorkflowStep, "barcode") != "barcode" {
+		a.cameraWorkflowStep = "barcode"
+		a.cameraPendingAdd = false
+		a.cameraPendingCode = ""
+		a.cameraPendingName = ""
+		a.cameraPendingExpire = ""
+		a.cameraPendingDetail = ""
+		a.cameraCode = "待扫描"
+		a.cameraExpire = "待识别"
+		a.cameraMeta = "商品条形码"
+	}
 	a.cameraAutoScan = !a.cameraAutoScan
 	if a.cameraAutoScan {
-		a.cameraStatus = "自动识别中"
-		a.cameraNote = "请将药品码放入画面，识别到后会弹窗确认录入。"
+		a.cameraStatus = "自动扫条码中"
+		a.cameraNote = "请将药盒商品条形码放入画面，识别后进入有效期识别步骤。"
 		a.cameraIgnoredCode = ""
 	} else {
 		a.cameraStatus = "识别已暂停"
-		a.cameraNote = "已暂停自动识别，点击“开始识别”恢复。"
+		a.cameraNote = "已暂停自动扫条码，点击“开始扫条码”恢复。"
 	}
 }
 
 func (a *app) clearCameraResult() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.cameraStatus = "自动识别中"
+	a.cameraStatus = "自动扫条码中"
 	a.cameraName = "尚未识别"
-	a.cameraMeta = "条形码 / 溯源码"
-	a.cameraNote = "已清除结果，请重新对准药品码。"
+	a.cameraMeta = "商品条形码"
+	a.cameraNote = "已重新开始。第一步：请将药盒商品条形码放入画面。"
 	a.cameraCode = "待扫描"
 	a.cameraExpire = "待识别"
 	a.cameraPendingAdd = false
@@ -2530,6 +2878,7 @@ func (a *app) clearCameraResult() {
 	a.cameraPendingDetail = ""
 	a.cameraIgnoredCode = ""
 	a.cameraAutoScan = true
+	a.cameraWorkflowStep = "barcode"
 }
 
 func (a *app) dismissPendingMedicine() {
@@ -2542,13 +2891,15 @@ func (a *app) dismissPendingMedicine() {
 	a.cameraPendingExpire = ""
 	a.cameraPendingDetail = ""
 	a.cameraAutoScan = true
-	a.cameraStatus = "继续识别中"
-	a.cameraNote = "已取消本次录入。移开当前码或点击清除结果后，可继续识别其他药品。"
+	a.cameraWorkflowStep = "barcode"
+	a.cameraStatus = "继续扫条码中"
+	a.cameraNote = "已取消本次录入。移开当前条码或点击重新开始后，可继续识别其他药品。"
 }
 
 func (a *app) confirmPendingMedicine() {
 	a.mu.Lock()
 	code := a.cameraPendingCode
+	expire := a.cameraPendingExpire
 	if !a.cameraPendingAdd || strings.TrimSpace(code) == "" {
 		a.mu.Unlock()
 		return
@@ -2558,7 +2909,7 @@ func (a *app) confirmPendingMedicine() {
 	a.mu.Unlock()
 
 	var add autoAddResp
-	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{"1"}}, &add)
+	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{"1"}, "expire_date": []string{expire}}, &add)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil || !add.OK {
@@ -2581,9 +2932,119 @@ func (a *app) confirmPendingMedicine() {
 	a.cameraPendingExpire = ""
 	a.cameraPendingDetail = ""
 	a.cameraAutoScan = true
+	a.cameraWorkflowStep = "barcode"
 	a.message = "药品已录入药柜"
 	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
 	a.lastFetch = time.Time{}
+}
+
+func (a *app) skipExpiryDate() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if strings.TrimSpace(a.cameraPendingCode) == "" {
+		return
+	}
+	a.cameraWorkflowStep = "confirm"
+	a.cameraPendingAdd = true
+	a.cameraPendingExpire = firstNonEmpty(a.cameraPendingExpire, "待人工确认")
+	a.cameraExpire = a.cameraPendingExpire
+	a.cameraStatus = "等待确认录入"
+	a.cameraNote = "已跳过有效期 OCR，请在确认前人工核对药盒侧面日期。"
+}
+
+func (a *app) recognizeExpiryDate() {
+	a.stopCameraStream()
+	a.mu.Lock()
+	if strings.TrimSpace(a.cameraPendingCode) == "" {
+		a.cameraStatus = "请先扫条码"
+		a.cameraNote = "第一步需要先识别商品条形码，再识别有效期。"
+		a.mu.Unlock()
+		return
+	}
+	a.cameraStatus = "识别有效期中"
+	a.cameraNote = "请将药盒侧面有效期/保质期文字面对摄像头，保持清晰。"
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		onCameraPage := a.page == "camera"
+		a.mu.Unlock()
+		if onCameraPage {
+			go a.startCameraStream()
+		}
+	}()
+
+	var resp expiryOCRResp
+	err := a.api.postFormJSON("/api/medicine/expiry_ocr", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil || !resp.OK {
+		a.cameraWorkflowStep = "confirm"
+		a.cameraPendingAdd = true
+		a.cameraPendingExpire = firstNonEmpty(a.cameraPendingExpire, "待人工确认")
+		a.cameraExpire = a.cameraPendingExpire
+		if err != nil {
+			a.cameraNote = "有效期 OCR 调用失败：" + err.Error()
+		} else {
+			a.cameraNote = firstNonEmpty(resp.Error, resp.Detail, "有效期 OCR 未返回结果，请人工核对。")
+		}
+		a.cameraStatus = "等待人工确认"
+		return
+	}
+	a.cameraWorkflowStep = "confirm"
+	a.cameraPendingAdd = true
+	if resp.Found && strings.TrimSpace(resp.ExpireDate) != "" {
+		a.cameraPendingExpire = resp.ExpireDate
+		a.cameraExpire = resp.ExpireDate
+		a.cameraStatus = "有效期已识别"
+		a.cameraNote = firstNonEmpty(resp.Detail, "已识别有效期，请核对后录入药柜。")
+	} else {
+		a.cameraPendingExpire = firstNonEmpty(a.cameraPendingExpire, "待人工确认")
+		a.cameraExpire = a.cameraPendingExpire
+		a.cameraStatus = "等待人工确认"
+		a.cameraNote = firstNonEmpty(resp.Detail, "未识别到有效期，请在确认前人工核对。")
+	}
+}
+
+func (a *app) visualRecognizeMedicine() {
+	a.stopCameraStream()
+	a.mu.Lock()
+	a.cameraStatus = "外观识别中"
+	a.cameraNote = "正在调用 RKNN 药盒外观识别接口。"
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		onCameraPage := a.page == "camera"
+		a.mu.Unlock()
+		if onCameraPage {
+			go a.startCameraStream()
+		}
+	}()
+
+	var resp visualRecognizeResp
+	err := a.api.postFormJSON("/api/medicine/visual_recognize", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.cameraStatus = "外观识别失败"
+		a.cameraNote = err.Error()
+		return
+	}
+	if !resp.OK {
+		a.cameraStatus = "外观识别失败"
+		a.cameraNote = firstNonEmpty(resp.Error, resp.Detail, "RKNN 外观识别失败")
+		return
+	}
+	if !resp.Found {
+		a.cameraStatus = "未识别药盒"
+		a.cameraName = "待训练模型"
+		a.cameraMeta = firstNonEmpty(resp.Source, "rknn")
+		a.cameraNote = firstNonEmpty(resp.Detail, "当前未配置药盒外观识别模型。")
+		return
+	}
+	a.cameraStatus = "外观识别完成"
+	a.cameraName = firstNonEmpty(resp.Medicine.Name, "未知药盒")
+	a.cameraMeta = fmt.Sprintf("%s / %.0f%%", firstNonEmpty(resp.Source, "rknn"), resp.Medicine.Confidence*100)
+	a.cameraNote = "已完成药盒外观识别，请核对后再录入药柜。"
 }
 
 func (a *app) askAI(question string) {
@@ -2811,7 +3272,7 @@ func (a *app) startCameraStream() {
 	a.cameraStreamCancel = cancel
 	a.cameraStreamRunning = true
 	a.cameraStatus = "实时预览中"
-	a.cameraNote = "实时画面来自 /api/camera/stream；点击扫码会暂停预览并拍照识别。"
+	a.cameraNote = "实时预览中。请先对准商品条形码，识别后再拍药盒侧面有效期。"
 	a.mu.Unlock()
 	go a.autoScanCameraLoop(ctx)
 
@@ -2840,7 +3301,7 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 	fps := getenv("ZYKH_CAMERA_FPS", "20")
 	quality := getenv("ZYKH_CAMERA_QUALITY", "60")
 	device := getenv("ZYKH_CAMERA_DEVICE", "/dev/video5")
-	rawCaps := fmt.Sprintf("video/x-raw,format=NV12,width=%s,height=%s", width, height)
+	rawCaps := fmt.Sprintf("video/x-raw,format=NV12,width=%s,height=%s,framerate=%s/1", width, height, fps)
 	cmd := exec.CommandContext(ctx, "gst-launch-1.0", "-q",
 		"v4l2src", "device="+device,
 		"!", rawCaps,
@@ -2856,7 +3317,7 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	a.setCameraStreamNote(fmt.Sprintf("直连 GStreamer %sx%s，Go 端限制 %sfps。扫码时会暂停预览。", width, height, fps))
+	a.setCameraStreamNote(fmt.Sprintf("直连 GStreamer %sx%s@%sfps。第一步请对准商品条形码。", width, height, fps))
 	frameCount := 0
 	tick := time.Now()
 	fpsN, err := strconv.Atoi(fps)
@@ -2992,7 +3453,7 @@ func (a *app) autoScanCameraLoop(ctx context.Context) {
 
 func (a *app) tryAutoScanFrame() {
 	a.mu.Lock()
-	if a.page != "camera" || !a.cameraAutoScan || a.cameraScanBusy || a.cameraPendingAdd || time.Since(a.cameraJPEGAt) > 2*time.Second || len(a.cameraJPEG) == 0 {
+	if a.page != "camera" || firstNonEmpty(a.cameraWorkflowStep, "barcode") != "barcode" || !a.cameraAutoScan || a.cameraScanBusy || a.cameraPendingAdd || time.Since(a.cameraJPEGAt) > 2*time.Second || len(a.cameraJPEG) == 0 {
 		a.mu.Unlock()
 		return
 	}
@@ -3003,8 +3464,8 @@ func (a *app) tryAutoScanFrame() {
 	frame := append([]byte(nil), a.cameraJPEG...)
 	a.cameraScanBusy = true
 	a.cameraLastScan = time.Now()
-	a.cameraStatus = "自动识别中"
-	a.cameraNote = "请将条形码/溯源码保持清晰，识别到后会弹窗确认录入。"
+	a.cameraStatus = "自动扫条码中"
+	a.cameraNote = "请将商品条形码保持清晰，识别后会进入有效期识别步骤。"
 	a.mu.Unlock()
 
 	go func() {
@@ -3050,14 +3511,15 @@ func (a *app) onAutoCodeDetected(code, format string) {
 		return
 	}
 	a.cameraAutoScan = false
-	a.cameraPendingAdd = true
+	a.cameraPendingAdd = false
 	a.cameraPendingCode = code
 	a.cameraPendingName = "目录查询中"
 	a.cameraPendingExpire = "待查询"
-	a.cameraStatus = "识别到码"
+	a.cameraWorkflowStep = "expiry"
+	a.cameraStatus = "条码已识别"
 	a.cameraCode = code
-	a.cameraMeta = firstNonEmpty(format, "barcode")
-	a.cameraNote = "已识别到药品码，正在查询本地药品目录。"
+	a.cameraMeta = firstNonEmpty(format, "商品条形码")
+	a.cameraNote = "已识别商品条形码，正在查询本地药品目录。下一步请将有效期文字面对摄像头。"
 	a.mu.Unlock()
 
 	var lookup medicineLookupResp
@@ -3070,7 +3532,7 @@ func (a *app) onAutoCodeDetected(code, format string) {
 		a.cameraPendingDetail = firstNonEmpty(lookup.Error, "查询失败")
 		a.cameraName = "待人工核对"
 		a.cameraExpire = "待人工确认"
-		a.cameraNote = "识别到码，但本地目录查询失败。可取消后重新识别。"
+		a.cameraNote = "商品条码已识别，但本地目录查询失败。可继续识别有效期，确认前需人工核对药名。"
 		return
 	}
 	if !lookup.Found {
@@ -3079,7 +3541,7 @@ func (a *app) onAutoCodeDetected(code, format string) {
 		a.cameraPendingDetail = lookup.Detail
 		a.cameraName = "待人工核对"
 		a.cameraExpire = "待人工确认"
-		a.cameraNote = "识别到码，但本地药品目录未收录。请先补充药品目录。"
+		a.cameraNote = "商品条码已识别，但本地药品目录未收录。可先识别有效期，之后补充目录再录入。"
 		return
 	}
 	a.cameraPendingName = lookup.Medicine.Name
@@ -3087,7 +3549,12 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	a.cameraPendingDetail = lookup.Medicine.Dosage
 	a.cameraName = lookup.Medicine.Name
 	a.cameraExpire = lookup.Medicine.ExpireDate
-	a.cameraNote = "已识别到药品并查到目录信息，请核对后确认是否录入药柜。"
+	if lookup.Source == "showapi" {
+		a.cameraMeta = "商品条码 / ShowAPI"
+		a.cameraNote = "已联网查询到药品信息并缓存到本地。请将药盒侧面有效期/保质期文字面对摄像头，然后点击识别有效期。"
+	} else {
+		a.cameraNote = "已根据商品条码查到药品信息。请将药盒侧面有效期/保质期文字面对摄像头，然后点击识别有效期。"
+	}
 }
 
 func (a *app) stopCameraStream() {
@@ -3348,6 +3815,31 @@ func circle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
 			if x*x+y*y <= r*r {
 				set(img, cx+x, cy+y, c)
 			}
+		}
+	}
+}
+
+func circleAlpha(img *image.RGBA, cx, cy, r int, c color.RGBA) {
+	if r <= 0 || c.A == 0 {
+		return
+	}
+	alpha := int(c.A)
+	inv := 255 - alpha
+	for y := -r; y <= r; y++ {
+		for x := -r; x <= r; x++ {
+			if x*x+y*y > r*r {
+				continue
+			}
+			px := cx + x
+			py := cy + y
+			if !image.Pt(px, py).In(img.Bounds()) {
+				continue
+			}
+			i := img.PixOffset(px, py)
+			img.Pix[i+0] = uint8((int(c.R)*alpha + int(img.Pix[i+0])*inv) / 255)
+			img.Pix[i+1] = uint8((int(c.G)*alpha + int(img.Pix[i+1])*inv) / 255)
+			img.Pix[i+2] = uint8((int(c.B)*alpha + int(img.Pix[i+2])*inv) / 255)
+			img.Pix[i+3] = 255
 		}
 	}
 }

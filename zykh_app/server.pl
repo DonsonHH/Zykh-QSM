@@ -295,6 +295,14 @@ sub url_decode {
     return decode('UTF-8', $s);
 }
 
+sub url_encode {
+    my ($s) = @_;
+    $s = '' unless defined $s;
+    my $bytes = Encode::encode('UTF-8', "$s");
+    $bytes =~ s/([^A-Za-z0-9\-_.~])/sprintf("%%%02X", ord($1))/eg;
+    return $bytes;
+}
+
 sub route_request {
     my ($client, $req) = @_;
     my $path = $req->{path};
@@ -326,6 +334,12 @@ sub route_api {
     }
     if ($method eq 'POST' && $path eq '/api/medicine/scan') {
         return send_json($client, 200, scan_medicine_code($req->{params}));
+    }
+    if ($method eq 'POST' && $path eq '/api/medicine/visual_recognize') {
+        return send_json($client, 200, visual_recognize_medicine($req->{params}));
+    }
+    if ($method eq 'POST' && $path eq '/api/medicine/expiry_ocr') {
+        return send_json($client, 200, recognize_expiry_date($req->{params}));
     }
     if ($method eq 'POST' && $path eq '/api/medicine/auto_add') {
         return send_json($client, 200, auto_add_medicine($req->{params}));
@@ -464,11 +478,16 @@ sub lookup_medicine {
     return { ok => JSON::PP::false, error => '未识别到条形码或溯源码' } if $code eq '';
     my @row = sqlite_row('SELECT code,name,dosage,manufacturer,batch_no,expire_date,trace_code,note FROM medicine_catalog WHERE code=' . sql_quote($code) . ' OR trace_code=' . sql_quote($code) . ' LIMIT 1;');
     if (!@row) {
+        my $remote = lookup_showapi_barcode($code);
+        return $remote if $remote->{ok} && $remote->{found};
+        my $detail = '本地药品目录未收录该条码。';
+        $detail .= ' ShowAPI：' . ($remote->{detail} || $remote->{error}) if $remote->{tried};
+        $detail .= ' 请人工核对后录入，后续可继续导入本地目录。';
         return {
             ok => JSON::PP::true,
             found => JSON::PP::false,
             code => $code,
-            detail => '本地药品目录未收录该条码，请人工核对后录入，后续可接入药监码/企业追溯接口或导入本地目录。',
+            detail => $detail,
         };
     }
     return {
@@ -489,9 +508,11 @@ sub auto_add_medicine {
     my $m = $lookup->{medicine};
     my $slot = int($p->{slot} || first_empty_slot());
     my $stock = int($p->{stock} || 1);
+    my $expire = trim($p->{expire_date} || $m->{expire_date} || '');
+    $m->{expire_date} = $expire if $expire ne '';
     sqlite_exec('INSERT INTO medicines(name,slot,dosage,stock,expire_date,created_at) VALUES (' .
-        join(',', map { sql_quote($_) } ($m->{name}, $slot, $m->{dosage}, $stock, $m->{expire_date}, now_text())) . ');');
-    add_record($m->{name}, $slot, 'medicine_auto_add', 'success', '条码/溯源码自动录入：' . ($m->{code} || $m->{trace_code} || ''));
+        join(',', map { sql_quote($_) } ($m->{name}, $slot, $m->{dosage}, $stock, $expire, now_text())) . ');');
+    add_record($m->{name}, $slot, 'medicine_auto_add', 'success', '商品条码自动录入：' . ($m->{code} || $m->{trace_code} || ''));
     return { ok => JSON::PP::true, found => JSON::PP::true, medicine => $m, slot => $slot, medicines => list_medicines() };
 }
 
@@ -509,7 +530,7 @@ sub scan_medicine_code {
     if ($decoded->{ok}) {
         $code = normalize_code($decoded->{code});
         $scanner = $decoded->{scanner};
-        $detail = '已从摄像头图像识别到条码/溯源码，格式：' . ($decoded->{format} || 'unknown');
+        $detail = '已从摄像头图像识别到商品条码，格式：' . ($decoded->{format} || 'unknown');
     }
 
     if ($code eq '' && trim(`which zbarimg 2>/dev/null`) ne '') {
@@ -523,13 +544,13 @@ sub scan_medicine_code {
         my $raw = read_text_file($log);
         ($code) = grep { $_ ne '' } map { normalize_code($_) } split(/\r?\n/, $raw || '');
         $scanner = 'zbarimg';
-        $detail = $code ? '已从摄像头图像识别到条码/溯源码' : '未从图像中识别到条码/溯源码';
+        $detail = $code ? '已从摄像头图像识别到商品条码' : '未从图像中识别到商品条码';
     }
 
     if ($code eq '') {
         $code = normalize_code($p->{code} || $p->{trace_code} || $ENV{DEMO_TRACE_CODE} || 'TRACE6901234567890');
         $scanner = 'demo-no-zbar';
-        $detail = $decoded->{error} || '板端当前没有可用条码解码器，使用演示溯源码跑通扫码、查目录、自动录入流程；部署 zykh-scan-code 或安装 zbar 后可替换为真实图像解码。';
+        $detail = $decoded->{error} || '板端当前没有可用条码解码器，使用演示商品条码跑通扫码、查目录流程；部署 zykh-scan-code 或安装 zbar 后可替换为真实图像解码。';
     }
 
     my $lookup = lookup_medicine({ code => $code });
@@ -541,6 +562,216 @@ sub scan_medicine_code {
         image_url => $capture->{image_url},
         lookup => $lookup,
     };
+}
+
+sub lookup_showapi_barcode {
+    my ($code) = @_;
+    $code = normalize_code($code);
+    return { ok => JSON::PP::true, found => JSON::PP::false, tried => JSON::PP::false, detail => '不是 69 开头国内商品条形码，跳过 ShowAPI 查询。' }
+        unless $code =~ /^69\d{11}$/;
+    my $app_key = showapi_app_key();
+    return { ok => JSON::PP::true, found => JSON::PP::false, tried => JSON::PP::false, detail => '未配置 ShowAPI appKey。' }
+        if $app_key eq '';
+
+    my $url = 'https://route.showapi.com/66-24?appKey=' . url_encode($app_key);
+    my $body = 'code=' . url_encode($code);
+    my $res_file = "$DATA_DIR/showapi-barcode-response.json";
+    my $http = https_post_form_via_openssl($url, $body, $res_file);
+    if (!$http->{ok}) {
+        return { ok => JSON::PP::true, found => JSON::PP::false, tried => JSON::PP::true, detail => '请求失败：' . ($http->{error} || 'unknown') };
+    }
+    my $json_text = eval { decode('UTF-8', $http->{body} || '', 1) };
+    $json_text = $http->{body} || '' if !defined $json_text;
+    my $obj = eval { JSON::PP->new->utf8(0)->decode($json_text) };
+    if (!$obj) {
+        return { ok => JSON::PP::true, found => JSON::PP::false, tried => JSON::PP::true, detail => '返回不是有效 JSON。' };
+    }
+    my $body_obj = $obj->{showapi_res_body} || {};
+    my $ret = defined $body_obj->{ret_code} ? $body_obj->{ret_code} + 0 : -1;
+    my $name = trim($body_obj->{name} || '');
+    if (($obj->{showapi_res_code} || 0) != 0 || $ret != 0 || $name eq '') {
+        return {
+            ok => JSON::PP::true,
+            found => JSON::PP::false,
+            tried => JSON::PP::true,
+            detail => $body_obj->{remark} || $obj->{showapi_res_error} || 'ShowAPI 未查询到药品条码信息。',
+        };
+    }
+
+    my $medicine = showapi_to_catalog($code, $body_obj);
+    upsert_catalog_medicine($medicine);
+    return {
+        ok => JSON::PP::true,
+        found => JSON::PP::true,
+        source => 'showapi',
+        medicine => $medicine,
+        detail => '已通过 ShowAPI 查询商品条码，并写入本地药品目录缓存。',
+    };
+}
+
+sub showapi_to_catalog {
+    my ($code, $b) = @_;
+    my $dosage = join('；', grep { defined && $_ ne '' } (
+        trim($b->{spec} || ''),
+        trim($b->{dosage} || ''),
+    ));
+    my $note = join("\n", grep { defined && $_ ne '' } (
+        '来源：ShowAPI 药品条码查询',
+        '类型：' . trim($b->{type} || ''),
+        '批准文号：' . trim($b->{approval} || ''),
+        '商品名/商标：' . trim($b->{trademark} || ''),
+        '功能主治/适用范围：' . trim($b->{purpose} || ''),
+        '主要成分：' . trim($b->{basis} || ''),
+        '注意事项：' . trim($b->{consideration} || ''),
+        '贮藏：' . trim($b->{storage} || ''),
+        '图片：' . trim($b->{img} || ''),
+    ));
+    return {
+        code => $code,
+        name => trim($b->{name} || '未知药品'),
+        dosage => $dosage,
+        manufacturer => trim($b->{manuName} || ''),
+        batch_no => '',
+        expire_date => trim($b->{validity} || ''),
+        trace_code => '',
+        note => $note,
+    };
+}
+
+sub upsert_catalog_medicine {
+    my ($m) = @_;
+    sqlite_exec('INSERT OR REPLACE INTO medicine_catalog(code,name,dosage,manufacturer,batch_no,expire_date,trace_code,note,created_at) VALUES (' .
+        join(',', map { sql_quote($_) } (
+            $m->{code}, $m->{name}, $m->{dosage}, $m->{manufacturer}, $m->{batch_no},
+            $m->{expire_date}, $m->{trace_code}, $m->{note}, now_text()
+        )) . ');');
+}
+
+sub showapi_app_key {
+    my $key = trim($ENV{SHOWAPI_APP_KEY} || '');
+    if ($key eq '') {
+        my $file = $ENV{SHOWAPI_APP_KEY_FILE} || "$DATA_DIR/showapi-app-key.txt";
+        $key = read_file_trim($file) if -s $file;
+    }
+    return $key;
+}
+
+sub visual_recognize_medicine {
+    my ($p) = @_;
+    my $capture = capture_camera();
+    return $capture unless $capture->{ok};
+    my $image = "$WEB_DIR/camera/latest.jpg";
+    my $cmd = $ENV{RKNN_MEDICINE_CMD} || '';
+    if ($cmd eq '') {
+        return {
+            ok => JSON::PP::true,
+            found => JSON::PP::false,
+            source => 'rknn-not-configured',
+            image_url => $capture->{image_url},
+            detail => '已预留 RKNN 药盒外观识别接口，但当前未配置 RKNN_MEDICINE_CMD。需要先训练/转换药盒分类或检测模型，再接入该命令。',
+        };
+    }
+    $cmd =~ s/\{image\}/shell_quote($image)/eg;
+    my $log = "$DATA_DIR/rknn-medicine.log";
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '30', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $raw = read_text_file($log);
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $obj = eval { decode_json($raw || '') };
+    if ($obj && $obj->{ok}) {
+        $obj->{image_url} ||= $capture->{image_url};
+        $obj->{source} ||= 'rknn';
+        return $obj;
+    }
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        found => JSON::PP::false,
+        source => 'rknn',
+        image_url => $capture->{image_url},
+        detail => $exit == 0 ? 'RKNN 命令已执行，但未返回可解析药品结果。' : 'RKNN 命令执行失败。',
+        raw => substr($raw || '', 0, 600),
+        exit_code => $exit,
+    };
+}
+
+sub recognize_expiry_date {
+    my ($p) = @_;
+    my $manual = trim($p->{manual_expire} || $p->{expire_date} || '');
+    if ($manual ne '') {
+        my $date = parse_expiry_date($manual);
+        return {
+            ok => JSON::PP::true,
+            found => $date ? JSON::PP::true : JSON::PP::false,
+            expire_date => $date || $manual,
+            source => 'manual',
+            detail => $date ? '已使用人工输入的有效期。' : '人工输入未解析成标准日期，请在确认页人工核对。',
+        };
+    }
+
+    my $capture = capture_camera();
+    return $capture unless $capture->{ok};
+    my $image = "$WEB_DIR/camera/latest.jpg";
+    my $cmd = $ENV{OCR_EXPIRY_CMD} || '';
+    if ($cmd eq '') {
+        return {
+            ok => JSON::PP::true,
+            found => JSON::PP::false,
+            source => 'ocr-not-configured',
+            image_url => $capture->{image_url},
+            detail => '已拍摄药盒侧面，但当前未配置 OCR_EXPIRY_CMD。可先在确认页人工核对有效期，后续接入 PaddleOCR/PP-OCR 或 RKNN OCR 命令。',
+        };
+    }
+
+    $cmd =~ s/\{image\}/shell_quote($image)/eg;
+    my $log = "$DATA_DIR/medicine-expiry-ocr.log";
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '25', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $raw = read_text_file($log);
+    my $obj = eval { decode_json($raw || '') };
+    my $text = '';
+    if ($obj) {
+        $text = join("\n", grep { defined($_) && $_ ne '' } ($obj->{text}, $obj->{raw}, $obj->{result}));
+        if (!$text && ref($obj->{lines}) eq 'ARRAY') {
+            $text = join("\n", @{$obj->{lines}});
+        }
+    } else {
+        $text = $raw || '';
+    }
+    my $date = parse_expiry_date($text);
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => ($exit == 0 || $date) ? JSON::PP::true : JSON::PP::false,
+        found => $date ? JSON::PP::true : JSON::PP::false,
+        expire_date => $date || '',
+        source => 'ocr',
+        image_url => $capture->{image_url},
+        detail => $date ? '已从药盒侧面文字识别到有效期。' : 'OCR 未解析到有效期，请调整药盒侧面位置或人工输入。',
+        raw => substr($text || '', 0, 500),
+        exit_code => $exit,
+    };
+}
+
+sub parse_expiry_date {
+    my ($text) = @_;
+    $text = trim($text || '');
+    return '' if $text eq '';
+    if ($text =~ /((?:19|20)\d{2})\s*[-\.\/年]\s*(\d{1,2})\s*[-\.\/月]\s*(\d{1,2})/u) {
+        return sprintf('%04d-%02d-%02d', $1, $2, $3);
+    }
+    if ($text =~ /((?:19|20)\d{2})(\d{2})(\d{2})/) {
+        return sprintf('%04d-%02d-%02d', $1, $2, $3);
+    }
+    if ($text =~ /(?:EXP|Exp|有效期至|使用期限|保质期)\D{0,8}((?:19|20)\d{2})\D{0,3}(\d{1,2})(?:\D{0,3}(\d{1,2}))?/u) {
+        my $day = $3 || 1;
+        return sprintf('%04d-%02d-%02d', $1, $2, $day);
+    }
+    return '';
 }
 
 sub decode_medicine_image {
@@ -1446,6 +1677,46 @@ sub https_post_json_via_openssl {
     {
         local $SIG{CHLD} = 'DEFAULT';
         $rc = system('timeout', '45', 'sh', '-c', $cmd);
+    }
+    unlink $req_file;
+    my $raw = read_raw_file($raw_file);
+    my $err = read_text_file($err_file);
+    my ($status, $body) = parse_http_response($raw);
+    write_raw_file($res_file, $body) if defined $body && length($body);
+    return { ok => JSON::PP::true, status => $status, body => $body, raw => $raw } if $status >= 200 && $status < 300 && defined $body && length($body);
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return { ok => JSON::PP::false, status => $status || 0, body => $body || '', raw => $raw || '', error => "openssl exit=$exit " . substr($err || '', 0, 300) };
+}
+
+sub https_post_form_via_openssl {
+    my ($url, $form_body, $res_file) = @_;
+    return { ok => JSON::PP::false, error => '仅支持 https:// API 地址' } unless $url =~ m{^https://([^/:]+)(?::(\d+))?(/.*)$};
+    my ($host, $port, $path) = ($1, $2 || 443, $3);
+    my $req_file = "$DATA_DIR/form-http-request.txt";
+    my $raw_file = "$DATA_DIR/form-http-response.raw";
+    my $err_file = "$DATA_DIR/form-http-error.log";
+    my $body_len = length($form_body);
+    my $request =
+        "POST $path HTTP/1.1\r\n" .
+        "Host: $host\r\n" .
+        "User-Agent: zykh-app/1.0\r\n" .
+        "Accept: application/json\r\n" .
+        "Content-Type: application/x-www-form-urlencoded\r\n" .
+        "Content-Length: $body_len\r\n" .
+        "Connection: close\r\n\r\n" .
+        $form_body;
+    write_raw_file($req_file, $request);
+    chmod 0600, $req_file;
+
+    my $cmd = 'openssl s_client -connect ' . shell_quote("$host:$port") .
+              ' -servername ' . shell_quote($host) .
+              ' -quiet <' . shell_quote($req_file) .
+              ' >' . shell_quote($raw_file) .
+              ' 2>' . shell_quote($err_file);
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '35', 'sh', '-c', $cmd);
     }
     unlink $req_file;
     my $raw = read_raw_file($raw_file);
