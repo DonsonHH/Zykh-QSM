@@ -3576,3 +3576,375 @@ camera-latest-barcode-test.jpg
 5. 增加正面光照，避免反光和阴影
 6. 如果仍然无法在预览里看到清晰竖线，后续应更换自动对焦或更适合近距离扫码的摄像头模组
 ```
+
+### 第二十三步：USB 自动对焦摄像头接入与 UVC 自动切换
+
+#### 用户新动作
+
+```text
+用户通过 USB 接入了新的摄像头，认为该摄像头应支持自动调焦，希望替换旧摄像头并测试条码识别。
+```
+
+#### 板端识别结果
+
+执行：
+
+```powershell
+adb -s ? shell "ls -l /dev/video*; v4l2-ctl --list-devices; lsusb; dmesg | tail"
+```
+
+发现：
+
+```text
+当前 /dev/video* 仍全部来自 Rockchip CSI/ISP：
+- rkcif_mipi_lvds
+- rkisp-vir0
+- rkisp-vir1
+
+当前 USB 设备中：
+32d7:0001 = USB2IIC_CTP_CONTROL / wch.cn
+这是触摸屏控制器，不是摄像头。
+```
+
+dmesg 里曾经出现过 USB 摄像头：
+
+```text
+usb 1-1: Product: FF Camera
+usb 1-1: Manufacturer: FF Camera
+uvcvideo: Found UVC 1.00 device FF Camera (32e6:9251)
+```
+
+但随后立刻断开：
+
+```text
+usb 1-1: USB disconnect
+```
+
+结论：
+
+```text
+新 USB 摄像头曾经被内核识别为 UVC 摄像头，说明 uvcvideo 驱动存在。
+但当前摄像头已经从 USB 总线掉线，所以系统没有生成新的 /dev/video 节点。
+当前程序无法实际切换到新摄像头，只能继续使用 /dev/video5。
+```
+
+可能原因：
+
+```text
+1. USB 摄像头/转接线接触不稳
+2. USB 供电不足，摄像头枚举后掉线
+3. 插到了不稳定的 OTG/Hub 口
+4. 摄像头启动电流较大，板子 USB 口供电撑不住
+```
+
+现场建议：
+
+```text
+1. 重新插拔 USB 摄像头
+2. 优先使用带外部供电的 USB Hub
+3. 换一根短一点、质量更好的 USB 线
+4. 插入后立刻执行：
+   adb -s ? shell "lsusb; v4l2-ctl --list-devices; dmesg | tail -n 50"
+5. 只要 v4l2-ctl --list-devices 出现 FF Camera 或 uvcvideo，并列出新的 /dev/videoX，就可以继续测试扫码
+```
+
+#### 本轮代码调整
+
+为避免后续每次手动改设备号，已加入 UVC 自动优先逻辑。
+
+Go HDMI UI 启动脚本：
+
+```text
+/userdata/zykh_app/scripts/start_go_hdmi_ui.sh
+```
+
+新增行为：
+
+```text
+启动时扫描 /dev/video*
+如果 v4l2-ctl -d <dev> --all 显示 Driver name: uvcvideo，则认为是 USB 摄像头
+优先设置：
+ZYKH_CAMERA_DEVICE=<UVC 节点>
+ZYKH_CAMERA_WIDTH=640
+ZYKH_CAMERA_HEIGHT=480
+ZYKH_CAMERA_FPS=30
+ZYKH_CAMERA_QUALITY=75
+
+如果没有 UVC 摄像头，则回退：
+ZYKH_CAMERA_DEVICE=/dev/video5
+ZYKH_CAMERA_WIDTH=424
+ZYKH_CAMERA_HEIGHT=240
+ZYKH_CAMERA_FPS=20
+```
+
+Go 原生 UI：
+
+```text
+旧 CSI 摄像头继续走 NV12 -> jpegenc
+USB UVC 摄像头改走 image/jpeg -> jpegparse -> fdsink
+```
+
+Perl 后端：
+
+```text
+detect_camera_device() 优先查找 uvcvideo 设备
+camera_capture_cmd() 对 UVC 使用 image/jpeg 管线
+camera_stream_cmd() 对 UVC 使用 image/jpeg 管线
+非 UVC 仍使用旧 NV12 管线
+```
+
+部署验证：
+
+```text
+/userdata/zykh_app/server.pl syntax OK
+Go HDMI UI started
+render: wayland
+touch: /dev/input/event4
+camera: /dev/video5 424x240@20
+```
+
+说明：
+
+```text
+当前仍显示 /dev/video5，代表 USB 摄像头没有在线。
+当 USB 摄像头稳定枚举后，启动输出应变为类似：
+camera: /dev/video23 640x480@30
+```
+
+### 第二十四步：更换 USB 接头后的摄像头复测
+
+#### 用户新动作
+
+```text
+用户更换了一个 USB 接头后重新插入 USB 摄像头，希望再次识别设备并切换到新摄像头。
+```
+
+#### 当前板端复测结果
+
+执行：
+
+```powershell
+adb -s ? shell "lsusb; v4l2-ctl --list-devices; ls -l /dev/video*"
+adb -s ? shell 'for d in /sys/bus/usb/devices/*; do [ -f "$d/idVendor" ] || continue; echo device=$d vendor=$(cat $d/idVendor) product=$(cat $d/idProduct) name=$(cat $d/product 2>/dev/null) manufacturer=$(cat $d/manufacturer 2>/dev/null); done'
+adb -s ? shell "dmesg | tail -n 260 | grep -Ei 'new .*usb|usb .*disconnect|uvcvideo|camera|idVendor|Product|Manufacturer|not accepting|unable to enumerate|device descriptor|over-current|reset high-speed|reset full-speed' || true"
+```
+
+结果：
+
+```text
+lsusb 当前仍只有：
+- 2c7c:6005 Android
+- 32d7:0001 USB2IIC_CTP_CONTROL / wch.cn
+- 多个 Linux USB Host Controller
+
+32d7:0001 是 HDMI 触摸屏控制器，不是摄像头。
+
+v4l2-ctl --list-devices 当前仍只看到：
+- rkcif_mipi_lvds
+- rkisp-vir0
+- rkisp-vir1
+
+没有出现 FF Camera、uvcvideo 或新的 /dev/videoX。
+
+dmesg 最近日志里也没有新的 USB 插入、断开、枚举失败、uvcvideo 事件。
+```
+
+结论：
+
+```text
+这次更换接头后，板端仍未检测到 USB 摄像头。
+当前不是程序没切换，而是 USB 摄像头没有枚举进系统。
+UVC 自动切换代码已经部署，但没有可用 UVC 节点时只能继续回退 /dev/video5。
+```
+
+下一步现场排查建议：
+
+```text
+1. 确认 USB 接头/转接头支持数据，不是仅充电线
+2. 确认插入的是板子的 USB Host 口，不是设备/烧录/ADB 口
+3. 尝试带外部供电的 USB Hub，避免摄像头上电后掉线
+4. 插入摄像头后立刻执行：
+   adb -s ? shell "dmesg | tail -n 80; lsusb; v4l2-ctl --list-devices"
+5. 只有看到类似 “uvcvideo: Found UVC ...” 且 v4l2-ctl 列出新 /dev/videoX，才能继续测试新摄像头扫码
+```
+
+#### GitHub 代理配置
+
+用户再次确认命令行可通过本机代理访问 GitHub：
+
+```cmd
+set HTTP_PROXY=http://127.0.0.1:7897
+set HTTPS_PROXY=http://127.0.0.1:7897
+set ALL_PROXY=socks5://127.0.0.1:7897
+```
+
+PowerShell 中使用等价写法：
+
+```powershell
+$env:HTTP_PROXY='http://127.0.0.1:7897'
+$env:HTTPS_PROXY='http://127.0.0.1:7897'
+$env:ALL_PROXY='socks5://127.0.0.1:7897'
+```
+
+### 第二十五步：回退老摄像头后的卡顿定位与 Go UI 优化
+
+#### 用户新动作
+
+```text
+USB 新摄像头仍未被板端识别，因此先回退使用老摄像头。
+用户反馈老摄像头画面卡、糊，同时怀疑可能不是摄像头本身，而是整个 Go UI 软件帧率不高。
+用户要求核对当前调用方式是否与最早 GStreamer 调用一致。
+```
+
+#### 当前调用方式核对
+
+最早验证可用的摄像头路线包括：
+
+```sh
+gst-launch-1.0 -q -e v4l2src device=/dev/video-camera0 num-buffers=1 \
+  ! video/x-raw,format=NV12,width=640,height=480,framerate=30/1 \
+  ! mppjpegenc \
+  ! filesink location=/userdata/medical_assistant/camera/capture.jpg
+```
+
+以及 LVDS 直出预览：
+
+```sh
+gst-launch-1.0 -v v4l2src device=/dev/video-camera0 \
+  ! video/x-raw,format=NV12,width=640,height=480,framerate=30/1 \
+  ! videoconvert \
+  ! waylandsink sync=false
+```
+
+本次检查发现，当前 Go UI 的摄像头预览不是 `waylandsink` 直出，而是：
+
+```text
+GStreamer 从 /dev/video5 取帧 -> JPEG 编码 -> stdout
+Go 程序读取 JPEG -> Go 解码 -> 软件绘制到 1024x600 UI -> Wayland Blit
+```
+
+因此它比最早的 LVDS 直出多了 JPEG 解码、页面重绘和整屏提交，性能压力明显更大。
+
+#### 纯摄像头基准测试
+
+先停止 UI 和 GStreamer：
+
+```powershell
+adb -s ? shell "killall zykh-go-ui 2>/dev/null; killall gst-launch-1.0 2>/dev/null"
+```
+
+测试裸采集：
+
+```powershell
+adb -s ? shell "gst-launch-1.0 -v v4l2src device=/dev/video5 num-buffers=120 ! video/x-raw,format=NV12,width=640,height=480,framerate=30/1 ! fpsdisplaysink video-sink=fakesink text-overlay=false sync=false"
+```
+
+结果：
+
+```text
+640x480@30 裸采集平均约 21fps。
+424x240@20 + jpegenc 平均也约 21fps。
+mppjpegenc 可用，但编码器不改变摄像头裸采集上限。
+临时设置 exposure=200 后，裸采集仍约 21fps。
+```
+
+结论：
+
+```text
+老 CSI 摄像头在当前驱动配置下，裸采集上限约 21fps。
+它本身很难提供稳定 25/30fps。
+画面糊更像是定焦距离、镜头质量、光照和条码摆放问题，不是条码解码算法失效。
+```
+
+#### Go UI 卡顿定位
+
+首页空闲时测试：
+
+```text
+优化前 zykh-go-ui 在首页也能吃到约 106% CPU。
+原因是主循环固定 33ms 整屏重绘一次，所有文字、卡片、图标和 Wayland Blit 都重复执行。
+```
+
+摄像头页优化前测试：
+
+```text
+摄像头页只有约 5-6fps。
+zykh-go-ui 约 180% CPU。
+gst-launch 只有约 6% CPU。
+说明主要瓶颈不是 GStreamer，而是 Go UI 的 JPEG 解码、页面绘制、图像缩放和 Wayland 整屏提交。
+```
+
+#### 已完成优化
+
+Go UI：
+
+```text
+1. 摄像头页和普通页面改成动态刷新率。
+2. 首页、药柜、取药等静态页面加入页面缓存，避免重复重画文字和卡片。
+3. 摄像头页拆成“静态背景缓存 + 实时视频区域覆盖”。
+4. 摄像头图像缩放从逐像素浮点计算改为定点整数步进。
+5. Wayland Blit 从逐字节 RGBA->BGRA 转换改为 32 位写入。
+6. 日志增加 render_fps 和 render_avg_ms，便于后续持续判断 UI 性能。
+7. 自动扫码间隔从 850ms 放宽到 1200ms，减少周期性卡顿。
+```
+
+摄像头链路：
+
+```text
+1. 老 CSI 摄像头默认回退为 /dev/video5。
+2. 默认预览参数调整为 424x240@20，优先保证本地屏幕触控流畅。
+3. 旧 CSI 摄像头的 Go 预览和后端拍照/流接口优先使用 mppjpegenc。
+4. 如果后续 UVC 摄像头枚举成功，仍会自动切换到 UVC 的 MJPEG 640x480@30 路径。
+```
+
+后端：
+
+```text
+server.pl 的 camera_capture_cmd 和 camera_stream_cmd 已改为：
+- UVC 摄像头：image/jpeg -> jpegparse
+- 老 CSI 摄像头：NV12 -> mppjpegenc，若无 mppjpegenc 再回退 jpegenc
+```
+
+#### 当前复测结果
+
+启动摄像头页：
+
+```powershell
+adb -s ? shell "ZYKH_START_PAGE=camera sh /userdata/zykh_app/scripts/start_go_hdmi_ui.sh"
+```
+
+当前输出：
+
+```text
+camera: /dev/video5 424x240@20
+```
+
+日志结果：
+
+```text
+摄像头页 render_fps 约 12-15fps。
+render_avg_ms 约 33-48ms。
+zykh-go-ui 约 100% CPU。
+gst-launch 约 6% CPU。
+自动扫码子进程会周期性产生额外 CPU 峰值。
+```
+
+结论：
+
+```text
+当前“整个软件卡”的主因已经确认是 Go/Wayland 软件渲染链路，而不是 GStreamer 编码。
+经过优化后，摄像头页从 5-6fps 提升到约 12-15fps。
+老摄像头裸采集上限约 21fps，Go UI 内嵌预览要稳定 20fps 仍比较困难。
+如果必须稳定 20-30fps 并兼顾条码清晰度，建议继续解决 UVC 自动对焦摄像头枚举问题，或改成 GStreamer/Wayland 原生视频层叠加显示。
+```
+
+#### 当前部署状态
+
+```text
+板端已部署：
+- /userdata/zykh_app/bin/zykh-go-ui
+- /userdata/zykh_app/server.pl
+- /userdata/zykh_app/scripts/start_go_hdmi_ui.sh
+
+当前 UI 暂时停在摄像头页，便于现场观察画面流畅度。
+```

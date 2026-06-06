@@ -31,10 +31,39 @@ export ZYKH_START_PAGE="${ZYKH_START_PAGE:-home}"
 export ZYKH_TOUCH_EVENT=/dev/input/event4
 export ZYKH_APP_DIR=/userdata/zykh_app
 export ZYKH_API_BASE=http://127.0.0.1:8080
-export ZYKH_CAMERA_WIDTH="${ZYKH_CAMERA_WIDTH:-424}"
-export ZYKH_CAMERA_HEIGHT="${ZYKH_CAMERA_HEIGHT:-240}"
-export ZYKH_CAMERA_FPS="${ZYKH_CAMERA_FPS:-20}"
-export ZYKH_CAMERA_QUALITY="${ZYKH_CAMERA_QUALITY:-60}"
+
+detect_usb_camera() {
+  for dev in /dev/video*; do
+    [ -e "$dev" ] || continue
+    [ -L "$dev" ] && continue
+    if v4l2-ctl -d "$dev" --all 2>/dev/null | grep -qi 'Driver name.*uvcvideo'; then
+      echo "$dev"
+      return 0
+    fi
+  done
+  return 1
+}
+
+USB_CAMERA="$(detect_usb_camera || true)"
+if [ -n "${ZYKH_CAMERA_DEVICE:-}" ]; then
+  :
+elif [ -n "$USB_CAMERA" ]; then
+  export ZYKH_CAMERA_DEVICE="$USB_CAMERA"
+else
+  export ZYKH_CAMERA_DEVICE=/dev/video5
+fi
+
+if [ -n "$USB_CAMERA" ] && [ "$ZYKH_CAMERA_DEVICE" = "$USB_CAMERA" ]; then
+  export ZYKH_CAMERA_WIDTH="${ZYKH_CAMERA_WIDTH:-640}"
+  export ZYKH_CAMERA_HEIGHT="${ZYKH_CAMERA_HEIGHT:-480}"
+  export ZYKH_CAMERA_FPS="${ZYKH_CAMERA_FPS:-30}"
+  export ZYKH_CAMERA_QUALITY="${ZYKH_CAMERA_QUALITY:-75}"
+else
+  export ZYKH_CAMERA_WIDTH="${ZYKH_CAMERA_WIDTH:-424}"
+  export ZYKH_CAMERA_HEIGHT="${ZYKH_CAMERA_HEIGHT:-240}"
+  export ZYKH_CAMERA_FPS="${ZYKH_CAMERA_FPS:-20}"
+  export ZYKH_CAMERA_QUALITY="${ZYKH_CAMERA_QUALITY:-60}"
+fi
 
 echo "Starting Go HDMI UI..."
 nohup env \
@@ -54,6 +83,7 @@ nohup env \
   ZYKH_CAMERA_HEIGHT=$ZYKH_CAMERA_HEIGHT \
   ZYKH_CAMERA_FPS=$ZYKH_CAMERA_FPS \
   ZYKH_CAMERA_QUALITY=$ZYKH_CAMERA_QUALITY \
+  ZYKH_CAMERA_DEVICE=$ZYKH_CAMERA_DEVICE \
   $BIN > $LOG 2>&1 < /dev/null &
 
 sleep 1
@@ -67,7 +97,7 @@ if [ -n "$PID" ]; then
     echo "page: $ZYKH_START_PAGE"
     echo "wayland: $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
     echo "touch: $ZYKH_TOUCH_EVENT"
-    echo "camera: ${ZYKH_CAMERA_WIDTH}x${ZYKH_CAMERA_HEIGHT}@${ZYKH_CAMERA_FPS}"
+    echo "camera: $ZYKH_CAMERA_DEVICE ${ZYKH_CAMERA_WIDTH}x${ZYKH_CAMERA_HEIGHT}@${ZYKH_CAMERA_FPS}"
 else
     echo "Go HDMI UI failed"
     cat $LOG 2>/dev/null

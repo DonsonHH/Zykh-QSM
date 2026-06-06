@@ -861,20 +861,21 @@ func (w *waylandSink) Blit(src *image.RGBA) {
 	maxY := min(src.Bounds().Dy(), w.height)
 	maxX := min(src.Bounds().Dx(), w.width)
 	for y := 0; y < maxY; y++ {
-		rowStart := y * w.stride
+		srcRow := src.Pix[y*src.Stride:]
+		dstRow := w.mem[y*w.stride:]
 		for x := 0; x < maxX; x++ {
-			i := src.PixOffset(x, y)
-			r, g, b := src.Pix[i], src.Pix[i+1], src.Pix[i+2]
-			off := rowStart + x*4
-			w.mem[off] = b
-			w.mem[off+1] = g
-			w.mem[off+2] = r
-			w.mem[off+3] = 0xff
+			i := x * 4
+			rgba := *(*uint32)(unsafe.Pointer(&srcRow[i]))
+			*(*uint32)(unsafe.Pointer(&dstRow[i])) = rgbaToXRGB(rgba)
 		}
 	}
 	_ = w.send(w.surface, 1, append(append(u32(w.buffer), i32(0)...), i32(0)...), nil)
 	_ = w.send(w.surface, 9, append(append(append(i32(0), i32(0)...), i32(int32(w.width))...), i32(int32(w.height))...), nil)
 	_ = w.send(w.surface, 6, nil, nil)
+}
+
+func rgbaToXRGB(rgba uint32) uint32 {
+	return 0xff000000 | ((rgba & 0x000000ff) << 16) | (rgba & 0x0000ff00) | ((rgba & 0x00ff0000) >> 16)
 }
 
 func (w *waylandSink) eventLoop() {
@@ -1530,6 +1531,8 @@ type app struct {
 	pressX              int
 	pressY              int
 	pressUntil          time.Time
+	renderCache         *image.RGBA
+	renderCacheKey      string
 }
 
 type aiMessage struct {
@@ -1731,11 +1734,32 @@ func (a *app) render() *image.RGBA {
 	a.maybeRefreshWiFi()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	now := time.Now()
 	img := image.NewRGBA(image.Rect(0, 0, a.width, a.height))
 	fillRect(img, 0, 0, a.width, a.height, hex(0xf6fbfb))
-	pageImg := image.NewRGBA(image.Rect(0, 0, a.width, a.height))
-	fillRect(pageImg, 0, 0, a.width, a.height, hex(0xf6fbfb))
-	a.renderPage(pageImg)
+	cacheKey := a.renderCacheKeyLocked(now)
+	var pageImg *image.RGBA
+	if cacheKey != "" && a.renderCache != nil && a.renderCacheKey == cacheKey {
+		pageImg = a.renderCache
+	} else {
+		pageImg = image.NewRGBA(image.Rect(0, 0, a.width, a.height))
+		fillRect(pageImg, 0, 0, a.width, a.height, hex(0xf6fbfb))
+		if a.page == "camera" {
+			frame, running, fps := a.cameraFrame, a.cameraStreamRunning, a.cameraFPS
+			a.cameraFrame, a.cameraStreamRunning, a.cameraFPS = nil, false, 0
+			a.renderPage(pageImg)
+			a.cameraFrame, a.cameraStreamRunning, a.cameraFPS = frame, running, fps
+		} else {
+			a.renderPage(pageImg)
+		}
+		if cacheKey != "" {
+			a.renderCache = pageImg
+			a.renderCacheKey = cacheKey
+		} else {
+			a.renderCache = nil
+			a.renderCacheKey = ""
+		}
+	}
 	elapsed := time.Since(a.pageChanged)
 	if elapsed < 260*time.Millisecond {
 		progress := float64(elapsed) / float64(260*time.Millisecond)
@@ -1746,11 +1770,55 @@ func (a *app) render() *image.RGBA {
 	} else {
 		draw.Draw(img, img.Bounds(), pageImg, image.Point{}, draw.Src)
 	}
+	if a.page == "camera" && elapsed >= 260*time.Millisecond {
+		a.renderCameraLiveOverlay(img)
+	}
 	if a.message != "" && time.Now().Before(a.messageUntil) {
 		a.toast(img, a.message)
 	}
 	a.renderTouchFeedback(img)
 	return img
+}
+
+func (a *app) renderCacheKeyLocked(now time.Time) string {
+	if a.page == "ai" {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s|%s|%s|%s|%d|%s|%d|%d|%s|%t|",
+		a.page,
+		now.Format("200601021504"),
+		a.status.Time,
+		a.wifiState,
+		a.wifiSignal,
+		a.wifiSSID,
+		a.selectedSlot,
+		a.dispenseSlot,
+		a.dispenseFilter,
+		a.dispenseConfirm,
+	)
+	for _, m := range a.medicines {
+		fmt.Fprintf(&b, "m:%d:%s:%d:%d:%s;", m.ID, m.Name, m.Slot, m.Stock, m.ExpireDate)
+	}
+	for _, p := range a.plans {
+		fmt.Fprintf(&b, "p:%d:%s:%s:%d:%d;", p.ID, p.Time, p.MedicineName, p.Slot, p.Amount)
+	}
+	return b.String()
+}
+
+func (a *app) renderCameraLiveOverlay(img *image.RGBA) {
+	fillRect(img, 438, 104, 170, 26, hex(0xffffff))
+	fpsText := "等待视频流"
+	if a.cameraStreamRunning {
+		fpsText = fmt.Sprintf("实时预览 %d fps", a.cameraFPS)
+	}
+	a.textRight(img, 608, 122, 16, fpsText, hex(0x008d7d), true)
+	if a.cameraFrame != nil {
+		drawImageCover(img, a.cameraFrame, 46, 148, 558, 292)
+	}
+	scanY := 170 + int(time.Now().UnixMilli()/22)%244
+	line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
+	line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
 }
 
 func (a *app) renderTouchFeedback(img *image.RGBA) {
@@ -3301,13 +3369,19 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 	fps := getenv("ZYKH_CAMERA_FPS", "20")
 	quality := getenv("ZYKH_CAMERA_QUALITY", "60")
 	device := getenv("ZYKH_CAMERA_DEVICE", "/dev/video5")
-	rawCaps := fmt.Sprintf("video/x-raw,format=NV12,width=%s,height=%s,framerate=%s/1", width, height, fps)
-	cmd := exec.CommandContext(ctx, "gst-launch-1.0", "-q",
-		"v4l2src", "device="+device,
-		"!", rawCaps,
-		"!", "jpegenc", "quality="+quality,
-		"!", "fdsink", "fd=1", "sync=false",
-	)
+	args := []string{"-q", "v4l2src", "device=" + device}
+	if cameraDeviceIsUVC(device) {
+		mjpegCaps := fmt.Sprintf("image/jpeg,width=%s,height=%s,framerate=%s/1", width, height, fps)
+		args = append(args, "!", mjpegCaps, "!", "jpegparse", "!", "fdsink", "fd=1", "sync=false")
+	} else {
+		rawCaps := fmt.Sprintf("video/x-raw,format=NV12,width=%s,height=%s,framerate=%s/1", width, height, fps)
+		if gstElementExists("mppjpegenc") {
+			args = append(args, "!", rawCaps, "!", "mppjpegenc", "!", "fdsink", "fd=1", "sync=false")
+		} else {
+			args = append(args, "!", rawCaps, "!", "jpegenc", "quality="+quality, "!", "fdsink", "fd=1", "sync=false")
+		}
+	}
+	cmd := exec.CommandContext(ctx, "gst-launch-1.0", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -3317,7 +3391,7 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	a.setCameraStreamNote(fmt.Sprintf("直连 GStreamer %sx%s@%sfps。第一步请对准商品条形码。", width, height, fps))
+	a.setCameraStreamNote(fmt.Sprintf("直连 GStreamer %s %sx%s@%sfps。第一步请对准商品条形码。", filepath.Base(device), width, height, fps))
 	frameCount := 0
 	tick := time.Now()
 	fpsN, err := strconv.Atoi(fps)
@@ -3360,6 +3434,22 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 		return waitErr
 	}
 	return nil
+}
+
+func cameraDeviceIsUVC(device string) bool {
+	out, err := exec.Command("v4l2-ctl", "-d", device, "--all").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(out))
+	return strings.Contains(text, "driver name") && strings.Contains(text, "uvcvideo")
+}
+
+func gstElementExists(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	return exec.Command("gst-inspect-1.0", name).Run() == nil
 }
 
 func (a *app) streamCameraFromHTTP(ctx context.Context) {
@@ -3439,7 +3529,7 @@ func (a *app) acceptCameraImage(jpg []byte, img image.Image, frameCount *int, ti
 }
 
 func (a *app) autoScanCameraLoop(ctx context.Context) {
-	ticker := time.NewTicker(850 * time.Millisecond)
+	ticker := time.NewTicker(1200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
@@ -3457,7 +3547,7 @@ func (a *app) tryAutoScanFrame() {
 		a.mu.Unlock()
 		return
 	}
-	if time.Since(a.cameraLastScan) < 800*time.Millisecond {
+	if time.Since(a.cameraLastScan) < 1100*time.Millisecond {
 		a.mu.Unlock()
 		return
 	}
@@ -3889,12 +3979,18 @@ func drawImageCover(dst *image.RGBA, src *image.RGBA, x, y, w, h int) {
 	offsetX := (drawW - w) / 2
 	offsetY := (drawH - h) / 2
 	rect := image.Rect(x, y, x+w, y+h).Intersect(dst.Bounds())
+	invScale := int((1 << 16) / scale)
+	startY := (rect.Min.Y - y + offsetY) * invScale
+	startX := (rect.Min.X - x + offsetX) * invScale
 	for yy := rect.Min.Y; yy < rect.Max.Y; yy++ {
-		sy := sb.Min.Y + min(sh-1, max(0, int(float64(yy-y+offsetY)/scale)))
+		sy := sb.Min.Y + min(sh-1, max(0, startY>>16))
+		sxFixed := startX
 		for xx := rect.Min.X; xx < rect.Max.X; xx++ {
-			sx := sb.Min.X + min(sw-1, max(0, int(float64(xx-x+offsetX)/scale)))
+			sx := sb.Min.X + min(sw-1, max(0, sxFixed>>16))
 			dst.SetRGBA(xx, yy, src.RGBAAt(sx, sy))
+			sxFixed += invScale
 		}
+		startY += invScale
 	}
 }
 
@@ -4042,16 +4138,64 @@ func main() {
 	touches := make(chan touchEvent, 8)
 	startTouchReader(touchPath, width, height, touches)
 
-	ticker := time.NewTicker(33 * time.Millisecond)
-	defer ticker.Stop()
-	sink.Blit(ui.render())
+	renderAndBlit := newRenderLoopLogger(ui, sink)
+	renderAndBlit()
 	for {
+		timer := time.NewTimer(ui.frameInterval())
 		select {
 		case t := <-touches:
+			timer.Stop()
 			ui.handleTouch(t)
-			sink.Blit(ui.render())
-		case <-ticker.C:
-			sink.Blit(ui.render())
+			renderAndBlit()
+		case <-timer.C:
+			renderAndBlit()
+		}
+	}
+}
+
+func (a *app) frameInterval() time.Duration {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	if now.Sub(a.pageChanged) < 280*time.Millisecond || now.Before(a.pressUntil) || now.Before(a.messageUntil) {
+		return 33 * time.Millisecond
+	}
+	switch a.page {
+	case "camera":
+		return 33 * time.Millisecond
+	case "ai":
+		return 66 * time.Millisecond
+	default:
+		return 100 * time.Millisecond
+	}
+}
+
+func (a *app) currentPage() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.page
+}
+
+func newRenderLoopLogger(ui *app, sink renderSink) func() {
+	var frames int
+	var total time.Duration
+	last := time.Now()
+	return func() {
+		start := time.Now()
+		sink.Blit(ui.render())
+		cost := time.Since(start)
+		frames++
+		total += cost
+		now := time.Now()
+		if now.Sub(last) >= time.Second {
+			avg := 0.0
+			if frames > 0 {
+				avg = float64(total.Microseconds()) / float64(frames) / 1000.0
+			}
+			fmt.Fprintf(os.Stderr, "render_fps=%d render_avg_ms=%.1f page=%s\n", frames, avg, ui.currentPage())
+			frames = 0
+			total = 0
+			last = now
 		}
 	}
 }

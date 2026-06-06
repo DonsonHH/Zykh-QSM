@@ -1233,9 +1233,7 @@ sub capture_camera {
         my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
         my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
         my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
-        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . $buffers . ' ' .
-               '! video/x-raw,format=NV12,width=' . $width . ',height=' . $height . ',framerate=30/1 ' .
-               '! videoconvert ! jpegenc ! filesink location=' . shell_quote($out);
+        $cmd = camera_capture_cmd($device, $width, $height, 30, $buffers, $out);
     }
 
     my $logfile = "$DATA_DIR/camera-capture.log";
@@ -1349,11 +1347,7 @@ sub start_camera_stream_producer {
     unlink glob("$stream_dir/frame-*.jpg");
     my $device = detect_camera_device();
     my $logfile = "$DATA_DIR/camera-stream.log";
-    my $cmd = $ENV{CAMERA_STREAM_CMD} ||
-        'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' ' .
-        '! video/x-raw,format=NV12,width=' . $width . ',height=' . $height . ',framerate=' . $fps . '/1 ' .
-        '! videoconvert ! jpegenc quality=' . $quality . ' ' .
-        '! multifilesink location=' . shell_quote("$stream_dir/frame-%05d.jpg") . ' max-files=3 sync=false';
+    my $cmd = $ENV{CAMERA_STREAM_CMD} || camera_stream_cmd($device, $width, $height, $fps, $quality, "$stream_dir/frame-%05d.jpg");
     my $shell = "$cmd > " . shell_quote($logfile) . " 2>&1 & echo \$! > " . shell_quote($pidfile);
     my $rc = system('sh', '-c', $shell);
     my $pid = -s $pidfile ? read_file_trim($pidfile) : '';
@@ -1412,9 +1406,7 @@ sub capture_camera_to {
         my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
         my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
         my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
-        $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . $buffers . ' ' .
-               '! video/x-raw,format=NV12,width=' . $width . ',height=' . $height . ',framerate=30/1 ' .
-               '! videoconvert ! jpegenc ! filesink location=' . shell_quote($out);
+        $cmd = camera_capture_cmd($device, $width, $height, 30, $buffers, $out);
     }
 
     my $logfile = "$DATA_DIR/camera-capture.log";
@@ -1934,10 +1926,17 @@ sub detect_display_output {
 
 sub detect_camera_device {
     return $ENV{CAMERA_DEVICE} if $ENV{CAMERA_DEVICE};
-    return '/dev/video5' if -e '/dev/video5';
     my $cache = "$DATA_DIR/camera-device.txt";
     my $cached = read_file_trim($cache);
     return $cached if $cached && -e $cached;
+
+    my $usb = detect_usb_camera_device();
+    if ($usb) {
+        write_text_file($cache, $usb);
+        return $usb;
+    }
+
+    return '/dev/video5' if -e '/dev/video5';
     for my $dev ('/dev/video5', '/dev/video-camera0', '/dev/video14') {
         next unless -e $dev;
         my $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($dev) .
@@ -1950,6 +1949,63 @@ sub detect_camera_device {
         }
     }
     return '/dev/video-camera0';
+}
+
+sub detect_usb_camera_device {
+    for my $dev (sort glob('/dev/video*')) {
+        next if -l $dev;
+        next unless -e $dev;
+        return $dev if camera_device_is_uvc($dev);
+    }
+    return '';
+}
+
+sub camera_device_is_uvc {
+    my ($dev) = @_;
+    return 0 unless $dev && -e $dev;
+    my $quoted = shell_quote($dev);
+    my $info = `v4l2-ctl -d $quoted --all 2>/dev/null`;
+    return $info =~ /Driver name\s*:\s*uvcvideo/i ? 1 : 0;
+}
+
+sub camera_capture_cmd {
+    my ($device, $width, $height, $fps, $buffers, $out) = @_;
+    if (camera_device_is_uvc($device)) {
+        return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . int($buffers) . ' ' .
+               '! image/jpeg,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
+               '! jpegparse ! filesink location=' . shell_quote($out);
+    }
+    return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . int($buffers) . ' ' .
+           '! video/x-raw,format=NV12,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
+           camera_jpeg_encoder_fragment(80) . ' ! filesink location=' . shell_quote($out);
+}
+
+sub camera_stream_cmd {
+    my ($device, $width, $height, $fps, $quality, $location) = @_;
+    if (camera_device_is_uvc($device)) {
+        return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' ' .
+               '! image/jpeg,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
+               '! jpegparse ! multifilesink location=' . shell_quote($location) . ' max-files=3 sync=false';
+    }
+    return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' ' .
+           '! video/x-raw,format=NV12,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
+           camera_jpeg_encoder_fragment($quality) . ' ' .
+           '! multifilesink location=' . shell_quote($location) . ' max-files=3 sync=false';
+}
+
+sub camera_jpeg_encoder_fragment {
+    my ($quality) = @_;
+    if (gst_element_exists('mppjpegenc')) {
+        return '! mppjpegenc';
+    }
+    return '! videoconvert ! jpegenc quality=' . int($quality || 75);
+}
+
+sub gst_element_exists {
+    my ($name) = @_;
+    return 0 unless $name && $name =~ /\A[A-Za-z0-9_-]+\z/;
+    my $cmd = 'gst-inspect-1.0 ' . shell_quote($name) . ' >/dev/null 2>&1';
+    return system($cmd) == 0 ? 1 : 0;
 }
 
 sub drm_status {
