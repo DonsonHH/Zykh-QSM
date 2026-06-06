@@ -3948,3 +3948,204 @@ gst-launch 约 6% CPU。
 
 当前 UI 暂时停在摄像头页，便于现场观察画面流畅度。
 ```
+
+### 第二十六步：体征测量子页面、MAX30102、GY-614 与喇叭接入
+
+#### 用户新需求
+
+```text
+1. 如果 GitHub 推不上去，给出手动上传命令。
+2. 继续把性能优化贯穿项目，特别是摄像头模糊、识别不到条形码和延迟问题。
+3. 接入 MAX30102 心率血氧脚本：
+   adb shell "perl /userdata/medical_assistant/scripts/read_max30102_vitals.pl"
+4. 接入喇叭测试脚本：
+   adb shell "SPK_VOL=230 sh /userdata/medical_assistant/scripts/play_beep.sh"
+5. 增加体征测量子页面，显示测量结果。
+6. 按 UART4 接入 GY-614 额温模块。
+```
+
+#### 本轮新增/更新文件
+
+```text
+zykh_app/server.pl
+zykh_app/native/go-ui/main.go
+zykh_app/bin/zykh-go-ui
+zykh_app/scripts/read_max30102_vitals.pl
+zykh_app/scripts/read_gy614_uart4.pl
+zykh_app/scripts/play_beep.sh
+智药康护-QSM368ZP-WF-项目调试记录.md
+```
+
+#### 板端部署路径
+
+```text
+/userdata/zykh_app/server.pl
+/userdata/zykh_app/bin/zykh-go-ui
+/userdata/medical_assistant/scripts/read_max30102_vitals.pl
+/userdata/medical_assistant/scripts/read_gy614_uart4.pl
+/userdata/medical_assistant/scripts/play_beep.sh
+```
+
+语法检查：
+
+```text
+/userdata/zykh_app/server.pl syntax OK
+/userdata/medical_assistant/scripts/read_max30102_vitals.pl syntax OK
+/userdata/medical_assistant/scripts/read_gy614_uart4.pl syntax OK
+```
+
+#### 后端新增接口
+
+```text
+POST /api/vitals/read
+调用 MAX30102 脚本，读取心率/血氧，并写入 vitals_records。
+
+POST /api/vitals/temp/read
+调用 GY-614 UART4 脚本，读取额温，并写入 vitals_records。
+
+POST /api/audio/beep
+调用 play_beep.sh，默认 SPK_VOL=230。
+```
+
+#### 当前接口实测
+
+喇叭：
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8080/api/audio/beep
+```
+
+结果：
+
+```json
+{"volume":230,"ok":true,"exit_code":0,"detail":"喇叭提示音播放完成"}
+```
+
+额温：
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8080/api/vitals/temp/read
+```
+
+结果：
+
+```text
+GY-614 /dev/ttyS4 已读取到有效帧。
+body_temp_c 约 35.6
+ambient_temp_c 约 25.5
+```
+
+心率血氧：
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8080/api/vitals/read
+```
+
+结果：
+
+```text
+MAX30102 通信成功，max30102_connected=true。
+本次未放稳手指，finger_detected=false。
+脚本返回 quality=no_finger，说明硬件通信正常但没有有效脉搏信号。
+测量时需要手指稳定覆盖传感器。
+```
+
+#### Go UI 新页面
+
+首页“测量体征”现在进入子页面：
+
+```text
+page=vitals
+```
+
+页面包含：
+
+```text
+1. 心率/血氧卡片：触摸后调用 /api/vitals/read
+2. 额温测量卡片：触摸后调用 /api/vitals/temp/read
+3. 喇叭测试卡片：触摸后调用 /api/audio/beep
+4. 最近记录区域：展示最新 vitals_records
+```
+
+UI 性能处理：
+
+```text
+vitals 页面纳入页面缓存。
+只有测量状态、测量结果或历史记录变化时才重画。
+测量调用在 goroutine 中执行，不阻塞触控主循环。
+重复点击时通过 vitalsBusy 防止并发重复触发脚本。
+```
+
+#### 时间校准
+
+板子曾回到 2000 年，已用电脑时间重新校准：
+
+```powershell
+$utc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+adb -s ? shell "TZ=UTC date -s '$utc'; hwclock -w 2>/dev/null || true; date"
+```
+
+服务接口当前返回北京时间：
+
+```json
+{"time":"2026-06-06 21:02:38"}
+```
+
+校时后重新读取 GY-614，数据库已写入北京时间记录：
+
+```text
+2026-06-06 21:05:43 / GY-614 / body_temp_c 35.7
+```
+
+#### 摄像头性能与条码识别建议
+
+当前结论不变：
+
+```text
+老 CSI 摄像头裸采集上限约 21fps。
+Go UI 内嵌预览经过优化后约 12-15fps。
+条形码识别算法已验证可识别清晰手机照片中的 EAN-13 码。
+实际摄像头扫不上更主要是画面糊、定焦距离、光照、条码占画面比例和 Go 解码/渲染延迟共同造成。
+```
+
+优先解决方案：
+
+```text
+1. 继续解决 UVC 自动对焦摄像头枚举问题，成功后走 MJPEG 640x480@30。
+2. 条码识别时降低 UI 干扰：扫码页保持 424x240@20 预览，但抓拍识别可以单独用 640x480 或 1280x720 静态图。
+3. 识别阶段尽量让条码横向占画面宽度 50%-80%，避免太近导致定焦虚焦。
+4. 增加正面补光，减少反光。
+5. 如果必须 20-30fps，可以考虑 GStreamer/Wayland 原生视频层叠加，不再让 Go 解码每一帧。
+```
+
+#### GitHub 手动上传命令
+
+如果 Codex 无法写 Git 索引或推送，可以在 Windows PowerShell 中执行：
+
+```powershell
+cd C:\Users\Donson\.codex\worktrees\930c\QSM368WF
+
+$env:HTTP_PROXY='http://127.0.0.1:7897'
+$env:HTTPS_PROXY='http://127.0.0.1:7897'
+$env:ALL_PROXY='socks5://127.0.0.1:7897'
+
+git status --short
+git add zykh_app/bin/zykh-go-ui `
+        zykh_app/native/go-ui/main.go `
+        zykh_app/server.pl `
+        zykh_app/scripts/start_go_hdmi_ui.sh `
+        zykh_app/scripts/read_max30102_vitals.pl `
+        zykh_app/scripts/read_gy614_uart4.pl `
+        zykh_app/scripts/play_beep.sh `
+        "智药康护-QSM368ZP-WF-项目调试记录.md"
+
+git commit -m "Add vitals measurement page and sensor integrations"
+git push zykh main
+```
+
+如果 `zykh` remote 不存在：
+
+```powershell
+git remote add zykh https://github.com/DonsonHH/Zykh-QSM.git
+git push -u zykh main
+```

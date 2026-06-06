@@ -1139,6 +1139,58 @@ type plansResp struct {
 	Plans []plan `json:"plans"`
 }
 
+type vitalRecord struct {
+	ID          int     `json:"id"`
+	Temperature float64 `json:"temperature"`
+	HeartRate   int     `json:"heart_rate"`
+	SpO2        int     `json:"spo2"`
+	Systolic    int     `json:"systolic"`
+	Diastolic   int     `json:"diastolic"`
+	Source      string  `json:"source"`
+	CreatedAt   string  `json:"created_at"`
+}
+
+type vitalsListResp struct {
+	OK     bool          `json:"ok"`
+	Vitals []vitalRecord `json:"vitals"`
+}
+
+type vitalsReadResp struct {
+	OK     bool `json:"ok"`
+	Vitals struct {
+		Temperature    float64 `json:"temperature"`
+		HeartRate      int     `json:"heart_rate"`
+		SpO2           int     `json:"spo2"`
+		FingerDetected bool    `json:"finger_detected"`
+		Quality        string  `json:"quality"`
+		Message        string  `json:"message"`
+		SampleCount    int     `json:"sample_count"`
+		Time           string  `json:"time"`
+	} `json:"vitals"`
+	Error  string `json:"error"`
+	Detail string `json:"detail"`
+}
+
+type tempReadResp struct {
+	OK          bool `json:"ok"`
+	Temperature struct {
+		BodyTempC    float64 `json:"body_temp_c"`
+		TargetTempC  float64 `json:"target_temp_c"`
+		AmbientTempC float64 `json:"ambient_temp_c"`
+		Source       string  `json:"source"`
+		Time         string  `json:"time"`
+	} `json:"temperature"`
+	Error  string `json:"error"`
+	Detail string `json:"detail"`
+}
+
+type beepResp struct {
+	OK       bool   `json:"ok"`
+	Detail   string `json:"detail"`
+	Error    string `json:"error"`
+	ExitCode int    `json:"exit_code"`
+}
+
 type captureResp struct {
 	OK       bool   `json:"ok"`
 	Error    string `json:"error"`
@@ -1491,6 +1543,7 @@ type app struct {
 	status          statusResp
 	medicines       []medicine
 	plans           []plan
+	vitals          []vitalRecord
 	lastFetch       time.Time
 	wifiSSID        string
 	wifiState       string
@@ -1528,6 +1581,13 @@ type app struct {
 	aiVoice             string
 	aiMessages          []aiMessage
 	aiScroll            int
+	vitalsStatus        string
+	vitalsBusy          bool
+	lastHeartRate       int
+	lastSpO2            int
+	lastBodyTemp        float64
+	lastVitalsQuality   string
+	lastVitalsTime      string
 	pressX              int
 	pressY              int
 	pressUntil          time.Time
@@ -1644,6 +1704,23 @@ func (a *app) fetch() {
 	var plans plansResp
 	if err := a.api.getJSON("/api/plans", &plans); err == nil && plans.OK {
 		a.plans = plans.Plans
+	}
+	var vitals vitalsListResp
+	if err := a.api.getJSON("/api/vitals", &vitals); err == nil && vitals.OK {
+		a.vitals = vitals.Vitals
+		if len(vitals.Vitals) > 0 {
+			v := vitals.Vitals[0]
+			if v.HeartRate > 0 {
+				a.lastHeartRate = v.HeartRate
+			}
+			if v.SpO2 > 0 {
+				a.lastSpO2 = v.SpO2
+			}
+			if v.Temperature > 0 {
+				a.lastBodyTemp = v.Temperature
+			}
+			a.lastVitalsTime = v.CreatedAt
+		}
 	}
 	if len(a.medicines) == 0 {
 		a.medicines = []medicine{
@@ -1797,6 +1874,7 @@ func (a *app) renderCacheKeyLocked(now time.Time) string {
 		a.dispenseFilter,
 		a.dispenseConfirm,
 	)
+	fmt.Fprintf(&b, "vb:%t:%s:%d:%d:%.1f:%s:%s|", a.vitalsBusy, a.vitalsStatus, a.lastHeartRate, a.lastSpO2, a.lastBodyTemp, a.lastVitalsQuality, a.lastVitalsTime)
 	for _, m := range a.medicines {
 		fmt.Fprintf(&b, "m:%d:%s:%d:%d:%s;", m.ID, m.Name, m.Slot, m.Stock, m.ExpireDate)
 	}
@@ -1852,6 +1930,8 @@ func (a *app) renderPage(img *image.RGBA) {
 		a.renderCamera(img)
 	case "ai":
 		a.renderAI(img)
+	case "vitals":
+		a.renderVitals(img)
 	default:
 		a.renderHome(img)
 	}
@@ -1959,6 +2039,66 @@ func (a *app) renderHome(img *image.RGBA) {
 	}
 	a.text(img, 60, 577, 19, host+" 已就绪，可以开始使用", hex(0x00786f), true)
 	a.textRight(img, 982, 577, 17, "Go 原生 UI", hex(0x657586), false)
+}
+
+func (a *app) renderVitals(img *image.RGBA) {
+	a.pageHeader(img, "测量体征", "心率血氧、额温和喇叭提示测试")
+
+	status := a.vitalsStatus
+	if status == "" {
+		status = "请选择需要测量的项目"
+	}
+	if a.vitalsBusy {
+		status = "正在读取传感器，请保持手指和额温模块稳定..."
+	}
+
+	roundRect(img, 24, 84, 976, 88, 16, hex(0xe8f5f2), hex(0xbce5dc), 1)
+	circle(img, 72, 128, 30, hex(0x008d7d))
+	a.textCenter(img, 72, 139, 25, "测", hex(0xffffff), true)
+	a.text(img, 118, 120, 24, status, hex(0x142333), true)
+	a.text(img, 118, 148, 15, "MAX30102 需要手指稳定放置；GY-614 请让额温探头对准额头或测试物体。", hex(0x607082), false)
+
+	a.vitalActionCard(img, 24, 196, 300, 188, "心率 / 血氧", "MAX30102", fmt.Sprintf("%d 次/分", a.lastHeartRate), fmt.Sprintf("%d %%", a.lastSpO2), "开始测量", hex(0xf7fbff), hex(0x1c66d4))
+	a.vitalActionCard(img, 362, 196, 300, 188, "额温测量", "GY-614 UART4", fmt.Sprintf("%.1f °C", a.lastBodyTemp), "体表温度", "读取额温", hex(0xfffbf1), hex(0xe77800))
+	a.vitalActionCard(img, 700, 196, 300, 188, "喇叭测试", "SPK_OUT", "230", "音量", "播放提示音", hex(0xfff7f8), hex(0xe52f34))
+
+	roundRect(img, 24, 410, 976, 162, 14, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.text(img, 50, 448, 23, "最近记录", hex(0x142333), true)
+	if len(a.vitals) == 0 {
+		a.text(img, 50, 500, 18, "暂无体征记录，请先完成一次测量。", hex(0x657586), false)
+		return
+	}
+	for i, v := range a.vitals {
+		if i >= 3 {
+			break
+		}
+		x := 50 + i*306
+		roundRect(img, x, 466, 280, 82, 12, hex(0xf8fcfc), hex(0xe5edf1), 1)
+		a.text(img, x+18, 494, 17, v.Source, hex(0x405268), true)
+		a.text(img, x+18, 520, 15, v.CreatedAt, hex(0x8a99a8), false)
+		value := fmt.Sprintf("心率 %d / 血氧 %d%%", v.HeartRate, v.SpO2)
+		if v.Temperature > 0 {
+			value = fmt.Sprintf("体温 %.1f °C", v.Temperature)
+		}
+		a.textRight(img, x+260, 520, 19, value, hex(0x008d7d), true)
+	}
+}
+
+func (a *app) vitalActionCard(img *image.RGBA, x, y, w, h int, title, sub, main, aux, button string, bg, accent color.RGBA) {
+	roundRect(img, x, y, w, h, 14, bg, hex(0xcfe1ef), 1)
+	circle(img, x+48, y+52, 30, accent)
+	runes := []rune(title)
+	icon := "测"
+	if len(runes) > 0 {
+		icon = string(runes[0])
+	}
+	a.textCenter(img, x+48, y+63, 24, icon, hex(0xffffff), true)
+	a.text(img, x+92, y+44, 23, title, hex(0x142333), true)
+	a.text(img, x+94, y+72, 15, sub, hex(0x657586), false)
+	a.text(img, x+30, y+126, 34, main, accent, true)
+	a.textRight(img, x+w-28, y+126, 16, aux, hex(0x657586), false)
+	roundRect(img, x+30, y+h-48, w-60, 34, 12, accent, accent, 1)
+	a.textCenter(img, x+w/2, y+h-25, 17, button, hex(0xffffff), true)
 }
 
 func (a *app) renderCabinet(img *image.RGBA) {
@@ -2756,7 +2896,28 @@ func (a *app) handleTouch(t touchEvent) {
 				return
 			}
 		}
+	case "vitals":
+		if inside(t, 18, 14, 100, 50) {
+			a.setPage("home")
+			return
+		}
+		if inside(t, 24, 196, 300, 188) {
+			go a.measureHeartSpO2()
+			return
+		}
+		if inside(t, 362, 196, 300, 188) {
+			go a.measureTemperature()
+			return
+		}
+		if inside(t, 700, 196, 300, 188) {
+			go a.playBeep()
+			return
+		}
 	default:
+		if inside(t, 360, 236, 310, 122) {
+			a.setPage("vitals")
+			return
+		}
 		if inside(t, 20, 236, 326, 122) {
 			next := a.nextPlan()
 			a.mu.Lock()
@@ -2801,6 +2962,90 @@ func (a *app) action(success string, fn func() error) {
 		a.lastFetch = time.Time{}
 	}
 	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+}
+
+func (a *app) measureHeartSpO2() {
+	if !a.setVitalsBusy("正在读取 MAX30102，请手指稳定放置...") {
+		return
+	}
+	var resp vitalsReadResp
+	err := a.api.postFormJSON("/api/vitals/read", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.vitalsBusy = false
+	if err != nil || !resp.OK {
+		a.vitalsStatus = "心率血氧读取失败：" + firstNonEmpty(resp.Error, resp.Detail, errText(err))
+		a.message = a.vitalsStatus
+		a.messageUntil = time.Now().Add(2600 * time.Millisecond)
+		return
+	}
+	a.lastHeartRate = resp.Vitals.HeartRate
+	a.lastSpO2 = resp.Vitals.SpO2
+	a.lastVitalsQuality = resp.Vitals.Quality
+	a.lastVitalsTime = resp.Vitals.Time
+	if resp.Vitals.FingerDetected {
+		a.vitalsStatus = fmt.Sprintf("心率 %d 次/分，血氧 %d%%，质量 %s", a.lastHeartRate, a.lastSpO2, firstNonEmpty(resp.Vitals.Quality, "ok"))
+	} else {
+		a.vitalsStatus = "未检测到稳定手指信号，请重新放置手指后再测"
+	}
+	a.lastFetch = time.Time{}
+}
+
+func (a *app) measureTemperature() {
+	if !a.setVitalsBusy("正在读取 GY-614 额温，请保持探头稳定...") {
+		return
+	}
+	var resp tempReadResp
+	err := a.api.postFormJSON("/api/vitals/temp/read", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.vitalsBusy = false
+	if err != nil || !resp.OK {
+		a.vitalsStatus = "额温读取失败：" + firstNonEmpty(resp.Error, resp.Detail, errText(err))
+		a.message = a.vitalsStatus
+		a.messageUntil = time.Now().Add(2600 * time.Millisecond)
+		return
+	}
+	a.lastBodyTemp = resp.Temperature.BodyTempC
+	a.lastVitalsTime = resp.Temperature.Time
+	a.vitalsStatus = fmt.Sprintf("额温 %.1f °C，环境 %.1f °C", resp.Temperature.BodyTempC, resp.Temperature.AmbientTempC)
+	a.lastFetch = time.Time{}
+}
+
+func (a *app) playBeep() {
+	if !a.setVitalsBusy("正在播放喇叭提示音...") {
+		return
+	}
+	var resp beepResp
+	err := a.api.postFormJSON("/api/audio/beep", url.Values{"volume": []string{"230"}}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.vitalsBusy = false
+	if err != nil || !resp.OK {
+		a.vitalsStatus = "喇叭测试失败：" + firstNonEmpty(resp.Error, resp.Detail, errText(err))
+		a.message = a.vitalsStatus
+		a.messageUntil = time.Now().Add(2600 * time.Millisecond)
+		return
+	}
+	a.vitalsStatus = firstNonEmpty(resp.Detail, "喇叭提示音播放完成")
+}
+
+func (a *app) setVitalsBusy(status string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.vitalsBusy {
+		return false
+	}
+	a.vitalsBusy = true
+	a.vitalsStatus = status
+	return true
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (a *app) confirmDispense() {

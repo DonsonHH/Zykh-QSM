@@ -380,6 +380,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/vitals/read') {
         return send_json($client, 200, read_vitals());
     }
+    if ($method eq 'POST' && $path eq '/api/vitals/temp/read') {
+        return send_json($client, 200, read_temperature());
+    }
     if ($method eq 'POST' && $path eq '/api/recognize') {
         return send_json($client, 200, recognize_medicine());
     }
@@ -412,6 +415,9 @@ sub route_api {
     }
     if ($method eq 'POST' && $path eq '/api/audio/speak') {
         return send_json($client, 200, speak_text($req->{params}));
+    }
+    if ($method eq 'POST' && $path eq '/api/audio/beep') {
+        return send_json($client, 200, play_beep($req->{params}));
     }
 
     return send_json($client, 404, { ok => JSON::PP::false, error => 'API not found' });
@@ -918,6 +924,29 @@ sub speak_text {
     };
 }
 
+sub play_beep {
+    my ($p) = @_;
+    my $script = $ENV{BEEP_SCRIPT} || '/userdata/medical_assistant/scripts/play_beep.sh';
+    return { ok => JSON::PP::false, error => '喇叭脚本不存在', script => $script } unless -f $script;
+    my $vol = int($p->{volume} || $ENV{SPK_VOL} || 230);
+    $vol = 0 if $vol < 0;
+    $vol = 255 if $vol > 255;
+    my $log = "$DATA_DIR/beep.log";
+    my $cmd = 'SPK_VOL=' . int($vol) . ' sh ' . shell_quote($script);
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '8', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        volume => $vol,
+        detail => $exit == 0 ? '喇叭提示音播放完成' : substr(read_text_file($log) || '', 0, 500),
+        exit_code => $exit,
+    };
+}
+
 sub aplay_cmd {
     my ($file) = @_;
     my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
@@ -1178,15 +1207,39 @@ sub write_gpio {
 }
 
 sub read_vitals {
-    my $sec = time % 60;
+    my $script = $ENV{MAX30102_SCRIPT} || '/userdata/medical_assistant/scripts/read_max30102_vitals.pl';
+    my $out = $ENV{MAX30102_JSON} || '/userdata/medical_assistant/data/vital_signs.json';
+    my $samples = int($ENV{MAX30102_SAMPLES} || 120);
+    my $result = run_json_sensor(
+        command => 'perl ' . shell_quote($script) . ' ' . int($samples) . ' ' . shell_quote($out),
+        output => $out,
+        timeout => 18,
+        log => "$DATA_DIR/max30102-read.log",
+    );
+
+    if (!$result->{ok}) {
+        return {
+            ok => JSON::PP::false,
+            sensor => 'MAX30102',
+            error => $result->{error},
+            detail => $result->{detail},
+            command => $result->{command},
+        };
+    }
+
+    my $raw = $result->{data} || {};
     my $vitals = {
-        temperature => sprintf('%.1f', 36.4 + (($sec % 5) * 0.1)) + 0,
-        heart_rate  => 72 + ($sec % 9),
-        spo2        => 96 + ($sec % 3),
-        systolic    => 136 + ($sec % 6),
-        diastolic   => 82 + ($sec % 5),
-        source      => 'demo',
+        temperature => 0,
+        heart_rate  => defined $raw->{heart_rate_bpm} ? sprintf('%.0f', $raw->{heart_rate_bpm}) + 0 : 0,
+        spo2        => defined $raw->{spo2_percent} ? sprintf('%.0f', $raw->{spo2_percent}) + 0 : 0,
+        systolic    => 0,
+        diastolic   => 0,
+        source      => 'MAX30102',
         time        => now_text(),
+        finger_detected => $raw->{finger_detected} ? JSON::PP::true : JSON::PP::false,
+        quality => $raw->{quality} || '',
+        message => $raw->{message} || '',
+        sample_count => int($raw->{sample_count} || 0),
     };
     add_vitals({
         temperature => $vitals->{temperature},
@@ -1199,6 +1252,82 @@ sub read_vitals {
     return {
         ok => JSON::PP::true,
         vitals => $vitals,
+        raw => $raw,
+    };
+}
+
+sub read_temperature {
+    my $script = $ENV{GY614_SCRIPT} || '/userdata/medical_assistant/scripts/read_gy614_uart4.pl';
+    my $out = $ENV{GY614_JSON} || '/userdata/medical_assistant/data/gy614_temp.json';
+    my $dev = $ENV{GY614_UART} || '/dev/ttyS4';
+    my $result = run_json_sensor(
+        command => 'perl ' . shell_quote($script) . ' ' . shell_quote($dev) . ' ' . shell_quote($out),
+        output => $out,
+        timeout => 12,
+        log => "$DATA_DIR/gy614-read.log",
+    );
+
+    if (!$result->{ok}) {
+        return {
+            ok => JSON::PP::false,
+            sensor => 'GY-614',
+            error => $result->{error},
+            detail => $result->{detail},
+            command => $result->{command},
+        };
+    }
+
+    my $raw = $result->{data} || {};
+    my $body = defined $raw->{body_temp_c} ? sprintf('%.1f', $raw->{body_temp_c}) + 0 : 0;
+    add_vitals({
+        temperature => $body,
+        heart_rate => 0,
+        spo2 => 0,
+        systolic => 0,
+        diastolic => 0,
+        source => 'GY-614',
+    }) if $body > 0;
+
+    return {
+        ok => JSON::PP::true,
+        temperature => {
+            body_temp_c => $body,
+            target_temp_c => defined $raw->{target_temp_c} ? $raw->{target_temp_c} + 0 : 0,
+            ambient_temp_c => defined $raw->{ambient_temp_c} ? $raw->{ambient_temp_c} + 0 : 0,
+            source => 'GY-614',
+            time => now_text(),
+        },
+        raw => $raw,
+    };
+}
+
+sub run_json_sensor {
+    my (%args) = @_;
+    my $cmd = $args{command};
+    my $out = $args{output};
+    my $log = $args{log} || "$DATA_DIR/sensor-read.log";
+    my $timeout = int($args{timeout} || 15);
+    return { ok => JSON::PP::false, error => '脚本不存在', command => $cmd } if $cmd =~ /perl\s+'?([^'\s]+)/ && !-f $1;
+
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', $timeout, 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $text = -s $out ? read_text_file($out) : '';
+    if ($text ne '') {
+        my $data = eval { decode_json(Encode::encode('UTF-8', $text)) };
+        if ($data) {
+            return { ok => JSON::PP::true, data => $data, exit_code => $exit, command => $cmd };
+        }
+    }
+    return {
+        ok => JSON::PP::false,
+        error => $exit == 124 ? '传感器读取超时' : '传感器读取失败',
+        detail => substr(read_text_file($log) || '', 0, 800),
+        exit_code => $exit,
+        command => $cmd,
     };
 }
 
