@@ -1931,7 +1931,7 @@ func (a *app) renderPage(img *image.RGBA) {
 	case "ai":
 		a.renderAI(img)
 	case "vitals":
-		a.renderVitals(img)
+		a.renderVitals2(img)
 	default:
 		a.renderHome(img)
 	}
@@ -2097,6 +2097,61 @@ func (a *app) vitalActionCard(img *image.RGBA, x, y, w, h int, title, sub, main,
 	a.text(img, x+94, y+72, 15, sub, hex(0x657586), false)
 	a.text(img, x+30, y+126, 34, main, accent, true)
 	a.textRight(img, x+w-28, y+126, 16, aux, hex(0x657586), false)
+	roundRect(img, x+30, y+h-48, w-60, 34, 12, accent, accent, 1)
+	a.textCenter(img, x+w/2, y+h-25, 17, button, hex(0xffffff), true)
+}
+
+func (a *app) renderVitals2(img *image.RGBA) {
+	a.pageHeader(img, "测量体征", "心率、血氧、额温")
+
+	status := firstNonEmpty(a.vitalsStatus, "请选择单项测量，或点击一键全测")
+	if a.vitalsBusy {
+		status = "正在测量，请保持手指和额温探头稳定..."
+	}
+
+	roundRect(img, 24, 84, 976, 90, 16, hex(0xe8f5f2), hex(0xbce5dc), 1)
+	circle(img, 72, 129, 30, hex(0x008d7d))
+	a.textCenter(img, 72, 140, 24, "测", hex(0xffffff), true)
+	a.text(img, 118, 122, 24, status, hex(0x142333), true)
+	a.text(img, 118, 150, 15, "MAX30102 读取心率和血氧；GY-614 UART4 读取额温。测量过程不会阻塞触摸。", hex(0x607082), false)
+	roundRect(img, 774, 110, 190, 44, 14, hex(0x008d7d), hex(0x008d7d), 1)
+	a.textCenter(img, 869, 139, 20, "一键全测", hex(0xffffff), true)
+
+	a.vitalMetricCard(img, 24, 198, 300, 188, "心率", "MAX30102", fmt.Sprintf("%d", a.lastHeartRate), "次/分", "测心率", hex(0xf7fbff), hex(0x1c66d4))
+	a.vitalMetricCard(img, 362, 198, 300, 188, "血氧", "MAX30102", fmt.Sprintf("%d", a.lastSpO2), "%", "测血氧", hex(0xf4fbff), hex(0x00a3c7))
+	a.vitalMetricCard(img, 700, 198, 300, 188, "额温", "GY-614 UART4", fmt.Sprintf("%.1f", a.lastBodyTemp), "°C", "测额温", hex(0xfffbf1), hex(0xe77800))
+
+	roundRect(img, 24, 414, 976, 158, 14, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.text(img, 50, 452, 23, "最近记录", hex(0x142333), true)
+	if len(a.vitals) == 0 {
+		a.text(img, 50, 502, 18, "暂无体征记录，请先完成一次测量。", hex(0x657586), false)
+		return
+	}
+	for i, v := range a.vitals {
+		if i >= 3 {
+			break
+		}
+		x := 50 + i*306
+		roundRect(img, x, 470, 280, 78, 12, hex(0xf8fcfc), hex(0xe5edf1), 1)
+		a.text(img, x+18, 497, 17, v.Source, hex(0x405268), true)
+		a.text(img, x+18, 522, 14, v.CreatedAt, hex(0x8a99a8), false)
+		value := fmt.Sprintf("%d次/分  %d%%", v.HeartRate, v.SpO2)
+		if v.Temperature > 0 {
+			value = value + fmt.Sprintf("  %.1f°C", v.Temperature)
+		}
+		a.textRight(img, x+260, 522, 17, value, hex(0x008d7d), true)
+	}
+}
+
+func (a *app) vitalMetricCard(img *image.RGBA, x, y, w, h int, title, sub, value, unit, button string, bg, accent color.RGBA) {
+	roundRect(img, x, y, w, h, 14, bg, hex(0xcfe1ef), 1)
+	circle(img, x+48, y+50, 30, accent)
+	icon := []rune(title)[0]
+	a.textCenter(img, x+48, y+61, 24, string(icon), hex(0xffffff), true)
+	a.text(img, x+92, y+42, 24, title, hex(0x142333), true)
+	a.text(img, x+94, y+70, 15, sub, hex(0x657586), false)
+	a.text(img, x+34, y+126, 46, value, accent, true)
+	a.text(img, x+132, y+126, 18, unit, hex(0x657586), false)
 	roundRect(img, x+30, y+h-48, w-60, 34, 12, accent, accent, 1)
 	a.textCenter(img, x+w/2, y+h-25, 17, button, hex(0xffffff), true)
 }
@@ -2901,16 +2956,20 @@ func (a *app) handleTouch(t touchEvent) {
 			a.setPage("home")
 			return
 		}
+		if inside(t, 774, 110, 190, 44) {
+			go a.measureAllVitals()
+			return
+		}
 		if inside(t, 24, 196, 300, 188) {
 			go a.measureHeartSpO2()
 			return
 		}
 		if inside(t, 362, 196, 300, 188) {
-			go a.measureTemperature()
+			go a.measureHeartSpO2()
 			return
 		}
 		if inside(t, 700, 196, 300, 188) {
-			go a.playBeep()
+			go a.measureTemperature()
 			return
 		}
 	default:
@@ -3009,6 +3068,30 @@ func (a *app) measureTemperature() {
 	a.lastBodyTemp = resp.Temperature.BodyTempC
 	a.lastVitalsTime = resp.Temperature.Time
 	a.vitalsStatus = fmt.Sprintf("额温 %.1f °C，环境 %.1f °C", resp.Temperature.BodyTempC, resp.Temperature.AmbientTempC)
+	a.lastFetch = time.Time{}
+}
+
+func (a *app) measureAllVitals() {
+	if !a.setVitalsBusy("正在一键全测：心率、血氧、额温...") {
+		return
+	}
+	var resp vitalsReadResp
+	err := a.api.postFormJSON("/api/vitals/read_all", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.vitalsBusy = false
+	if err != nil || !resp.OK {
+		a.vitalsStatus = "一键全测失败：" + firstNonEmpty(resp.Error, resp.Detail, errText(err))
+		a.message = a.vitalsStatus
+		a.messageUntil = time.Now().Add(2600 * time.Millisecond)
+		return
+	}
+	a.lastHeartRate = resp.Vitals.HeartRate
+	a.lastSpO2 = resp.Vitals.SpO2
+	a.lastBodyTemp = resp.Vitals.Temperature
+	a.lastVitalsQuality = resp.Vitals.Quality
+	a.lastVitalsTime = resp.Vitals.Time
+	a.vitalsStatus = fmt.Sprintf("已记录：心率 %d 次/分，血氧 %d%%，额温 %.1f °C", a.lastHeartRate, a.lastSpO2, a.lastBodyTemp)
 	a.lastFetch = time.Time{}
 }
 
@@ -3683,11 +3766,18 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 
 func cameraDeviceIsUVC(device string) bool {
 	out, err := exec.Command("v4l2-ctl", "-d", device, "--all").CombinedOutput()
+	if err == nil {
+		text := strings.ToLower(string(out))
+		if strings.Contains(text, "driver name") && strings.Contains(text, "uvcvideo") {
+			return true
+		}
+	}
+	formats, err := exec.Command("v4l2-ctl", "-d", device, "--list-formats-ext").CombinedOutput()
 	if err != nil {
 		return false
 	}
-	text := strings.ToLower(string(out))
-	return strings.Contains(text, "driver name") && strings.Contains(text, "uvcvideo")
+	text := string(formats)
+	return strings.Contains(text, "'MJPG'") && strings.Contains(text, "30.000 fps")
 }
 
 func gstElementExists(name string) bool {

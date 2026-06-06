@@ -36,7 +36,13 @@ detect_usb_camera() {
   for dev in /dev/video*; do
     [ -e "$dev" ] || continue
     [ -L "$dev" ] && continue
-    if v4l2-ctl -d "$dev" --all 2>/dev/null | grep -qi 'Driver name.*uvcvideo'; then
+    name="$(cat "/sys/class/video4linux/$(basename "$dev")/name" 2>/dev/null || true)"
+    formats="$(v4l2-ctl -d "$dev" --list-formats-ext 2>/dev/null || true)"
+    if echo "$formats" | grep -q "'MJPG'" && echo "$formats" | grep -q "30.000 fps"; then
+      echo "$dev"
+      return 0
+    fi
+    if echo "$name" | grep -qi 'FF Camera' && echo "$formats" | grep -q "'MJPG'"; then
       echo "$dev"
       return 0
     fi

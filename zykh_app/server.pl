@@ -383,6 +383,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/vitals/temp/read') {
         return send_json($client, 200, read_temperature());
     }
+    if ($method eq 'POST' && $path eq '/api/vitals/read_all') {
+        return send_json($client, 200, read_all_vitals());
+    }
     if ($method eq 'POST' && $path eq '/api/recognize') {
         return send_json($client, 200, recognize_medicine());
     }
@@ -1301,6 +1304,63 @@ sub read_temperature {
     };
 }
 
+sub read_all_vitals {
+    my $max_script = $ENV{MAX30102_SCRIPT} || '/userdata/medical_assistant/scripts/read_max30102_vitals.pl';
+    my $max_out = $ENV{MAX30102_JSON} || '/userdata/medical_assistant/data/vital_signs.json';
+    my $samples = int($ENV{MAX30102_SAMPLES} || 120);
+    my $max = run_json_sensor(
+        command => 'perl ' . shell_quote($max_script) . ' ' . int($samples) . ' ' . shell_quote($max_out),
+        output => $max_out,
+        timeout => 18,
+        log => "$DATA_DIR/max30102-read-all.log",
+    );
+
+    my $gy_script = $ENV{GY614_SCRIPT} || '/userdata/medical_assistant/scripts/read_gy614_uart4.pl';
+    my $gy_out = $ENV{GY614_JSON} || '/userdata/medical_assistant/data/gy614_temp.json';
+    my $dev = $ENV{GY614_UART} || '/dev/ttyS4';
+    my $gy = run_json_sensor(
+        command => 'perl ' . shell_quote($gy_script) . ' ' . shell_quote($dev) . ' ' . shell_quote($gy_out),
+        output => $gy_out,
+        timeout => 12,
+        log => "$DATA_DIR/gy614-read-all.log",
+    );
+
+    my $max_raw = $max->{data} || {};
+    my $gy_raw = $gy->{data} || {};
+    my $heart_rate = defined $max_raw->{heart_rate_bpm} ? sprintf('%.0f', $max_raw->{heart_rate_bpm}) + 0 : 0;
+    my $spo2 = defined $max_raw->{spo2_percent} ? sprintf('%.0f', $max_raw->{spo2_percent}) + 0 : 0;
+    my $temperature = defined $gy_raw->{body_temp_c} ? sprintf('%.1f', $gy_raw->{body_temp_c}) + 0 : 0;
+
+    add_vitals({
+        temperature => $temperature,
+        heart_rate => $heart_rate,
+        spo2 => $spo2,
+        systolic => 0,
+        diastolic => 0,
+        source => 'MAX30102+GY-614',
+    }) if $max->{ok} || $gy->{ok};
+
+    return {
+        ok => ($max->{ok} || $gy->{ok}) ? JSON::PP::true : JSON::PP::false,
+        vitals => {
+            temperature => $temperature,
+            heart_rate => $heart_rate,
+            spo2 => $spo2,
+            systolic => 0,
+            diastolic => 0,
+            source => 'MAX30102+GY-614',
+            time => now_text(),
+            finger_detected => $max_raw->{finger_detected} ? JSON::PP::true : JSON::PP::false,
+            quality => $max_raw->{quality} || '',
+            message => $max_raw->{message} || '',
+        },
+        sensors => {
+            max30102 => $max,
+            gy614 => $gy,
+        },
+    };
+}
+
 sub run_json_sensor {
     my (%args) = @_;
     my $cmd = $args{command};
@@ -2055,15 +2115,15 @@ sub detect_display_output {
 
 sub detect_camera_device {
     return $ENV{CAMERA_DEVICE} if $ENV{CAMERA_DEVICE};
+    my $usb = detect_usb_camera_device();
+    if ($usb) {
+        write_text_file("$DATA_DIR/camera-device.txt", $usb);
+        return $usb;
+    }
+
     my $cache = "$DATA_DIR/camera-device.txt";
     my $cached = read_file_trim($cache);
     return $cached if $cached && -e $cached;
-
-    my $usb = detect_usb_camera_device();
-    if ($usb) {
-        write_text_file($cache, $usb);
-        return $usb;
-    }
 
     return '/dev/video5' if -e '/dev/video5';
     for my $dev ('/dev/video5', '/dev/video-camera0', '/dev/video14') {
@@ -2084,9 +2144,20 @@ sub detect_usb_camera_device {
     for my $dev (sort glob('/dev/video*')) {
         next if -l $dev;
         next unless -e $dev;
-        return $dev if camera_device_is_uvc($dev);
+        return $dev if camera_device_is_uvc($dev) || camera_device_has_mjpg($dev);
     }
     return '';
+}
+
+sub camera_device_has_mjpg {
+    my ($dev) = @_;
+    return 0 unless $dev && -e $dev;
+    my $quoted = shell_quote($dev);
+    my $formats = `v4l2-ctl -d $quoted --list-formats-ext 2>/dev/null`;
+    return 1 if $formats =~ /'MJPG'/ && $formats =~ /30\.000\s+fps/;
+    my ($base) = $dev =~ m#/([^/]+)$#;
+    my $name = $base ? read_file_trim("/sys/class/video4linux/$base/name") : '';
+    return $name =~ /FF Camera/i && $formats =~ /'MJPG'/ ? 1 : 0;
 }
 
 sub camera_device_is_uvc {
@@ -2094,7 +2165,7 @@ sub camera_device_is_uvc {
     return 0 unless $dev && -e $dev;
     my $quoted = shell_quote($dev);
     my $info = `v4l2-ctl -d $quoted --all 2>/dev/null`;
-    return $info =~ /Driver name\s*:\s*uvcvideo/i ? 1 : 0;
+    return $info =~ /Driver name\s*:\s*uvcvideo/i || camera_device_has_mjpg($dev) ? 1 : 0;
 }
 
 sub camera_capture_cmd {
