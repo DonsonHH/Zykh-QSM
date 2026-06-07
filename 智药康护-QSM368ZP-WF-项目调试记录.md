@@ -4262,3 +4262,138 @@ Go UI:
 设置页已显示音量、网络、北京时间模块。
 AI 页旧内部错误已替换为可读提示。
 ```
+
+### 第二十七步：TTS 中断、ASR 麦克风、气泡错位、药品入库和 Wi-Fi 修复
+
+时间：2026-06-07
+
+用户反馈：
+
+```text
+语音播报播放几秒后报 aplay pcm_write interrupted。
+ASR 没生效，怀疑没识别到麦克风。
+AI 问诊气泡文字有错位。
+拍照识别有效期 OCR 报 JSON 错误，条码显示不全，有效期一直待人工确认。
+自动录入没有判断盒子大小、没有录入数量，柜子状态仍显示空仓。
+设置页 Wi-Fi 没连接到当前正确热点。
+```
+
+修复内容：
+
+```text
+1. TTS：
+   原因是 /api/audio/speak 外层 timeout 只有 20 秒，Qwen TTS 生成耗时也计入其中，导致 aplay 播放长 WAV 时被 timeout 中断。
+   timeout 提升到 90 秒，TTS 文本默认截断到 240 字，避免过长播报。
+
+2. ASR：
+   板端 arecord -l 显示 USB 摄像头自带麦克风为 card 1: FF Camera / USB Audio。
+   record_audio 改为未显式配置 AUDIO_CAPTURE_DEVICE 时优先选择 USB Audio，即 plughw:1,0。
+   录音采样率默认改为 8000Hz，匹配 fun-asr-flash-8k-realtime。
+
+3. AI 气泡：
+   限制单个助手气泡最大高度，按聊天窗口高度计算可显示行数，避免长回复挤出聊天区造成文字错位。
+
+4. 有效期视觉识别：
+   qwen3.6 有时返回带 think/Markdown 代码块的内容，parse_json_content 增强为优先提取 ```json {...}```，并清理 think 标签。
+   当前画面只有条码没有日期时，接口返回 ok:true、found:false、need_user_confirm:true，不再报 JSON 失败。
+
+5. 条码与录入：
+   入库面板条码显示长度从 10 位限制改为 18 位，EAN-13 可完整显示。
+   auto_add_medicine 新增盒型判断和数量估算：
+     - 大盒优先 1-8 大仓
+     - 中盒优先 18-23 中仓
+     - 小盒优先 9-17 小仓
+   stock 小于 1 时强制修正为 1。
+   返回 box_size、slot_kind、stock。
+   Go UI 确认页显示盒型/数量，并增加 年/月/日/数量 的触摸调节按钮。
+   medBySlot 只把 stock>0 的记录显示为占仓，旧 stock=0 记录不再让柜子看起来仍为空或错误占用。
+
+6. Wi-Fi：
+   设置页连接 Wi-Fi 改为使用 /userdata/wifi_primary.conf 主热点文件。
+   已在板端写入主热点配置文件。
+   当前扫描结果没有发现 LAPTOP-BSM79J69 或 LAPTOP-BSM79J69 1593，因此无法实际连上该热点；此前脚本会回退到表情热点，现已避免自动回退。
+```
+
+板端复测：
+
+```text
+/api/audio/speak:
+返回 ok:true, mode:qwen-tts, exit_code:0，未再出现 aplay pcm_write interrupted。
+
+/api/audio/asr:
+recording.device=plughw:1,0
+recording.rate=8000
+录音成功；现场无清晰语音时返回 text:""。
+
+/api/medicine/expiry_vision:
+ok:true, found:false
+detail 表示当前画面仅有条码，未发现日期文字。
+
+/api/medicine/auto_add:
+返回 box_size=medium, slot_kind=中仓, stock=12。
+
+Wi-Fi scan:
+未扫描到 LAPTOP-BSM79J69 / LAPTOP-BSM79J69 1593。
+```
+
+### 第二十八步：Go UI 性能优化与 FF Camera 默认选择修复
+
+时间：2026-06-07
+
+用户反馈：
+
+```text
+Go UI 使用起来不跟手，摄像头页卡顿。
+复测时发现误切到了老摄像头，应使用新 USB 摄像头 FF Camera。
+```
+
+修复内容：
+
+```text
+1. 渲染缓存：
+   Go UI 增加 frameCache，避免每帧重新分配全屏 RGBA。
+   AI 页面加入缓存键，非“思考中”状态不再每帧重画整页聊天记录。
+   摄像头页拆成静态 UI 缓存和动态视频 overlay，静态缓存不再包含旧扫描线。
+
+2. 局部刷新：
+   renderSink 新增 BlitRect 能力。
+   framebuffer、DRM、Wayland 三个显示后端均支持局部刷新。
+   摄像头稳定预览时只刷新视频区域和状态条；toast、触摸反馈、页面切换仍整屏刷新。
+
+3. 文本缓存：
+   中文文本绘制增加位图缓存，最多保留 768 项。
+   主页、AI、设置、药柜等文字密集页面减少重复 font.Drawer 绘制。
+
+4. 摄像头性能：
+   默认预览参数改为 640x480@30 采集、20fps UI 预览。
+   摄像头帧过密时直接丢弃旧帧，只保留最新帧，避免延迟堆积。
+   drawImageCover 改为直接操作 RGBA Pix 数组，减少 SetRGBA/RGBAAt 逐点调用开销。
+   性能日志新增 camera_fps、camera_drop、jpeg_decode_avg_ms。
+
+5. FF Camera：
+   Go UI 直连 GStreamer 不再默认 /dev/video5。
+   未设置 ZYKH_CAMERA_DEVICE 时，自动扫描 /dev/video*：
+     - 优先设备名包含 FF Camera 且支持 MJPG 的节点
+     - 其次任意 MJPG 30fps 摄像头
+     - 最后才回退 /dev/video5
+   启动时自动尝试 focus_automatic_continuous、focus_auto、auto_focus、continuous_auto_focus。
+```
+
+板端复测：
+
+```text
+v4l2-ctl --list-devices:
+FF Camera: FF Camera (usb-xhci-hcd.0.auto-1)
+  /dev/video23
+  /dev/video24
+
+Go UI 自动选择结果：
+/userdata/zykh_app/data/camera-focus.txt
+/dev/video23 focus_auto=1
+
+摄像头页性能：
+优化前老方案约 7-8fps，render_avg_ms 约 85-100ms。
+局部刷新后约 11-13fps，render_avg_ms 约 34-56ms。
+切到 FF Camera 并调整调度后约 15-20fps，render_avg_ms 约 29-41ms。
+FF Camera JPEG 解码平均约 23-27ms，比老摄像头约 38ms 明显更快。
+```

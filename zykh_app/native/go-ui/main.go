@@ -124,6 +124,10 @@ type renderSink interface {
 	Size() (int, int)
 }
 
+type partialRenderSink interface {
+	BlitRect(*image.RGBA, image.Rectangle)
+}
+
 func (fb *framebuffer) Size() (int, int) {
 	return fb.width, fb.height
 }
@@ -244,6 +248,10 @@ func (fb *framebuffer) Close() {
 }
 
 func (fb *framebuffer) Blit(src *image.RGBA) {
+	fb.BlitRect(src, image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
+}
+
+func (fb *framebuffer) BlitRect(src *image.RGBA, rect image.Rectangle) {
 	bpp := int(fb.vari.BitsPerPixel)
 	if bpp != 32 && bpp != 24 && bpp != 16 {
 		return
@@ -252,11 +260,14 @@ func (fb *framebuffer) Blit(src *image.RGBA) {
 	line := int(fb.fix.LineLength)
 	xoff := int(fb.vari.Xoffset)
 	yoff := int(fb.vari.Yoffset)
-	maxY := min(src.Bounds().Dy(), fb.height)
-	maxX := min(src.Bounds().Dx(), fb.width)
-	for y := 0; y < maxY; y++ {
+	bounds := image.Rect(0, 0, min(src.Bounds().Dx(), fb.width), min(src.Bounds().Dy(), fb.height))
+	rect = rect.Intersect(bounds)
+	if rect.Empty() {
+		return
+	}
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
 		rowStart := (y+yoff)*line + xoff*bytesPerPixel
-		for x := 0; x < maxX; x++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
 			i := src.PixOffset(x, y)
 			r, g, b, a := src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3]
 			if a < 255 {
@@ -601,11 +612,18 @@ func (d *drmSink) Close() {
 }
 
 func (d *drmSink) Blit(src *image.RGBA) {
-	maxY := min(src.Bounds().Dy(), d.height)
-	maxX := min(src.Bounds().Dx(), d.width)
-	for y := 0; y < maxY; y++ {
+	d.BlitRect(src, image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
+}
+
+func (d *drmSink) BlitRect(src *image.RGBA, rect image.Rectangle) {
+	bounds := image.Rect(0, 0, min(src.Bounds().Dx(), d.width), min(src.Bounds().Dy(), d.height))
+	rect = rect.Intersect(bounds)
+	if rect.Empty() {
+		return
+	}
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
 		rowStart := y * d.pitch
-		for x := 0; x < maxX; x++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
 			i := src.PixOffset(x, y)
 			r, g, b := src.Pix[i], src.Pix[i+1], src.Pix[i+2]
 			off := rowStart + x*4
@@ -858,19 +876,26 @@ func (w *waylandSink) Close() {
 }
 
 func (w *waylandSink) Blit(src *image.RGBA) {
-	maxY := min(src.Bounds().Dy(), w.height)
-	maxX := min(src.Bounds().Dx(), w.width)
-	for y := 0; y < maxY; y++ {
+	w.BlitRect(src, image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
+}
+
+func (w *waylandSink) BlitRect(src *image.RGBA, rect image.Rectangle) {
+	bounds := image.Rect(0, 0, min(src.Bounds().Dx(), w.width), min(src.Bounds().Dy(), w.height))
+	rect = rect.Intersect(bounds)
+	if rect.Empty() {
+		return
+	}
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
 		srcRow := src.Pix[y*src.Stride:]
 		dstRow := w.mem[y*w.stride:]
-		for x := 0; x < maxX; x++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
 			i := x * 4
 			rgba := *(*uint32)(unsafe.Pointer(&srcRow[i]))
 			*(*uint32)(unsafe.Pointer(&dstRow[i])) = rgbaToXRGB(rgba)
 		}
 	}
 	_ = w.send(w.surface, 1, append(append(u32(w.buffer), i32(0)...), i32(0)...), nil)
-	_ = w.send(w.surface, 9, append(append(append(i32(0), i32(0)...), i32(int32(w.width))...), i32(int32(w.height))...), nil)
+	_ = w.send(w.surface, 9, append(append(append(i32(int32(rect.Min.X)), i32(int32(rect.Min.Y))...), i32(int32(rect.Dx()))...), i32(int32(rect.Dy()))...), nil)
 	_ = w.send(w.surface, 6, nil, nil)
 }
 
@@ -1258,9 +1283,12 @@ type localScanResp struct {
 }
 
 type autoAddResp struct {
-	OK       bool `json:"ok"`
-	Found    bool `json:"found"`
-	Slot     int  `json:"slot"`
+	OK       bool   `json:"ok"`
+	Found    bool   `json:"found"`
+	Slot     int    `json:"slot"`
+	Stock    int    `json:"stock"`
+	BoxSize  string `json:"box_size"`
+	SlotKind string `json:"slot_kind"`
 	Medicine struct {
 		Name       string `json:"name"`
 		Dosage     string `json:"dosage"`
@@ -1575,6 +1603,8 @@ type app struct {
 	cameraPendingName   string
 	cameraPendingExpire string
 	cameraPendingDetail string
+	cameraPendingBox    string
+	cameraPendingStock  int
 	cameraIgnoredCode   string
 	cameraWorkflowStep  string
 	cameraLastScan      time.Time
@@ -1597,6 +1627,14 @@ type app struct {
 	pressUntil          time.Time
 	renderCache         *image.RGBA
 	renderCacheKey      string
+	frameCache          *image.RGBA
+	textCache           map[string]*image.RGBA
+	textCacheOrder      []string
+	renderStaticPass    bool
+	lastPartialBlit     bool
+	lastBlitRect        image.Rectangle
+	cameraDropped       int
+	cameraDecodeAvgMS   float64
 }
 
 type aiMessage struct {
@@ -1623,6 +1661,7 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		fontData:           data,
 		font:               tt,
 		faces:              map[int]font.Face{},
+		textCache:          map[string]*image.RGBA{},
 		page:               getenv("ZYKH_START_PAGE", "home"),
 		pageChanged:        time.Now(),
 		selectedSlot:       1,
@@ -1636,6 +1675,8 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		cameraExpire:       "待识别",
 		cameraAutoScan:     true,
 		cameraWorkflowStep: "barcode",
+		cameraPendingStock: 1,
+		cameraPendingBox:   "small",
 		aiQuestion:         "我早上起来有点头晕，血压有点高，怎么办？",
 		aiReply:            "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
 		aiStatus:           "在线",
@@ -1833,19 +1874,25 @@ func (a *app) render() *image.RGBA {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
-	img := image.NewRGBA(image.Rect(0, 0, a.width, a.height))
-	fillRect(img, 0, 0, a.width, a.height, hex(0xf6fbfb))
+	if a.frameCache == nil || a.frameCache.Bounds().Dx() != a.width || a.frameCache.Bounds().Dy() != a.height {
+		a.frameCache = image.NewRGBA(image.Rect(0, 0, a.width, a.height))
+	}
+	img := a.frameCache
 	cacheKey := a.renderCacheKeyLocked(now)
 	var pageImg *image.RGBA
+	cacheHit := false
 	if cacheKey != "" && a.renderCache != nil && a.renderCacheKey == cacheKey {
 		pageImg = a.renderCache
+		cacheHit = true
 	} else {
 		pageImg = image.NewRGBA(image.Rect(0, 0, a.width, a.height))
 		fillRect(pageImg, 0, 0, a.width, a.height, hex(0xf6fbfb))
 		if a.page == "camera" {
 			frame, running, fps := a.cameraFrame, a.cameraStreamRunning, a.cameraFPS
 			a.cameraFrame, a.cameraStreamRunning, a.cameraFPS = nil, false, 0
+			a.renderStaticPass = true
 			a.renderPage(pageImg)
+			a.renderStaticPass = false
 			a.cameraFrame, a.cameraStreamRunning, a.cameraFPS = frame, running, fps
 		} else {
 			a.renderPage(pageImg)
@@ -1871,15 +1918,26 @@ func (a *app) render() *image.RGBA {
 	if a.page == "camera" && elapsed >= 260*time.Millisecond {
 		a.renderCameraLiveOverlay(img)
 	}
-	if a.message != "" && time.Now().Before(a.messageUntil) {
+	showMessage := a.message != "" && time.Now().Before(a.messageUntil)
+	if showMessage {
 		a.toast(img, a.message)
 	}
 	a.renderTouchFeedback(img)
+	a.lastPartialBlit = a.page == "camera" &&
+		elapsed >= 260*time.Millisecond &&
+		cacheHit &&
+		!showMessage &&
+		now.After(a.pressUntil)
+	if a.lastPartialBlit {
+		a.lastBlitRect = image.Rect(38, 96, 616, 448)
+	} else {
+		a.lastBlitRect = img.Bounds()
+	}
 	return img
 }
 
 func (a *app) renderCacheKeyLocked(now time.Time) string {
-	if a.page == "ai" {
+	if a.page == "ai" && a.aiStatus == "思考中" {
 		return ""
 	}
 	var b strings.Builder
@@ -1902,6 +1960,12 @@ func (a *app) renderCacheKeyLocked(now time.Time) string {
 	for _, p := range a.plans {
 		fmt.Fprintf(&b, "p:%d:%s:%s:%d:%d;", p.ID, p.Time, p.MedicineName, p.Slot, p.Amount)
 	}
+	if a.page == "ai" {
+		fmt.Fprintf(&b, "ai:%s:%s:%d:%s:%d|", a.aiStatus, a.aiVoice, a.aiScroll, a.aiReply, len(a.aiMessages))
+		for _, m := range a.aiMessages {
+			fmt.Fprintf(&b, "am:%s:%s:%s;", m.Role, m.Time, m.Text)
+		}
+	}
 	return b.String()
 }
 
@@ -1915,7 +1979,7 @@ func (a *app) renderCameraLiveOverlay(img *image.RGBA) {
 	if a.cameraFrame != nil {
 		drawImageCover(img, a.cameraFrame, 46, 148, 558, 292)
 	}
-	scanY := 170 + int(time.Now().UnixMilli()/22)%244
+	scanY := 170 + int(time.Now().UnixMilli()/45)%244
 	line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
 	line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
 }
@@ -2450,7 +2514,7 @@ func (a *app) renderCamera(img *image.RGBA) {
 	}
 	a.textRight(img, 608, 122, 16, fpsText, hex(0x008d7d), true)
 	roundRect(img, 42, 144, 566, 300, 10, hex(0x0b1820), hex(0x0b1820), 1)
-	if a.cameraFrame != nil {
+	if !a.renderStaticPass && a.cameraFrame != nil {
 		drawImageCover(img, a.cameraFrame, 46, 148, 558, 292)
 	} else {
 		roundRect(img, 118, 184, 414, 220, 12, hex(0x112b36), hex(0x225e6f), 2)
@@ -2463,9 +2527,11 @@ func (a *app) renderCamera(img *image.RGBA) {
 			line(img, 118, 184+i*73, 532, 184+i*73, hex(0x173b48), 1)
 		}
 	}
-	scanY := 170 + int(time.Now().UnixMilli()/22)%244
-	line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
-	line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
+	if !a.renderStaticPass {
+		scanY := 170 + int(time.Now().UnixMilli()/45)%244
+		line(img, 66, scanY, 584, scanY, hex(0x00d2c3), 2)
+		line(img, 66, scanY+3, 584, scanY+3, hex(0x65efe3), 1)
+	}
 
 	step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
 	stepLabels := []string{"1 扫商品条形码", "2 识别有效期", "3 确认录入"}
@@ -2517,26 +2583,27 @@ func (a *app) renderCamera(img *image.RGBA) {
 	a.cameraGuideStep(img, 672, 266, "3", "确认入柜开仓", "核对药名、日期和仓位，再写入药柜", stepActive, 2)
 
 	panelY := 338
-	roundRect(img, 672, panelY, 308, 154, 10, hex(0xf8fcfc), hex(0xd8e4e9), 1)
+	roundRect(img, 672, panelY, 308, 170, 10, hex(0xf8fcfc), hex(0xd8e4e9), 1)
 	if step == "confirm" && a.cameraPendingAdd {
-		a.text(img, 692, panelY+30, 17, "请确认当前药品", hex(0x142333), true)
-		a.kvColor(img, 692, panelY+58, "药名", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 13), hex(0x142333))
-		a.kvColor(img, 692, panelY+86, "条码", clipText(a.cameraPendingCode, 15), hex(0x405268))
-		a.kvColor(img, 692, panelY+114, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
-		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+"}
+		a.text(img, 692, panelY+24, 16, "请确认当前药品", hex(0x142333), true)
+		a.kvPanel(img, 692, 960, panelY+50, "药名", firstNonEmpty(a.cameraPendingName, "目录未收录"), 13, hex(0x142333))
+		a.kvPanel(img, 692, 960, panelY+76, "条码", a.cameraPendingCode, 18, hex(0x405268))
+		a.kvPanel(img, 692, 960, panelY+102, "有效期", firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12, hex(0xe77800))
+		a.kvPanel(img, 692, 960, panelY+128, "盒型/数量", fmt.Sprintf("%s / %d", boxLabel(a.cameraPendingBox), max(1, a.cameraPendingStock)), 12, hex(0x008d7d))
+		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+", "数-", "数+"}
 		for i, label := range labels {
-			x := 692 + i*47
-			roundRect(img, x, panelY+124, 40, 24, 8, hex(0xfffbf1), hex(0xf0c781), 1)
-			a.textCenter(img, x+20, panelY+141, 13, label, hex(0xd96f00), true)
+			x := 692 + i*34
+			roundRect(img, x, panelY+142, 30, 22, 8, hex(0xfffbf1), hex(0xf0c781), 1)
+			a.textCenter(img, x+15, panelY+158, 11, label, hex(0xd96f00), true)
 		}
 	} else {
-		a.kvColor(img, 692, panelY+30, "药品名称", clipText(a.cameraName, 12), hex(0x142333))
-		a.kvColor(img, 692, panelY+62, "商品条码", clipText(a.cameraCode, 14), hex(0x405268))
-		a.kvColor(img, 692, panelY+94, "有效期", clipText(a.cameraExpire, 12), hex(0xe77800))
-		a.kvColor(img, 692, panelY+126, "建议仓位", "自动选择空仓", hex(0x142333))
+		a.kvPanel(img, 692, 960, panelY+30, "药品名称", a.cameraName, 13, hex(0x142333))
+		a.kvPanel(img, 692, 960, panelY+62, "商品条码", a.cameraCode, 18, hex(0x405268))
+		a.kvPanel(img, 692, 960, panelY+94, "有效期", a.cameraExpire, 12, hex(0xe77800))
+		a.kvPanel(img, 692, 960, panelY+126, "建议仓位", "按盒型自动选择", 12, hex(0x142333))
 	}
 	for i, line := range wrapRunes(a.cameraNote, 18, 1) {
-		a.text(img, 674, 512+i*20, 14, line, hex(0x657586), false)
+		a.text(img, 674, 522+i*18, 13, line, hex(0x657586), false)
 	}
 
 	roundRect(img, 20, 528, 984, 42, 10, hex(0xe8f5f2), hex(0xe8f5f2), 1)
@@ -2616,13 +2683,14 @@ func (a *app) renderChatHistory(img *image.RGBA, x, y, w, h int) {
 	}
 	var visible []bubble
 	used := 0
+	maxAssistantLines := max(6, (h-96)/20)
 	for i := limit - 1; i >= 0; i-- {
 		m := messages[i]
-		lines := markdownLines(m.Text, 22, 18)
+		lines := markdownLines(m.Text, 22, maxAssistantLines)
 		if m.Role == "user" {
 			lines = markdownLines(m.Text, 18, 6)
 		}
-		bh := max(52, 34+len(lines)*22)
+		bh := min(h-54, max(56, 46+len(lines)*20))
 		gap := 12
 		if used+bh+gap > h-42 && len(visible) > 0 {
 			break
@@ -2885,6 +2953,12 @@ func (a *app) kvColor(img *image.RGBA, x, y int, k, v string, c color.RGBA) {
 	line(img, x, y+12, 982, y+12, hex(0xd8e4e9), 1)
 }
 
+func (a *app) kvPanel(img *image.RGBA, x, right, y int, k, v string, maxLen int, c color.RGBA) {
+	a.text(img, x, y, 15, k, hex(0x657586), false)
+	a.textRight(img, right, y, 15, clipText(v, maxLen), c, true)
+	line(img, x, y+10, right, y+10, hex(0xd8e4e9), 1)
+}
+
 func (a *app) toast(img *image.RGBA, msg string) {
 	w := min(680, max(260, 24*len([]rune(msg))))
 	x := (a.width - w) / 2
@@ -2894,7 +2968,7 @@ func (a *app) toast(img *image.RGBA, msg string) {
 
 func (a *app) medBySlot(slot int) *medicine {
 	for i := range a.medicines {
-		if a.medicines[i].Slot == slot {
+		if a.medicines[i].Slot == slot && a.medicines[i].Stock > 0 {
 			return &a.medicines[i]
 		}
 	}
@@ -2999,17 +3073,24 @@ func (a *app) handleTouch(t touchEvent) {
 			adjusts := []struct {
 				x     int
 				delta struct{ y, m, d int }
+				stock int
 			}{
-				{692, struct{ y, m, d int }{-1, 0, 0}},
-				{739, struct{ y, m, d int }{1, 0, 0}},
-				{786, struct{ y, m, d int }{0, -1, 0}},
-				{833, struct{ y, m, d int }{0, 1, 0}},
-				{880, struct{ y, m, d int }{0, 0, -1}},
-				{927, struct{ y, m, d int }{0, 0, 1}},
+				{692, struct{ y, m, d int }{-1, 0, 0}, 0},
+				{726, struct{ y, m, d int }{1, 0, 0}, 0},
+				{760, struct{ y, m, d int }{0, -1, 0}, 0},
+				{794, struct{ y, m, d int }{0, 1, 0}, 0},
+				{828, struct{ y, m, d int }{0, 0, -1}, 0},
+				{862, struct{ y, m, d int }{0, 0, 1}, 0},
+				{896, struct{ y, m, d int }{0, 0, 0}, -1},
+				{930, struct{ y, m, d int }{0, 0, 0}, 1},
 			}
 			for _, adj := range adjusts {
-				if inside(t, adj.x, 462, 40, 24) {
-					a.adjustPendingExpire(adj.delta.y, adj.delta.m, adj.delta.d)
+				if inside(t, adj.x, 480, 30, 22) {
+					if adj.stock != 0 {
+						a.adjustPendingStock(adj.stock)
+					} else {
+						a.adjustPendingExpire(adj.delta.y, adj.delta.m, adj.delta.d)
+					}
 					return
 				}
 			}
@@ -3226,7 +3307,12 @@ func (a *app) connectWifi() {
 	cmd := getenv("ZYKH_WIFI_SCRIPT", "/userdata/medical_assistant/scripts/start_wifi.sh")
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "sh", cmd).CombinedOutput()
+	c := exec.CommandContext(ctx, "sh", cmd)
+	c.Env = append(os.Environ(),
+		"WIFI_PROFILE_FILE=/userdata/wifi_primary.conf",
+		"WIFI_SKIP_SSIDS=964 😋😋😋",
+	)
+	out, err := c.CombinedOutput()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil {
@@ -3471,6 +3557,8 @@ func (a *app) toggleCameraAutoScan() {
 		a.cameraPendingName = ""
 		a.cameraPendingExpire = ""
 		a.cameraPendingDetail = ""
+		a.cameraPendingBox = "small"
+		a.cameraPendingStock = 1
 		a.cameraCode = "待扫描"
 		a.cameraExpire = "待识别"
 		a.cameraMeta = "商品条形码"
@@ -3500,6 +3588,8 @@ func (a *app) clearCameraResult() {
 	a.cameraPendingName = ""
 	a.cameraPendingExpire = ""
 	a.cameraPendingDetail = ""
+	a.cameraPendingBox = "small"
+	a.cameraPendingStock = 1
 	a.cameraIgnoredCode = ""
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
@@ -3514,6 +3604,8 @@ func (a *app) dismissPendingMedicine() {
 	a.cameraPendingName = ""
 	a.cameraPendingExpire = ""
 	a.cameraPendingDetail = ""
+	a.cameraPendingBox = "small"
+	a.cameraPendingStock = 1
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
 	a.cameraStatus = "继续扫条码中"
@@ -3524,6 +3616,8 @@ func (a *app) confirmPendingMedicine() {
 	a.mu.Lock()
 	code := a.cameraPendingCode
 	expire := a.cameraPendingExpire
+	box := firstNonEmpty(a.cameraPendingBox, "small")
+	stock := max(1, a.cameraPendingStock)
 	if !a.cameraPendingAdd || strings.TrimSpace(code) == "" {
 		a.mu.Unlock()
 		return
@@ -3533,7 +3627,7 @@ func (a *app) confirmPendingMedicine() {
 	a.mu.Unlock()
 
 	var add autoAddResp
-	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{"1"}, "expire_date": []string{expire}}, &add)
+	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{strconv.Itoa(stock)}, "expire_date": []string{expire}, "box_size": []string{box}}, &add)
 	var openErr error
 	if err == nil && add.OK && add.Slot > 0 {
 		openErr = a.api.postForm("/api/dispense", url.Values{"slot": []string{strconv.Itoa(add.Slot)}})
@@ -3552,17 +3646,19 @@ func (a *app) confirmPendingMedicine() {
 	a.cameraStatus = "已录入药柜"
 	a.cameraName = firstNonEmpty(add.Medicine.Name, a.cameraPendingName, "未知药品")
 	a.cameraExpire = firstNonEmpty(add.Medicine.ExpireDate, a.cameraPendingExpire, "待确认")
-	a.cameraMeta = fmt.Sprintf("仓位 %02d / 自动识别", add.Slot)
+	a.cameraMeta = fmt.Sprintf("%02d仓 %s / %d件", add.Slot, firstNonEmpty(add.SlotKind, boxLabel(add.BoxSize)), max(stock, add.Stock))
 	if openErr != nil {
 		a.cameraNote = fmt.Sprintf("药品已写入 %02d 仓，但开仓失败：%s", add.Slot, openErr.Error())
 	} else {
-		a.cameraNote = fmt.Sprintf("药品已写入 %02d 仓，并已触发开仓。请把药品放入该仓。", add.Slot)
+		a.cameraNote = fmt.Sprintf("药品已写入 %02d 仓，数量 %d，并已触发开仓。请把药品放入该仓。", add.Slot, max(stock, add.Stock))
 	}
 	a.cameraPendingAdd = false
 	a.cameraPendingCode = ""
 	a.cameraPendingName = ""
 	a.cameraPendingExpire = ""
 	a.cameraPendingDetail = ""
+	a.cameraPendingBox = "small"
+	a.cameraPendingStock = 1
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
 	a.message = "药品已录入药柜"
@@ -3600,6 +3696,14 @@ func (a *app) adjustPendingExpire(years, months, days int) {
 	a.cameraNote = "已手动调整有效期，请核对无误后录入药柜。"
 }
 
+func (a *app) adjustPendingStock(delta int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cameraPendingStock = min(999, max(1, a.cameraPendingStock+delta))
+	a.cameraStatus = "请确认数量"
+	a.cameraNote = "已调整入柜数量，请核对后录入药柜。"
+}
+
 func parseUIDate(s string) time.Time {
 	s = strings.TrimSpace(s)
 	layouts := []string{"2006-01-02", "2006/01/02", "2006.01.02", "20060102"}
@@ -3609,6 +3713,57 @@ func parseUIDate(s string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+func boxLabel(box string) string {
+	switch strings.ToLower(strings.TrimSpace(box)) {
+	case "large":
+		return "大盒"
+	case "medium":
+		return "中盒"
+	default:
+		return "小盒"
+	}
+}
+
+func estimateBoxSize(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.Contains(text, "瓶") || strings.Contains(text, "口服液") || strings.Contains(text, "颗粒") || strings.Contains(text, "糖浆") || strings.Contains(text, "100片") || strings.Contains(text, "100粒") {
+		return "large"
+	}
+	if strings.Contains(text, "胶囊") || strings.Contains(text, "盒") || strings.Contains(text, "板") || strings.Contains(text, "24片") || strings.Contains(text, "24粒") || strings.Contains(text, "36片") || strings.Contains(text, "36粒") {
+		return "medium"
+	}
+	return "small"
+}
+
+func estimateStockCount(text string) int {
+	for _, unit := range []string{"片", "粒", "袋", "支", "贴", "瓶", "板"} {
+		if n := numberBeforeUnit(text, unit); n > 0 {
+			return min(999, n)
+		}
+	}
+	return 1
+}
+
+func numberBeforeUnit(text, unit string) int {
+	r := []rune(text)
+	u := []rune(unit)
+	for i := 0; i < len(r); i++ {
+		if i+len(u) > len(r) || string(r[i:i+len(u)]) != unit {
+			continue
+		}
+		j := i - 1
+		for j >= 0 && r[j] >= '0' && r[j] <= '9' {
+			j--
+		}
+		if j+1 < i {
+			if n, err := strconv.Atoi(string(r[j+1 : i])); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func (a *app) recognizeExpiryDate() {
@@ -3997,11 +4152,19 @@ func (a *app) startCameraStream() {
 }
 
 func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
-	width := getenv("ZYKH_CAMERA_WIDTH", "800")
-	height := getenv("ZYKH_CAMERA_HEIGHT", "600")
+	width := getenv("ZYKH_CAMERA_WIDTH", "640")
+	height := getenv("ZYKH_CAMERA_HEIGHT", "480")
 	fps := getenv("ZYKH_CAMERA_FPS", "30")
 	quality := getenv("ZYKH_CAMERA_QUALITY", "60")
-	device := getenv("ZYKH_CAMERA_DEVICE", "/dev/video5")
+	previewFPS := getenv("ZYKH_CAMERA_PREVIEW_FPS", "20")
+	device := strings.TrimSpace(os.Getenv("ZYKH_CAMERA_DEVICE"))
+	if device == "" {
+		device = detectPreferredCameraDevice()
+	}
+	if device == "" {
+		device = "/dev/video5"
+	}
+	configureCameraFocus(device)
 	args := []string{"-q", "v4l2src", "device=" + device}
 	if cameraDeviceIsUVC(device) {
 		mjpegCaps := fmt.Sprintf("image/jpeg,width=%s,height=%s,framerate=%s/1", width, height, fps)
@@ -4027,30 +4190,30 @@ func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
 	a.setCameraStreamNote(fmt.Sprintf("直连 GStreamer %s %sx%s@%sfps。第一步请对准商品条形码。", filepath.Base(device), width, height, fps))
 	frameCount := 0
 	tick := time.Now()
-	fpsN, err := strconv.Atoi(fps)
+	fpsN, err := strconv.Atoi(previewFPS)
 	if err != nil || fpsN <= 0 {
+		fpsN = 20
+	}
+	if fpsN > 30 {
 		fpsN = 30
 	}
 	minInterval := time.Second / time.Duration(fpsN)
 	lastDecode := time.Time{}
+	dropped := 0
 	readErr := readJPEGStream(ctx, stdout, func(frame []byte) {
 		now := time.Now()
 		if !lastDecode.IsZero() && now.Sub(lastDecode) < minInterval {
-			sleepFor := minInterval - now.Sub(lastDecode)
-			timer := time.NewTimer(sleepFor)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
+			dropped++
+			a.updateCameraDrop(dropped)
+			return
 		}
-		lastDecode = time.Now()
+		lastDecode = now
+		decodeStart := time.Now()
 		img, err := jpeg.Decode(bytes.NewReader(frame))
 		if err != nil {
 			return
 		}
-		a.acceptCameraImage(frame, img, &frameCount, &tick)
+		a.acceptCameraImage(frame, img, time.Since(decodeStart), &frameCount, &tick)
 	})
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
@@ -4085,6 +4248,62 @@ func cameraDeviceIsUVC(device string) bool {
 	return strings.Contains(text, "'MJPG'") && strings.Contains(text, "30.000 fps")
 }
 
+func detectPreferredCameraDevice() string {
+	devs, err := filepath.Glob("/dev/video*")
+	if err != nil {
+		return ""
+	}
+	var mjpg string
+	for _, dev := range devs {
+		if info, err := os.Lstat(dev); err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		name := cameraDeviceName(dev)
+		hasMJPG := cameraDeviceHasMJPG(dev)
+		if strings.Contains(strings.ToLower(name), "ff camera") && hasMJPG {
+			return dev
+		}
+		if mjpg == "" && hasMJPG {
+			mjpg = dev
+		}
+	}
+	return mjpg
+}
+
+func cameraDeviceName(dev string) string {
+	base := filepath.Base(dev)
+	raw, err := os.ReadFile(filepath.Join("/sys/class/video4linux", base, "name"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func cameraDeviceHasMJPG(device string) bool {
+	formats, err := exec.Command("v4l2-ctl", "-d", device, "--list-formats-ext").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	text := string(formats)
+	return strings.Contains(text, "'MJPG'") && (strings.Contains(text, "30.000 fps") || strings.Contains(strings.ToLower(cameraDeviceName(device)), "ff camera"))
+}
+
+func configureCameraFocus(device string) {
+	ctrls, err := exec.Command("v4l2-ctl", "-d", device, "--list-ctrls").CombinedOutput()
+	if err != nil {
+		return
+	}
+	text := string(ctrls)
+	for _, name := range []string{"focus_automatic_continuous", "focus_auto", "auto_focus", "continuous_auto_focus"} {
+		if strings.Contains(text, name) {
+			_ = exec.Command("v4l2-ctl", "-d", device, "--set-ctrl="+name+"=1").Run()
+			_ = os.WriteFile("/userdata/zykh_app/data/camera-focus.txt", []byte(device+" "+name+"=1\n"), 0644)
+			return
+		}
+	}
+	_ = os.WriteFile("/userdata/zykh_app/data/camera-focus.txt", []byte(device+" fixed-focus-or-no-autofocus\n"), 0644)
+}
+
 func gstElementExists(name string) bool {
 	if strings.TrimSpace(name) == "" {
 		return false
@@ -4093,7 +4312,7 @@ func gstElementExists(name string) bool {
 }
 
 func (a *app) streamCameraFromHTTP(ctx context.Context) {
-	streamURL := a.api.base + "/api/camera/stream?width=800&height=600&fps=20&quality=70"
+	streamURL := a.api.base + "/api/camera/stream?width=640&height=480&fps=20&quality=65"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
 	if err != nil {
 		a.setCameraStreamError(err)
@@ -4134,11 +4353,11 @@ func (a *app) streamCameraFromHTTP(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		a.acceptCameraImage(nil, img, &frameCount, &tick)
+		a.acceptCameraImage(nil, img, 0, &frameCount, &tick)
 	}
 }
 
-func (a *app) acceptCameraImage(jpg []byte, img image.Image, frameCount *int, tick *time.Time) {
+func (a *app) acceptCameraImage(jpg []byte, img image.Image, decodeCost time.Duration, frameCount *int, tick *time.Time) {
 	rgba := image.NewRGBA(img.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
 	*frameCount = *frameCount + 1
@@ -4159,6 +4378,14 @@ func (a *app) acceptCameraImage(jpg []byte, img image.Image, frameCount *int, ti
 	}
 	a.cameraFrame = rgba
 	a.cameraFrameAt = now
+	if decodeCost > 0 {
+		ms := float64(decodeCost.Microseconds()) / 1000.0
+		if a.cameraDecodeAvgMS <= 0 {
+			a.cameraDecodeAvgMS = ms
+		} else {
+			a.cameraDecodeAvgMS = a.cameraDecodeAvgMS*0.85 + ms*0.15
+		}
+	}
 	if len(jpg) > 0 {
 		a.cameraJPEG = append(a.cameraJPEG[:0], jpg...)
 		a.cameraJPEGAt = now
@@ -4166,6 +4393,14 @@ func (a *app) acceptCameraImage(jpg []byte, img image.Image, frameCount *int, ti
 	if a.cameraStatus == "预览已停止" || a.cameraStatus == "实时预览准备中" {
 		a.cameraStatus = "实时预览中"
 	}
+}
+
+func (a *app) updateCameraDrop(dropped int) {
+	if !a.mu.TryLock() {
+		return
+	}
+	a.cameraDropped = dropped
+	a.mu.Unlock()
 }
 
 func (a *app) autoScanCameraLoop(ctx context.Context) {
@@ -4245,6 +4480,8 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	a.cameraPendingCode = code
 	a.cameraPendingName = "目录查询中"
 	a.cameraPendingExpire = "待查询"
+	a.cameraPendingBox = "small"
+	a.cameraPendingStock = 1
 	a.cameraWorkflowStep = "expiry"
 	a.cameraStatus = "条码已识别"
 	a.cameraCode = code
@@ -4277,6 +4514,8 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	a.cameraPendingName = lookup.Medicine.Name
 	a.cameraPendingExpire = lookup.Medicine.ExpireDate
 	a.cameraPendingDetail = lookup.Medicine.Dosage
+	a.cameraPendingBox = estimateBoxSize(lookup.Medicine.Name + " " + lookup.Medicine.Dosage)
+	a.cameraPendingStock = estimateStockCount(lookup.Medicine.Dosage)
 	a.cameraName = lookup.Medicine.Name
 	a.cameraExpire = lookup.Medicine.ExpireDate
 	if lookup.Source == "showapi" {
@@ -4320,12 +4559,15 @@ func (a *app) setCameraStreamNote(note string) {
 }
 
 func (a *app) text(img *image.RGBA, x, y, size int, s string, c color.RGBA, bold bool) {
-	if bold {
-		drawString(img, a.face(size), x, y, s, c)
-		drawString(img, a.face(size), x+1, y, s, c)
+	if s == "" {
 		return
 	}
-	drawString(img, a.face(size), x, y, s, c)
+	if cached := a.cachedTextImage(size, s, c, bold); cached != nil {
+		baseline := size + 4
+		draw.Draw(img, image.Rect(x, y-baseline, x+cached.Bounds().Dx(), y-baseline+cached.Bounds().Dy()), cached, image.Point{}, draw.Over)
+		return
+	}
+	a.drawTextSlow(img, x, y, size, s, c, bold)
 }
 
 func (a *app) textCenter(img *image.RGBA, x, y, size int, s string, c color.RGBA, bold bool) {
@@ -4341,6 +4583,39 @@ func (a *app) textRight(img *image.RGBA, x, y, size int, s string, c color.RGBA,
 func (a *app) textWidth(size int, s string) int {
 	d := &font.Drawer{Face: a.face(size)}
 	return (d.MeasureString(s) + fixed.I(1)).Ceil()
+}
+
+func (a *app) cachedTextImage(size int, s string, c color.RGBA, bold bool) *image.RGBA {
+	if len([]rune(s)) > 96 {
+		return nil
+	}
+	key := fmt.Sprintf("%d:%t:%02x%02x%02x%02x:%s", size, bold, c.R, c.G, c.B, c.A, s)
+	if img, ok := a.textCache[key]; ok {
+		return img
+	}
+	w := max(1, a.textWidth(size, s)+3)
+	h := max(1, size*2+8)
+	baseline := size + 4
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	a.drawTextSlow(img, 0, baseline, size, s, c, bold)
+	if len(a.textCacheOrder) >= 768 {
+		old := a.textCacheOrder[0]
+		delete(a.textCache, old)
+		copy(a.textCacheOrder, a.textCacheOrder[1:])
+		a.textCacheOrder = a.textCacheOrder[:len(a.textCacheOrder)-1]
+	}
+	a.textCache[key] = img
+	a.textCacheOrder = append(a.textCacheOrder, key)
+	return img
+}
+
+func (a *app) drawTextSlow(img *image.RGBA, x, y, size int, s string, c color.RGBA, bold bool) {
+	if bold {
+		drawString(img, a.face(size), x, y, s, c)
+		drawString(img, a.face(size), x+1, y, s, c)
+		return
+	}
+	drawString(img, a.face(size), x, y, s, c)
 }
 
 func drawString(img *image.RGBA, face font.Face, x, y int, s string, c color.RGBA) {
@@ -4625,9 +4900,12 @@ func drawImageCover(dst *image.RGBA, src *image.RGBA, x, y, w, h int) {
 	for yy := rect.Min.Y; yy < rect.Max.Y; yy++ {
 		sy := sb.Min.Y + min(sh-1, max(0, startY>>16))
 		sxFixed := startX
+		dstOff := dst.PixOffset(rect.Min.X, yy)
 		for xx := rect.Min.X; xx < rect.Max.X; xx++ {
 			sx := sb.Min.X + min(sw-1, max(0, sxFixed>>16))
-			dst.SetRGBA(xx, yy, src.RGBAAt(sx, sy))
+			srcOff := src.PixOffset(sx, sy)
+			copy(dst.Pix[dstOff:dstOff+4], src.Pix[srcOff:srcOff+4])
+			dstOff += 4
 			sxFixed += invScale
 		}
 		startY += invScale
@@ -4802,11 +5080,14 @@ func (a *app) frameInterval() time.Duration {
 	}
 	switch a.page {
 	case "camera":
-		return 5 * time.Millisecond
+		return 20 * time.Millisecond
 	case "ai":
-		return 80 * time.Millisecond
+		if a.aiStatus == "思考中" {
+			return 80 * time.Millisecond
+		}
+		return 700 * time.Millisecond
 	default:
-		return 160 * time.Millisecond
+		return 1000 * time.Millisecond
 	}
 }
 
@@ -4816,13 +5097,34 @@ func (a *app) currentPage() string {
 	return a.page
 }
 
+func (a *app) renderPerfState() (string, int, int, float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.page, a.cameraFPS, a.cameraDropped, a.cameraDecodeAvgMS
+}
+
+func (a *app) lastBlitPreference() (image.Rectangle, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lastBlitRect, a.lastPartialBlit
+}
+
 func newRenderLoopLogger(ui *app, sink renderSink) func() {
 	var frames int
 	var total time.Duration
 	last := time.Now()
 	return func() {
 		start := time.Now()
-		sink.Blit(ui.render())
+		img := ui.render()
+		if ps, ok := sink.(partialRenderSink); ok {
+			if rect, partial := ui.lastBlitPreference(); partial {
+				ps.BlitRect(img, rect)
+			} else {
+				sink.Blit(img)
+			}
+		} else {
+			sink.Blit(img)
+		}
 		cost := time.Since(start)
 		frames++
 		total += cost
@@ -4832,7 +5134,12 @@ func newRenderLoopLogger(ui *app, sink renderSink) func() {
 			if frames > 0 {
 				avg = float64(total.Microseconds()) / float64(frames) / 1000.0
 			}
-			fmt.Fprintf(os.Stderr, "render_fps=%d render_avg_ms=%.1f page=%s\n", frames, avg, ui.currentPage())
+			page, camFPS, camDrop, camDecode := ui.renderPerfState()
+			if page == "camera" {
+				fmt.Fprintf(os.Stderr, "render_fps=%d render_avg_ms=%.1f page=%s camera_fps=%d camera_drop=%d jpeg_decode_avg_ms=%.1f\n", frames, avg, page, camFPS, camDrop, camDecode)
+			} else {
+				fmt.Fprintf(os.Stderr, "render_fps=%d render_avg_ms=%.1f page=%s\n", frames, avg, page)
+			}
 			frames = 0
 			total = 0
 			last = now

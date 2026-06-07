@@ -522,14 +522,16 @@ sub auto_add_medicine {
     return $lookup unless $lookup->{ok};
     return $lookup unless $lookup->{found};
     my $m = $lookup->{medicine};
-    my $slot = int($p->{slot} || first_empty_slot());
-    my $stock = int($p->{stock} || 1);
+    my $box_size = normalize_box_size($p->{box_size} || suggest_box_size($m));
+    my $slot = int($p->{slot} || first_empty_slot($box_size));
+    my $stock = int($p->{stock} || estimate_stock($m) || 1);
+    $stock = 1 if $stock < 1;
     my $expire = trim($p->{expire_date} || $m->{expire_date} || '');
     $m->{expire_date} = $expire if $expire ne '';
     sqlite_exec('INSERT INTO medicines(name,slot,dosage,stock,expire_date,created_at) VALUES (' .
         join(',', map { sql_quote($_) } ($m->{name}, $slot, $m->{dosage}, $stock, $expire, now_text())) . ');');
     add_record($m->{name}, $slot, 'medicine_auto_add', 'success', '商品条码自动录入：' . ($m->{code} || $m->{trace_code} || ''));
-    return { ok => JSON::PP::true, found => JSON::PP::true, medicine => $m, slot => $slot, medicines => list_medicines() };
+    return { ok => JSON::PP::true, found => JSON::PP::true, medicine => $m, slot => $slot, stock => $stock, box_size => $box_size, slot_kind => slot_kind($slot), medicines => list_medicines() };
 }
 
 sub scan_medicine_code {
@@ -896,13 +898,26 @@ sub qwen_vision_from_image {
 sub parse_json_content {
     my ($s) = @_;
     $s = trim($s || '');
+    $s =~ s{<think>.*?</think>}{}gis;
+    $s =~ s{</think>}{}gi;
+    if ($s =~ /```(?:json)?\s*(\{.*?\})\s*```/is) {
+        my $obj = eval { JSON::PP->new->utf8(0)->decode($1) };
+        return $obj if $obj;
+    }
     $s =~ s/^```(?:json)?\s*//i;
     $s =~ s/\s*```$//;
     my $obj = eval { JSON::PP->new->utf8(0)->decode($s) };
     return $obj if $obj;
-    if ($s =~ /(\{.*\})/s) {
-        $obj = eval { JSON::PP->new->utf8(0)->decode($1) };
-        return $obj if $obj;
+    my @starts;
+    while ($s =~ /\{/g) {
+        push @starts, pos($s) - 1;
+    }
+    for my $start (reverse @starts) {
+        my $candidate = substr($s, $start);
+        if ($candidate =~ /(\{.*?\})/s) {
+            $obj = eval { JSON::PP->new->utf8(0)->decode($1) };
+            return $obj if $obj;
+        }
     }
     return undef;
 }
@@ -961,11 +976,54 @@ sub decode_medicine_image {
 }
 
 sub first_empty_slot {
-    my %used = map { $_->{slot} => 1 } @{list_medicines()};
-    for my $slot (1..23) {
+    my ($box_size) = @_;
+    $box_size = normalize_box_size($box_size || '');
+    my %used = map { $_->{stock} > 0 ? ($_->{slot} => 1) : () } @{list_medicines()};
+    my @order = slot_order_for_size($box_size);
+    for my $slot (@order) {
         return $slot unless $used{$slot};
     }
     return 23;
+}
+
+sub slot_order_for_size {
+    my ($box_size) = @_;
+    return (1..8, 18..23, 9..17) if $box_size eq 'large';
+    return (18..23, 1..8, 9..17) if $box_size eq 'medium';
+    return (9..17, 18..23, 1..8);
+}
+
+sub slot_kind {
+    my ($slot) = @_;
+    return '大仓' if $slot >= 1 && $slot <= 8;
+    return '小仓' if $slot >= 9 && $slot <= 17;
+    return '中仓' if $slot >= 18 && $slot <= 23;
+    return '未知';
+}
+
+sub normalize_box_size {
+    my ($s) = @_;
+    $s = lc trim($s || '');
+    return 'large' if $s =~ /^(large|big|大|大仓)$/;
+    return 'medium' if $s =~ /^(medium|mid|中|中仓)$/;
+    return 'small';
+}
+
+sub suggest_box_size {
+    my ($m) = @_;
+    my $text = join(' ', map { $m->{$_} || '' } qw(name dosage note manufacturer));
+    return 'large' if $text =~ /(瓶|罐|口服液|颗粒|糖浆|喷雾|贴|大盒|家庭装|100\s*(?:片|粒|袋))/u;
+    return 'medium' if $text =~ /(胶囊|胶囊剂|盒|板|24\s*(?:片|粒)|36\s*(?:片|粒)|48\s*(?:片|粒))/u;
+    return 'small';
+}
+
+sub estimate_stock {
+    my ($m) = @_;
+    my $text = join(' ', map { $m->{$_} || '' } qw(dosage note name));
+    if ($text =~ /(\d{1,3})\s*(?:片|粒|丸|袋|支|贴|瓶|板)/u) {
+        return $1 + 0;
+    }
+    return 1;
 }
 
 sub normalize_code {
@@ -989,8 +1047,9 @@ sub record_audio {
     my $log = "$DATA_DIR/audio-record.log";
     unlink $out if -e $out;
 
-    my $device = $ENV{AUDIO_CAPTURE_DEVICE} || 'plughw:0,0';
-    my $cmd = 'arecord -q -D ' . shell_quote($device) . ' -f S16_LE -r 16000 -c 1 -d ' . int($duration) . ' ' . shell_quote($out);
+    my $device = capture_audio_device();
+    my $rate = int($ENV{ASR_RECORD_RATE} || 8000);
+    my $cmd = 'arecord -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c 1 -d ' . int($duration) . ' ' . shell_quote($out);
     my $run = $cmd . ' >' . shell_quote($log) . ' 2>&1';
     my $rc;
     {
@@ -1004,6 +1063,7 @@ sub record_audio {
             file => "$dir/last-question.wav",
             duration => $duration,
             device => $device,
+            rate => $rate,
             detail => '麦克风录音完成。',
             exit_code => $exit,
         };
@@ -1016,6 +1076,15 @@ sub record_audio {
         command => $cmd,
         exit_code => $exit,
     };
+}
+
+sub capture_audio_device {
+    return $ENV{AUDIO_CAPTURE_DEVICE} if trim($ENV{AUDIO_CAPTURE_DEVICE} || '') ne '';
+    my $cards = `arecord -l 2>/dev/null`;
+    if ($cards =~ /card\s+(\d+):\s+Camera\b/i || $cards =~ /card\s+(\d+):.*USB Audio/i) {
+        return 'plughw:' . $1 . ',0';
+    }
+    return 'plughw:0,0';
 }
 
 sub audio_asr {
@@ -1074,7 +1143,7 @@ sub speak_text {
     my ($p) = @_;
     my $text = trim($p->{text} || '');
     return { ok => JSON::PP::false, error => '播报文本为空' } if $text eq '';
-    $text = substr($text, 0, 500);
+    $text = substr($text, 0, int($ENV{TTS_MAX_CHARS} || 240));
 
     my $dir = "$DATA_DIR/audio";
     make_path($dir) unless -d $dir;
@@ -1116,7 +1185,7 @@ sub speak_text {
     my $rc;
     {
         local $SIG{CHLD} = 'DEFAULT';
-        $rc = system('timeout', '20', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+        $rc = system('timeout', int($ENV{TTS_TIMEOUT} || 90), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
     }
     my $exit = $rc == -1 ? -1 : ($rc >> 8);
     my $ok = $exit == 0 ? JSON::PP::true : JSON::PP::false;
