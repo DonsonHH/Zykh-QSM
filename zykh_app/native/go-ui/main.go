@@ -1316,6 +1316,15 @@ type visualRecognizeResp struct {
 	Detail   string `json:"detail"`
 	Raw      string `json:"raw"`
 	Error    string `json:"error"`
+	Result   struct {
+		MedicineName   string   `json:"medicine_name"`
+		Manufacturer   string   `json:"manufacturer"`
+		Spec           string   `json:"spec"`
+		Approval       string   `json:"approval"`
+		ExpiryDate     string   `json:"expiry_date"`
+		Detail         string   `json:"detail"`
+		CodeCandidates []string `json:"code_candidates"`
+	} `json:"result"`
 	Medicine struct {
 		Name       string  `json:"name"`
 		Confidence float64 `json:"confidence"`
@@ -2580,18 +2589,18 @@ func (a *app) renderCamera(img *image.RGBA) {
 		a.text(img, 692, panelY+24, 16, "请确认当前药品", hex(0x142333), true)
 		a.kvPanel(img, 692, 960, panelY+50, "药名", firstNonEmpty(a.cameraPendingName, "目录未收录"), 13, hex(0x142333))
 		a.kvPanel(img, 692, 960, panelY+76, "条码", a.cameraPendingCode, 18, hex(0x405268))
-		a.kvPanel(img, 692, 960, panelY+102, "有效期", firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12, hex(0xe77800))
+		a.text(img, 692, panelY+102, 13, "EXP", hex(0x657586), false)
+		a.text(img, 742, panelY+102, 13, clipText(firstNonEmpty(a.cameraPendingExpire, "manual"), 16), hex(0xe77800), true)
 		slot := a.cameraPendingSlot
 		if slot <= 0 {
 			slot = a.suggestSlotForBox(a.cameraPendingBox)
 		}
-		a.kvPanel(img, 692, 960, panelY+128, "仓位/盒型/数量", fmt.Sprintf("%02d仓 / %s / %d", slot, boxLabel(a.cameraPendingBox), max(1, a.cameraPendingStock)), 14, hex(0x008d7d))
-		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+", "数-", "数+", "仓-", "仓+"}
-		for i, label := range labels {
-			x := 692 + i*29
-			roundRect(img, x, panelY+142, 26, 22, 8, hex(0xfffbf1), hex(0xf0c781), 1)
-			a.textCenter(img, x+13, panelY+158, 10, label, hex(0xd96f00), true)
-		}
+		a.cameraStepper(img, 692, panelY+116, "SLOT", fmt.Sprintf("%02d", slot), hex(0xe7f8f4), hex(0x008d7d))
+		a.cameraStepper(img, 692, panelY+152, "QTY", fmt.Sprintf("%d", max(1, a.cameraPendingStock)), hex(0xfffbf1), hex(0xd96f00))
+		a.text(img, 842, panelY+138, 12, "BOX "+boxLabel(a.cameraPendingBox), hex(0x657586), true)
+		a.text(img, 842, panelY+171, 12, "EXP month", hex(0x8fa0b2), false)
+		a.miniAdjustButton(img, 908, panelY+150, "M-", hex(0xf4f9ff), hex(0x1c66d4))
+		a.miniAdjustButton(img, 944, panelY+150, "M+", hex(0xf4f9ff), hex(0x1c66d4))
 	} else {
 		a.kvPanel(img, 692, 960, panelY+30, "药品名称", a.cameraName, 13, hex(0x142333))
 		a.kvPanel(img, 692, 960, panelY+62, "商品条码", a.cameraCode, 18, hex(0x405268))
@@ -2955,6 +2964,21 @@ func (a *app) kvPanel(img *image.RGBA, x, right, y int, k, v string, maxLen int,
 	line(img, x, y+10, right, y+10, hex(0xd8e4e9), 1)
 }
 
+func (a *app) cameraStepper(img *image.RGBA, x, y int, label, value string, bg, fg color.RGBA) {
+	a.text(img, x, y+20, 13, label, hex(0x657586), true)
+	roundRect(img, x+54, y, 38, 30, 10, bg, fg, 1)
+	a.textCenter(img, x+73, y+21, 18, "-", fg, true)
+	roundRect(img, x+98, y, 54, 30, 10, hex(0xffffff), hex(0xd8e4e9), 1)
+	a.textCenter(img, x+125, y+21, 16, value, hex(0x142333), true)
+	roundRect(img, x+158, y, 38, 30, 10, bg, fg, 1)
+	a.textCenter(img, x+177, y+21, 18, "+", fg, true)
+}
+
+func (a *app) miniAdjustButton(img *image.RGBA, x, y int, label string, bg, fg color.RGBA) {
+	roundRect(img, x, y, 32, 28, 9, bg, fg, 1)
+	a.textCenter(img, x+16, y+19, 12, label, fg, true)
+}
+
 func (a *app) toast(img *image.RGBA, msg string) {
 	w := min(680, max(260, 24*len([]rune(msg))))
 	x := (a.width - w) / 2
@@ -3066,34 +3090,29 @@ func (a *app) handleTouch(t touchEvent) {
 		step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
 		a.mu.Unlock()
 		if step == "confirm" && pending {
-			adjusts := []struct {
-				x     int
-				delta struct{ y, m, d int }
-				stock int
-				slot  int
-			}{
-				{692, struct{ y, m, d int }{-1, 0, 0}, 0, 0},
-				{721, struct{ y, m, d int }{1, 0, 0}, 0, 0},
-				{750, struct{ y, m, d int }{0, -1, 0}, 0, 0},
-				{779, struct{ y, m, d int }{0, 1, 0}, 0, 0},
-				{808, struct{ y, m, d int }{0, 0, -1}, 0, 0},
-				{837, struct{ y, m, d int }{0, 0, 1}, 0, 0},
-				{866, struct{ y, m, d int }{0, 0, 0}, -1, 0},
-				{895, struct{ y, m, d int }{0, 0, 0}, 1, 0},
-				{924, struct{ y, m, d int }{0, 0, 0}, 0, -1},
-				{953, struct{ y, m, d int }{0, 0, 0}, 0, 1},
+			if inside(t, 746, 454, 38, 30) {
+				a.adjustPendingSlot(-1)
+				return
 			}
-			for _, adj := range adjusts {
-				if inside(t, adj.x, 480, 26, 22) {
-					if adj.stock != 0 {
-						a.adjustPendingStock(adj.stock)
-					} else if adj.slot != 0 {
-						a.adjustPendingSlot(adj.slot)
-					} else {
-						a.adjustPendingExpire(adj.delta.y, adj.delta.m, adj.delta.d)
-					}
-					return
-				}
+			if inside(t, 850, 454, 38, 30) {
+				a.adjustPendingSlot(1)
+				return
+			}
+			if inside(t, 746, 490, 38, 30) {
+				a.adjustPendingStock(-1)
+				return
+			}
+			if inside(t, 850, 490, 38, 30) {
+				a.adjustPendingStock(1)
+				return
+			}
+			if inside(t, 908, 488, 32, 28) {
+				a.adjustPendingExpire(0, -1, 0)
+				return
+			}
+			if inside(t, 944, 488, 32, 28) {
+				a.adjustPendingExpire(0, 1, 0)
+				return
 			}
 		}
 		if inside(t, 42, 484, 168, 38) {
@@ -3918,6 +3937,54 @@ func (a *app) visualRecognizeMedicine() {
 	a.cameraNote = "已完成药盒外观识别，请核对后再录入药柜。"
 }
 
+func (a *app) enrichPendingMedicineByVision() {
+	a.stopCameraStream()
+	a.mu.Lock()
+	code := a.cameraPendingCode
+	a.cameraStatus = "视觉补全中"
+	a.cameraNote = "条码未收录，正在用 Qwen 视觉识别药盒名称、厂家、规格和可见有效期。"
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		onCameraPage := a.page == "camera"
+		a.mu.Unlock()
+		if onCameraPage {
+			go a.startCameraStream()
+		}
+	}()
+
+	var resp visualRecognizeResp
+	err := a.api.postFormJSON("/api/medicine/visual_recognize", url.Values{}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if code != "" && a.cameraPendingCode != code {
+		return
+	}
+	a.cameraPendingAdd = true
+	a.cameraWorkflowStep = "confirm"
+	if err != nil || !resp.OK || !resp.Found {
+		a.cameraPendingName = firstNonEmpty(a.cameraPendingName, "待确认药品("+code+")")
+		a.cameraName = a.cameraPendingName
+		a.cameraStatus = "等待用户确认"
+		a.cameraNote = firstNonEmpty(resp.Detail, resp.Error, errText(err), "Qwen 未识别出稳定药名，请核对条码和药盒后确认。")
+		return
+	}
+	name := firstNonEmpty(resp.Result.MedicineName, resp.Medicine.Name, a.cameraPendingName, "待确认药品("+code+")")
+	spec := firstNonEmpty(resp.Result.Spec, a.cameraPendingDetail)
+	expire := firstNonEmpty(resp.Result.ExpiryDate, a.cameraPendingExpire)
+	a.cameraPendingName = name
+	a.cameraPendingDetail = spec
+	a.cameraPendingExpire = expire
+	a.cameraPendingBox = estimateBoxSize(name + " " + spec + " " + resp.Result.Detail)
+	a.cameraPendingStock = max(1, estimateStockCount(spec))
+	a.cameraPendingSlot = a.suggestSlotForBox(a.cameraPendingBox)
+	a.cameraName = name
+	a.cameraExpire = expire
+	a.cameraMeta = firstNonEmpty(resp.Source, "qwen3.6-flash")
+	a.cameraStatus = "等待确认入柜"
+	a.cameraNote = firstNonEmpty(resp.Result.Detail, resp.Detail, "Qwen 已补全药盒信息，请核对名称、有效期、数量和仓位后确认。")
+}
+
 func (a *app) askAI(question string) {
 	a.mu.Lock()
 	a.aiQuestion = question
@@ -4568,7 +4635,8 @@ func (a *app) onAutoCodeDetected(code, format string) {
 		a.cameraPendingDetail = lookup.Detail
 		a.cameraName = "待人工核对"
 		a.cameraExpire = "待人工确认"
-		a.cameraNote = "条码已识别但目录未收录。请核对药品名称/有效期，可用仓-/仓+选择仓位后确认录入。"
+		a.cameraNote = "条码已识别但目录未收录。正在尝试用 Qwen 视觉补全药盒信息。"
+		go a.enrichPendingMedicineByVision()
 		return
 	}
 	a.cameraPendingName = lookup.Medicine.Name
@@ -5141,7 +5209,7 @@ func (a *app) frameInterval() time.Duration {
 	}
 	switch a.page {
 	case "camera":
-		return 20 * time.Millisecond
+		return 33 * time.Millisecond
 	case "ai":
 		if a.aiStatus == "思考中" {
 			return 80 * time.Millisecond

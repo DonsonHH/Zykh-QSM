@@ -4594,3 +4594,64 @@ perl -c /userdata/zykh_app/server.pl
 Go UI:
 camera: /dev/video23 640x480@30 preview=20
 ```
+
+### 第三十二步：拍照识别流程 UI 与性能优化
+
+时间：2026-06-07
+
+用户反馈：
+
+```text
+拍照识别流程应为：
+识别条码 -> 查 ShowAPI/本地目录/必要时用 Qwen -> 识别药名、盒型、厂家、功效、数量等 -> 有效期识别或人工输入 -> 估算盒型和药品数量 -> 推荐仓位，也允许用户自行选择。
+
+确认页的“仓位/盒型/数量”显示不好看、不好点。
+用户输入反馈不明显。
+camera 页面和 Go UI 仍有卡顿感。
+```
+
+本次修改：
+
+```text
+1. 未收录条码的 Qwen 兜底：
+   条码查本地目录/ShowAPI 未收录时，Go UI 自动调用 /api/medicine/visual_recognize。
+   Qwen 视觉补全会尝试提取 medicine_name、manufacturer、spec、expiry_date、detail。
+   成功后自动更新确认页药名、规格、有效期、盒型、数量和推荐仓位。
+   失败时保留“待确认药品(条码)”，允许用户继续确认录入。
+
+2. 确认页 UI：
+   原来 10 个 26x22 小按钮太难点。
+   改为大控件：
+     SLOT - / +
+     QTY - / +
+     EXP month M- / M+
+   确认页直接显示 EXP、SLOT、QTY、BOX，减少拥挤和误触。
+
+3. 触摸反馈：
+   仓位、数量、有效期月份调整后会立即更新状态文字。
+   例如选择仓位后显示：已选择 XX 仓，确认后会写入该仓并通过 UART8 打开该仓。
+
+4. 性能：
+   camera 页刷新间隔从 20ms 调整到 33ms，减少无效重绘。
+   正式启动脚本 USB/FF Camera 默认 ZYKH_CAMERA_PREVIEW_FPS 从 20 降到 15。
+   保留局部 BlitRect 和文字缓存。
+```
+
+复测：
+
+```text
+正式脚本启动：
+camera: /dev/video23 640x480@30 preview=15
+
+camera 页日志：
+render_fps 约 18-25
+render_avg_ms 多数 8-16ms
+camera_fps 约 11-12
+jpeg_decode_avg_ms 约 33-38ms
+
+截图：
+/userdata/zykh_app/data/wayland-screenshot-2026-06-07_15-44-04.png
+
+当前药柜：
+SELECT COUNT(*) FROM medicines; -> 23
+```
