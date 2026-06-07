@@ -118,7 +118,11 @@ func runASR(args []string) error {
 	defer timeout.Stop()
 	for {
 		select {
-		case s := <-textCh:
+		case s, ok := <-textCh:
+			if !ok {
+				out := result{"ok": transcript.Len() > 0, "text": strings.TrimSpace(transcript.String()), "model": *model, "task_id": taskID}
+				return writeResult(*output, out)
+			}
 			if strings.TrimSpace(s) != "" {
 				if transcript.Len() > 0 {
 					transcript.WriteString(" ")
@@ -157,8 +161,14 @@ func readASR(conn *wsConn, textCh chan<- string, errCh chan<- error) {
 			errCh <- fmt.Errorf("%v", e)
 			return
 		}
+		keys := []string{"text", "sentence", "transcript", "result", "recognized_text", "sentence_text", "output_text"}
 		if payload, ok := obj["payload"]; ok {
-			for _, s := range collectStrings(payload, []string{"text", "sentence", "transcript", "result"}) {
+			for _, s := range collectStrings(payload, keys) {
+				textCh <- s
+			}
+		}
+		if output, ok := obj["output"]; ok {
+			for _, s := range collectStrings(output, keys) {
 				textCh <- s
 			}
 		}

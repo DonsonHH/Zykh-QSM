@@ -1300,6 +1300,7 @@ type aiChatResp struct {
 	Source string `json:"source"`
 	Model  string `json:"model"`
 	Error  string `json:"error"`
+	Detail string `json:"detail"`
 }
 
 type audioRecordResp struct {
@@ -1590,6 +1591,7 @@ type app struct {
 	lastBodyTemp        float64
 	lastVitalsQuality   string
 	lastVitalsTime      string
+	settingsVolume      int
 	pressX              int
 	pressY              int
 	pressUntil          time.Time
@@ -1638,6 +1640,7 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		aiReply:            "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
 		aiStatus:           "在线",
 		aiVoice:            "麦克风就绪",
+		settingsVolume:     230,
 	}
 	a.loadAIHistory()
 	a.fetch()
@@ -1653,6 +1656,11 @@ func (a *app) loadAIHistory() {
 	if err == nil {
 		var messages []aiMessage
 		if json.Unmarshal(raw, &messages) == nil && len(messages) > 0 {
+			for i := range messages {
+				if strings.Contains(messages[i].Text, "AI 流式请求失败") || strings.Contains(messages[i].Text, "context deadline exceeded") {
+					messages[i].Text = "刚才网络或 AI 接口响应超时，请重新发送问题。"
+				}
+			}
 			a.aiMessages = messages
 			last := messages[len(messages)-1]
 			a.aiReply = last.Text
@@ -1751,7 +1759,7 @@ func (a *app) maybeRefreshWiFi() {
 func (a *app) refreshWiFi() {
 	iface, status, signalRaw := wifiStatus()
 	state := valueFromLines(status, "wpa_state")
-	ssid := valueFromLines(status, "ssid")
+	ssid := cleanSSID(valueFromLines(status, "ssid"))
 	signal := -100
 	if v := valueFromLines(string(signalRaw), "RSSI"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
@@ -1804,6 +1812,17 @@ func valueFromLines(raw, key string) string {
 		}
 	}
 	return ""
+}
+
+func cleanSSID(ssid string) string {
+	ssid = strings.TrimSpace(ssid)
+	if ssid == "" {
+		return ""
+	}
+	if strings.Contains(ssid, "\\x") || strings.Contains(ssid, "\\") {
+		return "Wi-Fi"
+	}
+	return ssid
 }
 
 func (a *app) render() *image.RGBA {
@@ -1934,6 +1953,8 @@ func (a *app) renderPage(img *image.RGBA) {
 		a.renderAI(img)
 	case "vitals":
 		a.renderVitals2(img)
+	case "settings":
+		a.renderSettings(img)
 	default:
 		a.renderHome(img)
 	}
@@ -2040,7 +2061,8 @@ func (a *app) renderHome(img *image.RGBA) {
 		host = "rockchip"
 	}
 	a.text(img, 60, 577, 19, host+" 已就绪，可以开始使用", hex(0x00786f), true)
-	a.textRight(img, 982, 577, 17, "Go 原生 UI", hex(0x657586), false)
+	roundRect(img, 850, 558, 136, 26, 10, hex(0xffffff), hex(0xbce5dc), 1)
+	a.textCenter(img, 918, 577, 17, "设置", hex(0x008d7d), true)
 }
 
 func (a *app) renderVitals(img *image.RGBA) {
@@ -2101,6 +2123,51 @@ func (a *app) vitalActionCard(img *image.RGBA, x, y, w, h int, title, sub, main,
 	a.textRight(img, x+w-28, y+126, 16, aux, hex(0x657586), false)
 	roundRect(img, x+30, y+h-48, w-60, 34, 12, accent, accent, 1)
 	a.textCenter(img, x+w/2, y+h-25, 17, button, hex(0xffffff), true)
+}
+
+func (a *app) renderSettings(img *image.RGBA) {
+	a.pageHeader(img, "系统设置", "调节音量、连接网络、校准北京时间")
+
+	roundRect(img, 28, 92, 968, 132, 16, hex(0xffffff), hex(0xd8e4e9), 1)
+	circle(img, 78, 158, 30, hex(0x008d7d))
+	a.textCenter(img, 78, 169, 24, "音", hex(0xffffff), true)
+	a.text(img, 126, 140, 25, "音量", hex(0x142333), true)
+	a.text(img, 126, 170, 16, "用于 AI 播报、提示音和系统反馈", hex(0x657586), false)
+	roundRect(img, 650, 126, 58, 48, 14, hex(0xf4f9ff), hex(0xadc9ee), 1)
+	a.textCenter(img, 679, 159, 28, "-", hex(0x1c66d4), true)
+	roundRect(img, 724, 118, 114, 64, 14, hex(0xe7f8f4), hex(0xbce5dc), 1)
+	a.textCenter(img, 781, 158, 28, fmt.Sprintf("%d", a.settingsVolume), hex(0x008d7d), true)
+	roundRect(img, 854, 126, 58, 48, 14, hex(0xf4f9ff), hex(0xadc9ee), 1)
+	a.textCenter(img, 883, 159, 28, "+", hex(0x1c66d4), true)
+	roundRect(img, 916, 126, 58, 48, 14, hex(0x008d7d), hex(0x008d7d), 1)
+	a.textCenter(img, 945, 158, 17, "测试", hex(0xffffff), true)
+
+	roundRect(img, 28, 248, 968, 132, 16, hex(0xffffff), hex(0xd8e4e9), 1)
+	circle(img, 78, 314, 30, hex(0x1c66d4))
+	a.textCenter(img, 78, 325, 24, "网", hex(0xffffff), true)
+	a.text(img, 126, 296, 25, "网络", hex(0x142333), true)
+	wifiText := "未连接"
+	if a.wifiState == "COMPLETED" {
+		wifiText = "已连接 " + firstNonEmpty(a.wifiSSID, "Wi-Fi")
+	}
+	a.text(img, 126, 326, 16, wifiText, hex(0x657586), false)
+	a.renderWifiIndicator(img, 690, 286, 40)
+	roundRect(img, 782, 286, 178, 56, 14, hex(0x008d7d), hex(0x008d7d), 1)
+	a.textCenter(img, 871, 321, 20, "连接 Wi-Fi", hex(0xffffff), true)
+
+	roundRect(img, 28, 404, 968, 132, 16, hex(0xffffff), hex(0xd8e4e9), 1)
+	circle(img, 78, 470, 30, hex(0xe77800))
+	a.textCenter(img, 78, 481, 24, "时", hex(0xffffff), true)
+	a.text(img, 126, 452, 25, "北京时间", hex(0x142333), true)
+	a.text(img, 126, 482, 16, time.Now().Format("2006-01-02 15:04:05"), hex(0x657586), false)
+	roundRect(img, 610, 442, 88, 48, 14, hex(0xfffbf1), hex(0xf0c781), 1)
+	a.textCenter(img, 654, 474, 17, "-1分", hex(0xd96f00), true)
+	roundRect(img, 714, 442, 88, 48, 14, hex(0xfffbf1), hex(0xf0c781), 1)
+	a.textCenter(img, 758, 474, 17, "+1分", hex(0xd96f00), true)
+	roundRect(img, 818, 442, 88, 48, 14, hex(0xfffbf1), hex(0xf0c781), 1)
+	a.textCenter(img, 862, 474, 17, "+1时", hex(0xd96f00), true)
+	roundRect(img, 610, 498, 296, 30, 10, hex(0xe8f5f2), hex(0xbce5dc), 1)
+	a.textCenter(img, 758, 519, 15, "重启后建议先联网再校准时间", hex(0x00786f), true)
 }
 
 func (a *app) renderVitals2(img *image.RGBA) {
@@ -2453,9 +2520,15 @@ func (a *app) renderCamera(img *image.RGBA) {
 	roundRect(img, 672, panelY, 308, 154, 10, hex(0xf8fcfc), hex(0xd8e4e9), 1)
 	if step == "confirm" && a.cameraPendingAdd {
 		a.text(img, 692, panelY+30, 17, "请确认当前药品", hex(0x142333), true)
-		a.kvColor(img, 692, panelY+64, "药名", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 13), hex(0x142333))
-		a.kvColor(img, 692, panelY+96, "条码", clipText(a.cameraPendingCode, 15), hex(0x405268))
-		a.kvColor(img, 692, panelY+128, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
+		a.kvColor(img, 692, panelY+58, "药名", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 13), hex(0x142333))
+		a.kvColor(img, 692, panelY+86, "条码", clipText(a.cameraPendingCode, 15), hex(0x405268))
+		a.kvColor(img, 692, panelY+114, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
+		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+"}
+		for i, label := range labels {
+			x := 692 + i*47
+			roundRect(img, x, panelY+124, 40, 24, 8, hex(0xfffbf1), hex(0xf0c781), 1)
+			a.textCenter(img, x+20, panelY+141, 13, label, hex(0xd96f00), true)
+		}
 	} else {
 		a.kvColor(img, 692, panelY+30, "药品名称", clipText(a.cameraName, 12), hex(0x142333))
 		a.kvColor(img, 692, panelY+62, "商品条码", clipText(a.cameraCode, 14), hex(0x405268))
@@ -2545,7 +2618,7 @@ func (a *app) renderChatHistory(img *image.RGBA, x, y, w, h int) {
 	used := 0
 	for i := limit - 1; i >= 0; i-- {
 		m := messages[i]
-		lines := markdownLines(m.Text, 22, 9)
+		lines := markdownLines(m.Text, 22, 18)
 		if m.Role == "user" {
 			lines = markdownLines(m.Text, 18, 6)
 		}
@@ -2922,6 +2995,25 @@ func (a *app) handleTouch(t touchEvent) {
 		pending := a.cameraPendingAdd
 		step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
 		a.mu.Unlock()
+		if step == "confirm" && pending {
+			adjusts := []struct {
+				x     int
+				delta struct{ y, m, d int }
+			}{
+				{692, struct{ y, m, d int }{-1, 0, 0}},
+				{739, struct{ y, m, d int }{1, 0, 0}},
+				{786, struct{ y, m, d int }{0, -1, 0}},
+				{833, struct{ y, m, d int }{0, 1, 0}},
+				{880, struct{ y, m, d int }{0, 0, -1}},
+				{927, struct{ y, m, d int }{0, 0, 1}},
+			}
+			for _, adj := range adjusts {
+				if inside(t, adj.x, 462, 40, 24) {
+					a.adjustPendingExpire(adj.delta.y, adj.delta.m, adj.delta.d)
+					return
+				}
+			}
+		}
 		if inside(t, 42, 484, 168, 38) {
 			if step == "barcode" {
 				a.toggleCameraAutoScan()
@@ -2991,6 +3083,39 @@ func (a *app) handleTouch(t touchEvent) {
 				return
 			}
 		}
+	case "settings":
+		if inside(t, 18, 14, 100, 50) {
+			a.setPage("home")
+			return
+		}
+		if inside(t, 650, 126, 58, 48) {
+			a.adjustVolume(-10)
+			return
+		}
+		if inside(t, 854, 126, 58, 48) {
+			a.adjustVolume(10)
+			return
+		}
+		if inside(t, 916, 126, 58, 48) {
+			go a.testVolume()
+			return
+		}
+		if inside(t, 782, 286, 178, 56) {
+			go a.connectWifi()
+			return
+		}
+		if inside(t, 610, 442, 88, 48) {
+			go a.adjustSystemTime(-time.Minute)
+			return
+		}
+		if inside(t, 714, 442, 88, 48) {
+			go a.adjustSystemTime(time.Minute)
+			return
+		}
+		if inside(t, 818, 442, 88, 48) {
+			go a.adjustSystemTime(time.Hour)
+			return
+		}
 	case "vitals":
 		if inside(t, 18, 14, 100, 50) {
 			a.setPage("home")
@@ -3047,6 +3172,10 @@ func (a *app) handleTouch(t touchEvent) {
 			a.setPage("ai")
 			return
 		}
+		if inside(t, 850, 552, 136, 36) {
+			a.setPage("settings")
+			return
+		}
 	}
 }
 
@@ -3061,6 +3190,65 @@ func (a *app) action(success string, fn func() error) {
 		a.lastFetch = time.Time{}
 	}
 	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+}
+
+func (a *app) adjustVolume(delta int) {
+	a.mu.Lock()
+	a.settingsVolume = min(255, max(0, a.settingsVolume+delta))
+	a.message = fmt.Sprintf("音量 %d", a.settingsVolume)
+	a.messageUntil = time.Now().Add(1400 * time.Millisecond)
+	a.mu.Unlock()
+}
+
+func (a *app) testVolume() {
+	a.mu.Lock()
+	vol := a.settingsVolume
+	a.message = "正在播放测试音"
+	a.messageUntil = time.Now().Add(1800 * time.Millisecond)
+	a.mu.Unlock()
+	var resp audioSpeakResp
+	err := a.api.postFormJSON("/api/audio/beep", url.Values{"volume": []string{strconv.Itoa(vol)}}, &resp)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil || !resp.OK {
+		a.message = "音量测试失败：" + firstNonEmpty(resp.Error, resp.Detail, errText(err))
+	} else {
+		a.message = fmt.Sprintf("已按音量 %d 播放测试音", vol)
+	}
+	a.messageUntil = time.Now().Add(2400 * time.Millisecond)
+}
+
+func (a *app) connectWifi() {
+	a.mu.Lock()
+	a.message = "正在连接 Wi-Fi"
+	a.messageUntil = time.Now().Add(3000 * time.Millisecond)
+	a.mu.Unlock()
+	cmd := getenv("ZYKH_WIFI_SCRIPT", "/userdata/medical_assistant/scripts/start_wifi.sh")
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", cmd).CombinedOutput()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.message = "Wi-Fi 连接失败：" + clipText(string(out), 22)
+	} else {
+		a.message = "Wi-Fi 连接命令已执行"
+		a.wifiUpdated = time.Time{}
+	}
+	a.messageUntil = time.Now().Add(3000 * time.Millisecond)
+}
+
+func (a *app) adjustSystemTime(delta time.Duration) {
+	target := time.Now().Add(delta)
+	out, err := exec.Command("date", "-s", target.Format("2006-01-02 15:04:05")).CombinedOutput()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.message = "时间调整失败：" + clipText(string(out), 22)
+	} else {
+		a.message = "北京时间已调整为 " + target.Format("15:04")
+	}
+	a.messageUntil = time.Now().Add(2400 * time.Millisecond)
 }
 
 func (a *app) measureHeartSpO2() {
@@ -3396,6 +3584,33 @@ func (a *app) skipExpiryDate() {
 	a.cameraNote = "已跳过有效期 OCR，请在确认前人工核对药盒侧面日期。"
 }
 
+func (a *app) adjustPendingExpire(years, months, days int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	base := parseUIDate(a.cameraPendingExpire)
+	if base.IsZero() {
+		base = time.Now().AddDate(1, 0, 0)
+	}
+	base = base.AddDate(years, months, days)
+	a.cameraPendingExpire = base.Format("2006-01-02")
+	a.cameraExpire = a.cameraPendingExpire
+	a.cameraWorkflowStep = "confirm"
+	a.cameraPendingAdd = true
+	a.cameraStatus = "请确认有效期"
+	a.cameraNote = "已手动调整有效期，请核对无误后录入药柜。"
+}
+
+func parseUIDate(s string) time.Time {
+	s = strings.TrimSpace(s)
+	layouts := []string{"2006-01-02", "2006/01/02", "2006.01.02", "20060102"}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func (a *app) recognizeExpiryDate() {
 	a.stopCameraStream()
 	a.mu.Lock()
@@ -3505,15 +3720,17 @@ func (a *app) askAI(question string) {
 	a.mu.Unlock()
 
 	if err := a.streamAI(question, replyIndex); err != nil {
-		a.mu.Lock()
-		a.aiStatus = "离线"
-		a.aiReply = "AI 流式请求失败：" + err.Error()
-		if replyIndex < len(a.aiMessages) {
-			a.aiMessages[replyIndex].Text = a.aiReply
-			a.aiMessages[replyIndex].Time = time.Now().Format("15:04")
-			a.saveAIHistoryLocked()
+		if fallbackErr := a.chatAIOnce(question, replyIndex); fallbackErr != nil {
+			a.mu.Lock()
+			a.aiStatus = "离线"
+			a.aiReply = "AI 请求失败：" + fallbackErr.Error()
+			if replyIndex < len(a.aiMessages) {
+				a.aiMessages[replyIndex].Text = a.aiReply
+				a.aiMessages[replyIndex].Time = time.Now().Format("15:04")
+				a.saveAIHistoryLocked()
+			}
+			a.mu.Unlock()
 		}
-		a.mu.Unlock()
 	}
 }
 
@@ -3564,6 +3781,31 @@ func (a *app) streamAI(question string, replyIndex int) error {
 		go a.speakText(reply)
 		return nil
 	}
+	return errors.New("AI 流式响应为空")
+}
+
+func (a *app) chatAIOnce(question string, replyIndex int) error {
+	a.mu.Lock()
+	a.aiStatus = "生成中"
+	a.aiReply = "流式连接不稳定，正在改用普通请求..."
+	if replyIndex < len(a.aiMessages) {
+		a.aiMessages[replyIndex].Text = a.aiReply
+	}
+	a.mu.Unlock()
+	var resp aiChatResp
+	err := a.api.postFormJSON("/api/ai/chat", url.Values{"message": []string{question}}, &resp)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return errors.New(firstNonEmpty(resp.Error, resp.Detail, "AI 普通请求失败"))
+	}
+	reply := strings.TrimSpace(resp.Reply)
+	if reply == "" {
+		return errors.New("AI 回复为空")
+	}
+	a.finishAIReply(replyIndex, reply)
+	go a.speakText(reply)
 	return nil
 }
 
@@ -3644,19 +3886,26 @@ func (a *app) recordVoice() {
 	err := a.api.postFormJSON("/api/audio/asr", url.Values{"duration": []string{"4"}}, &resp)
 	if err != nil {
 		a.mu.Lock()
-		a.aiStatus = "录音失败"
+		a.aiStatus = "语音未完成"
 		a.aiVoice = err.Error()
 		a.mu.Unlock()
 		return
 	}
+	text := strings.TrimSpace(resp.Text)
 	if !resp.OK {
 		a.mu.Lock()
-		a.aiStatus = "识别失败"
-		a.aiVoice = firstNonEmpty(resp.Error, resp.Detail, "没有识别到清晰语音")
+		if text != "" {
+			a.aiStatus = "已识别"
+			a.aiVoice = fmt.Sprintf("ASR：%s", clipText(text, 24))
+			a.mu.Unlock()
+			a.askAI(text)
+			return
+		}
+		a.aiStatus = "未听清"
+		a.aiVoice = "没有识别到清晰语音，请靠近麦克风再按一次"
 		a.mu.Unlock()
 		return
 	}
-	text := strings.TrimSpace(resp.Text)
 	if text == "" {
 		a.mu.Lock()
 		a.aiStatus = "未听清"

@@ -1050,6 +1050,17 @@ sub audio_asr {
         $obj->{recording} = $rec;
         return $obj;
     }
+    if ($obj && exists $obj->{text} && trim($obj->{text} || '') eq '') {
+        return {
+            ok => JSON::PP::true,
+            text => '',
+            model => $obj->{model} || ($ENV{ASR_MODEL} || 'fun-asr-flash-8k-realtime'),
+            task_id => $obj->{task_id} || '',
+            detail => '录音完成，但没有识别到清晰语音。',
+            recording => $rec,
+            exit_code => $exit,
+        };
+    }
     return {
         ok => JSON::PP::false,
         error => 'ASR 识别失败',
@@ -1907,8 +1918,27 @@ sub send_ai_chat_stream {
     sse_headers($client);
     my $base = $ENV{AI_API_BASE} || 'https://api.deepseek.com/chat/completions';
     my $model = $ENV{AI_MODEL} || 'deepseek-v4-flash';
-    my $payload = build_ai_payload($message, JSON::PP::true);
     send_sse($client, 'meta', { model => $model, source => 'ai', context => ai_context_summary() });
+    if (($ENV{AI_TRUE_STREAM} || '') ne '1') {
+        my $res = ai_chat({ message => $message });
+        if (!$res->{ok}) {
+            send_sse($client, 'error', { error => $res->{error} || 'AI 请求失败', detail => $res->{detail} || '' });
+            send_sse($client, 'done', { ok => JSON::PP::false });
+            return;
+        }
+        my $reply = $res->{reply} || '';
+        my @chars = split //, $reply;
+        my $sent = '';
+        while (@chars) {
+            my $delta = join('', splice(@chars, 0, 12));
+            $sent .= $delta;
+            send_sse($client, 'delta', { delta => $delta });
+            select(undef, undef, undef, 0.025);
+        }
+        send_sse($client, 'done', { ok => JSON::PP::true, reply => $sent });
+        return;
+    }
+    my $payload = build_ai_payload($message, JSON::PP::true);
     return stream_ai_via_openssl($client, $base, $api_key, encode_json($payload));
 }
 
@@ -1942,11 +1972,12 @@ sub build_ai_payload {
             },
             {
                 role => 'user',
-                content => "用户本次问题：$message\n\n请结合上面的老人档案、最近体征和本机药柜库存回答。若信息不足，先说明需要补充哪些信息。"
+                content => "用户本次问题：$message\n\n请结合上面的老人档案、最近体征和本机药柜库存回答。若信息不足，先说明需要补充哪些信息。回答控制在 140 到 220 个中文字符，最多 4 条要点，适合语音播报和小屏显示。"
             },
         ],
         thinking => { type => 'disabled' },
         temperature => 0.25,
+        max_tokens => 320,
         stream => $stream ? JSON::PP::true : JSON::PP::false,
     };
 }
@@ -1958,7 +1989,7 @@ sub ai_system_prompt {
         '严格限制：你不是医生，不能替代诊断，不能开处方，不能建议用户自行新增/停用处方药，不能自行调整剂量。',
         '药柜库存只表示家中现有药品，不能因为药柜里有某种药就建议直接服用；只能说“如果这是医生已开具/正在服用的药，请按医嘱”。',
         '遇到胸痛、呼吸困难、意识障碍、严重过敏、单侧肢体无力、血压持续超过 180/110 mmHg 等高危情况，必须建议立即急救或就医。',
-        '回答格式要适合老人和家属听：先给一句结论，再列 3 到 5 条具体做法，最后说明何时必须就医。',
+        '回答格式要适合老人和家属听：先给一句结论，再列 3 到 4 条具体做法，最后说明何时必须就医。总长度控制在 140 到 220 个中文字符，避免长篇解释。',
         '',
         '以下是本机可用上下文：',
         ai_context_text(),
