@@ -521,16 +521,42 @@ sub auto_add_medicine {
     my ($p) = @_;
     my $lookup = lookup_medicine($p);
     return $lookup unless $lookup->{ok};
-    return $lookup unless $lookup->{found};
-    my $m = $lookup->{medicine};
+    my $m;
+    if ($lookup->{found}) {
+        $m = $lookup->{medicine};
+    } else {
+        my $code = normalize_code($p->{code} || $p->{trace_code} || $lookup->{code} || '');
+        return $lookup if $code eq '';
+        $m = {
+            code => $code,
+            name => trim($p->{name} || "待确认药品($code)"),
+            dosage => trim($p->{dosage} || ''),
+            manufacturer => '',
+            batch_no => '',
+            expire_date => '',
+            trace_code => '',
+            note => '条码未被本地目录/ShowAPI 收录，由用户确认后临时录入。',
+        };
+        upsert_catalog_medicine($m);
+    }
     my $box_size = normalize_box_size($p->{box_size} || suggest_box_size($m));
     my $slot = int($p->{slot} || first_empty_slot($box_size));
     my $stock = int($p->{stock} || estimate_stock($m) || 1);
     $stock = 1 if $stock < 1;
     my $expire = trim($p->{expire_date} || $m->{expire_date} || '');
     $m->{expire_date} = $expire if $expire ne '';
-    sqlite_exec('INSERT INTO medicines(name,slot,dosage,stock,expire_date,created_at) VALUES (' .
-        join(',', map { sql_quote($_) } ($m->{name}, $slot, $m->{dosage}, $stock, $expire, now_text())) . ');');
+    my @existing = sqlite_row('SELECT id FROM medicines WHERE slot=' . int($slot) . ' AND stock > 0 ORDER BY id LIMIT 1;');
+    if (@existing && defined $existing[0]) {
+        sqlite_exec('UPDATE medicines SET name=' . sql_quote($m->{name}) .
+            ', dosage=' . sql_quote($m->{dosage}) .
+            ', stock=' . int($stock) .
+            ', expire_date=' . sql_quote($expire) .
+            ', created_at=' . sql_quote(now_text()) .
+            ' WHERE id=' . int($existing[0]) . ';');
+    } else {
+        sqlite_exec('INSERT INTO medicines(name,slot,dosage,stock,expire_date,created_at) VALUES (' .
+            join(',', map { sql_quote($_) } ($m->{name}, $slot, $m->{dosage}, $stock, $expire, now_text())) . ');');
+    }
     add_record($m->{name}, $slot, 'medicine_auto_add', 'success', '商品条码自动录入：' . ($m->{code} || $m->{trace_code} || ''));
     return { ok => JSON::PP::true, found => JSON::PP::true, medicine => $m, slot => $slot, stock => $stock, box_size => $box_size, slot_kind => slot_kind($slot), medicines => list_medicines() };
 }
@@ -1399,16 +1425,25 @@ sub dispense {
     my ($p) = @_;
     my $slot = int($p->{slot} || 0);
     return { ok => JSON::PP::false, error => '仓位必填' } if $slot <= 0;
+    return { ok => JSON::PP::false, error => '仓位超出范围：1-23' } if $slot > 23;
 
     my @med = sqlite_row('SELECT id,name,stock FROM medicines WHERE slot=' . int($slot) . ' ORDER BY id LIMIT 1;');
     my $name = $med[1] || "仓位$slot";
     my $stock = defined $med[2] ? int($med[2]) : -1;
     my $gpio = $ENV{"SLOT${slot}_GPIO"};
-    $gpio = 27 if !defined $gpio && $slot == 1;
+    my $uart_dev = $ENV{DISPENSE_UART} || '/dev/ttyS8';
 
     my $detail;
     my $result = 'success';
-    if (defined $gpio && $gpio =~ /^\d+$/) {
+    if ($uart_dev && -e $uart_dev && ($ENV{DISPENSE_MODE} || 'uart') eq 'uart') {
+        my $r = dispense_uart($uart_dev, $slot);
+        if ($r->{ok}) {
+            $detail = $r->{detail};
+        } else {
+            $result = 'failed';
+            $detail = $r->{error};
+        }
+    } elsif (defined $gpio && $gpio =~ /^\d+$/) {
         my $r = pulse_gpio($gpio, 500);
         if ($r->{ok}) {
             $detail = "GPIO$gpio 已输出 500ms 出药控制脉冲";
@@ -1417,7 +1452,7 @@ sub dispense {
             $detail = $r->{error};
         }
     } else {
-        $detail = '未配置真实 GPIO/PWM，已按模拟出药记录';
+        $detail = '未配置 UART8/GPIO，已按模拟出药记录';
     }
 
     if ($result eq 'success' && $stock > 0 && defined $med[0]) {
@@ -1531,6 +1566,29 @@ sub read_vitals {
         vitals => $vitals,
         raw => $raw,
     };
+}
+
+sub dispense_uart {
+    my ($dev, $slot) = @_;
+    return { ok => JSON::PP::false, error => 'UART 设备不存在：' . ($dev || '') } unless $dev && -e $dev;
+    return { ok => JSON::PP::false, error => '仓位超出单字节范围' } if $slot < 1 || $slot > 255;
+
+    my $baud = int($ENV{DISPENSE_UART_BAUD} || 9600);
+    $baud = 9600 if $baud <= 0;
+    my $quoted = shell_quote($dev);
+    system('sh', '-c', 'stty -F ' . $quoted . ' ' . $baud . ' cs8 -cstopb -parenb -ixon -ixoff -crtscts clocal raw -echo >/dev/null 2>&1');
+
+    open my $fh, '>', $dev or return { ok => JSON::PP::false, error => "打开 UART 失败：$dev $!" };
+    binmode($fh);
+    my $command = $slot - 1;
+    my $payload = pack('C', $command);
+    my $ok = print {$fh} $payload;
+    close($fh);
+    return { ok => JSON::PP::false, error => "UART 写入失败：$!" } unless $ok;
+
+    my $hex = uc(sprintf('%02X', $command));
+    write_text_file("$DATA_DIR/dispense-uart.log", now_text() . " dev=$dev baud=$baud slot=$slot command=$command hex=$hex\n");
+    return { ok => JSON::PP::true, detail => "UART8 已发送仓位 $slot 控制字节 0x$hex" };
 }
 
 sub read_temperature {

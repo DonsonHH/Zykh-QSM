@@ -1605,6 +1605,7 @@ type app struct {
 	cameraPendingDetail string
 	cameraPendingBox    string
 	cameraPendingStock  int
+	cameraPendingSlot   int
 	cameraIgnoredCode   string
 	cameraWorkflowStep  string
 	cameraLastScan      time.Time
@@ -1677,6 +1678,7 @@ func newApp(width, height int, appDir string, api *apiClient) (*app, error) {
 		cameraWorkflowStep: "barcode",
 		cameraPendingStock: 1,
 		cameraPendingBox:   "small",
+		cameraPendingSlot:  9,
 		aiQuestion:         "我早上起来有点头晕，血压有点高，怎么办？",
 		aiReply:            "您好，我会结合您的档案、体征记录和药柜库存给出参考建议。若有胸痛、呼吸困难或意识不清，请立即就医。",
 		aiStatus:           "在线",
@@ -2579,12 +2581,16 @@ func (a *app) renderCamera(img *image.RGBA) {
 		a.kvPanel(img, 692, 960, panelY+50, "药名", firstNonEmpty(a.cameraPendingName, "目录未收录"), 13, hex(0x142333))
 		a.kvPanel(img, 692, 960, panelY+76, "条码", a.cameraPendingCode, 18, hex(0x405268))
 		a.kvPanel(img, 692, 960, panelY+102, "有效期", firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12, hex(0xe77800))
-		a.kvPanel(img, 692, 960, panelY+128, "盒型/数量", fmt.Sprintf("%s / %d", boxLabel(a.cameraPendingBox), max(1, a.cameraPendingStock)), 12, hex(0x008d7d))
-		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+", "数-", "数+"}
+		slot := a.cameraPendingSlot
+		if slot <= 0 {
+			slot = a.suggestSlotForBox(a.cameraPendingBox)
+		}
+		a.kvPanel(img, 692, 960, panelY+128, "仓位/盒型/数量", fmt.Sprintf("%02d仓 / %s / %d", slot, boxLabel(a.cameraPendingBox), max(1, a.cameraPendingStock)), 14, hex(0x008d7d))
+		labels := []string{"年-", "年+", "月-", "月+", "日-", "日+", "数-", "数+", "仓-", "仓+"}
 		for i, label := range labels {
-			x := 692 + i*34
-			roundRect(img, x, panelY+142, 30, 22, 8, hex(0xfffbf1), hex(0xf0c781), 1)
-			a.textCenter(img, x+15, panelY+158, 11, label, hex(0xd96f00), true)
+			x := 692 + i*29
+			roundRect(img, x, panelY+142, 26, 22, 8, hex(0xfffbf1), hex(0xf0c781), 1)
+			a.textCenter(img, x+13, panelY+158, 10, label, hex(0xd96f00), true)
 		}
 	} else {
 		a.kvPanel(img, 692, 960, panelY+30, "药品名称", a.cameraName, 13, hex(0x142333))
@@ -3064,20 +3070,25 @@ func (a *app) handleTouch(t touchEvent) {
 				x     int
 				delta struct{ y, m, d int }
 				stock int
+				slot  int
 			}{
-				{692, struct{ y, m, d int }{-1, 0, 0}, 0},
-				{726, struct{ y, m, d int }{1, 0, 0}, 0},
-				{760, struct{ y, m, d int }{0, -1, 0}, 0},
-				{794, struct{ y, m, d int }{0, 1, 0}, 0},
-				{828, struct{ y, m, d int }{0, 0, -1}, 0},
-				{862, struct{ y, m, d int }{0, 0, 1}, 0},
-				{896, struct{ y, m, d int }{0, 0, 0}, -1},
-				{930, struct{ y, m, d int }{0, 0, 0}, 1},
+				{692, struct{ y, m, d int }{-1, 0, 0}, 0, 0},
+				{721, struct{ y, m, d int }{1, 0, 0}, 0, 0},
+				{750, struct{ y, m, d int }{0, -1, 0}, 0, 0},
+				{779, struct{ y, m, d int }{0, 1, 0}, 0, 0},
+				{808, struct{ y, m, d int }{0, 0, -1}, 0, 0},
+				{837, struct{ y, m, d int }{0, 0, 1}, 0, 0},
+				{866, struct{ y, m, d int }{0, 0, 0}, -1, 0},
+				{895, struct{ y, m, d int }{0, 0, 0}, 1, 0},
+				{924, struct{ y, m, d int }{0, 0, 0}, 0, -1},
+				{953, struct{ y, m, d int }{0, 0, 0}, 0, 1},
 			}
 			for _, adj := range adjusts {
-				if inside(t, adj.x, 480, 30, 22) {
+				if inside(t, adj.x, 480, 26, 22) {
 					if adj.stock != 0 {
 						a.adjustPendingStock(adj.stock)
+					} else if adj.slot != 0 {
+						a.adjustPendingSlot(adj.slot)
 					} else {
 						a.adjustPendingExpire(adj.delta.y, adj.delta.m, adj.delta.d)
 					}
@@ -3549,6 +3560,7 @@ func (a *app) toggleCameraAutoScan() {
 		a.cameraPendingDetail = ""
 		a.cameraPendingBox = "small"
 		a.cameraPendingStock = 1
+		a.cameraPendingSlot = 9
 		a.cameraCode = "待扫描"
 		a.cameraExpire = "待识别"
 		a.cameraMeta = "商品条形码"
@@ -3580,6 +3592,7 @@ func (a *app) clearCameraResult() {
 	a.cameraPendingDetail = ""
 	a.cameraPendingBox = "small"
 	a.cameraPendingStock = 1
+	a.cameraPendingSlot = 9
 	a.cameraIgnoredCode = ""
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
@@ -3596,6 +3609,7 @@ func (a *app) dismissPendingMedicine() {
 	a.cameraPendingDetail = ""
 	a.cameraPendingBox = "small"
 	a.cameraPendingStock = 1
+	a.cameraPendingSlot = 9
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
 	a.cameraStatus = "继续扫条码中"
@@ -3608,6 +3622,10 @@ func (a *app) confirmPendingMedicine() {
 	expire := a.cameraPendingExpire
 	box := firstNonEmpty(a.cameraPendingBox, "small")
 	stock := max(1, a.cameraPendingStock)
+	slot := a.cameraPendingSlot
+	if slot <= 0 {
+		slot = a.suggestSlotForBox(box)
+	}
 	if !a.cameraPendingAdd || strings.TrimSpace(code) == "" {
 		a.mu.Unlock()
 		return
@@ -3617,7 +3635,7 @@ func (a *app) confirmPendingMedicine() {
 	a.mu.Unlock()
 
 	var add autoAddResp
-	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{strconv.Itoa(stock)}, "expire_date": []string{expire}, "box_size": []string{box}}, &add)
+	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{strconv.Itoa(stock)}, "expire_date": []string{expire}, "box_size": []string{box}, "slot": []string{strconv.Itoa(slot)}}, &add)
 	var openErr error
 	if err == nil && add.OK && add.Slot > 0 {
 		openErr = a.api.postForm("/api/dispense", url.Values{"slot": []string{strconv.Itoa(add.Slot)}})
@@ -3649,6 +3667,7 @@ func (a *app) confirmPendingMedicine() {
 	a.cameraPendingDetail = ""
 	a.cameraPendingBox = "small"
 	a.cameraPendingStock = 1
+	a.cameraPendingSlot = 9
 	a.cameraAutoScan = true
 	a.cameraWorkflowStep = "barcode"
 	a.message = "药品已录入药柜"
@@ -3692,6 +3711,54 @@ func (a *app) adjustPendingStock(delta int) {
 	a.cameraPendingStock = min(999, max(1, a.cameraPendingStock+delta))
 	a.cameraStatus = "请确认数量"
 	a.cameraNote = "已调整入柜数量，请核对后录入药柜。"
+}
+func (a *app) adjustPendingSlot(delta int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cameraPendingSlot <= 0 {
+		a.cameraPendingSlot = a.suggestSlotForBox(a.cameraPendingBox)
+	}
+	a.cameraPendingSlot = min(23, max(1, a.cameraPendingSlot+delta))
+	a.cameraStatus = "请选择开仓仓位"
+	a.cameraNote = fmt.Sprintf("已选择 %02d 仓。确认后会写入该仓并通过 UART8 打开该仓。", a.cameraPendingSlot)
+}
+
+func (a *app) suggestSlotForBox(box string) int {
+	used := map[int]bool{}
+	for _, m := range a.medicines {
+		if m.Stock > 0 {
+			used[m.Slot] = true
+		}
+	}
+	for _, slot := range slotOrderForBox(box) {
+		if !used[slot] {
+			return slot
+		}
+	}
+	order := slotOrderForBox(box)
+	if len(order) > 0 {
+		return order[0]
+	}
+	return 1
+}
+
+func slotOrderForBox(box string) []int {
+	switch strings.ToLower(strings.TrimSpace(box)) {
+	case "large":
+		return append(append(rangeInts(1, 8), rangeInts(18, 23)...), rangeInts(9, 17)...)
+	case "medium":
+		return append(append(rangeInts(18, 23), rangeInts(1, 8)...), rangeInts(9, 17)...)
+	default:
+		return append(append(rangeInts(9, 17), rangeInts(18, 23)...), rangeInts(1, 8)...)
+	}
+}
+
+func rangeInts(start, end int) []int {
+	out := make([]int, 0, max(0, end-start+1))
+	for i := start; i <= end; i++ {
+		out = append(out, i)
+	}
+	return out
 }
 
 func parseUIDate(s string) time.Time {
@@ -4472,6 +4539,7 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	a.cameraPendingExpire = "待查询"
 	a.cameraPendingBox = "small"
 	a.cameraPendingStock = 1
+	a.cameraPendingSlot = a.suggestSlotForBox("small")
 	a.cameraWorkflowStep = "expiry"
 	a.cameraStatus = "条码已识别"
 	a.cameraCode = code
@@ -4495,10 +4563,12 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	if !lookup.Found {
 		a.cameraPendingName = "目录未收录"
 		a.cameraPendingExpire = "待人工确认"
+		a.cameraPendingAdd = true
+		a.cameraPendingSlot = a.suggestSlotForBox(a.cameraPendingBox)
 		a.cameraPendingDetail = lookup.Detail
 		a.cameraName = "待人工核对"
 		a.cameraExpire = "待人工确认"
-		a.cameraNote = "商品条码已识别，但本地药品目录未收录。可先识别有效期，之后补充目录再录入。"
+		a.cameraNote = "条码已识别但目录未收录。请核对药品名称/有效期，可用仓-/仓+选择仓位后确认录入。"
 		return
 	}
 	a.cameraPendingName = lookup.Medicine.Name
@@ -4506,6 +4576,7 @@ func (a *app) onAutoCodeDetected(code, format string) {
 	a.cameraPendingDetail = lookup.Medicine.Dosage
 	a.cameraPendingBox = estimateBoxSize(lookup.Medicine.Name + " " + lookup.Medicine.Dosage)
 	a.cameraPendingStock = estimateStockCount(lookup.Medicine.Dosage)
+	a.cameraPendingSlot = a.suggestSlotForBox(a.cameraPendingBox)
 	a.cameraName = lookup.Medicine.Name
 	a.cameraExpire = lookup.Medicine.ExpireDate
 	if lookup.Source == "showapi" {

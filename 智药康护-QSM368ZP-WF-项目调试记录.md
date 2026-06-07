@@ -37,7 +37,7 @@
 - `GET/POST /api/medicines`：药品信息
 - `GET/POST /api/plans`：用药计划
 - `GET /api/records`：用药记录
-- `POST /api/dispense`：出药控制，默认 1 号仓触发 `GPIO27` 500ms
+- `POST /api/dispense`：出药控制，默认通过 `/dev/ttyS8` 向 C8T6 发送单字节仓位号
 - `POST /api/gpio`：GPIO 调试
 - `POST /api/vitals/read`：健康数据读取，目前是演示数据
 - `POST /api/recognize`：药品识别，目前是演示结果
@@ -4442,4 +4442,155 @@ records = 0
 HTTP API:
 GET /api/medicines -> {"ok":true,"medicines":[]}
 GET /api/plans -> {"ok":true,"plans":[]}
+```
+
+### 第三十步：UART8 接 C8T6 舵机开仓控制
+
+时间：2026-06-07
+
+用户提供的新硬件信息：
+
+```text
+UART8 端口已经连接到 C8T6。
+向串口输入 16 进制的对应柜门数字，即可操作舵机推开柜子。
+```
+
+后端修改：
+
+```text
+1. /api/dispense 改为默认使用 UART8：
+   DISPENSE_UART=/dev/ttyS8
+   DISPENSE_UART_BAUD=9600
+
+2. 协议：
+   1 号仓发送单字节 0x00
+   2 号仓发送单字节 0x01
+   ...
+   16 号仓发送单字节 0x0F
+   23 号仓发送单字节 0x16
+   即：控制字节 = 仓位号 - 1
+
+3. 串口参数：
+   stty -F /dev/ttyS8 9600 cs8 -cstopb -parenb -ixon -ixoff -crtscts clocal raw -echo
+
+4. 兼容逻辑：
+   如果设置 DISPENSE_MODE 非 uart，或 UART 设备不存在，才回退到 GPIO/模拟逻辑。
+   API 限制仓位范围为 1-23。
+
+5. 日志：
+   每次 UART 开仓会写入：
+   /userdata/zykh_app/data/dispense-uart.log
+```
+
+部署验证：
+
+```text
+adb shell "ls -l /dev/ttyS8"
+crw-rw---- root dialout /dev/ttyS8
+
+adb shell "stty -F /dev/ttyS8 -a | head -n 1"
+speed 9600 baud
+
+perl -c /userdata/zykh_app/server.pl
+/userdata/zykh_app/server.pl syntax OK
+```
+
+实测开仓命令示例：
+
+```powershell
+curl.exe -s -X POST -d "slot=1" http://127.0.0.1:8080/api/dispense
+curl.exe -s -X POST -d "slot=16" http://127.0.0.1:8080/api/dispense
+curl.exe -s -X POST -d "slot=23" http://127.0.0.1:8080/api/dispense
+```
+
+修正：
+
+```text
+用户确认 1 号仓对应控制字节为 0x00。
+后端已改为：控制字节 = 仓位号 - 1。
+示例：
+1 号仓 -> 0x00
+8 号仓 -> 0x07
+23 号仓 -> 0x16
+```
+
+### 第三十一步：填满 23 仓与拍照识别仓位确认
+
+时间：2026-06-07
+
+用户要求：
+
+```text
+先填满 23 个药物。
+拍照识别界面在自动分配建议仓位时，允许用户自己选择开哪个仓。
+条码优先走 ShowAPI；未收录时不应一直卡在“待人工核对”，需要让用户确认后继续录入。
+```
+
+数据库处理：
+
+```text
+已写入 23 条测试药品，占满 1-23 仓。
+为避免 adb/PowerShell 管道导致中文乱码，当前测试药品名称采用 ASCII/英文名称。
+真实扫码录入仍会优先使用 ShowAPI 返回的药品名称。
+
+验证：
+SELECT COUNT(*) FROM medicines; -> 23
+1 号仓：Nifedipine Tablet
+2 号仓：Aspirin EC Tablet
+3 号仓：Metformin Tablet
+21 号仓：Glimepiride Tablet
+22 号仓：Calcium D3 Tablet
+23 号仓：Levofloxacin Tablet
+```
+
+后端修改：
+
+```text
+/api/medicine/auto_add 支持用户指定 slot。
+如果指定仓位已有 stock>0 的药品，后端更新该仓药品信息，而不是插入重复记录。
+如果条码本地目录和 ShowAPI 都未收录，后端会生成：
+待确认药品(条码)
+并允许用户确认后临时入库。
+```
+
+Go UI 修改：
+
+```text
+拍照识别确认页显示：
+仓位/盒型/数量
+
+新增按钮：
+仓-、仓+
+
+流程：
+1. 扫商品条形码。
+2. ShowAPI/本地目录查询药品名称。
+3. 根据药名和规格估算盒型，并按盒型推荐仓位。
+4. 用户可用 仓-/仓+ 改仓位。
+5. 确认后将 code、expire_date、box_size、stock、slot 一起提交到 /api/medicine/auto_add。
+6. 写入该仓后调用 /api/dispense，通过 UART8 打开用户选择的仓。
+```
+
+UART 实操说明：
+
+```text
+用户手动验证方式：
+stty -F /dev/ttyS3 9600 cs8 -cstopb -parenb -ixon -ixoff
+printf '\x07' > /dev/ttyS8
+
+后端实际做法：
+stty -F /dev/ttyS8 9600 cs8 -cstopb -parenb -ixon -ixoff -crtscts clocal raw -echo
+向 /dev/ttyS8 写入单字节。
+
+如果 C8T6 实际接在 UART8，则 stty 应配置 /dev/ttyS8。
+```
+
+部署验证：
+
+```text
+perl -c /userdata/zykh_app/server.pl
+/userdata/zykh_app/server.pl syntax OK
+
+Go UI:
+camera: /dev/video23 640x480@30 preview=20
 ```
