@@ -176,6 +176,7 @@ SQL
             "('6941234567892','二甲双胍片','500mg*60片','示例药厂','M20270108','2027-03-31','TRACE6941234567892','演示条码，可替换为真实药品目录', $now);");
     }
 
+    return unless ($ENV{ZYKH_SEED_DEMO_MEDICINES} || '') eq '1';
     my ($count) = sqlite_row('SELECT COUNT(*) FROM medicines;');
     return if defined $count && $count > 0;
 

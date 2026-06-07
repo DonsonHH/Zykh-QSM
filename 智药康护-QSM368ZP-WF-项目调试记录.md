@@ -4397,3 +4397,49 @@ Go UI 自动选择结果：
 切到 FF Camera 并调整调度后约 15-20fps，render_avg_ms 约 29-41ms。
 FF Camera JPEG 解码平均约 23-27ms，比老摄像头约 38ms 明显更快。
 ```
+
+### 第二十九步：后端药柜数据初始化
+
+时间：2026-06-07
+
+用户要求：
+
+```text
+初始化后端数据，清空所有仓库/药柜数据。
+```
+
+处理内容：
+
+```text
+1. 已先备份数据库：
+   /userdata/zykh_app/data/zykh.db.before-clear-cabinet-20260607-212551
+
+2. 清空药柜相关表：
+   DELETE FROM plans;
+   DELETE FROM records;
+   DELETE FROM medicines;
+
+3. 保留非药柜数据：
+   vitals_records、patient_profile、health_memories、medicine_catalog、AI 历史和 API key 未清空。
+
+4. 修复演示数据自动回填问题：
+   server.pl 不再默认 seed 演示药品和用药计划。
+   只有显式设置 ZYKH_SEED_DEMO_MEDICINES=1 时才会写入演示药品。
+   Go UI 删除本地药品为空时的三条演示 fallback，避免数据库为空但界面仍显示假药品。
+```
+
+复测结果：
+
+```text
+perl -c /userdata/zykh_app/server.pl
+/userdata/zykh_app/server.pl syntax OK
+
+sqlite3 /userdata/zykh_app/data/zykh.db:
+medicines = 0
+plans = 0
+records = 0
+
+HTTP API:
+GET /api/medicines -> {"ok":true,"medicines":[]}
+GET /api/plans -> {"ok":true,"plans":[]}
+```

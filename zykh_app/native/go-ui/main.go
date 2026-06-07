@@ -1773,16 +1773,6 @@ func (a *app) fetch() {
 			a.lastVitalsTime = v.CreatedAt
 		}
 	}
-	if len(a.medicines) == 0 {
-		a.medicines = []medicine{
-			{Name: "硝苯地平片", Slot: 1, Dosage: "10mg", Stock: 12, ExpireDate: "2026-12-31"},
-			{Name: "阿司匹林肠溶片", Slot: 2, Dosage: "100mg", Stock: 8, ExpireDate: "2026-10-31"},
-			{Name: "二甲双胍片", Slot: 3, Dosage: "500mg", Stock: 26, ExpireDate: "2027-03-31"},
-		}
-	}
-	if len(a.plans) == 0 {
-		a.plans = []plan{{Time: "14:00", MedicineName: "阿司匹林肠溶片", Slot: 2, Amount: 1, Enabled: true}}
-	}
 	a.lastFetch = time.Now()
 }
 
