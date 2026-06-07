@@ -4,6 +4,7 @@ use warnings;
 use utf8;
 use IO::Socket::INET;
 use JSON::PP qw(encode_json decode_json);
+use MIME::Base64 qw(encode_base64);
 use POSIX qw(strftime setsid);
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
@@ -341,6 +342,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/medicine/expiry_ocr') {
         return send_json($client, 200, recognize_expiry_date($req->{params}));
     }
+    if ($method eq 'POST' && $path eq '/api/medicine/expiry_vision') {
+        return send_json($client, 200, recognize_expiry_date($req->{params}));
+    }
     if ($method eq 'POST' && $path eq '/api/medicine/auto_add') {
         return send_json($client, 200, auto_add_medicine($req->{params}));
     }
@@ -415,6 +419,9 @@ sub route_api {
     }
     if ($method eq 'POST' && $path eq '/api/audio/record') {
         return send_json($client, 200, record_audio($req->{params}));
+    }
+    if ($method eq 'POST' && $path eq '/api/audio/asr') {
+        return send_json($client, 200, audio_asr($req->{params}));
     }
     if ($method eq 'POST' && $path eq '/api/audio/speak') {
         return send_json($client, 200, speak_text($req->{params}));
@@ -557,9 +564,31 @@ sub scan_medicine_code {
     }
 
     if ($code eq '') {
-        $code = normalize_code($p->{code} || $p->{trace_code} || $ENV{DEMO_TRACE_CODE} || 'TRACE6901234567890');
-        $scanner = 'demo-no-zbar';
-        $detail = $decoded->{error} || '板端当前没有可用条码解码器，使用演示商品条码跑通扫码、查目录流程；部署 zykh-scan-code 或安装 zbar 后可替换为真实图像解码。';
+        my $vision = qwen_vision_from_image(
+            $image,
+            '请识别图片中的商品条形码。只返回 JSON，不要解释。字段：code_candidates 数组、format、confidence、detail。如果看不清，code_candidates 返回空数组。',
+            'barcode'
+        );
+        if ($vision->{ok}) {
+            my $v = $vision->{data} || {};
+            if (ref($v->{code_candidates}) eq 'ARRAY') {
+                ($code) = grep { $_ ne '' } map { normalize_code($_) } @{$v->{code_candidates}};
+            }
+            $scanner = 'qwen3.6-flash-vision';
+            $detail = $code
+                ? '本地解码未命中，已通过 Qwen3.6 视觉理解识别到候选条码。'
+                : '本地解码和视觉理解都未识别到清晰商品条码。';
+        }
+    }
+
+    if ($code eq '') {
+        return {
+            ok => JSON::PP::false,
+            code => '',
+            scanner => $scanner || 'none',
+            detail => $detail || $decoded->{error} || '未识别到商品条码，请调整距离、光线和对焦后重试。',
+            image_url => $capture->{image_url},
+        };
     }
 
     my $lookup = lookup_medicine({ code => $code });
@@ -672,12 +701,28 @@ sub visual_recognize_medicine {
     my $image = "$WEB_DIR/camera/latest.jpg";
     my $cmd = $ENV{RKNN_MEDICINE_CMD} || '';
     if ($cmd eq '') {
+        my $vision = qwen_vision_from_image(
+            $image,
+            '你是智能药柜的药盒视觉识别模块。请从图片中识别药品商品条码候选、药品名称、厂家、规格、批准文号和可见有效期。只返回 JSON，字段：code_candidates 数组、medicine_name、manufacturer、spec、approval、expiry_date、confidence、need_user_confirm、detail。',
+            'medicine'
+        );
+        if ($vision->{ok}) {
+            my $d = $vision->{data} || {};
+            return {
+                ok => JSON::PP::true,
+                found => ($d->{medicine_name} || (ref($d->{code_candidates}) eq 'ARRAY' && @{$d->{code_candidates}})) ? JSON::PP::true : JSON::PP::false,
+                source => 'qwen3.6-flash',
+                image_url => $capture->{image_url},
+                result => $d,
+                detail => $d->{detail} || '已调用 Qwen3.6 视觉理解，请在确认页核对后录入。',
+            };
+        }
         return {
-            ok => JSON::PP::true,
+            ok => JSON::PP::false,
             found => JSON::PP::false,
-            source => 'rknn-not-configured',
+            source => 'qwen3.6-flash',
             image_url => $capture->{image_url},
-            detail => '已预留 RKNN 药盒外观识别接口，但当前未配置 RKNN_MEDICINE_CMD。需要先训练/转换药盒分类或检测模型，再接入该命令。',
+            detail => 'Qwen3.6 视觉理解调用失败：' . ($vision->{error} || 'unknown'),
         };
     }
     $cmd =~ s/\{image\}/shell_quote($image)/eg;
@@ -725,12 +770,30 @@ sub recognize_expiry_date {
     my $image = "$WEB_DIR/camera/latest.jpg";
     my $cmd = $ENV{OCR_EXPIRY_CMD} || '';
     if ($cmd eq '') {
+        my $vision = qwen_vision_from_image(
+            $image,
+            '请识别药盒侧面的生产日期、有效期、失效日期或保质期信息。只返回 JSON，字段：expiry_date，raw_text，confidence，need_user_confirm，detail。expiry_date 尽量使用 YYYY-MM-DD；如果只有年月，使用当月最后一天。',
+            'expiry'
+        );
+        if ($vision->{ok}) {
+            my $d = $vision->{data} || {};
+            my $date = parse_expiry_date(join("\n", grep { defined && $_ ne '' } ($d->{expiry_date}, $d->{raw_text}, $d->{detail})));
+            return {
+                ok => JSON::PP::true,
+                found => $date ? JSON::PP::true : JSON::PP::false,
+                expire_date => $date || trim($d->{expiry_date} || ''),
+                source => 'qwen3.6-flash',
+                image_url => $capture->{image_url},
+                detail => $date ? '已通过视觉理解识别到有效期，请核对后录入。' : ($d->{detail} || '视觉理解未解析到标准有效期，请人工核对。'),
+                raw => $d,
+            };
+        }
         return {
-            ok => JSON::PP::true,
+            ok => JSON::PP::false,
             found => JSON::PP::false,
-            source => 'ocr-not-configured',
+            source => 'qwen3.6-flash',
             image_url => $capture->{image_url},
-            detail => '已拍摄药盒侧面，但当前未配置 OCR_EXPIRY_CMD。可先在确认页人工核对有效期，后续接入 PaddleOCR/PP-OCR 或 RKNN OCR 命令。',
+            detail => 'Qwen3.6 有效期视觉识别调用失败：' . ($vision->{error} || 'unknown'),
         };
     }
 
@@ -764,6 +827,84 @@ sub recognize_expiry_date {
         raw => substr($text || '', 0, 500),
         exit_code => $exit,
     };
+}
+
+sub qwen_vision_from_image {
+    my ($image, $prompt, $task) = @_;
+    return { ok => JSON::PP::false, error => '图片不存在' } unless $image && -s $image;
+    my $api_key = dashscope_api_key();
+    return { ok => JSON::PP::false, error => '未配置 DashScope API Key' } if $api_key eq '';
+
+    my $raw = read_raw_file($image);
+    my $b64 = encode_base64($raw, '');
+    my $model = $ENV{QWEN_VISION_MODEL} || 'qwen3.6-flash';
+    my $url = $ENV{QWEN_VISION_API_BASE} || 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+    my $payload = {
+        model => $model,
+        messages => [
+            {
+                role => 'system',
+                content => '你是智药康护智能药柜的视觉识别模块。禁止解释，禁止推理过程，禁止 Markdown。必须只输出一个合法 JSON 对象。结果不确定时必须设置 need_user_confirm=true。',
+            },
+            {
+                role => 'user',
+                content => [
+                    { type => 'text', text => $prompt },
+                    { type => 'image_url', image_url => { url => 'data:image/jpeg;base64,' . $b64 } },
+                ],
+            },
+        ],
+        temperature => 0,
+        max_completion_tokens => 1000,
+    };
+    my $json = encode_json($payload);
+    my $res_file = "$DATA_DIR/qwen-vision-$task-response.json";
+    my $http = https_post_json_via_openssl($url, $api_key, $json, $res_file);
+    if (!$http->{ok}) {
+        return { ok => JSON::PP::false, error => $http->{error} || 'HTTP request failed', status => $http->{status} || 0 };
+    }
+    my $text = eval { decode('UTF-8', $http->{body} || '', 1) };
+    $text = $http->{body} || '' if !defined $text;
+    my $obj = eval { JSON::PP->new->utf8(0)->decode($text) };
+    return { ok => JSON::PP::false, error => '视觉接口返回不是 JSON', raw => substr($text || '', 0, 500) } unless $obj;
+    my $content = $obj->{choices}[0]{message}{content} || '';
+    my $data = parse_json_content($content);
+    if (!$data) {
+        my @codes = $content =~ /\b(\d{8,14})\b/g;
+        my $date = parse_expiry_date($content);
+        if (@codes || $date) {
+            $data = {
+                code_candidates => \@codes,
+                expiry_date => $date || '',
+                confidence => 0.45,
+                need_user_confirm => JSON::PP::true,
+                detail => '模型未按 JSON 输出，已从原始文本兜底提取候选信息。',
+                raw_text => substr($content || '', 0, 500),
+            };
+        }
+    }
+    return { ok => JSON::PP::false, error => '模型未返回可解析 JSON', raw => substr($content || '', 0, 500) } unless $data;
+    return {
+        ok => JSON::PP::true,
+        model => $model,
+        source => 'dashscope-compatible',
+        data => $data,
+        raw_content => $content,
+    };
+}
+
+sub parse_json_content {
+    my ($s) = @_;
+    $s = trim($s || '');
+    $s =~ s/^```(?:json)?\s*//i;
+    $s =~ s/\s*```$//;
+    my $obj = eval { JSON::PP->new->utf8(0)->decode($s) };
+    return $obj if $obj;
+    if ($s =~ /(\{.*\})/s) {
+        $obj = eval { JSON::PP->new->utf8(0)->decode($1) };
+        return $obj if $obj;
+    }
+    return undef;
 }
 
 sub parse_expiry_date {
@@ -863,7 +1004,7 @@ sub record_audio {
             file => "$dir/last-question.wav",
             duration => $duration,
             device => $device,
-            detail => '麦克风录音完成；后续可接 RKNN Whisper 做语音转文字。',
+            detail => '麦克风录音完成。',
             exit_code => $exit,
         };
     }
@@ -874,6 +1015,47 @@ sub record_audio {
         detail => substr($err || '', 0, 500),
         command => $cmd,
         exit_code => $exit,
+    };
+}
+
+sub audio_asr {
+    my ($p) = @_;
+    my $rec = record_audio($p);
+    return $rec unless $rec->{ok};
+    my $helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
+    return {
+        ok => JSON::PP::false,
+        error => 'ASR 辅助程序不存在',
+        detail => '请部署 /userdata/zykh_app/bin/zykh-ai-voice',
+        recording => $rec,
+    } unless -x $helper;
+    my $api_key = dashscope_api_key();
+    return { ok => JSON::PP::false, error => '未配置 DashScope API Key', recording => $rec } if $api_key eq '';
+
+    my $out = "$DATA_DIR/audio/asr-result.json";
+    my $log = "$DATA_DIR/audio-asr.log";
+    my $cmd = 'DASHSCOPE_API_KEY=' . shell_quote($api_key) . ' ' .
+              shell_quote($helper) . ' asr --input ' . shell_quote($rec->{file}) .
+              ' --output ' . shell_quote($out) .
+              ' --model ' . shell_quote($ENV{ASR_MODEL} || 'fun-asr-flash-8k-realtime');
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '35', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $raw = read_text_file($out);
+    my $obj = eval { decode_json($raw || '') };
+    if ($obj && $obj->{ok}) {
+        $obj->{recording} = $rec;
+        return $obj;
+    }
+    return {
+        ok => JSON::PP::false,
+        error => 'ASR 识别失败',
+        detail => substr(read_text_file($log) || $raw || '', 0, 600),
+        exit_code => $exit,
+        recording => $rec,
     };
 }
 
@@ -889,7 +1071,18 @@ sub speak_text {
     my $cmd = '';
     my $mode = '';
 
-    if ($ENV{TTS_CMD}) {
+    my $helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
+    my $api_key = dashscope_api_key();
+    if (-x $helper && $api_key ne '') {
+        my $out = "$dir/qwen-tts.wav";
+        $cmd = 'DASHSCOPE_API_KEY=' . shell_quote($api_key) . ' ' .
+               shell_quote($helper) . ' tts --text ' . shell_quote($text) .
+               ' --output ' . shell_quote($out) .
+               ' --model ' . shell_quote($ENV{TTS_MODEL} || 'qwen3-tts-instruct-flash-realtime') .
+               ' --voice ' . shell_quote($ENV{TTS_VOICE} || 'Cherry') .
+               ' && ' . aplay_cmd($out);
+        $mode = 'qwen-tts';
+    } elsif ($ENV{TTS_CMD}) {
         $cmd = $ENV{TTS_CMD};
         $cmd =~ s/\{text\}/shell_quote($text)/eg;
         $mode = 'custom-tts';
@@ -917,7 +1110,7 @@ sub speak_text {
     my $exit = $rc == -1 ? -1 : ($rc >> 8);
     my $ok = $exit == 0 ? JSON::PP::true : JSON::PP::false;
     my $detail = $mode eq 'notice-tone'
-        ? '当前板端缺少中文 TTS 引擎，已用喇叭提示音验证播放链路；后续设置 TTS_CMD 可替换为真实语音合成。'
+        ? '当前板端缺少中文 TTS 引擎或 DashScope 配置，已用喇叭提示音验证播放链路。'
         : '语音播报命令已执行。';
     return {
         ok => $ok,
@@ -1728,6 +1921,15 @@ sub ai_api_key {
     return $api_key;
 }
 
+sub dashscope_api_key {
+    my $api_key = trim($ENV{DASHSCOPE_API_KEY} || $ENV{ALIYUN_API_KEY} || '');
+    if ($api_key eq '') {
+        my $key_file = $ENV{DASHSCOPE_API_KEY_FILE} || "$DATA_DIR/dashscope-api-key.txt";
+        $api_key = read_file_trim($key_file) if -s $key_file;
+    }
+    return $api_key;
+}
+
 sub build_ai_payload {
     my ($message, $stream) = @_;
     my $model = $ENV{AI_MODEL} || 'deepseek-v4-flash';
@@ -2141,11 +2343,21 @@ sub detect_camera_device {
 }
 
 sub detect_usb_camera_device {
+    my @ff;
+    my @mjpg;
     for my $dev (sort glob('/dev/video*')) {
         next if -l $dev;
         next unless -e $dev;
-        return $dev if camera_device_is_uvc($dev) || camera_device_has_mjpg($dev);
+        my ($base) = $dev =~ m#/([^/]+)$#;
+        my $name = $base ? read_file_trim("/sys/class/video4linux/$base/name") : '';
+        if ($name =~ /FF Camera/i && camera_device_has_mjpg($dev)) {
+            push @ff, $dev;
+            next;
+        }
+        push @mjpg, $dev if camera_device_is_uvc($dev) || camera_device_has_mjpg($dev);
     }
+    return $ff[0] if @ff;
+    return $mjpg[0] if @mjpg;
     return '';
 }
 
@@ -2170,6 +2382,7 @@ sub camera_device_is_uvc {
 
 sub camera_capture_cmd {
     my ($device, $width, $height, $fps, $buffers, $out) = @_;
+    configure_camera_focus($device);
     if (camera_device_is_uvc($device)) {
         return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' num-buffers=' . int($buffers) . ' ' .
                '! image/jpeg,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
@@ -2182,6 +2395,7 @@ sub camera_capture_cmd {
 
 sub camera_stream_cmd {
     my ($device, $width, $height, $fps, $quality, $location) = @_;
+    configure_camera_focus($device);
     if (camera_device_is_uvc($device)) {
         return 'gst-launch-1.0 -q v4l2src device=' . shell_quote($device) . ' ' .
                '! image/jpeg,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
@@ -2191,6 +2405,22 @@ sub camera_stream_cmd {
            '! video/x-raw,format=NV12,width=' . int($width) . ',height=' . int($height) . ',framerate=' . int($fps) . '/1 ' .
            camera_jpeg_encoder_fragment($quality) . ' ' .
            '! multifilesink location=' . shell_quote($location) . ' max-files=3 sync=false';
+}
+
+sub configure_camera_focus {
+    my ($dev) = @_;
+    return unless $dev && -e $dev;
+    return if $ENV{CAMERA_SKIP_AUTOFOCUS};
+    my $quoted = shell_quote($dev);
+    my $ctrls = `v4l2-ctl -d $quoted --list-ctrls 2>/dev/null`;
+    my @names = qw(focus_automatic_continuous focus_auto auto_focus continuous_auto_focus);
+    for my $name (@names) {
+        next unless $ctrls =~ /^\s*\Q$name\E\b/m;
+        system('sh', '-c', 'v4l2-ctl -d ' . $quoted . ' --set-ctrl=' . $name . '=1 >/dev/null 2>&1');
+        write_text_file("$DATA_DIR/camera-focus.txt", "$dev $name=1\n");
+        return;
+    }
+    write_text_file("$DATA_DIR/camera-focus.txt", "$dev fixed-focus-or-no-autofocus\n") if $ctrls;
 }
 
 sub camera_jpeg_encoder_fragment {

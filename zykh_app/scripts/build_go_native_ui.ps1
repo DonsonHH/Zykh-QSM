@@ -3,8 +3,10 @@ $ErrorActionPreference = 'Stop'
 $AppDir = Resolve-Path (Join-Path $PSScriptRoot '..')
 $RepoDir = Resolve-Path (Join-Path $AppDir '..')
 $SourceDir = Join-Path $AppDir 'native\go-ui'
+$VoiceDir = Join-Path $AppDir 'tools\ai-voice'
 $BinDir = Join-Path $AppDir 'bin'
 $Out = Join-Path $BinDir 'zykh-go-ui'
+$VoiceOut = Join-Path $BinDir 'zykh-ai-voice'
 $LocalGoBin = Join-Path $RepoDir '.tools\go-win\go\bin'
 
 if (Test-Path (Join-Path $LocalGoBin 'go.exe')) {
@@ -34,3 +36,18 @@ finally {
 }
 
 Write-Host ('Go native UI built: ' + $Out)
+
+Push-Location $VoiceDir
+try {
+  go mod tidy
+  gofmt -w main.go
+  $env:GOOS = 'linux'
+  $env:GOARCH = 'arm64'
+  $env:CGO_ENABLED = '0'
+  go build -trimpath -ldflags='-s -w' -o $VoiceOut .
+}
+finally {
+  Pop-Location
+}
+
+Write-Host ('Go AI voice helper built: ' + $VoiceOut)

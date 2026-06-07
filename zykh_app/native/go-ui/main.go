@@ -1309,6 +1309,8 @@ type audioRecordResp struct {
 	Duration int    `json:"duration"`
 	Device   string `json:"device"`
 	Error    string `json:"error"`
+	Text     string `json:"text"`
+	Model    string `json:"model"`
 }
 
 type audioSpeakResp struct {
@@ -2425,36 +2427,82 @@ func (a *app) renderCamera(img *image.RGBA) {
 	}
 	roundRect(img, 226, 484, 168, 38, 12, hex(0xf4f9ff), hex(0xadc9ee), 1)
 	if step == "expiry" {
-		a.textCenter(img, 310, 509, 17, "跳过日期", hex(0x1c66d4), true)
+		a.textCenter(img, 310, 509, 17, "跳过/人工填", hex(0x1c66d4), true)
+	} else if step == "confirm" {
+		a.textCenter(img, 310, 509, 17, "取消录入", hex(0x1c66d4), true)
 	} else {
 		a.textCenter(img, 310, 509, 17, "重新开始", hex(0x1c66d4), true)
 	}
 	roundRect(img, 410, 484, 198, 38, 12, hex(0xfff8ea), hex(0xf0c781), 1)
 	if step == "expiry" {
 		a.textCenter(img, 509, 509, 17, "识别有效期", hex(0xd96f00), true)
-	} else if a.cameraPendingAdd {
-		a.textCenter(img, 509, 509, 17, "录入当前药品", hex(0xd96f00), true)
+	} else if step == "confirm" && a.cameraPendingAdd {
+		a.textCenter(img, 509, 509, 17, "确认录入并开仓", hex(0xd96f00), true)
 	} else {
 		a.textCenter(img, 509, 509, 17, "等待条码", hex(0xd96f00), true)
 	}
 
 	roundRect(img, 650, 82, 354, 430, 12, hex(0xffffff), hex(0xd8e4e9), 1)
-	a.text(img, 672, 122, 23, "识别结果", hex(0x142333), true)
-	roundRect(img, 672, 150, 284, 42, 10, hex(0xe7f8f4), hex(0xbce5dc), 1)
-	a.text(img, 692, 177, 17, a.cameraStatus, hex(0x008d7d), true)
-	a.kvColor(img, 672, 226, "药品名称", clipText(a.cameraName, 12), hex(0x142333))
-	a.kvColor(img, 672, 270, "商品条码", clipText(a.cameraCode, 14), hex(0x405268))
-	a.kvColor(img, 672, 314, "识别信息", clipText(a.cameraMeta, 13), hex(0x405268))
-	a.kvColor(img, 672, 358, "有效期", clipText(a.cameraExpire, 12), hex(0xe77800))
-	a.kvColor(img, 672, 402, "建议仓位", "自动选择空仓", hex(0x142333))
-	for i, line := range wrapRunes(a.cameraNote, 15, 3) {
-		a.text(img, 672, 456+i*22, 15, line, hex(0x657586), false)
+	a.text(img, 672, 120, 23, "入库向导", hex(0x142333), true)
+	a.textRight(img, 982, 120, 14, a.cameraStatus, hex(0x008d7d), true)
+	a.cameraGuideStep(img, 672, 142, "1", "扫描商品条码", "正对 69 开头条形码，识别后自动查询药名", stepActive, 0)
+	a.cameraGuideStep(img, 672, 204, "2", "拍摄有效期", "把侧面日期对准镜头；失败可跳过人工填写", stepActive, 1)
+	a.cameraGuideStep(img, 672, 266, "3", "确认入柜开仓", "核对药名、日期和仓位，再写入药柜", stepActive, 2)
+
+	panelY := 338
+	roundRect(img, 672, panelY, 308, 154, 10, hex(0xf8fcfc), hex(0xd8e4e9), 1)
+	if step == "confirm" && a.cameraPendingAdd {
+		a.text(img, 692, panelY+30, 17, "请确认当前药品", hex(0x142333), true)
+		a.kvColor(img, 692, panelY+64, "药名", clipText(firstNonEmpty(a.cameraPendingName, "目录未收录"), 13), hex(0x142333))
+		a.kvColor(img, 692, panelY+96, "条码", clipText(a.cameraPendingCode, 15), hex(0x405268))
+		a.kvColor(img, 692, panelY+128, "有效期", clipText(firstNonEmpty(a.cameraPendingExpire, "待人工确认"), 12), hex(0xe77800))
+	} else {
+		a.kvColor(img, 692, panelY+30, "药品名称", clipText(a.cameraName, 12), hex(0x142333))
+		a.kvColor(img, 692, panelY+62, "商品条码", clipText(a.cameraCode, 14), hex(0x405268))
+		a.kvColor(img, 692, panelY+94, "有效期", clipText(a.cameraExpire, 12), hex(0xe77800))
+		a.kvColor(img, 692, panelY+126, "建议仓位", "自动选择空仓", hex(0x142333))
+	}
+	for i, line := range wrapRunes(a.cameraNote, 18, 1) {
+		a.text(img, 674, 512+i*20, 14, line, hex(0x657586), false)
 	}
 
 	roundRect(img, 20, 528, 984, 42, 10, hex(0xe8f5f2), hex(0xe8f5f2), 1)
-	a.text(img, 46, 555, 16, "操作：将 69 开头商品条码放进画面中间，保持 10-20cm；识别后再把有效期那一侧对准摄像头。", hex(0x00786f), true)
-	if a.cameraPendingAdd {
-		a.renderCameraConfirmDialog(img)
+	a.text(img, 46, 555, 16, cameraHintForStep(step), hex(0x00786f), true)
+}
+
+func (a *app) cameraGuideStep(img *image.RGBA, x, y int, no, title, desc string, active, idx int) {
+	fill := hex(0xf8fcfc)
+	stroke := hex(0xd8e4e9)
+	badgeFill := hex(0xe9f0f4)
+	badgeText := hex(0x657586)
+	titleColor := hex(0x142333)
+	if idx < active {
+		fill = hex(0xf0fbf7)
+		stroke = hex(0xbce5dc)
+		badgeFill = hex(0x13b887)
+		badgeText = hex(0xffffff)
+	} else if idx == active {
+		fill = hex(0xe7f8f4)
+		stroke = hex(0x00a590)
+		badgeFill = hex(0x008d7d)
+		badgeText = hex(0xffffff)
+		titleColor = hex(0x008d7d)
+	}
+	roundRect(img, x, y, 308, 50, 10, fill, stroke, 1)
+	circle(img, x+25, y+25, 16, badgeFill)
+	a.textCenter(img, x+25, y+34, 16, no, badgeText, true)
+	a.text(img, x+52, y+21, 16, title, titleColor, true)
+	a.text(img, x+52, y+42, 12, clipText(desc, 23), hex(0x657586), false)
+}
+
+func cameraHintForStep(step string) string {
+	switch step {
+	case "expiry":
+		return "第二步：将药盒侧面有效期/保质期文字对准镜头；看不清时可跳过，后续人工填写。"
+	case "confirm":
+		return "第三步：核对药名、条码和有效期；确认后系统写入药柜并打开对应仓位。"
+	default:
+		return "第一步：将 69 开头商品条码放进画面中间，占画面 1/3 以上，保持横平竖直。"
 	}
 }
 
@@ -2874,16 +2922,6 @@ func (a *app) handleTouch(t touchEvent) {
 		pending := a.cameraPendingAdd
 		step := firstNonEmpty(a.cameraWorkflowStep, "barcode")
 		a.mu.Unlock()
-		if pending {
-			if inside(t, 300, 398, 180, 42) {
-				a.dismissPendingMedicine()
-				return
-			}
-			if inside(t, 540, 398, 180, 42) {
-				go a.confirmPendingMedicine()
-				return
-			}
-		}
 		if inside(t, 42, 484, 168, 38) {
 			if step == "barcode" {
 				a.toggleCameraAutoScan()
@@ -2895,6 +2933,8 @@ func (a *app) handleTouch(t touchEvent) {
 		if inside(t, 226, 484, 168, 38) {
 			if step == "expiry" {
 				a.skipExpiryDate()
+			} else if step == "confirm" && pending {
+				a.dismissPendingMedicine()
 			} else {
 				a.clearCameraResult()
 			}
@@ -2903,7 +2943,7 @@ func (a *app) handleTouch(t touchEvent) {
 		if inside(t, 410, 484, 198, 38) {
 			if step == "expiry" {
 				go a.recognizeExpiryDate()
-			} else if pending {
+			} else if step == "confirm" && pending {
 				go a.confirmPendingMedicine()
 			} else {
 				a.mu.Lock()
@@ -3306,6 +3346,10 @@ func (a *app) confirmPendingMedicine() {
 
 	var add autoAddResp
 	err := a.api.postFormJSON("/api/medicine/auto_add", url.Values{"code": []string{code}, "stock": []string{"1"}, "expire_date": []string{expire}}, &add)
+	var openErr error
+	if err == nil && add.OK && add.Slot > 0 {
+		openErr = a.api.postForm("/api/dispense", url.Values{"slot": []string{strconv.Itoa(add.Slot)}})
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil || !add.OK {
@@ -3321,7 +3365,11 @@ func (a *app) confirmPendingMedicine() {
 	a.cameraName = firstNonEmpty(add.Medicine.Name, a.cameraPendingName, "未知药品")
 	a.cameraExpire = firstNonEmpty(add.Medicine.ExpireDate, a.cameraPendingExpire, "待确认")
 	a.cameraMeta = fmt.Sprintf("仓位 %02d / 自动识别", add.Slot)
-	a.cameraNote = "药品信息已写入药柜。请核对仓位、余量和有效期。"
+	if openErr != nil {
+		a.cameraNote = fmt.Sprintf("药品已写入 %02d 仓，但开仓失败：%s", add.Slot, openErr.Error())
+	} else {
+		a.cameraNote = fmt.Sprintf("药品已写入 %02d 仓，并已触发开仓。请把药品放入该仓。", add.Slot)
+	}
 	a.cameraPendingAdd = false
 	a.cameraPendingCode = ""
 	a.cameraPendingName = ""
@@ -3370,7 +3418,7 @@ func (a *app) recognizeExpiryDate() {
 	}()
 
 	var resp expiryOCRResp
-	err := a.api.postFormJSON("/api/medicine/expiry_ocr", url.Values{}, &resp)
+	err := a.api.postFormJSON("/api/medicine/expiry_vision", url.Values{}, &resp)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil || !resp.OK {
@@ -3588,31 +3636,39 @@ func (a *app) finishAIReply(replyIndex int, reply string) {
 
 func (a *app) recordVoice() {
 	a.mu.Lock()
-	a.aiStatus = "录音中"
-	a.aiVoice = "正在录音 3 秒，请对着麦克风说话"
+	a.aiStatus = "语音识别中"
+	a.aiVoice = "正在录音并调用阿里云实时语音识别"
 	a.mu.Unlock()
 
 	var resp audioRecordResp
-	err := a.api.postFormJSON("/api/audio/record", url.Values{"duration": []string{"3"}}, &resp)
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	err := a.api.postFormJSON("/api/audio/asr", url.Values{"duration": []string{"4"}}, &resp)
 	if err != nil {
+		a.mu.Lock()
 		a.aiStatus = "录音失败"
 		a.aiVoice = err.Error()
+		a.mu.Unlock()
 		return
 	}
 	if !resp.OK {
-		a.aiStatus = "录音失败"
-		a.aiVoice = firstNonEmpty(resp.Error, resp.Detail, "麦克风录音失败")
+		a.mu.Lock()
+		a.aiStatus = "识别失败"
+		a.aiVoice = firstNonEmpty(resp.Error, resp.Detail, "没有识别到清晰语音")
+		a.mu.Unlock()
 		return
 	}
-	a.aiStatus = "已录音"
-	a.aiVoice = fmt.Sprintf("录音完成 %d 秒，等待接入 Whisper 识别", resp.Duration)
-	a.aiMessages = append(a.aiMessages, aiMessage{Role: "user", Text: "已完成一次语音录音，等待接入语音识别。", Time: time.Now().Format("15:04")})
-	a.aiScroll = 0
-	a.saveAIHistoryLocked()
-	a.message = "麦克风录音完成"
-	a.messageUntil = time.Now().Add(2500 * time.Millisecond)
+	text := strings.TrimSpace(resp.Text)
+	if text == "" {
+		a.mu.Lock()
+		a.aiStatus = "未听清"
+		a.aiVoice = "没有识别到清晰语音，请靠近麦克风重试"
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Lock()
+	a.aiStatus = "已识别"
+	a.aiVoice = fmt.Sprintf("ASR：%s", clipText(text, 24))
+	a.mu.Unlock()
+	a.askAI(text)
 }
 
 func (a *app) speakText(text string) {
@@ -3692,9 +3748,9 @@ func (a *app) startCameraStream() {
 }
 
 func (a *app) streamCameraFromGStreamer(ctx context.Context) error {
-	width := getenv("ZYKH_CAMERA_WIDTH", "424")
-	height := getenv("ZYKH_CAMERA_HEIGHT", "240")
-	fps := getenv("ZYKH_CAMERA_FPS", "20")
+	width := getenv("ZYKH_CAMERA_WIDTH", "800")
+	height := getenv("ZYKH_CAMERA_HEIGHT", "600")
+	fps := getenv("ZYKH_CAMERA_FPS", "30")
 	quality := getenv("ZYKH_CAMERA_QUALITY", "60")
 	device := getenv("ZYKH_CAMERA_DEVICE", "/dev/video5")
 	args := []string{"-q", "v4l2src", "device=" + device}
@@ -3788,7 +3844,7 @@ func gstElementExists(name string) bool {
 }
 
 func (a *app) streamCameraFromHTTP(ctx context.Context) {
-	streamURL := a.api.base + "/api/camera/stream?width=424&height=240&fps=20&quality=60"
+	streamURL := a.api.base + "/api/camera/stream?width=800&height=600&fps=20&quality=70"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
 	if err != nil {
 		a.setCameraStreamError(err)
@@ -4497,11 +4553,11 @@ func (a *app) frameInterval() time.Duration {
 	}
 	switch a.page {
 	case "camera":
-		return 33 * time.Millisecond
+		return 5 * time.Millisecond
 	case "ai":
-		return 66 * time.Millisecond
+		return 80 * time.Millisecond
 	default:
-		return 100 * time.Millisecond
+		return 160 * time.Millisecond
 	}
 }
 

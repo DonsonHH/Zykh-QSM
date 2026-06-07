@@ -33,21 +33,44 @@ export ZYKH_APP_DIR=/userdata/zykh_app
 export ZYKH_API_BASE=http://127.0.0.1:8080
 
 detect_usb_camera() {
+  best_ff=""
+  best_mjpg=""
   for dev in /dev/video*; do
     [ -e "$dev" ] || continue
     [ -L "$dev" ] && continue
     name="$(cat "/sys/class/video4linux/$(basename "$dev")/name" 2>/dev/null || true)"
     formats="$(v4l2-ctl -d "$dev" --list-formats-ext 2>/dev/null || true)"
-    if echo "$formats" | grep -q "'MJPG'" && echo "$formats" | grep -q "30.000 fps"; then
-      echo "$dev"
-      return 0
-    fi
     if echo "$name" | grep -qi 'FF Camera' && echo "$formats" | grep -q "'MJPG'"; then
-      echo "$dev"
+      best_ff="$dev"
+      break
+    fi
+    if [ -z "$best_mjpg" ] && echo "$formats" | grep -q "'MJPG'" && echo "$formats" | grep -q "30.000 fps"; then
+      best_mjpg="$dev"
+    fi
+  done
+  if [ -n "$best_ff" ]; then
+    echo "$best_ff"
+    return 0
+  fi
+  if [ -n "$best_mjpg" ]; then
+    echo "$best_mjpg"
+    return 0
+  fi
+  return 1
+}
+
+enable_auto_focus() {
+  dev="$1"
+  [ -n "$dev" ] || return 0
+  ctrls="$(v4l2-ctl -d "$dev" --list-ctrls 2>/dev/null || true)"
+  for ctrl in focus_automatic_continuous focus_auto auto_focus continuous_auto_focus; do
+    if echo "$ctrls" | grep -q "^[[:space:]]*$ctrl"; then
+      v4l2-ctl -d "$dev" --set-ctrl="$ctrl=1" >/dev/null 2>&1 || true
+      echo "$dev $ctrl=1" > "$APP_DIR/data/camera-focus.txt"
       return 0
     fi
   done
-  return 1
+  [ -n "$ctrls" ] && echo "$dev fixed-focus-or-no-autofocus" > "$APP_DIR/data/camera-focus.txt"
 }
 
 USB_CAMERA="$(detect_usb_camera || true)"
@@ -60,8 +83,9 @@ else
 fi
 
 if [ -n "$USB_CAMERA" ] && [ "$ZYKH_CAMERA_DEVICE" = "$USB_CAMERA" ]; then
-  export ZYKH_CAMERA_WIDTH="${ZYKH_CAMERA_WIDTH:-640}"
-  export ZYKH_CAMERA_HEIGHT="${ZYKH_CAMERA_HEIGHT:-480}"
+  enable_auto_focus "$ZYKH_CAMERA_DEVICE"
+  export ZYKH_CAMERA_WIDTH="${ZYKH_CAMERA_WIDTH:-800}"
+  export ZYKH_CAMERA_HEIGHT="${ZYKH_CAMERA_HEIGHT:-600}"
   export ZYKH_CAMERA_FPS="${ZYKH_CAMERA_FPS:-30}"
   export ZYKH_CAMERA_QUALITY="${ZYKH_CAMERA_QUALITY:-75}"
 else
