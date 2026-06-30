@@ -4843,3 +4843,56 @@ Jetson -> QSM368 的 adb 调试链路已经打通。
 药柜数据已修复为 23 仓唯一。
 Go UI 暂未重新启动验证，原因是当前 HDMI-A-1 显示为 disconnected；需要先确认 HDMI 线/屏幕供电/输入源，或改走当前 connected 的 LVDS/DSI 输出。
 ```
+
+## 第三十五步：Jetson 主控版应用骨架落地
+
+目标从“QSM 单板承载前后端和 HDMI UI”调整为：
+
+```text
+Jetson：主控 UI、FastAPI、SQLite 主库、AI 问诊、业务流程
+QSM368：硬件网关，继续提供摄像头、体征、音频、UART8 开仓等 /api/*
+连接：Jetson adb forward tcp:18080 tcp:8080
+```
+
+本次新增：
+
+```text
+jetson_app/backend
+  FastAPI 服务
+  Jetson SQLite 主库
+  QSM ADB 网关代理
+  AI 流式问诊代理
+  后端冒烟测试
+
+jetson_app/frontend
+  React/Vite 1280x720 触屏 UI
+  首页中控、药柜、摄像头识药、AI 问诊、管理页
+
+jetson_app/scripts
+  setup_adb_forward.sh
+  start_jetson_app.sh
+  start_kiosk.sh
+  check_system.sh
+  install_user_service.sh
+```
+
+Jetson 主库初始化策略：
+
+```text
+profile             空老人档案
+medicines           23 仓结构，全部空库存
+plans               空用药计划
+records             空操作记录
+vitals_records      空体征记录
+health_memories     空健康记忆
+medicine_catalog    空药品目录
+settings            本地设置
+```
+
+安全边界：
+
+```text
+真实数据库、AI Key、日志、.env 不提交 Git。
+QSM 旧 zykh_app 不重构，只作为硬件接口继续保留。
+Jetson /api/dispense 会先写业务记录，再调用 QSM /api/dispense；测试中不实际触发硬件。
+```

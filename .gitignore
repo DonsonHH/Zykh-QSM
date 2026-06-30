@@ -11,3 +11,21 @@ QSM368WF开发板操作注意事项.pdf
 *.log
 hdmi-*.png
 zykh-*.png
+
+# Jetson master app runtime files
+.env
+jetson_app/.env
+jetson_app/data/*
+!jetson_app/data/.gitkeep
+jetson_app/backend/.venv/
+jetson_app/backend/__pycache__/
+jetson_app/backend/app/__pycache__/
+jetson_app/backend/tests/__pycache__/
+jetson_app/frontend/node_modules/
+jetson_app/frontend/dist/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
