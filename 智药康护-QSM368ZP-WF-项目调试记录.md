@@ -4655,3 +4655,191 @@ jpeg_decode_avg_ms 约 33-38ms
 当前药柜：
 SELECT COUNT(*) FROM medicines; -> 23
 ```
+
+### 第三十三步：Jetson 接续环境确认
+
+时间：2026-06-30
+
+本次接续要求：
+
+```text
+根据 previous_work.md 继续后续工作，先完整理解之前的调试流程和当前项目状态。
+```
+
+已读取并确认：
+
+```text
+1. previous_work.md 覆盖了从 QSM368 硬件 bring-up、Perl 后端、Web UI、AI 问诊、摄像头、23 仓药柜，到 Go 原生 HDMI UI 和 Jetson 调试链路的完整过程。
+2. 当前仓库工作区干净，无未提交修改。
+3. 最近提交为 Improve medicine scan confirmation UI and performance，说明当前代码已经处在第三十二步之后。
+4. zykh_app/server.pl 本地语法检查通过：
+   perl -c zykh_app/server.pl
+   zykh_app/server.pl syntax OK
+```
+
+当前 Jetson 环境：
+
+```text
+系统：Ubuntu 22.04.5 LTS
+架构：aarch64
+sudo：存在，但当前非交互命令无法输入 sudo 密码
+adb：未安装或不在 PATH
+go：未安装或不在 PATH
+```
+
+已确认本仓库中的板端二进制为 ARM64 静态程序：
+
+```text
+zykh_app/bin/zykh-go-ui     -> ELF 64-bit ARM aarch64, statically linked
+zykh_app/bin/zykh-ai-voice  -> ELF 64-bit ARM aarch64, statically linked
+zykh_app/bin/zykh-scan-code -> ELF 64-bit ARM aarch64, statically linked
+```
+
+因此当前阻塞点不是项目代码，而是 Jetson 调试工具链：
+
+```text
+无法执行 adb devices
+无法 adb push 到 QSM368
+无法在本机重新编译 Go 原生 UI
+```
+
+下一步需要先在 Jetson 交互终端中安装调试工具：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y android-tools-adb picocom screen rsync
+```
+
+如果还需要在 Jetson 本地改 Go 原生 UI 并重新编译，再安装：
+
+```bash
+sudo apt-get install -y golang-go
+```
+
+安装完成后的第一组验证命令：
+
+```bash
+adb devices
+adb shell "uname -m; cat /etc/os-release"
+adb shell "perl -c /userdata/zykh_app/server.pl"
+```
+
+如果 QSM368 能被 Jetson 识别，再继续部署当前仓库：
+
+```bash
+adb push zykh_app /userdata/
+adb shell "chmod +x /userdata/zykh_app/bin/zykh-go-ui /userdata/zykh_app/bin/zykh-ai-voice /userdata/zykh_app/bin/zykh-scan-code /userdata/zykh_app/scripts/*.sh"
+adb shell "sh /userdata/zykh_app/scripts/start_zykh_server.sh"
+adb shell "sh /userdata/zykh_app/scripts/start_go_hdmi_ui.sh"
+```
+
+当前建议的继续方向：
+
+```text
+1. 先补齐 Jetson 的 adb 工具并确认能看到 QSM368。
+2. 能连接 QSM368 后，优先复测第三十二步的拍照识别确认页、UART8 开仓和 Go UI 性能。
+3. 如果用户要继续开发 UI，再安装 Go 工具链；否则已有 ARM64 二进制可先部署验证。
+```
+
+更新验证：
+
+```text
+用户提供 Jetson sudo 密码后，已完成 Jetson 调试工具安装：
+adb、picocom、screen、rsync。
+
+apt update 期间 Docker 源握手失败，但 Ubuntu/NVIDIA/VS Code 等主要源正常，不影响 adb 安装。
+```
+
+ADB 连接状态：
+
+```text
+lsusb 可见：
+ID 2207:0019 Fuzhou Rockchip Electronics Company rk3xxx
+
+adb devices -l 可见：
+product:rk3568-linux model:Nexus_4 device:mako
+```
+
+权限说明：
+
+```text
+普通用户 adb 首次显示 no permissions。
+已用 sudo 启动 adb server 后，普通 adb shell 可以通过已启动的 server 访问 QSM368。
+长期建议后续加 udev 规则，避免每次依赖 sudo adb。
+```
+
+已部署当前仓库：
+
+```bash
+adb push zykh_app /userdata/
+chmod +x /userdata/zykh_app/server.pl /userdata/zykh_app/bin/* /userdata/zykh_app/scripts/*.sh
+perl -c /userdata/zykh_app/server.pl
+sh /userdata/zykh_app/scripts/start_zykh_server.sh
+```
+
+部署结果：
+
+```text
+/userdata/zykh_app/server.pl syntax OK
+ZYKH server started: 1375
+板端本机访问 http://127.0.0.1:8080/api/status 正常
+```
+
+时间校准：
+
+```text
+板子重启后时间又回到 2006 年。
+已用 Jetson UTC 时间校准：
+TZ=UTC date -s '2026-06-30 08:49:50'
+```
+
+摄像头复测：
+
+```text
+POST /api/camera/capture 返回 ok:true。
+当前使用命令：
+gst-launch-1.0 -q v4l2src device='/dev/video23' num-buffers=10 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegparse ! filesink location='/userdata/zykh_app/web/camera/latest.jpg'
+
+结论：摄像头拍照链路正常，当前稳定节点为 /dev/video23。
+```
+
+药柜数据修复：
+
+```text
+复测发现 medicines 表共有 25 行，但 distinct slot 为 23。
+重复仓位：
+17 号仓两条，其中一条 stock=0
+19 号仓两条，其中一条 stock=0
+
+已先备份数据库：
+/userdata/zykh_app/data/zykh.db.before-dedupe-20260630-1650
+
+已删除 id=63、id=65 两条 stock=0 重复记录。
+修复后：
+SELECT COUNT(*) FROM medicines; -> 23
+无重复仓位。
+```
+
+显示栈复测：
+
+```text
+当前 QSM368 检测到：
+DSI-1 connected
+LVDS-1 connected
+HDMI-A-1 disconnected
+
+触摸设备仍在：
+event4/event5/event6 -> wch.cn USB2IIC_CTP_CONTROL
+
+浏览器壳仍不存在：
+cog/chromium/qmlscene/wpe 均 not found
+```
+
+因此当前实际状态：
+
+```text
+Jetson -> QSM368 的 adb 调试链路已经打通。
+后端和摄像头拍照已复测通过。
+药柜数据已修复为 23 仓唯一。
+Go UI 暂未重新启动验证，原因是当前 HDMI-A-1 显示为 disconnected；需要先确认 HDMI 线/屏幕供电/输入源，或改走当前 connected 的 LVDS/DSI 输出。
+```
