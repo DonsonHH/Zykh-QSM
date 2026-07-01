@@ -1,12 +1,21 @@
-import { Camera, Check, Image, RefreshCw, RotateCcw } from "lucide-react";
+import { Camera, Check, RefreshCw, RotateCcw, ScanLine } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
 
 export function ScanPage({ status, refresh, notify }) {
   const [live, setLive] = useState(true);
-  const [result, setResult] = useState(null);
-  const [draft, setDraft] = useState({ slot: 1, stock: 1, expire_date: "" });
+  const [result, setResult] = useState({ ok: true, demo: true });
+  const [draft, setDraft] = useState({
+    slot: 4,
+    stock: 1,
+    expire_date: "2026-12-31",
+    dosage: "0.35g*24粒",
+    code: "869000100004",
+    trace_code: "TRACE-DEMO-04",
+    box_size: "big",
+    name: "连花清瘟胶囊"
+  });
   const [streamKey, setStreamKey] = useState(Date.now());
   const qsmOnline = Boolean(status?.qsm?.online);
   const streamUrl = useMemo(() => `/api/camera/stream?width=760&height=480&fps=24&t=${streamKey}`, [streamKey]);
@@ -61,7 +70,7 @@ export function ScanPage({ status, refresh, notify }) {
             <span className="card-eyebrow">拍照识药</span>
             <h1>请将药盒放入识别框内</h1>
           </div>
-          <a className="record-link" href="/admin">识别记录</a>
+          <span className={`record-link ${qsmOnline ? "good" : "warn"}`}>{qsmOnline ? "摄像头已连接 · 1280×720" : "摄像头离线"}</span>
         </div>
         <div className="camera-window">
           {qsmOnline && live ? (
@@ -79,18 +88,22 @@ export function ScanPage({ status, refresh, notify }) {
             <i />
             <i />
           </div>
+          <div className="camera-guide">
+            <ScanLine size={22} />
+            <span>请将药盒正面放入框内</span>
+          </div>
         </div>
         <div className="camera-controls">
-          <button onClick={() => setLive((value) => !value)}>
-            <Image size={22} />
-            {live ? "暂停预览" : "继续预览"}
+          <button onClick={resume}>
+            <RefreshCw size={22} />
+            重新识别
           </button>
           <button className="capture-button" onClick={scan} disabled={!qsmOnline}>
             <Camera size={34} />
           </button>
-          <button onClick={resume}>
-            <RefreshCw size={22} />
-            刷新预览
+          <button className="scan-primary" onClick={scan} disabled={!qsmOnline}>
+            <Camera size={22} />
+            拍照识别
           </button>
         </div>
       </GlassCard>

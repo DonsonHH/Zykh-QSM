@@ -4,11 +4,11 @@
   --bg-deep: #04101f;
   --bg-panel: #07172a;
   --bg-panel-2: #0b2038;
-  --line: rgba(126, 188, 255, 0.18);
-  --line-strong: rgba(126, 188, 255, 0.36);
+  --line: rgba(126, 188, 255, 0.24);
+  --line-strong: rgba(126, 188, 255, 0.46);
   --text: #eef7ff;
-  --muted: #93abc8;
-  --dim: #5f7896;
+  --muted: #b2cbed;
+  --dim: #789bc0;
   --blue: #2d8cff;
   --cyan: #3dd5ff;
   --green: #4ee49d;
@@ -138,15 +138,15 @@ p {
 input,
 textarea {
   width: 100%;
-  border: 1px solid rgba(126, 188, 255, 0.18);
+  border: 1px solid rgba(126, 188, 255, 0.34);
   border-radius: var(--radius);
-  background: rgba(3, 14, 27, 0.72);
+  background: rgba(14, 36, 62, 0.92);
   color: var(--text);
 }
 
 input {
-  height: 42px;
-  padding: 0 12px;
+  height: 52px;
+  padding: 0 14px;
 }
 
 textarea {
@@ -158,8 +158,9 @@ textarea {
 label {
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: #cfe6ff;
   font-size: 13px;
+  font-weight: 800;
 }
 
 .primary {

@@ -66,6 +66,8 @@ export function AdminApp() {
   };
 
   const openSlot = async () => {
+    const confirmed = window.confirm(`确认打开 ${slot} 号仓？\n此操作会触发 QSM UART8 开仓机构。`);
+    if (!confirmed) return;
     try {
       const res = await api("/api/dispense", formBody({ slot }));
       data.notify(res.detail || `${slot} 号仓开仓完成`);

@@ -12,6 +12,8 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
   const filledSlots = medicines.filter((item) => Number(item.stock) > 0).length;
   const lowStock = medicines.filter((item) => Number(item.stock) > 0 && Number(item.stock) <= 12).length;
   const qsmOnline = Boolean(status?.qsm?.online);
+  const dispenseTitle = plan ? "开始取药" : "暂无计划";
+  const dispenseDetail = !plan ? "请先添加用药计划" : !qsmOnline ? "QSM 离线不可开仓" : "校验计划后开仓";
 
   const dispense = async () => {
     if (!plan) return notify("当前没有可执行用药计划");
@@ -49,7 +51,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
             <p>{plan ? `${plan.amount || "按计划"} · ${plan.slot} 号仓` : "请在药柜页或后台添加计划"}</p>
           </div>
         </div>
-        <BigActionButton icon={Pill} title="开始取药" detail={!qsmOnline ? "QSM 离线不可开仓" : "校验计划后开仓"} tone="orange" onClick={dispense} disabled={!qsmOnline || !plan} />
+        <BigActionButton icon={Pill} title={dispenseTitle} detail={dispenseDetail} tone="orange" onClick={dispense} disabled={!qsmOnline || !plan} />
       </GlassCard>
 
       <GlassCard className="ai-card">
@@ -98,7 +100,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
         <Metric label="药柜占用" value={`${filledSlots}/23`} />
         <Metric label="低库存" value={`${lowStock}`} tone={lowStock ? "warn" : "good"} />
         <Metric label="今日记录" value={`${records.length}`} />
-        <Metric label="计划数量" value={`${plans.length}`} />
+        <Metric label="启用计划" value={`${plans.length}`} />
         <div className="strip-note">
           <ClipboardList size={20} />
           <span>{qsmOnline ? "QSM 外设可用，取药和测量已启用" : "QSM 离线，本地档案和药柜仍可查看"}</span>

@@ -8,7 +8,15 @@ import { VitalReadout } from "../components/VitalReadout.jsx";
 const starterMessages = [
   {
     role: "assistant",
-    text: "您好，我是智药康护 AI 助手。可以结合健康档案、最近体征和药柜库存，为您做健康咨询和用药提醒。"
+    text: "您好，我是智药康护 AI 助手。今天会结合张三的高血压档案、最近体征和药柜库存，提醒按时服药并给出居家照护建议。"
+  },
+  {
+    role: "user",
+    text: "我最近头有点晕，晚上的药还能按时吃吗？"
+  },
+  {
+    role: "assistant",
+    text: "可以先测量血压、心率和血氧。如果体征稳定，18:30 按计划服用硝苯地平控释片；若头晕明显、胸闷或血压异常，请暂停自行加药并联系家属或医生。"
   }
 ];
 
@@ -174,6 +182,11 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
         </div>
         <span className="card-eyebrow">最近体征</span>
         <VitalReadout vitals={currentVitals} />
+        <span className="card-eyebrow">慢病与过敏</span>
+        <div className="condition-list">
+          <p><strong>慢病</strong><span>{profile.conditions || "高血压；糖尿病前期"}</span></p>
+          <p><strong>过敏</strong><span>{profile.allergies || "青霉素"}</span></p>
+        </div>
         <span className="card-eyebrow">正在服用</span>
         <div className="med-context-list">
           {activeMeds.length ? activeMeds.map((item) => (

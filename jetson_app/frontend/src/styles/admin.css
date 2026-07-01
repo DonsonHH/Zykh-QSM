@@ -1,7 +1,7 @@
 .admin-shell {
   position: relative;
-  width: min(100vw, 1280px);
-  height: min(100vh, 720px);
+  width: 1280px;
+  height: 720px;
   display: grid;
   grid-template-columns: 178px 1fr;
   overflow: hidden;

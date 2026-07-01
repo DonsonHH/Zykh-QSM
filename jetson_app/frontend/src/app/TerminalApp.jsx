@@ -18,9 +18,14 @@ const pageTitles = {
   profile: "健康档案"
 };
 
+const terminalPages = new Set(Object.keys(pageTitles));
+
 export function TerminalApp() {
   const data = useJetsonData();
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get("page");
+    return terminalPages.has(requested) ? requested : "home";
+  });
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {

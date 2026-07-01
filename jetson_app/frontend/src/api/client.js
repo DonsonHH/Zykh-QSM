@@ -18,14 +18,38 @@ export function formBody(data) {
   };
 }
 
+async function safeApi(path, fallback, timeoutMs = 5000) {
+  let timer = null;
+  try {
+    const timeout = new Promise((resolve) => {
+      timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+    });
+    return await Promise.race([api(path), timeout]);
+  } catch {
+    return fallback;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
 export async function loadSnapshot() {
+  const offlineStatus = {
+    ok: true,
+    jetson: {},
+    qsm: {
+      online: false,
+      status: { ok: false, error: "QSM 状态检查超时" },
+      adb: { ok: false, connected: false },
+      forward: { ok: false }
+    }
+  };
   const [statusRes, medRes, planRes, recordRes, vitalRes, profileRes] = await Promise.all([
-    api("/api/status"),
-    api("/api/medicines"),
-    api("/api/plans"),
-    api("/api/records"),
-    api("/api/vitals"),
-    api("/api/profile")
+    safeApi("/api/status", offlineStatus, 2500),
+    safeApi("/api/medicines", { medicines: [] }),
+    safeApi("/api/plans", { plans: [] }),
+    safeApi("/api/records", { records: [] }),
+    safeApi("/api/vitals", { vitals: [] }),
+    safeApi("/api/profile", { profile: {} })
   ]);
 
   return {

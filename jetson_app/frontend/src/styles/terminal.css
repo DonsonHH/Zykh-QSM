@@ -1,9 +1,9 @@
 .terminal-shell {
   position: relative;
-  width: min(100vw, 1280px);
-  height: min(100vh, 720px);
+  width: 1280px;
+  height: 720px;
   display: grid;
-  grid-template-rows: 82px minmax(0, 1fr) 70px;
+  grid-template-rows: 82px minmax(0, 1fr) 82px;
   overflow: hidden;
   border: 1px solid rgba(126, 188, 255, 0.24);
   border-radius: var(--radius);
@@ -146,7 +146,7 @@
 }
 
 .bottom-nav button {
-  height: 50px;
+  height: 62px;
   display: grid;
   place-items: center;
   gap: 2px;
@@ -163,12 +163,12 @@
 }
 
 .bottom-nav span {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .big-action {
-  min-height: 64px;
+  min-height: 74px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -185,12 +185,12 @@
 }
 
 .big-action strong {
-  font-size: 18px;
+  font-size: 19px;
 }
 
 .big-action small {
   margin-top: 3px;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.88);
   font-size: 12px;
 }
 
@@ -199,7 +199,7 @@
 }
 
 .big-action.orange {
-  background: linear-gradient(135deg, #ff961f, #ffbe4a);
+  background: linear-gradient(135deg, #ff8d12, #ffd15c);
   color: #101217;
 }
 
@@ -215,7 +215,7 @@
   height: 100%;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: minmax(284px, 1fr) 92px 58px;
+  grid-template-rows: minmax(270px, 1fr) 92px 74px;
   gap: 8px;
 }
 
@@ -223,9 +223,15 @@
 .ai-card,
 .vitals-card {
   min-width: 0;
-  padding: 16px;
+  padding: 14px 16px;
   display: grid;
-  gap: 12px;
+  gap: 9px;
+}
+
+.today-card .big-action,
+.ai-card .big-action,
+.vitals-card .big-action {
+  min-height: 64px;
 }
 
 .next-dose {
@@ -273,8 +279,8 @@
 
 .assistant-orb {
   justify-self: center;
-  width: 82px;
-  height: 82px;
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
   border: 1px solid rgba(155, 109, 255, 0.35);
@@ -295,11 +301,11 @@
 
 .vital-readout {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .vital-readout div {
-  min-height: 38px;
+  min-height: 34px;
   display: grid;
   grid-template-columns: 24px 1fr auto 42px;
   align-items: center;
@@ -380,28 +386,30 @@
 
 .home-status-strip {
   grid-column: 1 / -1;
-  padding: 8px 12px;
+  padding: 10px 12px;
   display: grid;
-  grid-template-columns: repeat(4, 138px) 1fr;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) 1.25fr;
   align-items: center;
   gap: 10px;
 }
 
 .home-metric {
-  padding: 5px 12px;
+  min-height: 52px;
+  padding: 7px 14px;
+  border: 1px solid rgba(126, 188, 255, 0.18);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.055);
+  background: rgba(14, 36, 62, 0.72);
 }
 
 .home-metric span {
-  color: var(--muted);
-  font-size: 12px;
+  color: #b8d8f7;
+  font-size: 13px;
 }
 
 .home-metric strong {
   display: block;
   margin-top: 2px;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .home-metric.good strong {
@@ -484,11 +492,11 @@
 
 .medicine-slot {
   min-width: 0;
-  height: 62px;
+  height: 72px;
   padding: 8px;
   display: grid;
   gap: 4px;
-  border: 1px solid rgba(126, 188, 255, 0.15);
+  border: 1px solid rgba(126, 188, 255, 0.18);
   border-radius: var(--radius);
   background: rgba(11, 32, 56, 0.8);
   color: #eaf6ff;
@@ -497,12 +505,14 @@
 }
 
 .medicine-grid.filtered .medicine-slot {
-  height: 86px;
+  height: 94px;
 }
 
 .medicine-slot.selected {
-  border-color: rgba(61, 213, 255, 0.86);
-  box-shadow: inset 0 0 0 1px rgba(61, 213, 255, 0.45);
+  border-color: rgba(61, 213, 255, 1);
+  box-shadow:
+    inset 0 0 0 1px rgba(61, 213, 255, 0.58),
+    0 0 22px rgba(61, 213, 255, 0.2);
 }
 
 .slot-topline,
@@ -520,8 +530,8 @@
 .slot-topline span,
 .slot-stock span,
 .slot-body small {
-  color: var(--muted);
-  font-size: 10px;
+  color: #a7c3e4;
+  font-size: 11px;
 }
 
 .slot-body {
@@ -545,7 +555,7 @@
 
 .slot-body b {
   max-width: 120px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .slot-stock strong {
@@ -557,9 +567,17 @@
   color: var(--green);
 }
 
+.medicine-slot.good {
+  border-color: rgba(78, 228, 157, 0.36);
+}
+
 .medicine-slot.warn svg,
 .medicine-slot.warn .slot-stock strong {
   color: var(--orange);
+}
+
+.medicine-slot.warn {
+  border-color: rgba(255, 167, 53, 0.52);
 }
 
 .medicine-slot.danger svg,
@@ -567,8 +585,14 @@
   color: var(--red);
 }
 
+.medicine-slot.danger {
+  border-color: rgba(255, 97, 112, 0.58);
+}
+
 .medicine-slot.empty {
-  color: #758aa4;
+  color: #88a2c0;
+  border-color: rgba(126, 188, 255, 0.1);
+  background: rgba(7, 22, 40, 0.68);
 }
 
 .cabinet-legend {
@@ -645,7 +669,7 @@
 .composer button,
 .profile-vitals-card button,
 .quick-prompts button {
-  min-height: 44px;
+  min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -690,7 +714,7 @@
 
 .camera-panel {
   display: grid;
-  grid-template-rows: auto 1fr 66px;
+  grid-template-rows: auto 1fr 76px;
   gap: 12px;
 }
 
@@ -731,8 +755,59 @@
 .focus-frame {
   position: absolute;
   inset: 68px 116px;
-  border: 2px solid rgba(61, 213, 255, 0.72);
   pointer-events: none;
+}
+
+.focus-frame i {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-color: rgba(61, 213, 255, 0.9);
+}
+
+.focus-frame i:nth-child(1) {
+  left: 0;
+  top: 0;
+  border-left: 3px solid;
+  border-top: 3px solid;
+}
+
+.focus-frame i:nth-child(2) {
+  right: 0;
+  top: 0;
+  border-right: 3px solid;
+  border-top: 3px solid;
+}
+
+.focus-frame i:nth-child(3) {
+  right: 0;
+  bottom: 0;
+  border-right: 3px solid;
+  border-bottom: 3px solid;
+}
+
+.focus-frame i:nth-child(4) {
+  left: 0;
+  bottom: 0;
+  border-left: 3px solid;
+  border-bottom: 3px solid;
+}
+
+.camera-guide {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid rgba(61, 213, 255, 0.28);
+  border-radius: var(--radius);
+  background: rgba(3, 14, 27, 0.72);
+  color: #d7edff;
+  font-size: 14px;
+  font-weight: 800;
+  transform: translateX(-50%);
 }
 
 .camera-controls {
@@ -743,12 +818,17 @@
 }
 
 .capture-button {
-  width: 76px;
-  height: 76px;
+  width: 82px;
+  height: 82px;
   justify-self: center;
   border: 4px solid rgba(255, 255, 255, 0.92) !important;
   border-radius: 999px !important;
   background: rgba(45, 140, 255, 0.12) !important;
+}
+
+.scan-primary {
+  border-color: rgba(61, 213, 255, 0.42) !important;
+  background: linear-gradient(135deg, rgba(29, 110, 255, 0.92), rgba(37, 195, 255, 0.88)) !important;
 }
 
 .scan-result-panel {
@@ -783,8 +863,8 @@
 
 .result-card p {
   margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
+  color: #b9d6f3;
+  font-size: 13px;
 }
 
 .result-card strong {
@@ -853,13 +933,13 @@
 
 .history-panel span {
   margin-top: 6px;
-  color: var(--muted);
+  color: #a9c7e8;
   font-size: 11px;
 }
 
 .chat-panel {
   display: grid;
-  grid-template-rows: 54px 1fr 38px 66px;
+  grid-template-rows: 54px 1fr 46px 70px;
   gap: 8px;
 }
 
@@ -960,26 +1040,28 @@
 }
 
 .quick-prompts button {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
-  color: var(--muted);
-  font-size: 11px;
+  border-color: rgba(61, 213, 255, 0.24);
+  background: rgba(45, 140, 255, 0.12);
+  color: #d4ebff;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .composer {
   display: grid;
-  grid-template-columns: 48px 1fr 56px;
+  grid-template-columns: 56px 1fr 64px;
   gap: 8px;
 }
 
 .composer textarea {
-  min-height: 54px;
-  height: 54px;
+  min-height: 60px;
+  height: 60px;
 }
 
 .composer button {
-  min-height: 54px;
+  min-height: 60px;
 }
 
 .health-context-panel {
@@ -1000,7 +1082,7 @@
 
 .profile-block p,
 .qsm-note {
-  color: var(--muted);
+  color: #b4d0ee;
   font-size: 12px;
 }
 
@@ -1021,7 +1103,25 @@
 }
 
 .med-context-list span {
-  color: var(--muted);
+  color: #adc9e8;
+}
+
+.condition-list {
+  display: grid;
+  gap: 7px;
+}
+
+.condition-list p {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 12px;
+}
+
+.condition-list span {
+  color: #adc9e8;
 }
 
 .profile-page {
@@ -1060,7 +1160,7 @@
 
 .profile-hero p {
   margin-top: 8px;
-  color: var(--muted);
+  color: #b4d0ee;
 }
 
 .profile-notes {
@@ -1077,7 +1177,7 @@
 
 .profile-notes span {
   display: block;
-  color: var(--muted);
+  color: #b4d0ee;
   font-size: 12px;
 }
 
@@ -1102,6 +1202,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: #b4d0ee;
   font-size: 12px;
 }

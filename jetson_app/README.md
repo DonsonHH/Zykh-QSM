@@ -54,6 +54,26 @@ Kiosk：
 sh jetson_app/scripts/start_kiosk.sh
 ```
 
+比赛展示或触屏调试时，推荐使用 720p 包装脚本。它会先把当前显示输出切到 `1280x720`，退出 Chromium 后自动恢复原分辨率：
+
+```bash
+sh jetson_app/scripts/start_kiosk_720p.sh
+```
+
+可选环境变量：
+
+```bash
+JETSON_KIOSK_OUTPUT=HDMI-0 JETSON_KIOSK_MODE=1280x720 JETSON_KIOSK_RATE=60 sh jetson_app/scripts/start_kiosk_720p.sh
+```
+
+演示数据不会随服务启动自动覆盖真实数据。如需比赛展示数据，可手动执行：
+
+```bash
+sh jetson_app/scripts/seed_demo_data.sh
+```
+
+该脚本会先备份当前 `data/zykh_jetson.db`，再写入张三档案、8 个库存药仓、3 条用药计划、最近体征和操作记录。
+
 ## API
 
 - `GET /api/status`
