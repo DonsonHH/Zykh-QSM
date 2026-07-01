@@ -161,7 +161,7 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
         </div>
         <div className="offline-hint">
           <Search size={18} />
-          <span>{qsmOnline ? "QSM 在线，允许开仓调试" : "QSM 离线，开仓按钮已禁用"}</span>
+          <span>{qsmOnline ? "外设已连接，允许开仓" : "设备连接中，开仓按钮已暂时关闭"}</span>
         </div>
       </GlassCard>
     </div>

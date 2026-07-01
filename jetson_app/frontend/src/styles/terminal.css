@@ -3,7 +3,7 @@
   width: 1280px;
   height: 720px;
   display: grid;
-  grid-template-rows: 82px minmax(0, 1fr) 82px;
+  grid-template-rows: 84px minmax(0, 1fr) 76px;
   overflow: hidden;
   border: 1px solid rgba(126, 188, 255, 0.24);
   border-radius: var(--radius);
@@ -17,10 +17,10 @@
 
 .terminal-topbar {
   display: grid;
-  grid-template-columns: 220px 178px 1fr 130px;
+  grid-template-columns: 220px 168px 1fr 130px;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid rgba(126, 188, 255, 0.12);
 }
 
@@ -81,11 +81,11 @@
 
 .status-pill {
   min-width: 0;
-  gap: 9px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 7px 10px;
   border: 1px solid rgba(126, 188, 255, 0.14);
   border-radius: var(--radius);
-  background: rgba(7, 26, 48, 0.72);
+  background: rgba(7, 26, 48, 0.52);
 }
 
 .status-pill svg {
@@ -120,6 +120,11 @@
   color: var(--red);
 }
 
+.status-pill.soft svg,
+.status-pill.soft strong {
+  color: #9fc3e7;
+}
+
 .admin-peek {
   justify-content: center;
   gap: 7px;
@@ -131,10 +136,12 @@
 
 .terminal-content {
   min-height: 0;
-  padding: 10px 14px 12px;
+  padding: 10px 14px;
+  overflow: hidden;
 }
 
 .bottom-nav {
+  height: 64px;
   margin: 0 14px 12px;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -146,7 +153,7 @@
 }
 
 .bottom-nav button {
-  height: 62px;
+  height: 48px;
   display: grid;
   place-items: center;
   gap: 2px;
@@ -163,7 +170,7 @@
 }
 
 .bottom-nav span {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -381,7 +388,7 @@
 }
 
 .home-tile.archive {
-  background: linear-gradient(135deg, rgba(116, 72, 210, 0.94), rgba(61, 49, 135, 0.92));
+  background: linear-gradient(135deg, rgba(66, 92, 130, 0.94), rgba(31, 56, 92, 0.92));
 }
 
 .home-status-strip {
@@ -434,6 +441,8 @@
   display: grid;
   grid-template-columns: 1fr 322px;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .cabinet-main,
@@ -479,7 +488,7 @@
 
 .medicine-grid {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .medicine-grid.all {
@@ -493,7 +502,7 @@
 .medicine-slot {
   min-width: 0;
   height: 72px;
-  padding: 8px;
+  padding: 7px 8px;
   display: grid;
   gap: 4px;
   border: 1px solid rgba(126, 188, 255, 0.18);
@@ -596,7 +605,7 @@
 }
 
 .cabinet-legend {
-  margin-top: 10px;
+  margin-top: 6px;
   display: flex;
   align-items: center;
   gap: 18px;
@@ -704,6 +713,8 @@
   display: grid;
   grid-template-columns: 1fr 360px;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .camera-panel,
@@ -833,7 +844,9 @@
 
 .scan-result-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .result-card {
@@ -881,6 +894,8 @@
   display: grid;
   grid-template-columns: 202px 1fr 270px;
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .history-panel,
@@ -941,6 +956,7 @@
   display: grid;
   grid-template-rows: 54px 1fr 46px 70px;
   gap: 8px;
+  min-height: 0;
 }
 
 .chat-heading {
@@ -1067,7 +1083,8 @@
 .health-context-panel {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .profile-block {
@@ -1089,6 +1106,9 @@
 .med-context-list {
   display: grid;
   gap: 7px;
+  max-height: 126px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .med-context-list p {

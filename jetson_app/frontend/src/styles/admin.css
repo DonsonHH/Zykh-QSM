@@ -199,13 +199,13 @@
   padding: 14px;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .quick-actions-panel button,
 .quick-actions-panel a,
 .admin-panel button {
-  min-height: 42px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

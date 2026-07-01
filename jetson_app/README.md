@@ -74,6 +74,13 @@ sh jetson_app/scripts/seed_demo_data.sh
 
 该脚本会先备份当前 `data/zykh_jetson.db`，再写入张三档案、8 个库存药仓、3 条用药计划、最近体征和操作记录。
 
+管理后台也提供演示模式入口：
+
+```text
+/admin -> 快捷操作 -> 开启演示模式
+/admin -> 快捷操作 -> 清空演示数据
+```
+
 ## API
 
 - `GET /api/status`
@@ -93,6 +100,8 @@ sh jetson_app/scripts/seed_demo_data.sh
 - `GET /api/settings`
 - `POST /api/settings/ai_key`
 - `POST /api/admin/reset`
+- `POST /api/demo/seed`
+- `POST /api/demo/clear`
 
 ## 验证
 

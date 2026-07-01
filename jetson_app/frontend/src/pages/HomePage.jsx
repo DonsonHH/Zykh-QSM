@@ -13,7 +13,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
   const lowStock = medicines.filter((item) => Number(item.stock) > 0 && Number(item.stock) <= 12).length;
   const qsmOnline = Boolean(status?.qsm?.online);
   const dispenseTitle = plan ? "开始取药" : "暂无计划";
-  const dispenseDetail = !plan ? "请先添加用药计划" : !qsmOnline ? "QSM 离线不可开仓" : "校验计划后开仓";
+  const dispenseDetail = !plan ? "请先添加用药计划" : !qsmOnline ? "设备连接中，暂不可取药" : "校验计划后开仓";
 
   const dispense = async () => {
     if (!plan) return notify("当前没有可执行用药计划");
@@ -71,7 +71,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
           <strong>{latest.created_at ? latest.created_at.slice(11, 16) : "--:--"}</strong>
         </div>
         <VitalReadout vitals={latest} />
-        <BigActionButton icon={HeartPulse} title="立即测量" detail={!qsmOnline ? "等待 QSM 连接" : "心率 血氧 体温"} tone="blue" onClick={readVitals} disabled={!qsmOnline} />
+        <BigActionButton icon={HeartPulse} title="立即测量" detail={!qsmOnline ? "设备连接中，暂不可测量" : "心率 血氧 体温"} tone="blue" onClick={readVitals} disabled={!qsmOnline} />
       </GlassCard>
 
       <button className="home-tile scan" onClick={() => setPage("scan")}>
@@ -103,7 +103,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
         <Metric label="启用计划" value={`${plans.length}`} />
         <div className="strip-note">
           <ClipboardList size={20} />
-          <span>{qsmOnline ? "QSM 外设可用，取药和测量已启用" : "QSM 离线，本地档案和药柜仍可查看"}</span>
+          <span>{qsmOnline ? "外设已连接，取药和测量已启用" : "设备连接中，本地档案和药柜仍可查看"}</span>
         </div>
       </GlassCard>
     </div>

@@ -4,6 +4,7 @@ import { api, formBody } from "../api/client.js";
 import { DeviceCard } from "../components/DeviceCard.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { useJetsonData } from "./useJetsonData.js";
+import { useKioskScale } from "./useKioskScale.js";
 
 const adminNav = [
   ["overview", Home, "系统概览"],
@@ -16,6 +17,7 @@ const adminNav = [
 
 export function AdminApp() {
   const data = useJetsonData();
+  const scale = useKioskScale();
   const [section, setSection] = useState("overview");
   const [settings, setSettings] = useState(null);
   const [apiKey, setApiKey] = useState("");
@@ -77,9 +79,33 @@ export function AdminApp() {
     }
   };
 
+  const seedDemo = async () => {
+    const confirmed = window.confirm("确认开启演示模式？\n这会写入张三档案、药柜、计划、体征和演示记录。");
+    if (!confirmed) return;
+    try {
+      await api("/api/demo/seed", { method: "POST" });
+      data.notify("演示模式已开启");
+      await data.refresh();
+    } catch (err) {
+      data.notify(err.message);
+    }
+  };
+
+  const clearDemo = async () => {
+    const confirm = window.prompt("输入 CLEAR 清空演示数据并恢复空库");
+    if (confirm !== "CLEAR") return;
+    try {
+      await api("/api/demo/clear", formBody({ confirm }));
+      data.notify("演示数据已清空");
+      await data.refresh();
+    } catch (err) {
+      data.notify(err.message);
+    }
+  };
+
   return (
     <main className="viewport admin-viewport">
-      <section className="admin-shell">
+      <section className="admin-shell kiosk-canvas" style={{ "--kiosk-scale": scale }}>
         <aside className="admin-sidebar">
           <div className="admin-brand">
             <Shield size={30} />
@@ -116,7 +142,13 @@ export function AdminApp() {
               <div className="device-grid">
                 <DeviceCard icon={Cpu} title="QSM 设备" value={qsmOnline ? "在线" : "离线"} detail={forwardOk ? "ADB 转发正常" : "请检查 ADB forward"} tone={qsmOnline ? "good" : "bad"} />
                 <DeviceCard icon={Camera} title="摄像头" value={qsmOnline ? "正常" : "不可用"} detail={qsmStatus.camera || "经 QSM 网关访问"} tone={qsmOnline ? "good" : "warn"} />
-                <DeviceCard icon={HeartPulse} title="心率血氧仪" value={latestVital.heart_rate ? "正常" : "待测量"} detail={`心率 ${latestVital.heart_rate || "--"} · 血氧 ${latestVital.spo2 || "--"}`} tone={latestVital.heart_rate ? "good" : "warn"} />
+                <DeviceCard
+                  icon={HeartPulse}
+                  title="心率血氧仪"
+                  value={qsmOnline ? (latestVital.heart_rate ? "最近数据正常" : "待测量") : "待连接"}
+                  detail={latestVital.heart_rate ? `缓存 ${latestVital.heart_rate} / ${latestVital.spo2} · 依赖 QSM` : "依赖 QSM 网关"}
+                  tone={qsmOnline && latestVital.heart_rate ? "good" : "warn"}
+                />
                 <DeviceCard icon={DoorOpen} title="开仓控制" value={qsmOnline ? "正常" : "禁用"} detail={`累计记录 ${data.records.length} 次`} tone={qsmOnline ? "good" : "bad"} />
               </div>
               <GlassCard className="admin-stats">
@@ -126,7 +158,7 @@ export function AdminApp() {
                 <Metric label="操作记录" value={data.records.length} />
               </GlassCard>
               <AdminLogs records={data.records} />
-              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} />
+              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} seedDemo={seedDemo} clearDemo={clearDemo} />
             </div>
           )}
 
@@ -140,7 +172,7 @@ export function AdminApp() {
                   刷新状态
                 </button>
               </GlassCard>
-              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} />
+              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} seedDemo={seedDemo} clearDemo={clearDemo} />
             </div>
           )}
 
@@ -247,7 +279,7 @@ function AdminLogs({ records, large = false }) {
   );
 }
 
-function QuickActions({ qsmOnline, slot, setSlot, openSlot, refresh, resetDb }) {
+function QuickActions({ qsmOnline, slot, setSlot, openSlot, refresh, resetDb, seedDemo, clearDemo }) {
   return (
     <GlassCard className="quick-actions-panel">
       <span className="card-eyebrow">快捷操作</span>
@@ -264,6 +296,14 @@ function QuickActions({ qsmOnline, slot, setSlot, openSlot, refresh, resetDb }) 
       <button onClick={refresh}>
         <RefreshCw size={18} />
         刷新状态
+      </button>
+      <button className="primary" onClick={seedDemo}>
+        <Bot size={18} />
+        开启演示模式
+      </button>
+      <button onClick={clearDemo}>
+        <Database size={18} />
+        清空演示数据
       </button>
       <button onClick={resetDb}>
         <Database size={18} />

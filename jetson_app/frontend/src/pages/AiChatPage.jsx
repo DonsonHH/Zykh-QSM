@@ -196,7 +196,7 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
             </p>
           )) : <p className="muted">暂无库存药品</p>}
         </div>
-        <span className="qsm-note">{qsmOnline ? "语音输入和播报可用" : "QSM 离线，语音能力不可用"}</span>
+        <span className="qsm-note">{qsmOnline ? "语音输入和播报可用" : "设备连接中，语音能力暂不可用"}</span>
       </GlassCard>
     </div>
   );

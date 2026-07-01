@@ -9,6 +9,7 @@ import { ProfilePage } from "../pages/ProfilePage.jsx";
 import { ScanPage } from "../pages/ScanPage.jsx";
 import { formatClock, formatDay } from "../utils/domain.js";
 import { useJetsonData } from "./useJetsonData.js";
+import { useKioskScale } from "./useKioskScale.js";
 
 const pageTitles = {
   home: "首页",
@@ -22,6 +23,7 @@ const terminalPages = new Set(Object.keys(pageTitles));
 
 export function TerminalApp() {
   const data = useJetsonData();
+  const scale = useKioskScale();
   const [page, setPage] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("page");
     return terminalPages.has(requested) ? requested : "home";
@@ -37,7 +39,7 @@ export function TerminalApp() {
 
   return (
     <main className="viewport terminal-viewport">
-      <section className="terminal-shell">
+      <section className="terminal-shell kiosk-canvas" style={{ "--kiosk-scale": scale }}>
         <TerminalTopbar now={now} status={data.status} profile={data.profile} page={page} />
         <section className="terminal-content">
           {page === "home" && <HomePage {...common} />}
@@ -72,8 +74,8 @@ function TerminalTopbar({ now, status, profile, page }) {
         <span>{formatDay(now)}</span>
       </div>
       <div className="topbar-status">
-        <StatusPill icon={Cpu} label="QSM状态" value={qsmOnline ? "在线" : "离线"} tone={qsmOnline ? "good" : "bad"} />
-        <StatusPill icon={Wifi} label="网关转发" value={forwardOk ? "正常" : "异常"} tone={forwardOk ? "good" : "warn"} />
+        <StatusPill icon={Cpu} label="设备连接" value={qsmOnline ? "外设在线" : "连接中"} tone={qsmOnline ? "good" : "soft"} />
+        <StatusPill icon={Wifi} label="硬件功能" value={qsmOnline && forwardOk ? "可用" : "部分暂不可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
         <StatusPill icon={ShieldCheck} label="系统状态" value={status?.jetson ? "正常" : "检查中"} tone={status?.jetson ? "good" : "warn"} />
       </div>
       <a className="admin-peek" href="/admin" aria-label="进入管理后台">

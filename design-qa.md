@@ -42,3 +42,18 @@ focused region comparison evidence: checked terminal top status row, home card g
 
 patches made since previous QA pass: fixed missing React imports that caused a blank screen, compacted the terminal home grid to prevent bottom nav/status overlap, and regenerated terminal/admin screenshots
 final result: passed
+
+**2026-07-01 Refinement Pass**
+- Added a shared 1280x720 kiosk scale hook for terminal and admin views so the canvas scales as a unit instead of each component reflowing independently.
+- Tightened the global type system: Noto CJK font stack, anti-aliasing, shared font/line-height tokens, tabular numeric rendering and clearer disabled button styling.
+- Reduced elderly-terminal technical wording: QSM/ADB details stay in admin; terminal shows "设备连接中 / 硬件功能暂不可用" style messages.
+- Added admin demo controls backed by `POST /api/demo/seed` and `POST /api/demo/clear`.
+- Fixed scan-page camera stream failure state: no browser broken-image icon, disabled capture while the stream is unavailable, and labels cached data as the latest result.
+- Clarified admin device status by separating cached vitals from current QSM dependency.
+
+**Verification 2026-07-01 Refinement**
+- `npm run build`: passed.
+- `jetson_app/backend/.venv/bin/python -m pytest`: 6 passed, 2 FastAPI deprecation warnings.
+- Chromium QA screenshots generated under ignored `jetson_app/data/`: `zykh-home-refine-qa.png`, `zykh-cabinet-refine-qa2.png`, `zykh-scan-refine-qa2.png`, `zykh-ai-refine-qa.png`, `zykh-admin-refine-qa.png`.
+- Remaining accepted limitation: Chromium snap headless still needs the same height compensation for screenshots; the physical kiosk path remains `start_kiosk_720p.sh`.
+final result: passed

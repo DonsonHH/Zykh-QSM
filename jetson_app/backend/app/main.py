@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .ai import stream_chat
 from .config import AI_API_BASE, AI_KEY_FILE, AI_MODEL, APP_ROOT, DATA_DIR, DB_PATH, QSM_API_BASE
 from .db import add_record, execute, init_db, now_text, row, rows, slot_kind
+from .demo_data import clear_demo_data, seed_demo_data
 from .qsm_client import qsm
 
 
@@ -400,6 +401,20 @@ def reset_database(confirm: str = Form("")) -> dict[str, Any]:
             target.unlink()
     init_db()
     return ok(detail="Jetson 主库已重新初始化")
+
+
+@app.post("/api/demo/seed")
+def seed_demo() -> dict[str, Any]:
+    seed_demo_data()
+    return ok(detail="演示模式已开启", profile=get_profile()["profile"], medicines=list_medicines())
+
+
+@app.post("/api/demo/clear")
+def clear_demo(confirm: str = Form("")) -> dict[str, Any]:
+    if confirm != "CLEAR":
+        raise HTTPException(400, "confirm must be CLEAR")
+    clear_demo_data()
+    return ok(detail="演示数据已清空", medicines=list_medicines())
 
 
 if DIST_DIR.exists():

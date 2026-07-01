@@ -1,6 +1,16 @@
 :root {
   color-scheme: dark;
-  font-family: "Inter", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Inter", system-ui, sans-serif;
+  --font-xs: 12px;
+  --font-sm: 14px;
+  --font-md: 16px;
+  --font-lg: 20px;
+  --font-xl: 28px;
+  --font-2xl: 36px;
+  --font-clock: 48px;
+  --line-tight: 1.12;
+  --line-normal: 1.35;
+  --line-relaxed: 1.55;
   --bg-deep: #04101f;
   --bg-panel: #07172a;
   --bg-panel-2: #0b2038;
@@ -29,6 +39,8 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
@@ -39,6 +51,9 @@ body {
     radial-gradient(circle at 84% 12%, rgba(78, 228, 157, 0.1), transparent 22%),
     linear-gradient(135deg, #020813 0%, #071427 48%, #020813 100%);
   color: var(--text);
+  font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 button,
@@ -55,11 +70,15 @@ a {
 
 button {
   cursor: pointer;
+  line-height: 1;
 }
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.46;
+  border-color: rgba(120, 160, 200, 0.12) !important;
+  background: rgba(80, 100, 125, 0.32) !important;
+  color: rgba(210, 230, 255, 0.42) !important;
+  opacity: 1;
 }
 
 button:focus-visible,
@@ -82,12 +101,48 @@ p {
   margin: 0;
 }
 
+h1,
+h2,
+h3,
+strong,
+.clock,
+.metric-value,
+.stat-number,
+.slot-number,
+.time-lockup strong,
+.next-dose strong,
+.home-metric strong,
+.slot-topline strong,
+.vital-readout strong {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
 .viewport {
   width: 100vw;
   height: 100vh;
   display: grid;
   place-items: center;
   overflow: hidden;
+}
+
+.kiosk-canvas {
+  transform: scale(var(--kiosk-scale, 1));
+  transform-origin: center center;
+}
+
+.icon-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+}
+
+.icon-row svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: block;
 }
 
 .glass-card {
@@ -145,7 +200,7 @@ textarea {
 }
 
 input {
-  height: 52px;
+  height: 50px;
   padding: 0 14px;
 }
 

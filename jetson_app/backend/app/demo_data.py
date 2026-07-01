@@ -115,6 +115,35 @@ def seed_demo_data() -> None:
         )
 
 
+def clear_demo_data() -> None:
+    init_db()
+    now = now_text()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE profile
+            SET name='', gender='', age=0, height='', weight='', conditions='',
+                allergies='', notes='', updated_at=?
+            WHERE id=1
+            """,
+            (now,),
+        )
+        for slot in range(1, 24):
+            conn.execute(
+                """
+                UPDATE medicines
+                SET name='', dosage='', stock=0, expire_date='', code='',
+                    trace_code='', box_size=box_size, updated_at=?
+                WHERE slot=?
+                """,
+                (now, slot),
+            )
+        conn.execute("DELETE FROM plans")
+        conn.execute("DELETE FROM records")
+        conn.execute("DELETE FROM vitals_records")
+        conn.execute("DELETE FROM health_memories")
+
+
 if __name__ == "__main__":
     seed_demo_data()
     print("Demo data seeded.")

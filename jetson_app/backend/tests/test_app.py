@@ -95,3 +95,14 @@ def test_settings_save_and_clear_ai_key(clean_db):
     cleared = run(main.save_ai_key(FakeRequest({"api_key": ""})))
     assert cleared["settings"]["ai_key_configured"] is False
     assert not Path(os.environ["AI_API_KEY_FILE"]).exists()
+
+
+def test_demo_seed_and_clear_endpoints(clean_db):
+    seeded = main.seed_demo()
+    assert seeded["ok"] is True
+    assert seeded["profile"]["name"] == "张三"
+    assert sum(1 for item in seeded["medicines"] if item["stock"] > 0) >= 8
+
+    cleared = main.clear_demo(confirm="CLEAR")
+    assert cleared["ok"] is True
+    assert sum(1 for item in cleared["medicines"] if item["stock"] > 0) == 0

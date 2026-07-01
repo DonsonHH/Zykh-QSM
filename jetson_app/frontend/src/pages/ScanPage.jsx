@@ -17,6 +17,7 @@ export function ScanPage({ status, refresh, notify }) {
     name: "连花清瘟胶囊"
   });
   const [streamKey, setStreamKey] = useState(Date.now());
+  const [streamFailed, setStreamFailed] = useState(false);
   const qsmOnline = Boolean(status?.qsm?.online);
   const streamUrl = useMemo(() => `/api/camera/stream?width=760&height=480&fps=24&t=${streamKey}`, [streamKey]);
 
@@ -59,6 +60,7 @@ export function ScanPage({ status, refresh, notify }) {
 
   const resume = () => {
     setLive(true);
+    setStreamFailed(false);
     setStreamKey(Date.now());
   };
 
@@ -70,16 +72,18 @@ export function ScanPage({ status, refresh, notify }) {
             <span className="card-eyebrow">拍照识药</span>
             <h1>请将药盒放入识别框内</h1>
           </div>
-          <span className={`record-link ${qsmOnline ? "good" : "warn"}`}>{qsmOnline ? "摄像头已连接 · 1280×720" : "摄像头离线"}</span>
+          <span className={`record-link ${qsmOnline && !streamFailed ? "good" : "warn"}`}>
+            {qsmOnline && !streamFailed ? "摄像头已连接 · 1280×720" : "摄像头暂不可用"}
+          </span>
         </div>
         <div className="camera-window">
-          {qsmOnline && live ? (
-            <img src={streamUrl} alt="QSM 摄像头实时预览" />
+          {qsmOnline && live && !streamFailed ? (
+            <img src={streamUrl} alt="QSM 摄像头实时预览" onError={() => setStreamFailed(true)} />
           ) : (
             <div className="camera-empty">
               <Camera size={78} />
-              <strong>{qsmOnline ? "预览已暂停" : "QSM 摄像头离线"}</strong>
-              <span>{qsmOnline ? "点击刷新预览继续观察" : "请在管理后台检查 ADB 和 QSM 服务"}</span>
+              <strong>{qsmOnline && !streamFailed ? "预览已暂停" : "摄像头暂不可用"}</strong>
+              <span>{qsmOnline && !streamFailed ? "点击刷新预览继续观察" : "请在管理后台检查设备连接"}</span>
             </div>
           )}
           <div className="focus-frame">
@@ -98,10 +102,10 @@ export function ScanPage({ status, refresh, notify }) {
             <RefreshCw size={22} />
             重新识别
           </button>
-          <button className="capture-button" onClick={scan} disabled={!qsmOnline}>
+          <button className="capture-button" onClick={scan} disabled={!qsmOnline || streamFailed}>
             <Camera size={34} />
           </button>
-          <button className="scan-primary" onClick={scan} disabled={!qsmOnline}>
+          <button className="scan-primary" onClick={scan} disabled={!qsmOnline || streamFailed}>
             <Camera size={22} />
             拍照识别
           </button>
@@ -110,7 +114,7 @@ export function ScanPage({ status, refresh, notify }) {
 
       <GlassCard className="scan-result-panel">
         <div className="result-section">
-          <span className="card-eyebrow">识别结果</span>
+          <span className="card-eyebrow">{qsmOnline && !streamFailed ? "识别结果" : "最近识别结果 · 摄像头暂不可用"}</span>
           <div className="result-card">
             <div className="drug-thumbnail">
               <Camera size={34} />
