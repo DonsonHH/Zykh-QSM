@@ -13,6 +13,8 @@ fi
 HOST="${JETSON_HOST:-127.0.0.1}"
 PORT="${JETSON_PORT:-8088}"
 URL="http://${HOST}:${PORT}/"
+KIOSK_PATH="${JETSON_KIOSK_PATH:-terminal}"
+KIOSK_URL="${URL}${KIOSK_PATH#/}"
 LOG_DIR="${APP_ROOT}/data"
 PROFILE_DIR="${CHROMIUM_PROFILE_DIR:-${LOG_DIR}/chromium-profile}"
 mkdir -p "${LOG_DIR}"
@@ -43,11 +45,13 @@ fi
 
 exec "${CHROMIUM_BIN}" \
   --kiosk \
-  --app="${URL}" \
+  --app="${KIOSK_URL}" \
   --window-size=1280,720 \
   --force-device-scale-factor=1 \
   --disable-gpu \
   --disable-translate \
+  --disable-features=Translate,TranslateUI \
+  --lang=zh-CN \
   --no-first-run \
   --disable-session-crashed-bubble \
   --disable-infobars \

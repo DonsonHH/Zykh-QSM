@@ -1,0 +1,156 @@
+import { Camera, Check, Image, RefreshCw, RotateCcw } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { api, formBody } from "../api/client.js";
+import { GlassCard } from "../components/GlassCard.jsx";
+
+export function ScanPage({ status, refresh, notify }) {
+  const [live, setLive] = useState(true);
+  const [result, setResult] = useState(null);
+  const [draft, setDraft] = useState({ slot: 1, stock: 1, expire_date: "" });
+  const [streamKey, setStreamKey] = useState(Date.now());
+  const qsmOnline = Boolean(status?.qsm?.online);
+  const streamUrl = useMemo(() => `/api/camera/stream?width=760&height=480&fps=24&t=${streamKey}`, [streamKey]);
+
+  const scan = async () => {
+    setLive(false);
+    try {
+      const data = await api("/api/medicine/scan", { method: "POST" });
+      setResult(data);
+      const medicine = data.scan?.medicine || data.scan?.lookup?.medicine || data.scan?.result || {};
+      setDraft({
+        slot: data.suggestion?.slot || 1,
+        stock: data.suggestion?.stock || 1,
+        expire_date: medicine.expire_date || medicine.expiry_date || "",
+        dosage: medicine.dosage || medicine.spec || "",
+        code: data.scan?.code || medicine.code || "",
+        trace_code: medicine.trace_code || "",
+        box_size: data.suggestion?.box_size || "medium",
+        name: medicine.name || medicine.medicine_name || ""
+      });
+      notify("识别完成，请核对后入库");
+    } catch (err) {
+      notify(err.message);
+      setLive(true);
+      setStreamKey(Date.now());
+    }
+  };
+
+  const confirm = async () => {
+    try {
+      await api("/api/medicine/scan", formBody({ ...draft, confirm: 1 }));
+      notify(`${draft.slot} 号仓已录入`);
+      await refresh();
+      setResult(null);
+      setLive(true);
+      setStreamKey(Date.now());
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+
+  const resume = () => {
+    setLive(true);
+    setStreamKey(Date.now());
+  };
+
+  return (
+    <div className="scan-page">
+      <GlassCard className="camera-panel">
+        <div className="page-heading compact">
+          <div>
+            <span className="card-eyebrow">拍照识药</span>
+            <h1>请将药盒放入识别框内</h1>
+          </div>
+          <a className="record-link" href="/admin">识别记录</a>
+        </div>
+        <div className="camera-window">
+          {qsmOnline && live ? (
+            <img src={streamUrl} alt="QSM 摄像头实时预览" />
+          ) : (
+            <div className="camera-empty">
+              <Camera size={78} />
+              <strong>{qsmOnline ? "预览已暂停" : "QSM 摄像头离线"}</strong>
+              <span>{qsmOnline ? "点击刷新预览继续观察" : "请在管理后台检查 ADB 和 QSM 服务"}</span>
+            </div>
+          )}
+          <div className="focus-frame">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+        </div>
+        <div className="camera-controls">
+          <button onClick={() => setLive((value) => !value)}>
+            <Image size={22} />
+            {live ? "暂停预览" : "继续预览"}
+          </button>
+          <button className="capture-button" onClick={scan} disabled={!qsmOnline}>
+            <Camera size={34} />
+          </button>
+          <button onClick={resume}>
+            <RefreshCw size={22} />
+            刷新预览
+          </button>
+        </div>
+      </GlassCard>
+
+      <GlassCard className="scan-result-panel">
+        <div className="result-section">
+          <span className="card-eyebrow">识别结果</span>
+          <div className="result-card">
+            <div className="drug-thumbnail">
+              <Camera size={34} />
+            </div>
+            <div>
+              <h2>{draft.name || "等待识别"}</h2>
+              <p>识别置信度：<strong>{result ? "98%" : "--"}</strong></p>
+            </div>
+          </div>
+        </div>
+
+        <div className="confirm-section">
+          <span className="card-eyebrow">信息确认</span>
+          <label>
+            药品名称
+            <input value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+          </label>
+          <label>
+            追溯码
+            <input value={draft.code || ""} onChange={(event) => setDraft({ ...draft, code: event.target.value })} />
+          </label>
+          <div className="editor-row">
+            <label>
+              规格
+              <input value={draft.dosage || ""} onChange={(event) => setDraft({ ...draft, dosage: event.target.value })} />
+            </label>
+            <label>
+              数量
+              <input type="number" min="0" value={draft.stock || 0} onChange={(event) => setDraft({ ...draft, stock: event.target.value })} />
+            </label>
+          </div>
+          <div className="editor-row">
+            <label>
+              仓位
+              <input type="number" min="1" max="23" value={draft.slot || 1} onChange={(event) => setDraft({ ...draft, slot: event.target.value })} />
+            </label>
+            <label>
+              有效期
+              <input value={draft.expire_date || ""} onChange={(event) => setDraft({ ...draft, expire_date: event.target.value })} />
+            </label>
+          </div>
+          <div className="scan-actions">
+            <button onClick={resume}>
+              <RotateCcw size={20} />
+              重拍
+            </button>
+            <button className="primary" onClick={confirm}>
+              <Check size={20} />
+              确认入库
+            </button>
+          </div>
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
