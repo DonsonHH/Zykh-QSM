@@ -39,7 +39,10 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
   return (
     <div className="home-page">
       <GlassCard className="today-card">
-        <span className="card-eyebrow">今日用药</span>
+        <div className="card-title-row">
+          <span className="card-eyebrow">今日用药</span>
+          <span className="dose-state">按时</span>
+        </div>
         <div className="next-dose">
           <span>下一次服药时间</span>
           <strong>{plan?.time || "--:--"}</strong>
@@ -49,6 +52,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
           <div>
             <h2>{plan?.medicine_name || (plan ? `${plan.slot} 号仓药品` : "暂无用药计划")}</h2>
             <p>{plan ? `${plan.amount || "按计划"} · ${plan.slot} 号仓` : "请在药柜页或后台添加计划"}</p>
+            {plan && <small>饭后服用</small>}
           </div>
         </div>
         <BigActionButton icon={Pill} title={dispenseTitle} detail={dispenseDetail} tone="orange" onClick={dispense} disabled={!qsmOnline || !plan} />

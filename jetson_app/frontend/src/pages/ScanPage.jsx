@@ -121,7 +121,7 @@ export function ScanPage({ status, refresh, notify }) {
             </div>
             <div>
               <h2>{draft.name || "等待识别"}</h2>
-              <p>识别置信度：<strong>{result ? "98%" : "--"}</strong></p>
+              <p>识别置信度 <strong className="confidence-pill">{result ? "98%" : "--"}</strong></p>
             </div>
           </div>
         </div>

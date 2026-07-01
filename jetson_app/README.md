@@ -81,6 +81,14 @@ sh jetson_app/scripts/seed_demo_data.sh
 /admin -> 快捷操作 -> 清空演示数据
 ```
 
+开发调 UI 时可以打开视觉规范预览页：
+
+```text
+http://127.0.0.1:8088/style-preview
+```
+
+该页集中展示按钮、表单、状态胶囊和颜色 token，不进入老人端 kiosk 主流程。
+
 ## API
 
 - `GET /api/status`

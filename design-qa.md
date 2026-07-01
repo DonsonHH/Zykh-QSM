@@ -43,6 +43,19 @@ focused region comparison evidence: checked terminal top status row, home card g
 patches made since previous QA pass: fixed missing React imports that caused a blank screen, compacted the terminal home grid to prevent bottom nav/status overlap, and regenerated terminal/admin screenshots
 final result: passed
 
+**2026-07-01 Design-System Pass**
+- Rebased the visual system on explicit design tokens: 1280x720 shell, 88px header, 76px bottom nav, Noto CJK font stack, tabular numerals, 20/16/14px radius scale, stricter color tokens and softer card borders.
+- Upgraded `GlassCard`, status chips, primary buttons, metric rows, cabinet cards, scan result confidence pill, AI chat bubbles and admin cards toward one shared visual language.
+- Restored the homepage hierarchy: stronger 今日用药 button, clearer AI/体征 secondary focus, and controlled quick-entry colors.
+- Added `/style-preview` as a non-kiosk design-system preview for buttons, forms, status chips and color swatches.
+- Tightened cabinet right-side density so the plan editor is less likely to be clipped in 720p.
+
+**Verification 2026-07-01 Design-System**
+- `npm run build`: passed.
+- `jetson_app/backend/.venv/bin/python -m pytest`: 6 passed, 2 FastAPI deprecation warnings.
+- Chromium QA screenshots generated under ignored `jetson_app/data/`: `zykh-home-system-qa.png`, `zykh-cabinet-system-qa2.png`, `zykh-scan-system-qa.png`, `zykh-ai-system-qa.png`, `zykh-style-preview-qa.png`.
+final result: passed
+
 **2026-07-01 Refinement Pass**
 - Added a shared 1280x720 kiosk scale hook for terminal and admin views so the canvas scales as a unit instead of each component reflowing independently.
 - Tightened the global type system: Noto CJK font stack, anti-aliasing, shared font/line-height tokens, tabular numeric rendering and clearer disabled button styling.

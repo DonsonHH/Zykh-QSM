@@ -105,7 +105,9 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
   };
 
   const currentVitals = vitals[0] || {};
-  const activeMeds = medicines.filter((item) => Number(item.stock) > 0).slice(0, 4);
+  const stockedMeds = medicines.filter((item) => Number(item.stock) > 0);
+  const activeMeds = stockedMeds.slice(0, 3);
+  const moreMeds = Math.max(stockedMeds.length - activeMeds.length, 0);
 
   return (
     <div className="ai-page">
@@ -195,6 +197,7 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
               <span>{item.dosage || "未填规格"}</span>
             </p>
           )) : <p className="muted">暂无库存药品</p>}
+          {moreMeds > 0 && <p className="more-meds"><strong>+{moreMeds} 项</strong><span>在药柜中</span></p>}
         </div>
         <span className="qsm-note">{qsmOnline ? "语音输入和播报可用" : "设备连接中，语音能力暂不可用"}</span>
       </GlassCard>

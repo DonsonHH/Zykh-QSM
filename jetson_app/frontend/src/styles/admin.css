@@ -5,10 +5,10 @@
   display: grid;
   grid-template-columns: 178px 1fr;
   overflow: hidden;
-  border: 1px solid rgba(126, 188, 255, 0.24);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
   background:
-    linear-gradient(135deg, #04101f 0%, #07182d 45%, #04101f 100%);
+    linear-gradient(135deg, var(--bg-page) 0%, var(--bg-panel) 45%, var(--bg-page) 100%);
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
 }
 
@@ -18,7 +18,7 @@
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 16px;
-  border-right: 1px solid rgba(126, 188, 255, 0.14);
+  border-right: 1px solid var(--border-soft);
   background: rgba(5, 16, 31, 0.82);
 }
 
@@ -60,7 +60,7 @@
   gap: 10px;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
   background: transparent;
   color: #9ab2ce;
 }
@@ -75,8 +75,8 @@
   height: 42px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(126, 188, 255, 0.18);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
   color: #9ccfff;
   background: rgba(255, 255, 255, 0.045);
 }
@@ -107,9 +107,9 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border: 1px solid rgba(126, 188, 255, 0.16);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: rgba(11, 26, 46, 0.72);
 }
 
 .admin-overview {
@@ -133,10 +133,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border: 1px solid rgba(126, 188, 255, 0.16);
-  border-radius: var(--radius);
-  background:
-    linear-gradient(145deg, rgba(19, 42, 73, 0.92), rgba(8, 21, 39, 0.96));
+  border: 1px solid rgba(92, 160, 255, 0.16);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
 }
 
 .device-card span,
@@ -149,7 +148,8 @@
 .device-card strong {
   display: block;
   margin: 6px 0 4px;
-  font-size: 22px;
+  font-size: var(--fs-card-big);
+  line-height: var(--lh-tight);
 }
 
 .device-card.good strong,
@@ -177,8 +177,8 @@
 
 .admin-stats div {
   padding: 12px;
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.055);
+  border-radius: var(--radius-md);
+  background: rgba(18, 40, 68, 0.72);
 }
 
 .admin-stats span {
@@ -190,7 +190,7 @@
 .admin-stats strong {
   display: block;
   margin-top: 6px;
-  font-size: 24px;
+  font-size: 26px;
 }
 
 .quick-actions-panel {
@@ -205,13 +205,13 @@
 .quick-actions-panel button,
 .quick-actions-panel a,
 .admin-panel button {
-  min-height: 40px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid rgba(126, 188, 255, 0.18);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.065);
   color: var(--text);
 }
@@ -289,7 +289,7 @@
   overflow: auto;
   margin: 0;
   padding: 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.28);
   color: #b8d5f4;
   font-size: 12px;
@@ -319,7 +319,7 @@
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.045);
   color: #dceeff;
   font-size: 12px;
