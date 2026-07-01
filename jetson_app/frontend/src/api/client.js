@@ -35,10 +35,10 @@ async function safeApi(path, fallback, timeoutMs = 5000) {
 export async function loadSnapshot() {
   const offlineStatus = {
     ok: true,
-    jetson: {},
+    qsm_main: {},
     qsm: {
       online: false,
-      status: { ok: false, error: "QSM 状态检查超时" },
+      status: { ok: false, error: "外设设备状态检查超时" },
       adb: { ok: false, connected: false },
       forward: { ok: false }
     }

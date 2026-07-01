@@ -20,7 +20,7 @@ from .qsm_client import qsm
 
 DIST_DIR = APP_ROOT / "frontend" / "dist"
 
-app = FastAPI(title="Zykh Jetson Master", version="0.1.0")
+app = FastAPI(title="Zykh QSM Master", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -108,14 +108,15 @@ def status() -> dict[str, Any]:
     forward = qsm.ensure_forward()
     qsm_status = qsm.get("/api/status", timeout=5.0)
     adb = qsm.adb_devices()
+    main_status = {
+        "host": platform.node(),
+        "arch": platform.machine(),
+        "python": platform.python_version(),
+        "time": now_text(),
+        "data_dir": str(DATA_DIR),
+    }
     return ok(
-        jetson={
-            "host": platform.node(),
-            "arch": platform.machine(),
-            "python": platform.python_version(),
-            "time": now_text(),
-            "data_dir": str(DATA_DIR),
-        },
+        qsm_main=main_status,
         qsm={
             "online": bool(qsm_status.get("ok")),
             "status": qsm_status,
@@ -232,7 +233,7 @@ def read_all_vitals() -> dict[str, Any]:
         if fallback.get("ok"):
             data = fallback
     if not data.get("ok"):
-        add_record("vitals_read", "failed", data.get("error", "QSM vitals failed"))
+        add_record("vitals_read", "failed", data.get("error", "外设设备体征读取失败"))
         return {"ok": False, **data}
     v = data.get("vitals", {})
     execute(
@@ -246,12 +247,12 @@ def read_all_vitals() -> dict[str, Any]:
             int_value(v.get("spo2")),
             int_value(v.get("systolic")),
             int_value(v.get("diastolic")),
-            v.get("source", "QSM"),
+            v.get("source", "外设设备"),
             v.get("quality", ""),
             now_text(),
         ),
     )
-    add_record("vitals_read", "success", "QSM 体征读取完成")
+    add_record("vitals_read", "success", "外设设备体征读取完成")
     return ok(vitals=v, qsm=data)
 
 
@@ -265,7 +266,7 @@ async def add_memory(request: Request) -> dict[str, Any]:
     p = await parse_payload(request)
     execute(
         "INSERT INTO health_memories(type,title,content,happened_at,source,created_at) VALUES (?,?,?,?,?,?)",
-        (p.get("type", "note"), p.get("title", ""), p.get("content", ""), p.get("happened_at", ""), p.get("source", "jetson"), now_text()),
+        (p.get("type", "note"), p.get("title", ""), p.get("content", ""), p.get("happened_at", ""), p.get("source", "qsm-main"), now_text()),
     )
     return memories()
 
@@ -282,8 +283,8 @@ async def dispense(request: Request) -> dict[str, Any]:
         return {"ok": False, "error": "库存不足或仓位未绑定药品"}
     qsm_res = qsm.post("/api/dispense", {"slot": slot}, timeout=15.0)
     if not qsm_res.get("ok"):
-        add_record("dispense", "failed", qsm_res.get("error", "QSM 开仓失败"), slot, med.get("name", ""))
-        return {"ok": False, "error": "QSM 开仓失败", "qsm": qsm_res}
+        add_record("dispense", "failed", qsm_res.get("error", "外设设备开仓失败"), slot, med.get("name", ""))
+        return {"ok": False, "error": "外设设备开仓失败", "qsm": qsm_res}
     execute("UPDATE medicines SET stock=MAX(stock-1,0), updated_at=? WHERE slot=?", (now_text(), slot))
     add_record("dispense", "success", qsm_res.get("detail", "开仓完成"), slot, med.get("name", ""))
     return ok(detail=qsm_res.get("detail", "开仓完成"), qsm=qsm_res, medicines=list_medicines())
@@ -400,7 +401,7 @@ def reset_database(confirm: str = Form("")) -> dict[str, Any]:
         if target.exists():
             target.unlink()
     init_db()
-    return ok(detail="Jetson 主库已重新初始化")
+    return ok(detail="QSM 主库已重新初始化")
 
 
 @app.post("/api/demo/seed")

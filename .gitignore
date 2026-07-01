@@ -12,7 +12,7 @@ QSM368WF开发板操作注意事项.pdf
 hdmi-*.png
 zykh-*.png
 
-# Jetson master app runtime files
+# QSM master app runtime files
 .env
 jetson_app/.env
 jetson_app/data/*

@@ -112,7 +112,7 @@ def init_db() -> None:
               title TEXT DEFAULT '',
               content TEXT DEFAULT '',
               happened_at TEXT DEFAULT '',
-              source TEXT DEFAULT 'jetson',
+              source TEXT DEFAULT 'qsm-main',
               created_at TEXT NOT NULL
             );
 
@@ -167,4 +167,3 @@ def add_record(action: str, result: str, detail: str = "", slot: int = 0, subjec
         "INSERT INTO records(action, slot, subject, result, detail, created_at) VALUES (?,?,?,?,?,?)",
         (action, slot, subject, result, detail, now_text()),
     )
-

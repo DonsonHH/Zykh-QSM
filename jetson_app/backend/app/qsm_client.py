@@ -50,7 +50,7 @@ class QsmClient:
                     data.setdefault("qsm_status", res.status_code)
                 return data
         except Exception as exc:
-            return {"ok": False, "error": f"QSM request failed: {exc}", "url": url}
+            return {"ok": False, "error": f"外设设备请求失败: {exc}", "url": url}
 
     def get(self, path: str, **kwargs: Any) -> dict[str, Any]:
         return self.request("GET", path, **kwargs)
@@ -75,4 +75,3 @@ class QsmClient:
 
 
 qsm = QsmClient()
-

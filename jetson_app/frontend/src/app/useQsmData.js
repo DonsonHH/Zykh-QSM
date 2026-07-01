@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { loadSnapshot } from "../api/client.js";
 
-export function useJetsonData() {
+export function useQsmData() {
   const [status, setStatus] = useState(null);
   const [medicines, setMedicines] = useState([]);
   const [plans, setPlans] = useState([]);

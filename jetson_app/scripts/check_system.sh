@@ -10,8 +10,8 @@ if [ -f "${APP_ROOT}/.env" ]; then
   set +a
 fi
 
-HOST="${JETSON_HOST:-127.0.0.1}"
-PORT="${JETSON_PORT:-8088}"
+HOST="${QSM_HOST:-127.0.0.1}"
+PORT="${QSM_PORT:-8088}"
 LOCAL_PORT="${QSM_ADB_LOCAL_PORT:-18080}"
 
 check_cmd() {
@@ -36,13 +36,13 @@ if command -v adb >/dev/null 2>&1; then
   adb devices -l || true
 fi
 
-echo "[jetson] http://${HOST}:${PORT}/api/status"
+echo "[qsm-main] http://${HOST}:${PORT}/api/status"
 if command -v curl >/dev/null 2>&1; then
   curl -fsS "http://${HOST}:${PORT}/api/status" || true
   echo
 fi
 
-echo "[qsm] http://127.0.0.1:${LOCAL_PORT}/api/status"
+echo "[peripheral] http://127.0.0.1:${LOCAL_PORT}/api/status"
 if command -v curl >/dev/null 2>&1; then
   curl -fsS "http://127.0.0.1:${LOCAL_PORT}/api/status" || true
   echo

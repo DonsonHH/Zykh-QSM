@@ -11,7 +11,7 @@ adb devices -l
 echo "[adb] forward tcp:${LOCAL_PORT} tcp:${REMOTE_PORT}"
 adb forward "tcp:${LOCAL_PORT}" "tcp:${REMOTE_PORT}"
 
-echo "[qsm] ${QSM_BASE}/api/status"
+echo "[peripheral] ${QSM_BASE}/api/status"
 if command -v curl >/dev/null 2>&1; then
   curl -fsS "${QSM_BASE}/api/status" || true
   echo

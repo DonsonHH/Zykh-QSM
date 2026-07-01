@@ -10,10 +10,10 @@ if [ -f "${APP_ROOT}/.env" ]; then
   set +a
 fi
 
-HOST="${JETSON_HOST:-127.0.0.1}"
-PORT="${JETSON_PORT:-8088}"
+HOST="${QSM_HOST:-127.0.0.1}"
+PORT="${QSM_PORT:-8088}"
 URL="http://${HOST}:${PORT}/"
-KIOSK_PATH="${JETSON_KIOSK_PATH:-terminal}"
+KIOSK_PATH="${QSM_KIOSK_PATH:-terminal}"
 KIOSK_URL="${URL}${KIOSK_PATH#/}"
 LOG_DIR="${APP_ROOT}/data"
 PROFILE_DIR="${CHROMIUM_PROFILE_DIR:-${LOG_DIR}/chromium-profile}"
@@ -22,8 +22,8 @@ mkdir -p "${PROFILE_DIR}"
 
 if command -v curl >/dev/null 2>&1; then
   if ! curl -fsS "${URL}api/status" >/dev/null 2>&1; then
-    echo "[jetson] backend is not responding, starting it"
-    nohup "${SCRIPT_DIR}/start_jetson_app.sh" > "${LOG_DIR}/backend.log" 2>&1 &
+    echo "[qsm-main] backend is not responding, starting it"
+    nohup "${SCRIPT_DIR}/start_qsm_app.sh" > "${LOG_DIR}/backend.log" 2>&1 &
     i=0
     until curl -fsS "${URL}api/status" >/dev/null 2>&1; do
       i=$((i + 1))

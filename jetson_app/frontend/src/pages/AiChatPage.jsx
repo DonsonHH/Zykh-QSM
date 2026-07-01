@@ -4,6 +4,7 @@ import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { MarkdownText } from "../components/MarkdownText.jsx";
 import { VitalReadout } from "../components/VitalReadout.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 const starterMessages = [
   {
@@ -25,13 +26,11 @@ const quickPrompts = ["今天该吃哪些药？", "血氧低要注意什么？",
 export function AiChatPage({ status, profile, vitals, medicines, notify }) {
   const [messages, setMessages] = useState(starterMessages);
   const [input, setInput] = useState("");
-  const [speaking, setSpeaking] = useState(false);
-  const [listening, setListening] = useState(false);
   const [activeHistory, setActiveHistory] = useState("high");
   const boxRef = useRef(null);
   const qsmOnline = Boolean(status?.qsm?.online);
 
-  const send = async (text = input.trim()) => {
+  const [send, responding] = useAsyncAction(async (text = input.trim()) => {
     if (!text) return;
     setInput("");
     const next = [...messages, { role: "user", text }, { role: "assistant", text: "" }];
@@ -65,14 +64,13 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
         current.map((message, idx) => (idx === current.length - 1 ? { ...message, text: "AI 问诊暂时不可用，请稍后重试。" } : message))
       );
     }
-  };
+  });
 
   useEffect(() => {
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
   }, [messages]);
 
-  const listen = async () => {
-    setListening(true);
+  const [listen, listening] = useAsyncAction(async () => {
     try {
       const data = await api("/api/audio/asr", formBody({ duration: 4 }));
       const text = data.text || data.transcript || data.asr?.text || data.result?.text || "";
@@ -81,23 +79,18 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
       notify("语音已转写");
     } catch (err) {
       notify(err.message);
-    } finally {
-      setListening(false);
     }
-  };
+  });
 
-  const speakLast = async () => {
+  const [speakLast, speaking] = useAsyncAction(async () => {
     const last = [...messages].reverse().find((message) => message.role === "assistant" && message.text)?.text || "";
-    setSpeaking(true);
     try {
       await api("/api/audio/speak", formBody({ text: last }));
-      notify("已发送到 QSM 喇叭播报");
+      notify("已发送到外设设备喇叭播报");
     } catch (err) {
       notify(err.message);
-    } finally {
-      setSpeaking(false);
     }
-  };
+  });
 
   const resetChat = () => {
     setMessages(starterMessages);
@@ -157,15 +150,15 @@ export function AiChatPage({ status, profile, vitals, medicines, notify }) {
         </div>
         <div className="quick-prompts">
           {quickPrompts.map((prompt) => (
-            <button key={prompt} onClick={() => send(prompt)}>{prompt}</button>
+            <button key={prompt} onClick={() => send(prompt)} disabled={responding}>{prompt}</button>
           ))}
         </div>
         <div className="composer">
           <button onClick={listen} disabled={!qsmOnline || listening}>
             <Mic size={24} />
           </button>
-          <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入您的问题..." />
-          <button className="primary" onClick={() => send()}>
+          <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入您的问题..." aria-label="输入问诊问题" />
+          <button className="primary" onClick={() => send()} disabled={!input.trim() || responding} aria-busy={responding || undefined}>
             <Send size={24} />
           </button>
         </div>

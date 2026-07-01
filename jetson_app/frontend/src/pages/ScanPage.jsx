@@ -2,6 +2,7 @@ import { Camera, Check, RefreshCw, RotateCcw, ScanLine } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 export function ScanPage({ status, refresh, notify }) {
   const [live, setLive] = useState(true);
@@ -21,7 +22,7 @@ export function ScanPage({ status, refresh, notify }) {
   const qsmOnline = Boolean(status?.qsm?.online);
   const streamUrl = useMemo(() => `/api/camera/stream?width=760&height=480&fps=24&t=${streamKey}`, [streamKey]);
 
-  const scan = async () => {
+  const [scan, scanning] = useAsyncAction(async () => {
     setLive(false);
     try {
       const data = await api("/api/medicine/scan", { method: "POST" });
@@ -43,9 +44,9 @@ export function ScanPage({ status, refresh, notify }) {
       setLive(true);
       setStreamKey(Date.now());
     }
-  };
+  });
 
-  const confirm = async () => {
+  const [confirm, confirming] = useAsyncAction(async () => {
     try {
       await api("/api/medicine/scan", formBody({ ...draft, confirm: 1 }));
       notify(`${draft.slot} 号仓已录入`);
@@ -56,7 +57,7 @@ export function ScanPage({ status, refresh, notify }) {
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
   const resume = () => {
     setLive(true);
@@ -78,7 +79,7 @@ export function ScanPage({ status, refresh, notify }) {
         </div>
         <div className="camera-window">
           {qsmOnline && live && !streamFailed ? (
-            <img src={streamUrl} alt="QSM 摄像头实时预览" onError={() => setStreamFailed(true)} />
+            <img src={streamUrl} alt="外设设备摄像头实时预览" onError={() => setStreamFailed(true)} />
           ) : (
             <div className="camera-empty">
               <Camera size={78} />
@@ -102,12 +103,12 @@ export function ScanPage({ status, refresh, notify }) {
             <RefreshCw size={22} />
             重新识别
           </button>
-          <button className="capture-button" onClick={scan} disabled={!qsmOnline || streamFailed}>
+          <button className="capture-button" onClick={scan} disabled={!qsmOnline || streamFailed || scanning} aria-label={scanning ? "正在识别药品" : "拍照识别"}>
             <Camera size={34} />
           </button>
-          <button className="scan-primary" onClick={scan} disabled={!qsmOnline || streamFailed}>
+          <button className="scan-primary" onClick={scan} disabled={!qsmOnline || streamFailed || scanning}>
             <Camera size={22} />
-            拍照识别
+            {scanning ? "识别中" : "拍照识别"}
           </button>
         </div>
       </GlassCard>
@@ -161,9 +162,9 @@ export function ScanPage({ status, refresh, notify }) {
               <RotateCcw size={20} />
               重拍
             </button>
-            <button className="primary" onClick={confirm}>
+            <button className="primary" onClick={confirm} disabled={confirming}>
               <Check size={20} />
-              确认入库
+              {confirming ? "入库中" : "确认入库"}
             </button>
           </div>
         </div>

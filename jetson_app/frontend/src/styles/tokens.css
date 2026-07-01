@@ -96,6 +96,18 @@ a {
 button {
   cursor: pointer;
   line-height: 1;
+  touch-action: manipulation;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    box-shadow 160ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(0.99);
 }
 
 button:disabled {
@@ -136,7 +148,6 @@ strong,
 .slot-number,
 .time-lockup strong,
 .next-dose strong,
-.home-metric strong,
 .slot-topline strong,
 .vital-readout strong {
   font-variant-numeric: tabular-nums;
@@ -207,6 +218,17 @@ strong,
   transform: translate(-50%, 18px);
   pointer-events: none;
   transition: opacity 160ms ease, transform 160ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 .toast.show {

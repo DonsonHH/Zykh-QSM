@@ -8,7 +8,7 @@ import { HomePage } from "../pages/HomePage.jsx";
 import { ProfilePage } from "../pages/ProfilePage.jsx";
 import { ScanPage } from "../pages/ScanPage.jsx";
 import { formatClock, formatDay } from "../utils/domain.js";
-import { useJetsonData } from "./useJetsonData.js";
+import { useQsmData } from "./useQsmData.js";
 import { useKioskScale } from "./useKioskScale.js";
 
 const pageTitles = {
@@ -22,7 +22,7 @@ const pageTitles = {
 const terminalPages = new Set(Object.keys(pageTitles));
 
 export function TerminalApp() {
-  const data = useJetsonData();
+  const data = useQsmData();
   const scale = useKioskScale();
   const [page, setPage] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("page");
@@ -58,6 +58,7 @@ export function TerminalApp() {
 function TerminalTopbar({ now, status, profile, page }) {
   const qsmOnline = Boolean(status?.qsm?.online);
   const forwardOk = Boolean(status?.qsm?.forward?.ok ?? status?.qsm?.forward);
+  const mainOk = Boolean(status?.qsm_main);
   return (
     <header className="terminal-topbar">
       <div className="brand-lockup">
@@ -65,7 +66,7 @@ function TerminalTopbar({ now, status, profile, page }) {
           <HeartHandshake size={30} />
         </div>
         <div>
-          <strong>智药康护终端</strong>
+          <strong>智药康护 QSM</strong>
           <span>{pageTitles[page]}</span>
         </div>
       </div>
@@ -76,7 +77,7 @@ function TerminalTopbar({ now, status, profile, page }) {
       <div className="topbar-status">
         <StatusPill icon={Cpu} label="设备连接" value={qsmOnline ? "外设在线" : "连接中"} tone={qsmOnline ? "good" : "soft"} />
         <StatusPill icon={Wifi} label="硬件功能" value={qsmOnline && forwardOk ? "可用" : "部分暂不可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
-        <StatusPill icon={ShieldCheck} label="系统状态" value={status?.jetson ? "正常" : "检查中"} tone={status?.jetson ? "good" : "warn"} />
+        <StatusPill icon={ShieldCheck} label="系统状态" value={mainOk ? "正常" : "检查中"} tone={mainOk ? "good" : "warn"} />
       </div>
       <a className="admin-peek" href="/admin" aria-label="进入管理后台">
         <Activity size={18} />

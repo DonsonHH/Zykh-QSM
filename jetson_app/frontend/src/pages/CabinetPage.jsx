@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { MedicineSlot } from "../components/MedicineSlot.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import { medicineForSlot, slotLayout, slotLabel, stockState } from "../utils/domain.js";
 
 const filters = [
@@ -40,7 +41,7 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
     );
   }, [medicines]);
 
-  const save = async () => {
+  const [save, saving] = useAsyncAction(async () => {
     try {
       await api("/api/medicines", formBody({ ...draft, slot: selected }));
       notify(`${selected} 号仓已保存`);
@@ -48,9 +49,9 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
-  const open = async () => {
+  const [open, opening] = useAsyncAction(async () => {
     try {
       const data = await api("/api/dispense", formBody({ slot: selected }));
       notify(data.detail || "开仓完成");
@@ -58,9 +59,9 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
-  const addPlan = async () => {
+  const [addPlan, addingPlan] = useAsyncAction(async () => {
     try {
       await api("/api/plans", formBody({ slot: selected, time: planDraft.time, amount: planDraft.amount, enabled: 1 }));
       notify(`${selected} 号仓用药计划已添加`);
@@ -68,7 +69,7 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
   return (
     <div className="cabinet-page">
@@ -133,13 +134,13 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
           </label>
         </div>
         <div className="editor-actions">
-          <button className="primary" onClick={save}>
+          <button className="primary" onClick={save} disabled={saving}>
             <Save size={20} />
-            保存
+            {saving ? "保存中" : "保存"}
           </button>
-          <button onClick={open} disabled={!qsmOnline}>
+          <button onClick={open} disabled={!qsmOnline || opening}>
             <DoorOpen size={20} />
-            开仓
+            {opening ? "开仓中" : "开仓"}
           </button>
         </div>
         <div className="plan-editor">
@@ -154,9 +155,9 @@ export function CabinetPage({ status, medicines, refresh, notify }) {
               <input value={planDraft.amount} onChange={(event) => setPlanDraft({ ...planDraft, amount: event.target.value })} />
             </label>
           </div>
-          <button className="wide" onClick={addPlan}>
+          <button className="wide" onClick={addPlan} disabled={addingPlan}>
             <Plus size={20} />
-            添加计划
+            {addingPlan ? "添加中" : "添加计划"}
           </button>
         </div>
         <div className="offline-hint">

@@ -3,9 +3,9 @@ set -eu
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APP_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
-TARGET_MODE="${JETSON_KIOSK_MODE:-1280x720}"
-TARGET_RATE="${JETSON_KIOSK_RATE:-60}"
-OUTPUT="${JETSON_KIOSK_OUTPUT:-}"
+TARGET_MODE="${QSM_KIOSK_MODE:-1280x720}"
+TARGET_RATE="${QSM_KIOSK_RATE:-60}"
+OUTPUT="${QSM_KIOSK_OUTPUT:-}"
 PREV_MODE=""
 
 if [ -f "${APP_ROOT}/.env" ]; then

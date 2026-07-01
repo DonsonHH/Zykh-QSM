@@ -21,7 +21,7 @@ def ai_api_key() -> str:
 def build_system_prompt(context: dict[str, Any]) -> str:
     return "\n".join(
         [
-            "你是“智药康护”Jetson 主控终端中的 AI 问诊助手，使用中文回答。",
+            "你是“智药康护”QSM 主控终端中的 AI 问诊助手，使用中文回答。",
             "你的职责是解释健康知识、结合老人档案和最近体征给出风险提醒、提醒按医嘱用药。",
             "你不是医生，不能替代诊断，不能开处方，不能建议自行新增、停用或调整处方药剂量。",
             "药柜库存只代表家中现有药品，不能因为药柜里有某种药就建议直接服用。",
@@ -68,4 +68,3 @@ def stream_chat(message: str, context: dict[str, Any]) -> Iterator[str]:
             delta = obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
             if delta:
                 yield delta
-

@@ -1,21 +1,20 @@
 import React from "react";
-import { Bot, CalendarClock, Camera, ClipboardList, HeartPulse, Pill, UserRound } from "lucide-react";
+import { Bot, CalendarClock, Camera, HeartPulse, Pill, UserRound } from "lucide-react";
 import { api, formBody } from "../api/client.js";
 import { BigActionButton } from "../components/BigActionButton.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { VitalReadout } from "../components/VitalReadout.jsx";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import { latestVitals, nextPlan } from "../utils/domain.js";
 
-export function HomePage({ status, medicines, plans, records, vitals, refresh, notify, setPage }) {
+export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
   const plan = nextPlan(plans);
   const latest = latestVitals(vitals);
-  const filledSlots = medicines.filter((item) => Number(item.stock) > 0).length;
-  const lowStock = medicines.filter((item) => Number(item.stock) > 0 && Number(item.stock) <= 12).length;
   const qsmOnline = Boolean(status?.qsm?.online);
   const dispenseTitle = plan ? "开始取药" : "暂无计划";
   const dispenseDetail = !plan ? "请先添加用药计划" : !qsmOnline ? "设备连接中，暂不可取药" : "校验计划后开仓";
 
-  const dispense = async () => {
+  const [dispense, dispensing] = useAsyncAction(async () => {
     if (!plan) return notify("当前没有可执行用药计划");
     try {
       const data = await api("/api/dispense", formBody({ slot: plan.slot }));
@@ -24,9 +23,9 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
-  const readVitals = async () => {
+  const [readVitals, readingVitals] = useAsyncAction(async () => {
     try {
       const data = await api("/api/vitals/read_all", { method: "POST" });
       notify(`体征已写入：心率 ${data.vitals?.heart_rate || "--"}，血氧 ${data.vitals?.spo2 || "--"}`);
@@ -34,7 +33,7 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
     } catch (err) {
       notify(err.message);
     }
-  };
+  });
 
   return (
     <div className="home-page">
@@ -55,7 +54,15 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
             {plan && <small>饭后服用</small>}
           </div>
         </div>
-        <BigActionButton icon={Pill} title={dispenseTitle} detail={dispenseDetail} tone="orange" onClick={dispense} disabled={!qsmOnline || !plan} />
+        <BigActionButton
+          icon={Pill}
+          title={dispensing ? "取药中" : dispenseTitle}
+          detail={dispensing ? "正在校验计划并开仓" : dispenseDetail}
+          tone="orange"
+          onClick={dispense}
+          disabled={!qsmOnline || !plan}
+          busy={dispensing}
+        />
       </GlassCard>
 
       <GlassCard className="ai-card">
@@ -75,7 +82,15 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
           <strong>{latest.created_at ? latest.created_at.slice(11, 16) : "--:--"}</strong>
         </div>
         <VitalReadout vitals={latest} />
-        <BigActionButton icon={HeartPulse} title="立即测量" detail={!qsmOnline ? "设备连接中，暂不可测量" : "心率 血氧 体温"} tone="blue" onClick={readVitals} disabled={!qsmOnline} />
+        <BigActionButton
+          icon={HeartPulse}
+          title={readingVitals ? "测量中" : "立即测量"}
+          detail={readingVitals ? "正在读取心率 血氧 体温" : !qsmOnline ? "设备连接中，暂不可测量" : "心率 血氧 体温"}
+          tone="blue"
+          onClick={readVitals}
+          disabled={!qsmOnline}
+          busy={readingVitals}
+        />
       </GlassCard>
 
       <button className="home-tile scan" onClick={() => setPage("scan")}>
@@ -99,26 +114,6 @@ export function HomePage({ status, medicines, plans, records, vitals, refresh, n
         </div>
         <UserRound size={54} />
       </button>
-
-      <GlassCard className="home-status-strip">
-        <Metric label="药柜占用" value={`${filledSlots}/23`} />
-        <Metric label="低库存" value={`${lowStock}`} tone={lowStock ? "warn" : "good"} />
-        <Metric label="今日记录" value={`${records.length}`} />
-        <Metric label="启用计划" value={`${plans.length}`} />
-        <div className="strip-note">
-          <ClipboardList size={20} />
-          <span>{qsmOnline ? "外设已连接，取药和测量已启用" : "设备连接中，本地档案和药柜仍可查看"}</span>
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function Metric({ label, value, tone = "info" }) {
-  return (
-    <div className={`home-metric ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }

@@ -1,2 +1,1 @@
-"""Jetson master application backend."""
-
+"""QSM master application backend."""

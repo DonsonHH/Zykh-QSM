@@ -3,7 +3,8 @@ import { Bot, Camera, Cpu, Database, DoorOpen, HeartPulse, Home, KeyRound, Refre
 import { api, formBody } from "../api/client.js";
 import { DeviceCard } from "../components/DeviceCard.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
-import { useJetsonData } from "./useJetsonData.js";
+import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import { useQsmData } from "./useQsmData.js";
 import { useKioskScale } from "./useKioskScale.js";
 
 const adminNav = [
@@ -16,7 +17,7 @@ const adminNav = [
 ];
 
 export function AdminApp() {
-  const data = useJetsonData();
+  const data = useQsmData();
   const scale = useKioskScale();
   const [section, setSection] = useState("overview");
   const [settings, setSettings] = useState(null);
@@ -32,9 +33,10 @@ export function AdminApp() {
   const qsmOnline = Boolean(data.status?.qsm?.online);
   const forwardOk = Boolean(data.status?.qsm?.forward?.ok ?? data.status?.qsm?.forward);
   const qsmStatus = data.status?.qsm?.status || {};
+  const mainStatus = data.status?.qsm_main || {};
   const latestVital = data.vitals[0] || {};
 
-  const saveProfile = async () => {
+  const [saveProfile, savingProfile] = useAsyncAction(async () => {
     try {
       await api("/api/profile", formBody(profileDraft));
       data.notify("档案已保存");
@@ -42,33 +44,33 @@ export function AdminApp() {
     } catch (err) {
       data.notify(err.message);
     }
-  };
+  });
 
-  const saveKey = async () => {
+  const [saveKey, savingKey] = useAsyncAction(async () => {
     try {
       const res = await api("/api/settings/ai_key", formBody({ api_key: apiKey }));
       setSettings(res.settings);
       setApiKey("");
-      data.notify(apiKey ? "AI Key 已保存到 Jetson 本地" : "AI Key 已清除");
+      data.notify(apiKey ? "AI Key 已保存到本机" : "AI Key 已清除");
     } catch (err) {
       data.notify(err.message);
     }
-  };
+  });
 
-  const resetDb = async () => {
-    const confirm = window.prompt("输入 RESET 重新初始化 Jetson 主库");
+  const [resetDb, resettingDb] = useAsyncAction(async () => {
+    const confirm = window.prompt("输入 RESET 重新初始化 QSM 主库");
     if (confirm !== "RESET") return;
     try {
       await api("/api/admin/reset", formBody({ confirm }));
-      data.notify("Jetson 主库已重新初始化");
+      data.notify("QSM 主库已重新初始化");
       await data.refresh();
     } catch (err) {
       data.notify(err.message);
     }
-  };
+  });
 
-  const openSlot = async () => {
-    const confirmed = window.confirm(`确认打开 ${slot} 号仓？\n此操作会触发 QSM UART8 开仓机构。`);
+  const [openSlot, openingSlot] = useAsyncAction(async () => {
+    const confirmed = window.confirm(`确认打开 ${slot} 号仓？\n此操作会触发外设设备 UART8 开仓机构。`);
     if (!confirmed) return;
     try {
       const res = await api("/api/dispense", formBody({ slot }));
@@ -77,9 +79,9 @@ export function AdminApp() {
     } catch (err) {
       data.notify(err.message);
     }
-  };
+  });
 
-  const seedDemo = async () => {
+  const [seedDemo, seedingDemo] = useAsyncAction(async () => {
     const confirmed = window.confirm("确认开启演示模式？\n这会写入张三档案、药柜、计划、体征和演示记录。");
     if (!confirmed) return;
     try {
@@ -89,9 +91,9 @@ export function AdminApp() {
     } catch (err) {
       data.notify(err.message);
     }
-  };
+  });
 
-  const clearDemo = async () => {
+  const [clearDemo, clearingDemo] = useAsyncAction(async () => {
     const confirm = window.prompt("输入 CLEAR 清空演示数据并恢复空库");
     if (confirm !== "CLEAR") return;
     try {
@@ -101,6 +103,20 @@ export function AdminApp() {
     } catch (err) {
       data.notify(err.message);
     }
+  });
+  const quickActionState = {
+    qsmOnline,
+    slot,
+    setSlot,
+    openSlot,
+    openingSlot,
+    refresh: data.refresh,
+    resetDb,
+    resettingDb,
+    seedDemo,
+    seedingDemo,
+    clearDemo,
+    clearingDemo
   };
 
   return (
@@ -111,7 +127,7 @@ export function AdminApp() {
             <Shield size={30} />
             <div>
               <strong>系统管理后台</strong>
-              <span>Jetson 控制台</span>
+              <span>QSM 控制台</span>
             </div>
           </div>
           <nav>
@@ -140,13 +156,13 @@ export function AdminApp() {
           {section === "overview" && (
             <div className="admin-overview">
               <div className="device-grid">
-                <DeviceCard icon={Cpu} title="QSM 设备" value={qsmOnline ? "在线" : "离线"} detail={forwardOk ? "ADB 转发正常" : "请检查 ADB forward"} tone={qsmOnline ? "good" : "bad"} />
-                <DeviceCard icon={Camera} title="摄像头" value={qsmOnline ? "正常" : "不可用"} detail={qsmStatus.camera || "经 QSM 网关访问"} tone={qsmOnline ? "good" : "warn"} />
+                <DeviceCard icon={Cpu} title="外设设备" value={qsmOnline ? "在线" : "离线"} detail={forwardOk ? "ADB 转发正常" : "请检查 ADB forward"} tone={qsmOnline ? "good" : "bad"} />
+                <DeviceCard icon={Camera} title="摄像头" value={qsmOnline ? "正常" : "不可用"} detail={qsmStatus.camera || "经外设网关访问"} tone={qsmOnline ? "good" : "warn"} />
                 <DeviceCard
                   icon={HeartPulse}
                   title="心率血氧仪"
                   value={qsmOnline ? (latestVital.heart_rate ? "最近数据正常" : "待测量") : "待连接"}
-                  detail={latestVital.heart_rate ? `缓存 ${latestVital.heart_rate} / ${latestVital.spo2} · 依赖 QSM` : "依赖 QSM 网关"}
+                  detail={latestVital.heart_rate ? `缓存 ${latestVital.heart_rate} / ${latestVital.spo2} · 依赖外设设备` : "依赖外设网关"}
                   tone={qsmOnline && latestVital.heart_rate ? "good" : "warn"}
                 />
                 <DeviceCard icon={DoorOpen} title="开仓控制" value={qsmOnline ? "正常" : "禁用"} detail={`累计记录 ${data.records.length} 次`} tone={qsmOnline ? "good" : "bad"} />
@@ -158,21 +174,21 @@ export function AdminApp() {
                 <Metric label="操作记录" value={data.records.length} />
               </GlassCard>
               <AdminLogs records={data.records} />
-              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} seedDemo={seedDemo} clearDemo={clearDemo} />
+              <QuickActions {...quickActionState} />
             </div>
           )}
 
           {section === "devices" && (
             <div className="admin-two-col">
               <GlassCard className="admin-panel">
-                <span className="card-eyebrow">QSM 原始状态</span>
+                <span className="card-eyebrow">外设设备原始状态</span>
                 <pre>{JSON.stringify(data.status?.qsm || {}, null, 2)}</pre>
                 <button onClick={data.refresh}>
                   <RefreshCw size={18} />
                   刷新状态
                 </button>
               </GlassCard>
-              <QuickActions qsmOnline={qsmOnline} slot={slot} setSlot={setSlot} openSlot={openSlot} refresh={data.refresh} resetDb={resetDb} seedDemo={seedDemo} clearDemo={clearDemo} />
+              <QuickActions {...quickActionState} />
             </div>
           )}
 
@@ -206,7 +222,7 @@ export function AdminApp() {
                 <label>过敏史<textarea value={profileDraft.allergies || ""} onChange={(event) => setProfileDraft({ ...profileDraft, allergies: event.target.value })} /></label>
                 <label>备注<textarea value={profileDraft.notes || ""} onChange={(event) => setProfileDraft({ ...profileDraft, notes: event.target.value })} /></label>
               </div>
-              <button className="primary" onClick={saveProfile}>保存档案</button>
+              <button className="primary" onClick={saveProfile} disabled={savingProfile}>{savingProfile ? "保存中" : "保存档案"}</button>
             </GlassCard>
           )}
 
@@ -219,19 +235,19 @@ export function AdminApp() {
                 <p>主库：{settings?.db_path || "--"}</p>
                 <label>API Key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
                 <div className="admin-actions-row">
-                  <button className="primary" onClick={saveKey}>
+                  <button className="primary" onClick={saveKey} disabled={savingKey}>
                     <KeyRound size={18} />
-                    保存 Key
+                    {savingKey ? "保存中" : "保存 Key"}
                   </button>
-                  <button onClick={resetDb}>
+                  <button onClick={resetDb} disabled={resettingDb}>
                     <Database size={18} />
-                    初始化主库
+                    {resettingDb ? "初始化中" : "初始化主库"}
                   </button>
                 </div>
               </GlassCard>
               <GlassCard className="admin-panel">
-                <span className="card-eyebrow">Jetson 状态</span>
-                <pre>{JSON.stringify(data.status?.jetson || {}, null, 2)}</pre>
+                <span className="card-eyebrow">QSM 主控状态</span>
+                <pre>{JSON.stringify(mainStatus, null, 2)}</pre>
               </GlassCard>
             </div>
           )}
@@ -279,7 +295,7 @@ function AdminLogs({ records, large = false }) {
   );
 }
 
-function QuickActions({ qsmOnline, slot, setSlot, openSlot, refresh, resetDb, seedDemo, clearDemo }) {
+function QuickActions({ qsmOnline, slot, setSlot, openSlot, openingSlot, refresh, resetDb, resettingDb, seedDemo, seedingDemo, clearDemo, clearingDemo }) {
   return (
     <GlassCard className="quick-actions-panel">
       <span className="card-eyebrow">快捷操作</span>
@@ -288,26 +304,26 @@ function QuickActions({ qsmOnline, slot, setSlot, openSlot, refresh, resetDb, se
           开仓仓位
           <input type="number" min="1" max="23" value={slot} onChange={(event) => setSlot(event.target.value)} />
         </label>
-        <button onClick={openSlot} disabled={!qsmOnline}>
+        <button onClick={openSlot} disabled={!qsmOnline || openingSlot}>
           <DoorOpen size={18} />
-          测试开仓
+          {openingSlot ? "开仓中" : "测试开仓"}
         </button>
       </div>
       <button onClick={refresh}>
         <RefreshCw size={18} />
         刷新状态
       </button>
-      <button className="primary" onClick={seedDemo}>
+      <button className="primary" onClick={seedDemo} disabled={seedingDemo}>
         <Bot size={18} />
-        开启演示模式
+        {seedingDemo ? "写入中" : "开启演示模式"}
       </button>
-      <button onClick={clearDemo}>
+      <button onClick={clearDemo} disabled={clearingDemo}>
         <Database size={18} />
-        清空演示数据
+        {clearingDemo ? "清空中" : "清空演示数据"}
       </button>
-      <button onClick={resetDb}>
+      <button onClick={resetDb} disabled={resettingDb}>
         <Database size={18} />
-        初始化主库
+        {resettingDb ? "初始化中" : "初始化主库"}
       </button>
       <a href="/terminal">
         <Bot size={18} />

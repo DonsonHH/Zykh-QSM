@@ -6,9 +6,9 @@ import asyncio
 from pathlib import Path
 
 os.environ["QSM_ADB_AUTO_FORWARD"] = "0"
-os.environ["JETSON_DATA_DIR"] = tempfile.mkdtemp(prefix="zykh-jetson-test-")
-os.environ["JETSON_DB_PATH"] = str(Path(os.environ["JETSON_DATA_DIR"]) / "test.db")
-os.environ["AI_API_KEY_FILE"] = str(Path(os.environ["JETSON_DATA_DIR"]) / "ai-key.txt")
+os.environ["QSM_DATA_DIR"] = tempfile.mkdtemp(prefix="zykh-qsm-test-")
+os.environ["QSM_DB_PATH"] = str(Path(os.environ["QSM_DATA_DIR"]) / "test.db")
+os.environ["AI_API_KEY_FILE"] = str(Path(os.environ["QSM_DATA_DIR"]) / "ai-key.txt")
 
 import pytest
 
@@ -35,7 +35,7 @@ def run(coro):
 @pytest.fixture()
 def clean_db(monkeypatch):
     for suffix in ("", "-wal", "-shm"):
-        target = Path(os.environ["JETSON_DB_PATH"] + suffix)
+        target = Path(os.environ["QSM_DB_PATH"] + suffix)
         if target.exists():
             target.unlink()
     db.init_db()
@@ -55,7 +55,15 @@ def test_initializes_empty_23_slot_cabinet(clean_db):
     assert payload["medicines"][17]["box_size"] == "medium"
 
 
-def test_profile_medicine_and_plan_write_to_jetson_db(clean_db):
+def test_status_uses_qsm_main_naming(clean_db):
+    payload = main.status()
+    assert payload["ok"] is True
+    assert "qsm_main" in payload
+    assert "jetson" not in payload
+    assert payload["qsm"]["online"] is False
+
+
+def test_profile_medicine_and_plan_write_to_qsm_db(clean_db):
     profile = run(main.save_profile(FakeRequest({"name": "张三", "age": "72", "conditions": "高血压"})))
     assert profile["profile"]["name"] == "张三"
 
@@ -69,7 +77,7 @@ def test_profile_medicine_and_plan_write_to_jetson_db(clean_db):
     assert plans["plans"][0]["medicine_name"] == "硝苯地平片"
 
 
-def test_vitals_write_to_jetson_db(clean_db):
+def test_vitals_write_to_qsm_db(clean_db):
     response = run(main.add_vitals(FakeRequest({"temperature": "36.5", "heart_rate": "76", "spo2": "98", "source": "manual"})))
     latest = response["vitals"][0]
     assert latest["temperature"] == 36.5
