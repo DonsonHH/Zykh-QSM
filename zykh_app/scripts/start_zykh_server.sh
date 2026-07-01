@@ -8,8 +8,8 @@ cd "$APP_DIR" || exit 1
 pidof perl >/dev/null 2>&1 && kill $(pidof perl) 2>/dev/null
 sleep 1
 
-TZ="${TZ:-CST-8}" AI_MODEL="${AI_MODEL:-deepseek-v4-flash}" nohup perl server.pl \
-  > "$APP_DIR/server.log" 2>&1 < /dev/null &
+TZ="${TZ:-CST-8}" AI_MODEL="${AI_MODEL:-deepseek-v4-flash}" perl server.pl --daemon \
+  > "$APP_DIR/server.log" 2>&1 < /dev/null
 
 sleep 1
 if pidof perl >/dev/null 2>&1; then

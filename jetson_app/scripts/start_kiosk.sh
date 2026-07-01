@@ -14,7 +14,9 @@ HOST="${JETSON_HOST:-127.0.0.1}"
 PORT="${JETSON_PORT:-8088}"
 URL="http://${HOST}:${PORT}/"
 LOG_DIR="${APP_ROOT}/data"
+PROFILE_DIR="${CHROMIUM_PROFILE_DIR:-${LOG_DIR}/chromium-profile}"
 mkdir -p "${LOG_DIR}"
+mkdir -p "${PROFILE_DIR}"
 
 if command -v curl >/dev/null 2>&1; then
   if ! curl -fsS "${URL}api/status" >/dev/null 2>&1; then
@@ -44,6 +46,9 @@ exec "${CHROMIUM_BIN}" \
   --app="${URL}" \
   --window-size=1280,720 \
   --force-device-scale-factor=1 \
+  --disable-gpu \
+  --disable-translate \
   --no-first-run \
   --disable-session-crashed-bubble \
-  --disable-infobars
+  --disable-infobars \
+  --user-data-dir="${PROFILE_DIR}"

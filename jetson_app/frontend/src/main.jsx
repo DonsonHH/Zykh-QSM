@@ -120,8 +120,8 @@ function Sidebar({ page, setPage, status }) {
       <div className={`link-status ${online ? "online" : "offline"}`}>
         {online ? <Radio size={22} /> : <WifiOff size={22} />}
         <div>
-          <strong>{online ? "QSM 在线" : "QSM 离线"}</strong>
-          <small>{online ? "外设网关可用" : "仅本地数据可用"}</small>
+          <strong>{online ? "在线" : "离线"}</strong>
+          <small>{online ? "QSM 网关" : "本地数据"}</small>
         </div>
       </div>
     </aside>

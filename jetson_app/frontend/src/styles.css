@@ -75,7 +75,9 @@ nav span { font-size: 14px; }
 }
 .link-status.online { color: #5ff0c8; }
 .link-status.offline { color: #ff9a91; }
-.link-status small { color: #8ba9c8; }
+.link-status strong, .link-status small { display: block; line-height: 1.25; }
+.link-status strong { font-size: 15px; }
+.link-status small { color: #8ba9c8; font-size: 12px; margin-top: 3px; }
 
 .screen { padding: 18px 22px 18px 22px; overflow: hidden; }
 .topbar {
