@@ -101,3 +101,15 @@ final result: passed
 - `sh -n` passed for `start_qsm_app.sh`, `seed_demo_data.sh`, and `install_user_service.sh`.
 - Chromium QA screenshot generated under ignored `jetson_app/data/`: `zykh-home-ui-pro-qa.png`.
 final result: passed
+
+**2026-07-02 Creative Tim Inspiration Pass**
+- Reviewed `creativetimofficial/ui` as a component/block inspiration source, but did not add shadcn/Tailwind dependencies because the QSM terminal is a fixed 1280x720 touch kiosk.
+- Borrowed the useful ideas only: production-style card polish, status badges, subtle component motion, and clearer feedback surfaces.
+- Added glass-card light edge treatment, status LED dots, shortcut-card light sweep feedback, AI assistant pulse, and live-only camera scan sweep.
+- Kept elderly-touch constraints intact: no extra navigation layer, no hover-only dependency, no decorative animation when reduced motion is requested.
+
+**Verification 2026-07-02 Creative Tim Inspiration**
+- `npm run build`: passed.
+- `PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests`: 7 passed, 2 FastAPI deprecation warnings.
+- Chromium QA screenshots generated under ignored `jetson_app/data/`: `zykh-home-creative-tim-qa.png`, `zykh-scan-creative-tim-qa.png`.
+final result: passed

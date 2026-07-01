@@ -77,7 +77,7 @@ export function ScanPage({ status, refresh, notify }) {
             {qsmOnline && !streamFailed ? "摄像头已连接 · 1280×720" : "摄像头暂不可用"}
           </span>
         </div>
-        <div className="camera-window">
+        <div className={`camera-window ${qsmOnline && live && !streamFailed ? "live" : "idle"}`}>
           {qsmOnline && live && !streamFailed ? (
             <img src={streamUrl} alt="外设设备摄像头实时预览" onError={() => setStreamFailed(true)} />
           ) : (
