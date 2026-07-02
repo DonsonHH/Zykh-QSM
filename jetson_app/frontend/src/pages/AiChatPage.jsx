@@ -33,6 +33,7 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
   const [lastReply, setLastReply] = useState("");
   const boxRef = useRef(null);
   const qsmOnline = Boolean(status?.qsm?.online);
+  const peripheralReason = status?.qsm?.diagnosis?.label || "外设平台未连接";
   const network = status?.network || {};
   const currentVitals = vitals[0] || {};
   const stockedMeds = medicines.filter((item) => Number(item.stock) > 0);
@@ -153,19 +154,21 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
         <span className="card-eyebrow">症状与场景</span>
         <label>
           症状输入
-          <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} placeholder="例如：老人轻微咽痛流涕，无发热，想确认服务点是否有可用药品..." />
+          <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} placeholder="例如：咽痛流涕，无发热" />
         </label>
-        <label>
-          持续时间
-          <input value={duration} onChange={(event) => setDuration(event.target.value)} placeholder="例如：2小时、1天、3天反复出现" />
-        </label>
-        <label>
-          已用药情况
-          <input value={usedMedicine} onChange={(event) => setUsedMedicine(event.target.value)} placeholder="例如：未用药、已服降压药、刚吃退烧药" />
-        </label>
+        <div className="triage-compact-fields">
+          <label>
+            持续时间
+            <input value={duration} onChange={(event) => setDuration(event.target.value)} placeholder="如：2小时" />
+          </label>
+          <label>
+            已用药
+            <input value={usedMedicine} onChange={(event) => setUsedMedicine(event.target.value)} placeholder="如：未用药" />
+          </label>
+        </div>
         <label>
           过敏 / 禁忌
-          <textarea value={allergy} onChange={(event) => setAllergy(event.target.value)} placeholder="例如：青霉素过敏、胃溃疡、正在服用降压药" />
+          <textarea value={allergy} onChange={(event) => setAllergy(event.target.value)} placeholder="如：青霉素过敏、胃溃疡" />
         </label>
         <div className="scene-tags">
           {sceneOptions.map(([id, label]) => (
@@ -173,19 +176,20 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
           ))}
         </div>
         <div className="triage-tools">
-          <button onClick={listen} disabled={!qsmOnline || listening}>
+          <button onClick={listen} disabled={!qsmOnline || listening} title={!qsmOnline ? peripheralReason : "语音输入"}>
             <Mic size={18} />
-            {listening ? "录音中" : "语音输入"}
+            {listening ? "录音中" : qsmOnline ? "语音输入" : "语音不可用"}
           </button>
-          <button onClick={readVitals} disabled={!qsmOnline || readingVitals}>
+          <button onClick={readVitals} disabled={!qsmOnline || readingVitals} title={!qsmOnline ? peripheralReason : "读取体征"}>
             <HeartPulse size={18} />
-            {readingVitals ? "读取中" : "读取体征"}
+            {readingVitals ? "读取中" : qsmOnline ? "读取体征" : "体征不可用"}
           </button>
           <button className="primary" onClick={() => triage()} disabled={!symptoms.trim() || triaging}>
             <Send size={18} />
             {triaging ? "评估中" : "开始问询"}
           </button>
         </div>
+        {!qsmOnline && <p className="triage-disabled-note">{peripheralReason}，语音和体征读取暂不可用；文字问询仍可使用规则兜底。</p>}
         <div className="quick-prompts">
           {quickPrompts.map((prompt) => (
             <button key={prompt} onClick={() => triage(prompt)} disabled={triaging}>{prompt}</button>
@@ -261,7 +265,7 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
           <CheckCircle2 size={20} />
           {confirmingDispense ? "记录中" : "进入取药确认"}
         </button>
-        <span className="qsm-note">中/高/紧急风险必须联系管理员、医生或救援人员。</span>
+        <span className="qsm-note">{result?.allow_self_confirm ? "取药前仍需核对药品说明书和禁忌。" : "中/高/紧急风险必须联系管理员、医生或救援人员。"}</span>
       </GlassCard>
     </div>
   );

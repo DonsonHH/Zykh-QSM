@@ -178,6 +178,68 @@ def call_ollama(prompt: str) -> str:
     return str(data.get("response") or "").strip()
 
 
+def local_ai_health() -> dict[str, Any]:
+    provider = os.getenv("LOCAL_AI_PROVIDER", LOCAL_AI_PROVIDER).strip().lower() or "rules"
+    base_url = os.getenv("LOCAL_AI_BASE_URL", LOCAL_AI_BASE_URL).rstrip("/")
+    model = os.getenv("LOCAL_AI_MODEL", LOCAL_AI_MODEL)
+    if provider in {"rules", "mock"}:
+        return {
+            "ok": True,
+            "provider": provider,
+            "base_url": base_url,
+            "model": model,
+            "fallback": "rules",
+            "detail": "当前使用规则兜底，不依赖本地模型服务。",
+        }
+    try:
+        with httpx.Client(timeout=LOCAL_AI_TIMEOUT_SECONDS, trust_env=False) as client:
+            if provider == "ollama":
+                res = client.get(f"{base_url}/api/tags")
+                res.raise_for_status()
+                data = res.json()
+                names = [str(item.get("name", "")) for item in data.get("models", [])]
+                available = model in names or any(name.startswith(f"{model}:") for name in names)
+                return {
+                    "ok": available,
+                    "provider": provider,
+                    "base_url": base_url,
+                    "model": model,
+                    "fallback": "rules" if not available else "",
+                    "detail": "本地模型可用" if available else "Ollama 可访问，但未发现配置的模型；问询会自动切换规则兜底。",
+                    "models": names[:12],
+                }
+            if provider == "llamacpp":
+                res = client.get(f"{base_url}/health")
+                if res.status_code == 404:
+                    res = client.get(f"{base_url}/v1/models")
+                return {
+                    "ok": res.is_success,
+                    "provider": provider,
+                    "base_url": base_url,
+                    "model": model,
+                    "fallback": "" if res.is_success else "rules",
+                    "detail": "llama.cpp 服务可访问" if res.is_success else "llama.cpp 服务不可用，问询会自动切换规则兜底。",
+                    "status_code": res.status_code,
+                }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "provider": provider,
+            "base_url": base_url,
+            "model": model,
+            "fallback": "rules",
+            "detail": f"本地 AI 不可用，问询会自动切换规则兜底：{exc}",
+        }
+    return {
+        "ok": False,
+        "provider": provider,
+        "base_url": base_url,
+        "model": model,
+        "fallback": "rules",
+        "detail": "不支持的本地 AI provider，问询会自动切换规则兜底。",
+    }
+
+
 def call_local_ai(prompt: str, provider: str) -> str:
     if provider == "mock":
         return ""

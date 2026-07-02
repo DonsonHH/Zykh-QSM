@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .ai import stream_chat
-from .ai_router import SAFETY_NOTICE, route_triage, stream_chunks
+from .ai_router import SAFETY_NOTICE, local_ai_health, route_triage, stream_chunks
 from .config import (
     AI_API_BASE,
     AI_KEY_FILE,
@@ -137,11 +137,27 @@ def latest_context() -> dict[str, Any]:
     }
 
 
+def qsm_diagnosis(qsm_status: dict[str, Any], adb: dict[str, Any], forward: dict[str, Any]) -> dict[str, Any]:
+    if not adb.get("connected"):
+        return {"layer": "adb", "label": "ADB 未连接", "detail": "未检测到外设采集与执行控制平台。"}
+    if not forward.get("ok"):
+        return {"layer": "forward", "label": "ADB 转发失败", "detail": forward.get("stderr") or "tcp 转发未建立。"}
+    if qsm_status.get("ok"):
+        return {"layer": "online", "label": "外设服务在线", "detail": "外设 8080 服务可访问。"}
+    error = str(qsm_status.get("error") or "")
+    if "Server disconnected" in error or "Empty reply" in error:
+        return {"layer": "gateway_empty_reply", "label": "8080 空响应", "detail": "ADB 转发已建立，但外设 8080 服务未正常返回，请检查 Perl 网关进程。"}
+    if "Connection refused" in error or "connect" in error:
+        return {"layer": "gateway_down", "label": "8080 未监听", "detail": "外设网关服务未启动或未绑定 8080。"}
+    return {"layer": "gateway_error", "label": "外设服务异常", "detail": error or "外设服务暂不可用。"}
+
+
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     forward = qsm.ensure_forward()
     qsm_status = qsm.get("/api/status", timeout=5.0)
     adb = qsm.adb_devices()
+    diagnosis = qsm_diagnosis(qsm_status, adb, forward)
     site = row("SELECT * FROM site_profile WHERE id=1") or {}
     stocked = rows("SELECT COUNT(*) AS count FROM medicines WHERE stock > 0")[0]["count"]
     low_stock = rows("SELECT COUNT(*) AS count FROM medicines WHERE stock BETWEEN 1 AND 5")[0]["count"]
@@ -179,6 +195,7 @@ def status() -> dict[str, Any]:
             "status": qsm_status,
             "adb": adb,
             "forward": forward,
+            "diagnosis": diagnosis,
         },
     )
 
@@ -529,17 +546,30 @@ def settings() -> dict[str, Any]:
     )
 
 
+@app.get("/api/local-ai/check")
+def local_ai_check() -> dict[str, Any]:
+    return ok(check=local_ai_health())
+
+
 @app.post("/api/admin/hardware_check")
 async def hardware_check(request: Request) -> dict[str, Any]:
     p = await parse_payload(request)
     action = str(p.get("action") or "status").strip()
     result: dict[str, Any]
     if action == "status":
+        forward = qsm.ensure_forward()
+        adb = qsm.adb_devices()
+        peripheral = qsm.get("/api/status", timeout=5.0)
         result = {
-            "forward": qsm.ensure_forward(),
-            "adb": qsm.adb_devices(),
-            "peripheral": qsm.get("/api/status", timeout=5.0),
+            "ok": bool(peripheral.get("ok")),
+            "diagnosis": qsm_diagnosis(peripheral, adb, forward),
+            "forward": forward,
+            "adb": adb,
+            "peripheral": peripheral,
+            "gateway": qsm.gateway_diagnostics(),
         }
+    elif action == "gateway_start":
+        result = qsm.start_gateway()
     elif action == "camera":
         result = qsm.post("/api/camera/capture", timeout=20.0)
     elif action == "vitals":

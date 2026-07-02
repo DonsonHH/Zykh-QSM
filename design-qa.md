@@ -163,6 +163,49 @@ final result: passed
 - The latest QSM main stream proxy fix requires restarting `zykh-qsm.service` before the running browser sees it. Runtime restart and Git push were blocked by the current sandbox approval/usage limit; code-level checks passed.
 final result: partial-pass
 
+**2026-07-03 UI Overflow P0 Repair and Peripheral Recheck**
+- Scope: paused new feature work and treated 11-inch 1280x720 UI overlap/overflow as P0.
+- Terminal shell:
+  - Bottom navigation now occupies the shell's normal bottom grid row instead of overlaying content.
+  - Page transitions use lightweight `motion` with reduced-motion support.
+  - Status chips truncate long values such as `规则兜底`, `部分可用`, and `4 待同步` without pushing adjacent chips.
+  - Ordinary terminal no longer exposes `扫码识别` or admin scan links; scan recognition is admin-only.
+- Medicine page:
+  - Recompressed detail hero, table rows, warning hint and CTA so `进入取药确认` is fully visible above the bottom nav.
+  - Product names and category chips use ellipsis instead of overflowing.
+- AI emergency inquiry page:
+  - Fixed three-column 720p layout.
+  - Removed tiny internal scrollbars from result/medicine/warning cards.
+  - External-device disabled states now show a clear reason while text inquiry remains available through rules fallback.
+- Admin pages:
+  - Added `启动外设网关` to device checks.
+  - Added local AI detection under system settings.
+  - Admin JSON panels now wrap text and avoid horizontal scrollbars.
+
+**Screenshots 2026-07-03 UI Overflow P0 Repair**
+- Chromium QA screenshots generated under ignored `jetson_app/data/ui-overflow-qa/`:
+  - `home-final.png`
+  - `cabinet-final.png`
+  - `ai-final.png`
+  - `profile-final.png`
+  - `admin-final.png`
+  - `admin-scan-final.png`
+  - `admin-devices-final2.png`
+- Screenshot note: Chromium snap still needs `--window-size=1280,807 --virtual-time-budget=5000` to show the full 1280x720 kiosk canvas.
+- UI result: no visible horizontal overflow, no bottom-nav overlap on terminal pages, no ordinary-user admin scan entry, no tiny internal scrollbars in the AI result cards.
+final result: passed
+
+**Peripheral Results 2026-07-03 Recheck**
+- Before repair: ADB device and `tcp:18080 -> tcp:8080` forward were present, but `/api/status` returned `Server disconnected without sending a response`; backend diagnosis now reports `gateway_empty_reply`.
+- Gateway repair: `POST /api/admin/hardware_check action=gateway_start` executed `/userdata/zykh_app/scripts/start_zykh_server.sh`, returned `ZYKH server started: 1597`, and external `/api/status` then passed.
+- External status: passed after gateway start. Returned Buildroot/aarch64 inventory with video, UART, PWM and I2C nodes.
+- Camera: failed at hardware media-link level. `/api/admin/hardware_check action=camera` returned `VIDIOC_STREAMON returned -1 (No such device)` on `/dev/video5`.
+- Vitals: partial. GY-614 returned realtime temperature around 36.0C; MAX30102 failed with `write reg 0x09 failed`, so heart-rate/SPO2 are not usable until hardware/I2C is fixed.
+- Audio speak: failed. `qwen-tts` returned `exit_code=1` with empty detail; needs external-device TTS dependency/log follow-up.
+- Audio ASR: partial. Recording completed on `plughw:0,0` and produced `/userdata/zykh_app/data/audio/last-question.wav`; recognition returned no text because no clear speech was captured.
+- Dispense: not triggered. Dry-run protection remains the default and no real mechanical open was executed in this pass.
+final result: partial-pass
+
 **2026-07-03 Product Design Image-to-Code Redraw**
 - Source visual truth: the six user-provided 1280x720 mockups in the 2026-07-02 chat turn covering terminal home, station medicines, AI emergency inquiry, service records, admin overview and scan recognition.
 - Rebuilt the terminal shell around the mockup structure for an 11-inch touch display:

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Cpu, HeartHandshake, RadioTower, ShieldCheck, Wifi } from "lucide-react";
 import { BottomNav } from "../components/BottomNav.jsx";
 import { StatusPill } from "../components/StatusPill.jsx";
@@ -22,6 +23,7 @@ const terminalPages = new Set(Object.keys(pageTitles));
 export function TerminalApp() {
   const data = useQsmData();
   const scale = useKioskScale();
+  const reduceMotion = useReducedMotion();
   const [page, setPage] = useState(() => {
     if (window.location.pathname.startsWith("/triage")) return "ai";
     const requested = new URLSearchParams(window.location.search).get("page");
@@ -35,16 +37,28 @@ export function TerminalApp() {
   }, []);
 
   const common = useMemo(() => ({ ...data, setPage }), [data]);
+  const motionProps = reduceMotion
+    ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 1 }, transition: { duration: 0 } }
+    : {
+        initial: { opacity: 0, y: 8, scale: 0.995 },
+        animate: { opacity: 1, y: 0, scale: 1 },
+        exit: { opacity: 0, y: -6, scale: 0.995 },
+        transition: { duration: 0.18, ease: "easeOut" }
+      };
 
   return (
     <main className="viewport terminal-viewport">
       <section className="terminal-shell kiosk-canvas" style={{ "--kiosk-scale": scale }}>
       <TerminalTopbar now={now} status={data.status} site={data.site} page={page} />
         <section className="terminal-content">
-          {page === "home" && <HomePage {...common} />}
-          {page === "cabinet" && <CabinetPage {...common} />}
-          {page === "ai" && <AiChatPage {...common} />}
-          {page === "profile" && <ProfilePage {...common} />}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={page} className="terminal-page-motion" {...motionProps}>
+              {page === "home" && <HomePage {...common} />}
+              {page === "cabinet" && <CabinetPage {...common} />}
+              {page === "ai" && <AiChatPage {...common} />}
+              {page === "profile" && <ProfilePage {...common} />}
+            </motion.div>
+          </AnimatePresence>
         </section>
         <BottomNav page={page} onChange={setPage} />
         <Toast message={data.toast} />

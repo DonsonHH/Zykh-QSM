@@ -486,3 +486,55 @@
     grid-template-columns: 150px 1fr;
   }
 }
+
+/* 720p admin usability fixes */
+.hardware-check-panel {
+  gap: 8px;
+}
+
+.hardware-check-note {
+  font-size: 11px;
+}
+
+.hardware-check-list {
+  gap: 6px;
+}
+
+.hardware-check-row {
+  min-height: 48px !important;
+}
+
+.hardware-check-row strong {
+  font-size: 13px;
+}
+
+.hardware-check-row small {
+  font-size: 10px;
+}
+
+.hardware-check-panel pre {
+  max-height: 102px;
+}
+
+.admin-panel button:disabled,
+.hardware-check-panel button:disabled,
+.quick-actions-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.admin-panel pre {
+  word-break: break-word;
+  white-space: pre-wrap;
+  overflow-x: hidden;
+}
+
+.admin-two-col .admin-panel {
+  overflow: hidden;
+}
+
+.admin-two-col .admin-panel p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

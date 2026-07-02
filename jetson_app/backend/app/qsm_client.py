@@ -36,6 +36,61 @@ class QsmClient:
         except Exception as exc:
             return {"ok": False, "connected": False, "error": str(exc)}
 
+    def adb_shell(self, command: str, timeout: float = 5.0) -> dict[str, Any]:
+        cmd = ["adb", "shell", command]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return {
+                "ok": proc.returncode == 0,
+                "command": " ".join(cmd),
+                "stdout": proc.stdout.strip(),
+                "stderr": proc.stderr.strip(),
+                "returncode": proc.returncode,
+            }
+        except Exception as exc:
+            return {"ok": False, "command": " ".join(cmd), "error": str(exc)}
+
+    def forward_list(self) -> dict[str, Any]:
+        try:
+            proc = subprocess.run(["adb", "forward", "--list"], capture_output=True, text=True, timeout=5)
+            text = proc.stdout.strip()
+            expected = f"tcp:{QSM_ADB_LOCAL_PORT} tcp:{QSM_ADB_REMOTE_PORT}"
+            return {
+                "ok": proc.returncode == 0,
+                "active": expected in text,
+                "expected": expected,
+                "output": text,
+                "stderr": proc.stderr.strip(),
+            }
+        except Exception as exc:
+            return {"ok": False, "active": False, "error": str(exc)}
+
+    def gateway_diagnostics(self) -> dict[str, Any]:
+        return {
+            "adb": self.adb_devices(),
+            "forward": self.ensure_forward(),
+            "forward_list": self.forward_list(),
+            "script": self.adb_shell(
+                "ls -l /userdata/zykh_app/scripts/start_zykh_server.sh /userdata/zykh_app/server.pl 2>/dev/null",
+                timeout=4,
+            ),
+            "process": self.adb_shell("ps | grep -E 'server.pl|perl|zykh' | grep -v grep", timeout=4),
+            "port_8080": self.adb_shell(
+                "netstat -ltnp 2>/dev/null | grep ':8080' || ss -ltnp 2>/dev/null | grep ':8080'",
+                timeout=4,
+            ),
+        }
+
+    def start_gateway(self) -> dict[str, Any]:
+        start = self.adb_shell("sh /userdata/zykh_app/scripts/start_zykh_server.sh", timeout=8)
+        status = self.get("/api/status", timeout=5.0)
+        return {
+            "ok": bool(status.get("ok")),
+            "start": start,
+            "peripheral": status,
+            "diagnostics": self.gateway_diagnostics(),
+        }
+
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:

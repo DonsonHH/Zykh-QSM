@@ -1,4 +1,4 @@
-import { ChevronRight, Info, PackageCheck, ScanLine, ShieldCheck } from "lucide-react";
+import { ChevronRight, Info, PackageCheck, ShieldCheck } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { GlassCard } from "../components/GlassCard.jsx";
 
@@ -38,10 +38,6 @@ export function CabinetPage({ medicines, setPage }) {
             <h1>站点药品</h1>
             <strong>{stocked.length}<small>/23 仓有库存</small></strong>
           </div>
-          <a className="scan-admin-link" href="/admin?section=scan">
-            <ScanLine size={22} />
-            扫码识别
-          </a>
         </div>
         <div className="cabinet-tabs category-tabs">
           {filters.map((item) => (

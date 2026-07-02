@@ -50,6 +50,8 @@ export function AdminApp() {
   const [siteDraft, setSiteDraft] = useState({});
   const [hardwareChecks, setHardwareChecks] = useState({});
   const [hardwareBusy, setHardwareBusy] = useState("");
+  const [localAiCheck, setLocalAiCheck] = useState(null);
+  const [localAiBusy, setLocalAiBusy] = useState(false);
 
   useEffect(() => setProfileDraft(data.profile || {}), [data.profile]);
   useEffect(() => setSiteDraft(data.site || {}), [data.site]);
@@ -165,6 +167,20 @@ export function AdminApp() {
       data.notify(err.message);
     } finally {
       setHardwareBusy("");
+    }
+  }
+
+  async function runLocalAiCheck() {
+    setLocalAiBusy(true);
+    try {
+      const res = await api("/api/local-ai/check");
+      setLocalAiCheck(res.check);
+      data.notify(res.check?.ok ? "本地 AI 检测完成" : "本地 AI 不可用，已使用规则兜底");
+    } catch (err) {
+      setLocalAiCheck({ ok: false, detail: err.message, fallback: "rules" });
+      data.notify(err.message);
+    } finally {
+      setLocalAiBusy(false);
     }
   }
 
@@ -362,8 +378,15 @@ export function AdminApp() {
                 </div>
               </GlassCard>
               <GlassCard className="admin-panel">
-                <span className="card-eyebrow">QSM368ZP-WF 核心终端状态</span>
-                <pre>{JSON.stringify(mainStatus, null, 2)}</pre>
+                <span className="card-eyebrow">本地 AI 检测</span>
+                <p>Provider：{settings?.local_ai_provider || "--"}</p>
+                <p>Base URL：{settings?.local_ai_base_url || "--"}</p>
+                <p>模型：{settings?.local_ai_model || "--"}</p>
+                <button className="primary" onClick={runLocalAiCheck} disabled={localAiBusy}>
+                  <Bot size={18} />
+                  {localAiBusy ? "检测中" : "检测本地 AI"}
+                </button>
+                <pre>{JSON.stringify(localAiCheck || mainStatus, null, 2)}</pre>
               </GlassCard>
             </div>
           )}
@@ -438,6 +461,7 @@ function AdminLogs({ records, adminLogs = {}, large = false }) {
 
 const hardwareCheckItems = [
   ["status", Radio, "连接状态", "ADB / forward / 外设状态"],
+  ["gateway_start", Server, "启动外设网关", "执行外设板 start_zykh_server.sh"],
   ["camera", Camera, "摄像头拍照", "调用外设摄像头 capture"],
   ["vitals", HeartPulse, "体征读取", "MAX30102 / GY-614"],
   ["audio_speak", Volume2, "语音播报", "外设喇叭播报测试"],
@@ -455,7 +479,7 @@ function HardwareCheckPanel({ checks, busy, runCheck, qsmOnline }) {
           const ok = Boolean(result?.ok);
           const failed = result && !ok;
           return (
-            <button key={action} className={`hardware-check-row ${ok ? "ok" : failed ? "failed" : ""}`} onClick={() => runCheck(action)} disabled={Boolean(busy) || (action !== "status" && !qsmOnline)}>
+            <button key={action} className={`hardware-check-row ${ok ? "ok" : failed ? "failed" : ""}`} onClick={() => runCheck(action)} disabled={Boolean(busy) || (!["status", "gateway_start"].includes(action) && !qsmOnline)}>
               <Icon size={20} />
               <span>
                 <strong>{busy === action ? "检查中" : label}</strong>
@@ -480,7 +504,7 @@ function QuickActions({ qsmOnline, slot, setSlot, openSlot, openingSlot, refresh
           dry-run 仓位
           <input type="number" min="1" max="23" value={slot} onChange={(event) => setSlot(event.target.value)} />
         </label>
-        <button onClick={openSlot} disabled={!qsmOnline || openingSlot}>
+        <button onClick={openSlot} disabled={openingSlot}>
           <DoorOpen size={18} />
           {openingSlot ? "记录中" : "dry-run 测试"}
         </button>

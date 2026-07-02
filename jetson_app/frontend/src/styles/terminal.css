@@ -2595,3 +2595,423 @@
   font-size: 18px;
   font-weight: 800;
 }
+
+/* P0 720p kiosk fit overrides. Keep these at the end so older redesign blocks cannot reintroduce overlap. */
+.terminal-topbar {
+  grid-template-columns: 300px 300px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.topbar-status {
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+}
+
+.status-pill {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.status-pill div {
+  min-width: 0;
+}
+
+.status-pill span,
+.status-pill strong,
+.status-pill small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-content {
+  min-height: 0;
+  padding: 2px 28px 0;
+  overflow: hidden;
+}
+
+.terminal-page-motion {
+  height: 100%;
+  min-height: 0;
+}
+
+.bottom-nav {
+  position: static;
+  align-self: stretch;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  height: auto;
+  min-height: 76px;
+  margin: 0 20px 8px;
+}
+
+.bottom-nav button {
+  min-height: 60px;
+  touch-action: manipulation;
+}
+
+.touch-ripple,
+.bottom-nav button,
+.hero-action,
+.home-tile,
+.medicine-product-card,
+.triage-tools button,
+.composer button {
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease, filter 150ms ease;
+}
+
+.touch-ripple:active,
+.bottom-nav button:active,
+.hero-action:active,
+.home-tile:active,
+.medicine-product-card:active,
+.triage-tools button:active,
+.composer button:active {
+  transform: scale(0.985);
+  filter: brightness(1.08);
+}
+
+.cabinet-reference-page {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 440px;
+  gap: 12px;
+}
+
+.medicine-list-panel,
+.medicine-detail-panel {
+  min-height: 0;
+  padding: 16px;
+}
+
+.medicine-list-head {
+  min-height: 58px;
+}
+
+.page-icon {
+  width: 50px;
+  height: 50px;
+}
+
+.page-title-with-icon h1,
+.detail-title h1 {
+  font-size: 30px;
+}
+
+.page-title-with-icon > strong {
+  font-size: 36px;
+}
+
+.page-title-with-icon small {
+  font-size: 17px;
+}
+
+.cabinet-reference-page .cabinet-tabs {
+  margin: 14px 0 12px;
+}
+
+.cabinet-reference-page .cabinet-tabs button {
+  height: 46px;
+  min-width: 102px;
+  font-size: 18px;
+}
+
+.medicine-card-grid {
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.medicine-product-card {
+  min-height: 92px;
+  grid-template-columns: 80px minmax(0, 1fr) 54px;
+  padding: 12px;
+}
+
+.product-box {
+  width: 80px;
+  height: 58px;
+}
+
+.product-info strong {
+  font-size: 20px;
+  line-height: 1.12;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-info em {
+  margin-top: 7px;
+  font-size: 16px;
+}
+
+.medicine-product-card b {
+  font-size: 28px;
+}
+
+.medicine-detail-panel {
+  gap: 8px;
+}
+
+.detail-hero {
+  min-height: 96px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+}
+
+.product-box.large {
+  width: 106px;
+  height: 76px;
+}
+
+.detail-hero h2 {
+  font-size: 24px;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.detail-hero em {
+  margin-top: 7px;
+  font-size: 15px;
+}
+
+.medicine-detail-table p {
+  min-height: 34px;
+  grid-template-columns: 108px minmax(0, 1fr);
+  font-size: 16px;
+}
+
+.medicine-detail-table strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-hint {
+  min-height: 42px;
+  padding: 0 14px;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.medicine-detail-panel .hero-action {
+  min-height: 52px;
+  font-size: 22px;
+}
+
+.triage-page {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: 270px minmax(0, 1fr) 292px;
+  gap: 10px;
+}
+
+.history-panel,
+.chat-panel,
+.health-context-panel {
+  padding: 12px;
+}
+
+.triage-input-panel {
+  grid-template-rows: auto 58px 54px 58px auto auto;
+  gap: 7px;
+}
+
+.triage-compact-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.triage-input-panel label {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.triage-input-panel textarea {
+  min-height: 38px;
+  height: 38px;
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.triage-input-panel input {
+  min-height: 34px;
+}
+
+.triage-input-panel .scene-tags {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.triage-input-panel .scene-tags button {
+  min-height: 32px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.triage-input-panel .triage-tools {
+  grid-template-columns: 1fr 1fr;
+}
+
+.triage-input-panel .triage-tools .primary {
+  grid-column: 1 / -1;
+}
+
+.triage-input-panel .triage-tools button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.triage-disabled-note {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 179, 71, 0.28);
+  border-radius: var(--radius-control);
+  background: rgba(255, 179, 71, 0.08);
+  color: #ffd99c;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.triage-page .chat-panel {
+  grid-template-rows: 48px auto minmax(0, 1fr) 62px;
+  gap: 7px;
+}
+
+.chat-heading h1 {
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.safety-banner {
+  min-height: 34px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.chat-message .bubble {
+  max-width: 84%;
+}
+
+.bubble {
+  padding: 9px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.composer {
+  grid-template-columns: 1fr 58px;
+}
+
+.composer textarea,
+.composer button {
+  min-height: 52px;
+  height: 52px;
+  overflow: hidden;
+}
+
+.triage-result-panel {
+  gap: 6px;
+  padding-right: 12px;
+}
+
+.risk-badge {
+  min-height: 42px;
+  font-size: 22px;
+}
+
+.result-summary-box {
+  min-height: 38px;
+  max-height: 58px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.med-context-list,
+.warning-list {
+  max-height: none;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.med-context-list {
+  gap: 5px;
+}
+
+.med-context-list p,
+.warning-list p {
+  min-height: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+}
+
+.med-context-list p {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.med-context-list strong,
+.med-context-list span,
+.warning-list p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-row {
+  gap: 5px;
+}
+
+.token-row span {
+  min-height: 26px;
+  max-width: 100%;
+  font-size: 11px;
+}
+
+.condition-list {
+  gap: 4px;
+}
+
+.condition-list p {
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.triage-result-panel .primary.wide {
+  min-height: 50px;
+}
+
+.triage-result-panel .qsm-note {
+  display: block;
+  margin-top: -2px;
+  color: #ffd99c;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touch-ripple,
+  .bottom-nav button,
+  .hero-action,
+  .home-tile,
+  .medicine-product-card,
+  .triage-tools button,
+  .composer button {
+    transition: none;
+  }
+
+  .touch-ripple:active,
+  .bottom-nav button:active,
+  .hero-action:active,
+  .home-tile:active,
+  .medicine-product-card:active,
+  .triage-tools button:active,
+  .composer button:active {
+    transform: none;
+  }
+}

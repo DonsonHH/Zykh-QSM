@@ -1,5 +1,5 @@
 import React from "react";
-import { Bot, CalendarPlus, ChevronRight, ClipboardList, HeartPulse, PackageCheck, ScanLine } from "lucide-react";
+import { Bot, CalendarPlus, ChevronRight, ClipboardList, HeartPulse, PackageCheck, UserRound } from "lucide-react";
 import assistantRobot from "../assets/assistant-robot.svg";
 import { api } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
@@ -73,11 +73,11 @@ export function HomePage({ status, site, plans, vitals, medicines, records, admi
         </button>
       </GlassCard>
 
-      <button className="home-tile touch-ripple scan" onClick={() => { window.location.href = "/admin?section=scan"; }}>
-        <span className="tile-icon"><ScanLine size={44} /></span>
+      <button className="home-tile touch-ripple scan" onClick={() => setPage("profile")}>
+        <span className="tile-icon"><UserRound size={44} /></span>
         <div>
-          <strong>扫码识别</strong>
-          <span>药盒 / 条码 / 站点码</span>
+          <strong>服务对象</strong>
+          <span>{serviceObjects.length} 人今日随访</span>
         </div>
         <ChevronRight size={32} />
       </button>
