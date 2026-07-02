@@ -31,7 +31,7 @@ const adminNav = [
   ["site", Radio, "站点配置"],
   ["devices", Server, "设备管理"],
   ["medicines", Database, "药品管理"],
-  ["profile", UserRound, "康护档案"],
+  ["profile", UserRound, "服务对象"],
   ["settings", Settings, "系统设置"],
   ["logs", Shield, "日志管理"]
 ];
@@ -64,7 +64,7 @@ export function AdminApp() {
   const [saveProfile, savingProfile] = useAsyncAction(async () => {
     try {
       await api("/api/profile", formBody(profileDraft));
-      data.notify("档案已保存");
+      data.notify("服务对象已保存");
       await data.refresh();
     } catch (err) {
       data.notify(err.message);
@@ -127,7 +127,7 @@ export function AdminApp() {
   });
 
   const [seedDemo, seedingDemo] = useAsyncAction(async () => {
-    const confirmed = window.confirm("确认开启演示模式？\n这会写入张三档案、药柜、计划、体征和演示记录。");
+    const confirmed = window.confirm("确认开启演示模式？\n这会写入村镇站点、固定服务对象、药品库存、计划、体征和服务记录。");
     if (!confirmed) return;
     try {
       await api("/api/demo/seed", { method: "POST" });
@@ -316,7 +316,7 @@ export function AdminApp() {
 
           {section === "profile" && (
             <GlassCard className="admin-panel profile-editor-admin">
-                <span className="card-eyebrow">基础家庭 / 慢病档案</span>
+                <span className="card-eyebrow">固定服务对象 / 慢病随访</span>
               <div className="admin-form-grid">
                 <label>姓名<input value={profileDraft.name || ""} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} /></label>
                 <label>性别<input value={profileDraft.gender || ""} onChange={(event) => setProfileDraft({ ...profileDraft, gender: event.target.value })} /></label>
@@ -327,7 +327,7 @@ export function AdminApp() {
                 <label>过敏史<textarea value={profileDraft.allergies || ""} onChange={(event) => setProfileDraft({ ...profileDraft, allergies: event.target.value })} /></label>
                 <label>备注<textarea value={profileDraft.notes || ""} onChange={(event) => setProfileDraft({ ...profileDraft, notes: event.target.value })} /></label>
               </div>
-              <button className="primary" onClick={saveProfile} disabled={savingProfile}>{savingProfile ? "保存中" : "保存档案"}</button>
+              <button className="primary" onClick={saveProfile} disabled={savingProfile}>{savingProfile ? "保存中" : "保存服务对象"}</button>
             </GlassCard>
           )}
 

@@ -1,36 +1,32 @@
 import React from "react";
-import { Bot, HeartPulse, Pill } from "lucide-react";
+import { Bot, ClipboardList, HeartPulse, Pill, ShieldCheck } from "lucide-react";
 import assistantRobot from "../assets/assistant-robot.svg";
 import calendarAsset from "../assets/calendar-3d.svg";
 import cameraAsset from "../assets/camera-3d.svg";
 import profileAsset from "../assets/profile-folder-3d.svg";
-import { api, formBody } from "../api/client.js";
+import { api } from "../api/client.js";
 import { BigActionButton } from "../components/BigActionButton.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
-import { VitalReadout } from "../components/VitalReadout.jsx";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import { latestVitals, nextPlan } from "../utils/domain.js";
 
-export function HomePage({ status, site, plans, vitals, medicines, refresh, notify, setPage }) {
+const serviceObjects = [
+  { name: "张三", age: 65, tag: "高血压 · 饭后服药", next: "08:00 阿司匹林肠溶片" },
+  { name: "李四", age: 72, tag: "糖尿病随访", next: "今日体征复查" },
+  { name: "王五", age: 58, tag: "长期胃病", next: "近期问询对象" }
+];
+
+export function HomePage({ status, site, plans, vitals, medicines, records, adminLogs, refresh, notify, setPage }) {
   const plan = nextPlan(plans);
   const latest = latestVitals(vitals);
   const qsmOnline = Boolean(status?.qsm?.online);
   const network = status?.network || {};
+  const devices = status?.devices || {};
   const stocked = medicines.filter((item) => Number(item.stock) > 0);
   const emergencyCount = stocked.filter((item) => Number(item.is_emergency) === 1).length;
-  const dispenseTitle = plan ? "开始取药" : "暂无计划";
-  const dispenseDetail = !plan ? "请在后台添加用药计划" : "dry-run 校验计划与记录";
-
-  const [dispense, dispensing] = useAsyncAction(async () => {
-    if (!plan) return notify("当前没有可执行用药计划");
-    try {
-      const data = await api("/api/dispense", formBody({ slot: plan.slot }));
-      notify(data.detail || "取药完成");
-      await refresh();
-    } catch (err) {
-      notify(err.message);
-    }
-  });
+  const pendingReview = (adminLogs?.emergency_sessions || []).filter((item) => Number(item.need_admin_review) === 1).length;
+  const pendingSync = Number(network.pending_sync_count || adminLogs?.pending_sync_count || 0);
+  const todayRecords = records?.length || 0;
 
   const [readVitals, readingVitals] = useAsyncAction(async () => {
     try {
@@ -46,31 +42,35 @@ export function HomePage({ status, site, plans, vitals, medicines, refresh, noti
     <div className="home-page">
       <GlassCard className="today-card">
         <div className="card-title-row">
-          <h1>今日用药提醒</h1>
-          <span className="dose-state">按时</span>
+          <h1>固定对象今日用药</h1>
+          <span className="dose-state">{serviceObjects.length} 人</span>
         </div>
-        <div className="next-dose">
-          <span>下一次服药时间</span>
-          <strong>{plan?.time || "--:--"}</strong>
+        <div className="station-metrics primary">
+          <article>
+            <span>待服药对象</span>
+            <strong>{serviceObjects.length}人</strong>
+          </article>
+          <article>
+            <span>待执行计划</span>
+            <strong>{plans.length}条</strong>
+          </article>
         </div>
         <div className="medicine-summary">
           <div className="medicine-icon">
             <Pill size={66} />
           </div>
           <div>
-            <h2>{plan?.medicine_name || (plan ? `${plan.slot} 号仓药品` : "暂无用药计划")}</h2>
-            <p>{plan ? `${plan.amount || "按计划"} · ${plan.slot} 号仓` : "请在药柜页或后台添加计划"}</p>
-            {plan && <small>饭后服用</small>}
+            <h2>下一条：{plan?.time || "08:00"} 张三</h2>
+            <p>{plan?.medicine_name || "阿司匹林肠溶片"} · {plan?.amount || "1片"} · 饭后服用</p>
+            <small>张三只是固定服务对象之一，站点同时服务多名对象。</small>
           </div>
         </div>
         <BigActionButton
-          icon={Pill}
-          title={dispensing ? "取药中" : dispenseTitle}
-          detail={dispensing ? "正在校验计划并开仓" : dispenseDetail}
+          icon={ClipboardList}
+          title="查看今日计划"
+          detail={`${todayRecords} 条服务记录 · 执行取药确认需完成核验`}
           tone="orange"
-          onClick={dispense}
-          disabled={!plan}
-          busy={dispensing}
+          onClick={() => setPage("profile")}
         />
       </GlassCard>
 
@@ -94,15 +94,36 @@ export function HomePage({ status, site, plans, vitals, medicines, refresh, noti
             <strong>{modeLabel(network.mode || site?.network_mode)}</strong>
           </div>
         </div>
-        <VitalReadout vitals={latest} />
+        <div className="station-status-grid">
+          <article>
+            <span>药柜库存</span>
+            <strong>{stocked.length}/23</strong>
+          </article>
+          <article>
+            <span>待复核</span>
+            <strong>{pendingReview}</strong>
+          </article>
+          <article>
+            <span>待同步</span>
+            <strong>{pendingSync}</strong>
+          </article>
+          <article>
+            <span>外设接入</span>
+            <strong>{qsmOnline ? "可用" : "部分不可用"}</strong>
+          </article>
+        </div>
+        <div className="device-strip">
+          <span>摄像头 {deviceLabel(devices.camera?.ok)}</span>
+          <span>体征 {deviceLabel(devices.vitals?.ok)}</span>
+          <span>语音 {deviceLabel(devices.voice?.ok)}</span>
+          <span>出药 {devices.dispense?.dry_run ? "演示模式" : deviceLabel(devices.dispense?.ok)}</span>
+        </div>
         <BigActionButton
-          icon={HeartPulse}
-          title={readingVitals ? "测量中" : "立即测量"}
-          detail={readingVitals ? "正在读取心率 血氧 体温" : !qsmOnline ? "设备连接中，暂不可测量" : "心率 血氧 体温"}
+          icon={ShieldCheck}
+          title="查看复核队列"
+          detail={`最近体征：心率 ${latest?.heart_rate || "--"} · 血氧 ${latest?.spo2 || "--"}`}
           tone="blue"
-          onClick={readVitals}
-          disabled={!qsmOnline}
-          busy={readingVitals}
+          onClick={() => setPage("profile")}
         />
       </GlassCard>
 
@@ -127,10 +148,21 @@ export function HomePage({ status, site, plans, vitals, medicines, refresh, noti
         </div>
         <img src={profileAsset} alt="" />
       </button>
+      <button className="home-tile touch-ripple vitals" onClick={readVitals} disabled={!qsmOnline || readingVitals}>
+        <div>
+          <strong>{readingVitals ? "测量中" : "体征测量"}</strong>
+          <span>{qsmOnline ? "心率、血氧、体温" : "外设接入中"}</span>
+        </div>
+        <HeartPulse size={58} />
+      </button>
     </div>
   );
 }
 
 function modeLabel(mode) {
   return { online: "在线模式", weak: "弱网模式", offline: "离线模式" }[mode] || "弱网模式";
+}
+
+function deviceLabel(ok) {
+  return ok ? "可用" : "待连接";
 }

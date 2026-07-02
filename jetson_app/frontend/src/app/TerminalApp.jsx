@@ -13,10 +13,10 @@ import { useKioskScale } from "./useKioskScale.js";
 
 const pageTitles = {
   home: "首页",
-  cabinet: "可用药品",
+  cabinet: "站点库存",
   scan: "扫码识别",
-  ai: "AI 应急问询",
-  profile: "康护档案"
+  ai: "AI 问询",
+  profile: "服务记录"
 };
 
 const terminalPages = new Set(Object.keys(pageTitles));
@@ -41,7 +41,7 @@ export function TerminalApp() {
   return (
     <main className="viewport terminal-viewport">
       <section className="terminal-shell kiosk-canvas" style={{ "--kiosk-scale": scale }}>
-        <TerminalTopbar now={now} status={data.status} site={data.site} profile={data.profile} page={page} />
+      <TerminalTopbar now={now} status={data.status} site={data.site} page={page} />
         <section className="terminal-content">
           {page === "home" && <HomePage {...common} />}
           {page === "cabinet" && <CabinetPage {...common} />}
@@ -56,7 +56,7 @@ export function TerminalApp() {
   );
 }
 
-function TerminalTopbar({ now, status, site, profile, page }) {
+function TerminalTopbar({ now, status, site, page }) {
   const qsmOnline = Boolean(status?.qsm?.online);
   const forwardOk = Boolean(status?.qsm?.forward?.ok ?? status?.qsm?.forward);
   const mainOk = Boolean(status?.qsm_main);
@@ -84,7 +84,7 @@ function TerminalTopbar({ now, status, site, profile, page }) {
       </div>
       <a className="admin-peek" href="/admin" aria-label="进入管理后台">
         <Activity size={18} />
-        <span>{profile?.name || "管理员"}</span>
+        <span>{site?.manager_name || "值守员"}</span>
         <ChevronDown size={16} />
       </a>
     </header>

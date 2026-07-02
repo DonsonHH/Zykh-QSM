@@ -183,6 +183,24 @@ final result: partial-pass
 - `git diff --check`: passed.
 final result: passed
 
+**2026-07-02 Product Calibration Pass**
+- Reframed the terminal information architecture from a single-person medicine box to a village care station serving multiple fixed service objects plus walk-in emergency inquiries.
+- Added `CONTEXT.md` domain language to lock the product subject: 偏远社区康护站、固定服务对象、现场应急对象、值守员、AI 应急问询、药品辅助匹配、取药确认、管理员复核、服务记录.
+- Bottom navigation changed to `首页 / 药品 / 扫码 / 问询 / 记录`; the user terminal no longer presents “我的档案” semantics.
+- Home now shows station-level work: fixed service objects, pending medication plans, next object-level plan, inventory, review queue, pending sync and peripheral access.
+- AI page now presents an emergency inquiry flow: symptoms, duration, used medicine, allergy/contraindication, scene tags, vitals read, risk assessment, inventory match, contraindication and next action.
+- Medicine page now reads as station inventory and exposes user-confirm/review status instead of a personal cabinet.
+- Scan page keeps user/admin recognition modes and adds degraded camera copy plus four product use cases.
+- Record page replaced the personal profile page with fixed service objects, recent vitals/inquiries, medication plans, dispense records and sync state.
+- Demo data now emphasizes village station service objects, emergency inventory and service records rather than a single elderly-home profile.
+- Verification:
+  - `python3 -m py_compile jetson_app/backend/app/*.py`: passed.
+  - `PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests`: 9 passed, 2 FastAPI deprecation warnings.
+  - `cd jetson_app/frontend && npm run build`: passed.
+  - `git diff --check`: passed.
+  - Terminal forbidden-flow scan: user terminal has no `我的档案` / `AI问诊` / `调试开仓` / `录药` / `补药` wording.
+final result: passed
+
 **2026-07-02 Live Peripheral Repair Follow-up**
 - Restarted the local QSM main backend and the external-device Perl gateway, then rechecked the live ADB/forward path.
 - Fixed microphone recording after finding ALSA `Capture MIC Path` was `MIC OFF`; `record_audio()` now initializes the external device to `Main Mic` before `arecord`.

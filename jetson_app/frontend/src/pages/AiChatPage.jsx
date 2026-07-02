@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { MarkdownText } from "../components/MarkdownText.jsx";
-import { VitalReadout } from "../components/VitalReadout.jsx";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 const safetyNotice = "本系统仅提供应急辅助信息和药品匹配参考，不能替代医生诊断、处方或专业救援判断。如出现严重症状，请立即联系医生、管理员或救援人员。";
@@ -19,13 +18,15 @@ const sceneOptions = [
   ["rescue_camp", "救援点"]
 ];
 
-const quickPrompts = ["轻微咽痛流涕", "老人头晕怎么办", "腹泻可用哪些应急药", "这些药能一起用吗"];
+const quickPrompts = ["轻微头痛流涕", "腹泻一天", "皮肤瘙痒疑似过敏", "摔伤擦破皮", "老人头晕需复核降压药"];
 
 export function AiChatPage({ status, site, profile, vitals, medicines, refresh, notify }) {
   const [messages, setMessages] = useState([
     { role: "assistant", text: "这里是 AI 应急问询。请描述症状、持续时间、已用药和过敏禁忌。系统只做风险提示和药品辅助匹配，不诊断、不开药、不生成处方。" }
   ]);
   const [symptoms, setSymptoms] = useState("");
+  const [duration, setDuration] = useState("");
+  const [usedMedicine, setUsedMedicine] = useState("");
   const [allergy, setAllergy] = useState(profile?.allergies || "");
   const [scene, setScene] = useState(site?.station_type || "village");
   const [result, setResult] = useState(null);
@@ -68,12 +69,18 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
 
   const [triage, triaging] = useAsyncAction(async (text = symptoms.trim()) => {
     if (!text) return notify("请先输入症状或问询内容");
+    const inquiryText = [
+      `症状：${text}`,
+      duration ? `持续时间：${duration}` : "",
+      usedMedicine ? `已用药情况：${usedMedicine}` : "",
+      allergy ? `过敏/禁忌：${allergy}` : ""
+    ].filter(Boolean).join("；");
     setResult(null);
     setLastReply("");
-    setMessages((current) => [...current, { role: "user", text }, { role: "assistant", text: "" }]);
+    setMessages((current) => [...current, { role: "user", text: inquiryText }, { role: "assistant", text: "" }]);
     try {
       const payload = {
-        symptoms_text: text,
+        symptoms_text: inquiryText,
         scene_type: scene,
         network_mode: network.mode || site?.network_mode || "weak",
         allergy_or_contraindication: allergy,
@@ -149,6 +156,14 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
           <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} placeholder="例如：老人轻微咽痛流涕，无发热，想确认服务点是否有可用药品..." />
         </label>
         <label>
+          持续时间
+          <input value={duration} onChange={(event) => setDuration(event.target.value)} placeholder="例如：2小时、1天、3天反复出现" />
+        </label>
+        <label>
+          已用药情况
+          <input value={usedMedicine} onChange={(event) => setUsedMedicine(event.target.value)} placeholder="例如：未用药、已服降压药、刚吃退烧药" />
+        </label>
+        <label>
           过敏 / 禁忌
           <textarea value={allergy} onChange={(event) => setAllergy(event.target.value)} placeholder="例如：青霉素过敏、胃溃疡、正在服用降压药" />
         </label>
@@ -166,6 +181,10 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
             <HeartPulse size={18} />
             {readingVitals ? "读取中" : "读取体征"}
           </button>
+          <button className="primary" onClick={() => triage()} disabled={!symptoms.trim() || triaging}>
+            <Send size={18} />
+            {triaging ? "评估中" : "开始问询"}
+          </button>
         </div>
         <div className="quick-prompts">
           {quickPrompts.map((prompt) => (
@@ -178,7 +197,7 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
         <div className="chat-heading">
           <Bot size={28} />
           <div>
-            <span className="card-eyebrow">AI 应急问询 · {modeLabel(network.mode)}</span>
+            <span className="card-eyebrow">问询 → 风险判断 → 库存匹配 → 复核</span>
             <h1>风险提示与药品辅助匹配</h1>
           </div>
           <button onClick={speakLast} disabled={!qsmOnline || speaking}>
@@ -211,6 +230,10 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
       <GlassCard className="health-context-panel triage-result-panel">
         <span className="card-eyebrow">风险等级</span>
         <div className={`risk-badge ${result?.risk_level || "unknown"}`}>{riskLabel(result?.risk_level)}</div>
+        <span className="card-eyebrow">症状摘要</span>
+        <div className="result-summary-box">
+          {result?.symptoms_summary || "完成问询后显示症状摘要、场景和需要复核的关键点。"}
+        </div>
         <span className="card-eyebrow">当前库存匹配</span>
         <div className="med-context-list">
           {(result?.candidate_medicines || []).length ? result.candidate_medicines.map((item) => (
@@ -220,12 +243,19 @@ export function AiChatPage({ status, site, profile, vitals, medicines, refresh, 
             </p>
           )) : <p className="muted">问询后显示候选药品。当前库存 {stockedMeds.length}/23 仓。</p>}
         </div>
-        <span className="card-eyebrow">最近体征</span>
-        <VitalReadout vitals={currentVitals} />
+        <span className="card-eyebrow">候选药品类别</span>
+        <div className="token-row">
+          {(result?.suggested_categories || ["待评估"]).map((item) => <span key={item}>{item}</span>)}
+        </div>
+        <span className="card-eyebrow">禁忌提醒</span>
+        <div className="warning-list">
+          {(result?.safety_warnings || ["请核对说明书、过敏史、基础疾病和重复用药风险。"]).map((item) => <p key={item}>{item}</p>)}
+        </div>
         <span className="card-eyebrow">后续动作</span>
         <div className="condition-list">
           <p><strong>取药确认</strong><span>{result?.allow_self_confirm ? "低风险可自助确认" : "需要管理员复核"}</span></p>
           <p><strong>AI 模式</strong><span>{result?.ai_mode || aiModeLabel(network.ai_mode)}</span></p>
+          <p><strong>体征</strong><span>心率 {currentVitals.heart_rate || "--"} · 血氧 {currentVitals.spo2 || "--"}</span></p>
         </div>
         <button className="primary wide" onClick={confirmDispense} disabled={!result?.allow_self_confirm || confirmingDispense}>
           <CheckCircle2 size={20} />

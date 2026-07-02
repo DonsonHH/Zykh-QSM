@@ -1,11 +1,12 @@
 import { Camera, RefreshCw, RotateCcw, ScanLine, ShieldCheck } from "lucide-react";
 import React, { useMemo, useState } from "react";
-import { api, formBody } from "../api/client.js";
+import { api } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 
 export function ScanPage({ status, refresh, notify }) {
   const [live, setLive] = useState(true);
+  const [mode, setMode] = useState("user");
   const [result, setResult] = useState({ ok: true, demo: true });
   const [draft, setDraft] = useState({
     slot: 4,
@@ -66,6 +67,10 @@ export function ScanPage({ status, refresh, notify }) {
             {qsmOnline && !streamFailed ? "摄像头已连接 · 用于人工复核" : "摄像头暂不可用"}
           </span>
         </div>
+        <div className="mode-switch">
+          <button className={mode === "user" ? "active" : ""} onClick={() => setMode("user")}>用户识别</button>
+          <button className={mode === "admin" ? "active" : ""} onClick={() => setMode("admin")}>管理员识别</button>
+        </div>
         <div className={`camera-window ${qsmOnline && live && !streamFailed ? "live" : "idle"}`}>
           {qsmOnline && live && !streamFailed ? (
             <img src={streamUrl} alt="外设采集与执行控制平台摄像头实时预览" onError={() => setStreamFailed(true)} />
@@ -73,7 +78,7 @@ export function ScanPage({ status, refresh, notify }) {
             <div className="camera-empty">
               <Camera size={78} />
               <strong>{qsmOnline && !streamFailed ? "预览已暂停" : "摄像头暂不可用"}</strong>
-              <span>{qsmOnline && !streamFailed ? "点击刷新预览继续观察" : "请在管理后台检查设备连接"}</span>
+              <span>{qsmOnline && !streamFailed ? "点击刷新预览继续观察" : "仍可手动输入条码或由管理员完成复核"}</span>
             </div>
           )}
           <div className="focus-frame">
@@ -84,8 +89,14 @@ export function ScanPage({ status, refresh, notify }) {
           </div>
           <div className="camera-guide">
             <ScanLine size={22} />
-            <span>请将药盒、站点码或取到的药品放入框内</span>
+            <span>{mode === "user" ? "请将药盒、站点码或取到的药品放入框内" : "管理员维护识别需在后台确认后生效"}</span>
           </div>
+        </div>
+        <div className="scan-purpose-grid">
+          <span>药品条码/二维码识别</span>
+          <span>药盒/药板拍照核验</span>
+          <span>取药后二次拍照复核</span>
+          <span>管理员维护码扫描</span>
         </div>
         <div className="camera-controls">
           <button onClick={resume}>
@@ -124,7 +135,7 @@ export function ScanPage({ status, refresh, notify }) {
           </label>
           <label>
             条码 / 站点码
-            <input value={draft.code || ""} readOnly />
+            <input value={draft.code || ""} onChange={(event) => setDraft({ ...draft, code: event.target.value })} readOnly={qsmOnline && !streamFailed} />
           </label>
           <div className="editor-row">
             <label>
@@ -153,7 +164,7 @@ export function ScanPage({ status, refresh, notify }) {
             </button>
             <button className="primary" onClick={() => notify("已记录本次拍照核验，需管理员复核时请联系值守人员")}>
               <ShieldCheck size={20} />
-              核验完成
+              {mode === "user" ? "核验完成" : "提交后台复核"}
             </button>
           </div>
         </div>

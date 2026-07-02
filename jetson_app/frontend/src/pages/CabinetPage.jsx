@@ -10,7 +10,9 @@ const filters = [
   { id: "肠胃", label: "肠胃" },
   { id: "过敏", label: "过敏" },
   { id: "外伤消毒", label: "外伤消毒" },
-  { id: "慢病常用", label: "慢病常用" }
+  { id: "慢病常用", label: "慢病常用" },
+  { id: "emergency", label: "应急药品" },
+  { id: "low_stock", label: "低库存" }
 ];
 
 export function CabinetPage({ medicines, setPage }) {
@@ -22,9 +24,13 @@ export function CabinetPage({ medicines, setPage }) {
     if (filter === "all") return slotLayout;
     return slotLayout.filter((slot) => {
       const med = medicineForSlot(medicines, slot.slot);
+      if (filter === "emergency") return Number(med.is_emergency) === 1 && Number(med.stock) > 0;
+      if (filter === "low_stock") return Number(med.stock) > 0 && Number(med.stock) <= 10;
       return med.category === filter || String(med.indication_tags || "").includes(filter);
     });
   }, [filter, medicines]);
+  const allowUserConfirm = Number(selectedMedicine.stock) > 0 && Number(selectedMedicine.is_emergency) === 1 && selectedMedicine.category !== "慢病常用";
+  const needsReview = !allowUserConfirm || /禁用|慎用|医生|处方|医嘱/.test(`${selectedMedicine.contraindications || ""}${selectedMedicine.safety_note || ""}`);
 
   const counts = useMemo(() => {
     return medicines.reduce(
@@ -42,8 +48,8 @@ export function CabinetPage({ medicines, setPage }) {
       <GlassCard className="cabinet-main">
         <div className="page-heading compact">
           <div>
-            <span className="card-eyebrow">可用药品 / 应急药品库存</span>
-            <h1>23 仓库存总览</h1>
+            <span className="card-eyebrow">站点应急药品库存</span>
+            <h1>可用药品 / 日常用药库存</h1>
           </div>
           <div className="heading-pill">#{selected} · {slotLabel(selected)}</div>
         </div>
@@ -85,6 +91,8 @@ export function CabinetPage({ medicines, setPage }) {
         <InfoRow icon={ShieldCheck} label="用途标签" value={selectedMedicine.indication_tags || "待管理员维护"} />
         <InfoRow icon={ShieldCheck} label="禁忌提醒" value={selectedMedicine.contraindications || "请核对说明书、过敏史和重复用药风险"} />
         <InfoRow icon={Tag} label="库存" value={`${selectedMedicine.stock || 0} ${selectedMedicine.unit || "件"} · 有效期 ${selectedMedicine.expire_date || "--"}`} />
+        <InfoRow icon={ShieldCheck} label="用户确认" value={allowUserConfirm ? "低风险问询后可进入确认" : "不允许直接确认"} />
+        <InfoRow icon={ShieldCheck} label="复核要求" value={needsReview ? "需要值守员复核" : "常规抽查复核"} />
         <div className="safety-note-box">
           <strong>安全提示</strong>
           <span>{selectedMedicine.safety_note || "普通用户端只展示库存和核验信息，药品维护与设备控制由管理员在后台完成。"}</span>
