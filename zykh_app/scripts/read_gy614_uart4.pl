@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use Errno qw(EAGAIN EWOULDBLOCK EINTR);
+use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 use Time::HiRes qw(time);
 
 my $dev = shift || "/dev/ttyS4";
@@ -10,6 +12,8 @@ system("stty -F $dev 9600 cs8 -cstopb -parenb -ixon -ixoff -crtscts clocal raw -
 
 open(my $fh, "<", $dev) or die "open $dev failed: $!\n";
 binmode($fh);
+my $flags = fcntl($fh, F_GETFL, 0);
+fcntl($fh, F_SETFL, $flags | O_NONBLOCK) if defined $flags;
 
 my $deadline = time() + 10;
 my $best;
@@ -17,6 +21,15 @@ my $best;
 while (time() < $deadline) {
     my $c = "";
     my $n = sysread($fh, $c, 1);
+    if (!defined $n) {
+        die "read $dev failed: $!\n" unless $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};
+        select(undef, undef, undef, 0.02);
+        next;
+    }
+    if ($n == 0) {
+        select(undef, undef, undef, 0.02);
+        next;
+    }
     next unless $n;
     next unless ord($c) == 0xA4;
 
@@ -24,7 +37,16 @@ while (time() < $deadline) {
     while (length($rest) < 11 && time() < $deadline) {
         my $r = "";
         my $m = sysread($fh, $r, 11 - length($rest));
-        $rest .= $r if $m;
+        if (!defined $m) {
+            die "read $dev failed: $!\n" unless $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};
+            select(undef, undef, undef, 0.02);
+            next;
+        }
+        if ($m == 0) {
+            select(undef, undef, undef, 0.02);
+            next;
+        }
+        $rest .= $r;
     }
 
     next unless length($rest) == 11;

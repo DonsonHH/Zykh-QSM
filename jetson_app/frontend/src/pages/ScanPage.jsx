@@ -25,6 +25,8 @@ export function ScanPage({ status, refresh, notify }) {
   const [scan, scanning] = useAsyncAction(async () => {
     setLive(false);
     try {
+      await api("/api/camera/stream/stop", { method: "POST" }).catch(() => {});
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
       const data = await api("/api/medicine/scan", { method: "POST" });
       setResult(data);
       const medicine = data.scan?.medicine || data.scan?.lookup?.medicine || data.scan?.result || {};

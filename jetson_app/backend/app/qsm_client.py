@@ -60,7 +60,7 @@ class QsmClient:
 
     def stream_bytes(self, path: str) -> Iterator[bytes]:
         url = f"{self.base_url}{path}"
-        with httpx.stream("GET", url, timeout=None) as res:
+        with httpx.stream("GET", url, timeout=None, trust_env=False) as res:
             res.raise_for_status()
             for chunk in res.iter_bytes():
                 if chunk:

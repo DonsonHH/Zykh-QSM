@@ -592,6 +592,7 @@ sub scan_medicine_code {
         $detail = $code ? '已从摄像头图像识别到商品条码' : '未从图像中识别到商品条码';
     }
 
+    $code ||= '';
     if ($code eq '') {
         my $vision = qwen_vision_from_image(
             $image,
@@ -1074,6 +1075,7 @@ sub record_audio {
     my $log = "$DATA_DIR/audio-record.log";
     unlink $out if -e $out;
 
+    prepare_audio_capture();
     my $device = capture_audio_device();
     my $rate = int($ENV{ASR_RECORD_RATE} || 8000);
     my $cmd = 'arecord -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c 1 -d ' . int($duration) . ' ' . shell_quote($out);
@@ -1103,6 +1105,16 @@ sub record_audio {
         command => $cmd,
         exit_code => $exit,
     };
+}
+
+sub prepare_audio_capture {
+    return if $ENV{AUDIO_SKIP_CAPTURE_SETUP};
+    my $card = int($ENV{AUDIO_CAPTURE_CARD} || 0);
+    my $path = trim($ENV{AUDIO_CAPTURE_PATH} || 'Main Mic');
+    return if $path eq '';
+
+    my $cmd = 'amixer -c ' . $card . ' sset ' . shell_quote('Capture MIC Path') . ' ' . shell_quote($path) . ' >/dev/null 2>&1';
+    system('sh', '-c', $cmd);
 }
 
 sub capture_audio_device {
@@ -1702,22 +1714,32 @@ sub run_json_sensor {
     return { ok => JSON::PP::false, error => '脚本不存在', command => $cmd } if $cmd =~ /perl\s+'?([^'\s]+)/ && !-f $1;
 
     my $rc;
+    unlink $out if defined $out && length $out && -e $out;
     {
         local $SIG{CHLD} = 'DEFAULT';
         $rc = system('timeout', $timeout, 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
     }
     my $exit = $rc == -1 ? -1 : ($rc >> 8);
     my $text = -s $out ? read_text_file($out) : '';
+    my $detail = substr(read_text_file($log) || '', 0, 800);
     if ($text ne '') {
         my $data = eval { decode_json(Encode::encode('UTF-8', $text)) };
         if ($data) {
-            return { ok => JSON::PP::true, data => $data, exit_code => $exit, command => $cmd };
+            return { ok => JSON::PP::true, data => $data, exit_code => $exit, command => $cmd } if $exit == 0;
+            return {
+                ok => JSON::PP::false,
+                data => $data,
+                error => $exit == 124 ? '传感器读取超时' : '传感器读取失败',
+                detail => $detail,
+                exit_code => $exit,
+                command => $cmd,
+            };
         }
     }
     return {
         ok => JSON::PP::false,
         error => $exit == 124 ? '传感器读取超时' : '传感器读取失败',
-        detail => substr(read_text_file($log) || '', 0, 800),
+        detail => $detail,
         exit_code => $exit,
         command => $cmd,
     };
@@ -1738,7 +1760,8 @@ sub recognize_medicine {
 
 sub capture_camera {
     stop_camera_stream_producer();
-    select(undef, undef, undef, 0.5);
+    stop_camera_preview(1);
+    select(undef, undef, undef, 1.0);
     my $camera_dir = "$WEB_DIR/camera";
     make_path($camera_dir) unless -d $camera_dir;
     my $out = "$camera_dir/latest.jpg";
@@ -1751,10 +1774,12 @@ sub capture_camera {
         $cmd .= ' ' . shell_quote($out);
     } else {
         my $device = detect_camera_device();
-        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
-        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
+        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 800);
+        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 600);
         my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
         $cmd = camera_capture_cmd($device, $width, $height, 30, $buffers, $out);
+        my $probe = camera_link_preflight($device, $width, $height);
+        return $probe unless $probe->{ok};
     }
 
     my $logfile = "$DATA_DIR/camera-capture.log";
@@ -1867,6 +1892,8 @@ sub start_camera_stream_producer {
     make_path($stream_dir) unless -d $stream_dir;
     unlink glob("$stream_dir/frame-*.jpg");
     my $device = detect_camera_device();
+    my $probe = camera_link_preflight($device, $width, $height);
+    return $probe unless $probe->{ok};
     my $logfile = "$DATA_DIR/camera-stream.log";
     my $cmd = $ENV{CAMERA_STREAM_CMD} || camera_stream_cmd($device, $width, $height, $fps, $quality, "$stream_dir/frame-%05d.jpg");
     my $shell = "$cmd > " . shell_quote($logfile) . " 2>&1 & echo \$! > " . shell_quote($pidfile);
@@ -1887,9 +1914,15 @@ sub stop_camera_stream_producer {
     my $pid = -f $pidfile ? read_file_trim($pidfile) : '';
     if ($pid =~ /^\d+$/) {
         system('kill', $pid);
+        for (1..10) {
+            last unless kill(0, $pid);
+            select(undef, undef, undef, 0.1);
+        }
+        system('kill', '-9', $pid) if kill(0, $pid);
         unlink $pidfile;
     }
     system('sh', '-c', "pkill -f 'multifilesink location=.*/frame-%05d.jpg' 2>/dev/null");
+    select(undef, undef, undef, 0.2);
     return { ok => JSON::PP::true, detail => '摄像头浏览器视频流已停止' };
 }
 
@@ -1915,7 +1948,7 @@ sub capture_camera_to {
     my ($out) = @_;
     stop_camera_stream_producer();
     stop_camera_preview(1);
-    select(undef, undef, undef, 0.5);
+    select(undef, undef, undef, 1.0);
     unlink $out if -e $out;
     my $cmd = $ENV{CAMERA_CAPTURE_CMD};
     if ($cmd && $cmd =~ /\{out\}/) {
@@ -1924,10 +1957,12 @@ sub capture_camera_to {
         $cmd .= ' ' . shell_quote($out);
     } else {
         my $device = detect_camera_device();
-        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 1280);
-        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 720);
+        my $width = int($ENV{CAMERA_CAPTURE_WIDTH} || 800);
+        my $height = int($ENV{CAMERA_CAPTURE_HEIGHT} || 600);
         my $buffers = int($ENV{CAMERA_CAPTURE_BUFFERS} || 10);
         $cmd = camera_capture_cmd($device, $width, $height, 30, $buffers, $out);
+        my $probe = camera_link_preflight($device, $width, $height);
+        return $probe unless $probe->{ok};
     }
 
     my $logfile = "$DATA_DIR/camera-capture.log";
@@ -2476,17 +2511,20 @@ sub detect_display_output {
 
 sub detect_camera_device {
     return $ENV{CAMERA_DEVICE} if $ENV{CAMERA_DEVICE};
+    my $cache = "$DATA_DIR/camera-device.txt";
+    my $cached = read_file_trim($cache);
+    return $cached if $cached && -e $cached;
+
+    # The QSM board exposes the CSI camera on /dev/video5 in the verified setup.
+    # Avoid scanning every /dev/video* node here because some ISP nodes can block.
+    return '/dev/video5' if -e '/dev/video5';
+
     my $usb = detect_usb_camera_device();
     if ($usb) {
         write_text_file("$DATA_DIR/camera-device.txt", $usb);
         return $usb;
     }
 
-    my $cache = "$DATA_DIR/camera-device.txt";
-    my $cached = read_file_trim($cache);
-    return $cached if $cached && -e $cached;
-
-    return '/dev/video5' if -e '/dev/video5';
     for my $dev ('/dev/video5', '/dev/video-camera0', '/dev/video14') {
         next unless -e $dev;
         my $cmd = 'gst-launch-1.0 -q v4l2src device=' . shell_quote($dev) .
@@ -2499,6 +2537,40 @@ sub detect_camera_device {
         }
     }
     return '/dev/video-camera0';
+}
+
+sub camera_link_preflight {
+    my ($device, $width, $height) = @_;
+    return { ok => JSON::PP::false, error => '未找到摄像头设备' } unless $device && -e $device;
+
+    $width = int($width || 640);
+    $height = int($height || 480);
+    $width = 800 if $width > 800;
+    $height = 600 if $height > 600;
+    my $probe = "$DATA_DIR/camera-probe.raw";
+    unlink $probe if -e $probe;
+    my $cmd = 'v4l2-ctl -d ' . shell_quote($device) .
+              ' --set-fmt-video=width=' . $width . ',height=' . $height . ',pixelformat=NV12 ' .
+              '--stream-mmap --stream-count=1 --stream-to=' . shell_quote($probe);
+    my $logfile = "$DATA_DIR/camera-probe.log";
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', '3', 'sh', '-c', $cmd . ' >' . shell_quote($logfile) . ' 2>&1');
+    }
+    return { ok => JSON::PP::true, device => $device } if $rc == 0 && -s $probe;
+
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $log = read_text_file($logfile) || '';
+    $log = substr($log, 0, 600);
+    return {
+        ok => JSON::PP::false,
+        error => '摄像头硬件链路不可用，请检查外设设备摄像头排线、电源和 media pipeline',
+        detail => $log,
+        device => $device,
+        exit_code => $exit,
+        command => $cmd,
+    };
 }
 
 sub detect_usb_camera_device {

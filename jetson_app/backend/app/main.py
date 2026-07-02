@@ -298,10 +298,16 @@ def camera_stream(width: int = 640, height: int = 480, fps: int = 30):
 
 @app.post("/api/camera/capture")
 def camera_capture() -> dict[str, Any]:
+    qsm.post("/api/camera/stream/stop", timeout=8.0)
     data = qsm.post("/api/camera/capture", timeout=20.0)
     if data.get("ok"):
         data["image_url"] = "/api/camera/latest.jpg"
     return data
+
+
+@app.post("/api/camera/stream/stop")
+def camera_stream_stop() -> dict[str, Any]:
+    return qsm.post("/api/camera/stream/stop", timeout=8.0)
 
 
 @app.get("/api/camera/latest.jpg")
@@ -316,6 +322,7 @@ async def medicine_scan(request: Request) -> dict[str, Any]:
     if str(p.get("confirm", "")).lower() in {"1", "true", "yes"}:
         upsert_medicine_payload(p, action="medicine_scan_confirm")
         return medicines()
+    qsm.post("/api/camera/stream/stop", timeout=8.0)
     data = qsm.post("/api/medicine/scan", timeout=45.0)
     if not data.get("ok"):
         capture = qsm.post("/api/camera/capture", timeout=20.0)

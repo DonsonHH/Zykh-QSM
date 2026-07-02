@@ -135,3 +135,55 @@ final result: passed
   - Microphone/ASR: recording passed on `plughw:2,0`; no clear speech detected in the test environment, so ASR text was empty.
   - Vitals: external API call passed; GY-614 temperature returned about 36.48C, MAX30102 currently reports `write reg 0x09 failed` and `finger_detected:false`, so heart-rate/SPO2 require sensor/I2C/power/finger-placement troubleshooting.
 final result: passed
+
+**2026-07-02 Peripheral Recheck + Fix Pass**
+- Rechecked peripherals one by one under the QSM main + external-device architecture.
+- Fixed GY-614 script behavior: `read_gy614_uart4.pl` now uses non-blocking UART reads so its internal deadline works instead of hanging until `timeout` kills the process.
+- Fixed stale sensor false positives: `zykh_app/server.pl` now removes old sensor JSON before each read and only reports a sensor script as ok when its exit code is 0. Failed scripts can still return diagnostic `data`, but no longer masquerade as successful hardware reads.
+- Fixed camera preview/capture contention for the terminal scan flow:
+  - QSM main now exposes `POST /api/camera/stream/stop`.
+  - Camera capture and medicine scan stop the external camera stream before taking a still image.
+  - Scan UI pauses stream, calls stop, waits briefly, then starts recognition.
+  - External `server.pl` waits longer after stopping stream/preview and force-cleans stale stream processes.
+- Fixed QSM main MJPEG proxy: `QsmClient.stream_bytes()` now uses `trust_env=False`, matching normal JSON and image requests, so local SOCKS proxy settings do not break `/api/camera/stream`.
+
+**Peripheral Results 2026-07-02**
+- ADB/forward: passed. External device visible as `product:rk3568-linux model:Nexus_4`; `tcp:18080 tcp:8080` present.
+- External status API: passed. `/api/status` returns Buildroot/aarch64 device inventory.
+- Camera still capture: passed. Captured 1280x720 JPEG and visually confirmed real scene.
+- Camera stream: passed at the byte-stream level. A 5-second stream pull produced about 4.2MB of MJPEG data.
+- Scan flow: after stream-stop fix, QSM main `/api/medicine/scan` returns ok with camera capture fallback when no clear barcode is visible. A real barcode/QR needs to be placed in frame for recognition success.
+- GY-614 forehead temperature: fixed and passed. Direct script returned `RC=0` with realtime UART4 frame and `body_temp_c` around 35.3-35.8C.
+- MAX30102 heart-rate/SPO2: failed at hardware/I2C level. `i2cdetect -y 3` does not show address `0x57`; direct script fails at `write reg 0x09 failed`. This points to sensor power/wiring/bus/address rather than QSM main UI/backend.
+- Speaker: passed by API. `/api/audio/speak` and `/api/audio/beep` returned ok.
+- Microphone: passed for recording. Pulled WAV is 3.0s, mono 8000Hz PCM, non-zero amplitude; ASR returned empty text because no clear speech was captured during the test.
+- UART8 dispense: passed. `/api/dispense slot=1` returned `UART8 已发送仓位 1 控制字节 0x00`.
+
+**Current limitation**
+- The latest QSM main stream proxy fix requires restarting `zykh-qsm.service` before the running browser sees it. Runtime restart and Git push were blocked by the current sandbox approval/usage limit; code-level checks passed.
+final result: partial-pass
+
+**2026-07-02 Live Peripheral Repair Follow-up**
+- Restarted the local QSM main backend and the external-device Perl gateway, then rechecked the live ADB/forward path.
+- Fixed microphone recording after finding ALSA `Capture MIC Path` was `MIC OFF`; `record_audio()` now initializes the external device to `Main Mic` before `arecord`.
+- Verified microphone repair by resetting `Capture MIC Path` back to `MIC OFF`, calling `/api/audio/asr`, then pulling the WAV: 3.0s mono 8000Hz PCM with non-zero amplitude (`peak` around 6449, `avg_abs` around 657).
+- Hardened camera failure handling for the current external-device state:
+  - Avoids scanning every `/dev/video*` node because some ISP nodes block.
+  - Uses the known QSM CSI camera node `/dev/video5`.
+  - Adds a fast `v4l2-ctl` preflight before still capture and MJPEG stream so disconnected camera hardware returns a clear error instead of hanging.
+  - Lowers default CSI capture size from 1280x720 to 800x600, matching the external camera node's reported capability.
+- Current camera result: failed at hardware/media-link level, not UI/backend. `/api/camera/capture` and `/api/camera/stream` now return quickly with `摄像头硬件链路不可用`; preflight detail is `VIDIOC_STREAMON returned -1 (No such device)`.
+- Kernel/media evidence for camera: `dmesg` reports `rockchip-csi2-dphy1: No link between dphy and sensor` and `rkisp-vir0: update sensor info failed -19`. Check camera ribbon cable, sensor power, and media pipeline before expecting live preview.
+- Current GY-614 result: passed. `/api/admin/hardware_check action=vitals` returns `gy614.ok=true` and realtime body temperature around 35.8C.
+- Current MAX30102 result: still failed at I2C/hardware level. `/api/admin/hardware_check action=vitals` returns `write reg 0x09 failed`; `i2cdetect -y 3` previously showed no `0x57`.
+- Current speaker result: passed. `/api/audio/speak` and `/api/audio/beep` returned ok.
+- Current UART8 dispense result: not re-triggered in this follow-up because it is a real mechanical action. Earlier same-day test returned ok for slot 1; repeat testing should be done only with explicit on-site confirmation.
+
+**Verification 2026-07-02 Live Peripheral Repair Follow-up**
+- `perl -c zykh_app/server.pl`: passed.
+- External-device gateway restart: passed, service started with new PID.
+- QSM main `/api/status`: passed; external device online through ADB forward.
+- `/api/audio/asr`: passed for recording after automatic mic setup; ASR text empty when no clear speech was spoken.
+- `/api/camera/capture`: failed fast with hardware-link diagnostic instead of timing out.
+- `/api/camera/stream`: failed fast with hardware-link diagnostic instead of timing out.
+final result: partial-pass
