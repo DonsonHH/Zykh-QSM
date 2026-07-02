@@ -1,5 +1,24 @@
 import React, { useEffect, useState } from "react";
-import { Bot, Camera, Cpu, Database, DoorOpen, HeartPulse, Home, KeyRound, RefreshCw, Server, Settings, Shield, UserRound } from "lucide-react";
+import {
+  Bot,
+  Camera,
+  CheckCircle2,
+  Cpu,
+  Database,
+  DoorOpen,
+  HeartPulse,
+  Home,
+  KeyRound,
+  Mic,
+  Radio,
+  RefreshCw,
+  Server,
+  Settings,
+  Shield,
+  UserRound,
+  Volume2,
+  XCircle
+} from "lucide-react";
 import { api, formBody } from "../api/client.js";
 import { DeviceCard } from "../components/DeviceCard.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
@@ -24,6 +43,8 @@ export function AdminApp() {
   const [apiKey, setApiKey] = useState("");
   const [slot, setSlot] = useState(1);
   const [profileDraft, setProfileDraft] = useState({});
+  const [hardwareChecks, setHardwareChecks] = useState({});
+  const [hardwareBusy, setHardwareBusy] = useState("");
 
   useEffect(() => setProfileDraft(data.profile || {}), [data.profile]);
   useEffect(() => {
@@ -104,6 +125,22 @@ export function AdminApp() {
       data.notify(err.message);
     }
   });
+
+  async function runHardwareCheck(action, payload = {}) {
+    setHardwareBusy(action);
+    try {
+      const res = await api("/api/admin/hardware_check", formBody({ action, ...payload }));
+      setHardwareChecks((prev) => ({ ...prev, [action]: res.result }));
+      data.notify(res.result?.ok ? "外设检查通过" : "外设检查返回异常");
+      await data.refresh();
+    } catch (err) {
+      setHardwareChecks((prev) => ({ ...prev, [action]: { ok: false, error: err.message } }));
+      data.notify(err.message);
+    } finally {
+      setHardwareBusy("");
+    }
+  }
+
   const quickActionState = {
     qsmOnline,
     slot,
@@ -188,7 +225,7 @@ export function AdminApp() {
                   刷新状态
                 </button>
               </GlassCard>
-              <QuickActions {...quickActionState} />
+              <HardwareCheckPanel checks={hardwareChecks} busy={hardwareBusy} runCheck={runHardwareCheck} qsmOnline={qsmOnline} />
             </div>
           )}
 
@@ -291,6 +328,41 @@ function AdminLogs({ records, large = false }) {
         ))}
         {!records.length && <p className="muted">暂无日志</p>}
       </div>
+    </GlassCard>
+  );
+}
+
+const hardwareCheckItems = [
+  ["status", Radio, "连接状态", "ADB / forward / 外设状态"],
+  ["camera", Camera, "摄像头拍照", "调用外设摄像头 capture"],
+  ["vitals", HeartPulse, "体征读取", "MAX30102 / GY-614"],
+  ["audio_speak", Volume2, "语音播报", "外设喇叭播报测试"],
+  ["audio_asr", Mic, "语音识别", "外设麦克风录音识别"]
+];
+
+function HardwareCheckPanel({ checks, busy, runCheck, qsmOnline }) {
+  return (
+    <GlassCard className="hardware-check-panel">
+      <span className="card-eyebrow">外设检查</span>
+      <p className="hardware-check-note">非机械联调，不会触发开仓机构。开仓测试请使用快捷操作并二次确认。</p>
+      <div className="hardware-check-list">
+        {hardwareCheckItems.map(([action, Icon, label, detail]) => {
+          const result = checks[action];
+          const ok = Boolean(result?.ok);
+          const failed = result && !ok;
+          return (
+            <button key={action} className={`hardware-check-row ${ok ? "ok" : failed ? "failed" : ""}`} onClick={() => runCheck(action)} disabled={Boolean(busy) || (action !== "status" && !qsmOnline)}>
+              <Icon size={20} />
+              <span>
+                <strong>{busy === action ? "检查中" : label}</strong>
+                <small>{result?.error || result?.detail || detail}</small>
+              </span>
+              {ok ? <CheckCircle2 size={20} /> : failed ? <XCircle size={20} /> : <RefreshCw size={18} />}
+            </button>
+          );
+        })}
+      </div>
+      <pre>{JSON.stringify(checks, null, 2)}</pre>
     </GlassCard>
   );
 }

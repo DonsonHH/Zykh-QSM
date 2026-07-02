@@ -113,3 +113,25 @@ final result: passed
 - `PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests`: 7 passed, 2 FastAPI deprecation warnings.
 - Chromium QA screenshots generated under ignored `jetson_app/data/`: `zykh-home-creative-tim-qa.png`, `zykh-scan-creative-tim-qa.png`.
 final result: passed
+
+**2026-07-02 Image Reference + Hardware Link Pass**
+- Rebuilt the terminal home closer to the latest user reference: larger 1280x720 topbar, three hero cards, three 3D-style shortcut tiles, stronger orange/purple/blue card emphasis, and full-width touch bottom nav.
+- Added local visual assets for the AI robot, camera, calendar, and profile folder so the home screen no longer depends on flat placeholder icons.
+- Added light touch feedback: ripple press states, hero-card status glow, robot float/aura motion, shortcut image press response, and primary-button light sweep. Existing reduced-motion CSS disables these for users who request it.
+- Added `/api/admin/hardware_check` and a management-page "外设检查" panel for non-mechanical checks: ADB/forward/status, camera capture, vitals read, speaker test, and ASR recording.
+- Fixed external-device HTTP calls to ignore system proxy variables (`trust_env=False`), which prevented `127.0.0.1:18080` from working when a local SOCKS proxy was configured.
+
+**Verification 2026-07-02 Image Reference + Hardware Link**
+- `npm run build`: passed.
+- `PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests`: 7 passed, 2 FastAPI deprecation warnings.
+- `python3 -m py_compile jetson_app/backend/app/main.py`: passed.
+- Chromium QA screenshot generated under ignored `jetson_app/data/`: `qsm-home-image-to-code-qa4.png`; because snap Chromium reports a shorter CSS viewport than its requested outer window, the QA capture used `--window-size=1280,807` to show the true 1280x720 kiosk canvas.
+- Real external-device link:
+  - `adb devices -l`: connected `product:rk3568-linux model:Nexus_4 device:mako`.
+  - `adb forward --list`: `tcp:18080 tcp:8080`.
+  - `curl http://127.0.0.1:18080/api/status`: passed, external device returned Buildroot/aarch64 status plus I2C/UART/video inventories.
+  - Camera capture: passed, `/api/camera/capture` returned `ok:true` and captured 1280x720 JPEG via `/dev/video23`.
+  - Speaker test: passed, `/api/audio/speak` returned `ok:true`.
+  - Microphone/ASR: recording passed on `plughw:2,0`; no clear speech detected in the test environment, so ASR text was empty.
+  - Vitals: external API call passed; GY-614 temperature returned about 36.48C, MAX30102 currently reports `write reg 0x09 failed` and `finger_detected:false`, so heart-rate/SPO2 require sensor/I2C/power/finger-placement troubleshooting.
+final result: passed

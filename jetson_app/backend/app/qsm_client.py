@@ -39,7 +39,7 @@ class QsmClient:
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            with httpx.Client(timeout=kwargs.pop("timeout", 20.0)) as client:
+            with httpx.Client(timeout=kwargs.pop("timeout", 20.0), trust_env=False) as client:
                 res = client.request(method, url, **kwargs)
                 content_type = res.headers.get("content-type", "")
                 if "application/json" in content_type:
@@ -68,7 +68,7 @@ class QsmClient:
 
     def get_bytes(self, path: str) -> tuple[bytes, str]:
         url = f"{self.base_url}{path}"
-        with httpx.Client(timeout=20.0) as client:
+        with httpx.Client(timeout=20.0, trust_env=False) as client:
             res = client.get(url)
             res.raise_for_status()
             return res.content, res.headers.get("content-type", "application/octet-stream")

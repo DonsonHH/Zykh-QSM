@@ -10,6 +10,10 @@ export function useKioskScale() {
     const update = () => {
       const sx = window.innerWidth / DESIGN_WIDTH;
       const sy = window.innerHeight / DESIGN_HEIGHT;
+      if (sx >= 1 && sy >= 0.86 && sy < 1) {
+        setScale(1);
+        return;
+      }
       setScale(Math.min(sx, sy));
     };
 

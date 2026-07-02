@@ -204,7 +204,8 @@
 
 .quick-actions-panel button,
 .quick-actions-panel a,
-.admin-panel button {
+.admin-panel button,
+.hardware-check-panel button {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -298,6 +299,87 @@
 
 .admin-panel p {
   color: var(--muted);
+}
+
+.hardware-check-panel {
+  min-height: 0;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.hardware-check-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hardware-check-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hardware-check-row {
+  width: 100%;
+  min-height: 56px !important;
+  justify-content: flex-start !important;
+  text-align: left;
+}
+
+.hardware-check-row span {
+  min-width: 0;
+  flex: 1;
+}
+
+.hardware-check-row strong,
+.hardware-check-row small {
+  display: block;
+}
+
+.hardware-check-row strong {
+  color: #eef7ff;
+  font-size: 14px;
+}
+
+.hardware-check-row small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hardware-check-row.ok {
+  border-color: rgba(65, 224, 141, 0.36);
+  background: rgba(65, 224, 141, 0.1);
+}
+
+.hardware-check-row.ok > svg:last-child {
+  color: var(--green);
+}
+
+.hardware-check-row.failed {
+  border-color: rgba(255, 93, 115, 0.38);
+  background: rgba(255, 93, 115, 0.1);
+}
+
+.hardware-check-row.failed > svg:last-child {
+  color: var(--red);
+}
+
+.hardware-check-panel pre {
+  max-height: 132px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.28);
+  color: #b8d5f4;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .admin-actions-row {

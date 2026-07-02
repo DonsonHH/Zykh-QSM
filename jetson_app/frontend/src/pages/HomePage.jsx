@@ -1,5 +1,9 @@
 import React from "react";
-import { Bot, CalendarClock, Camera, HeartPulse, Pill, UserRound } from "lucide-react";
+import { Bot, HeartPulse, Pill } from "lucide-react";
+import assistantRobot from "../assets/assistant-robot.svg";
+import calendarAsset from "../assets/calendar-3d.svg";
+import cameraAsset from "../assets/camera-3d.svg";
+import profileAsset from "../assets/profile-folder-3d.svg";
 import { api, formBody } from "../api/client.js";
 import { BigActionButton } from "../components/BigActionButton.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
@@ -39,7 +43,7 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
     <div className="home-page">
       <GlassCard className="today-card">
         <div className="card-title-row">
-          <span className="card-eyebrow">今日用药</span>
+          <h1>今日用药</h1>
           <span className="dose-state">按时</span>
         </div>
         <div className="next-dose">
@@ -47,7 +51,9 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
           <strong>{plan?.time || "--:--"}</strong>
         </div>
         <div className="medicine-summary">
-          <Pill size={34} />
+          <div className="medicine-icon">
+            <Pill size={66} />
+          </div>
           <div>
             <h2>{plan?.medicine_name || (plan ? `${plan.slot} 号仓药品` : "暂无用药计划")}</h2>
             <p>{plan ? `${plan.amount || "按计划"} · ${plan.slot} 号仓` : "请在药柜页或后台添加计划"}</p>
@@ -66,20 +72,24 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
       </GlassCard>
 
       <GlassCard className="ai-card">
-        <span className="card-eyebrow">AI 健康助手</span>
-        <h2>有问题？问问 AI 健康助手</h2>
-        <p>基于档案、最近体征、病例记忆和药柜库存给出建议。</p>
-        <div className="assistant-orb">
-          <Bot size={66} />
+        <div className="ai-copy">
+          <span className="card-eyebrow">AI 健康助手</span>
+          <h2>有问题？问问 AI 健康助手</h2>
+          <p>基于档案、最近体征、病例记忆和药柜库存给出建议。</p>
+        </div>
+        <div className="assistant-stage" aria-hidden="true">
+          <img src={assistantRobot} alt="" />
         </div>
         <BigActionButton icon={Bot} title="开始问诊" detail="支持文字与语音" tone="purple" onClick={() => setPage("ai")} />
       </GlassCard>
 
       <GlassCard className="vitals-card">
-        <span className="card-eyebrow">体征监测</span>
-        <div className="measure-time">
-          <span>最近测量时间</span>
-          <strong>{latest.created_at ? latest.created_at.slice(11, 16) : "--:--"}</strong>
+        <div>
+          <h1>体征监测</h1>
+          <div className="measure-time">
+            <span>最近测量时间</span>
+            <strong>{latest.created_at ? latest.created_at.slice(11, 16) : "--:--"}</strong>
+          </div>
         </div>
         <VitalReadout vitals={latest} />
         <BigActionButton
@@ -93,26 +103,26 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
         />
       </GlassCard>
 
-      <button className="home-tile scan" onClick={() => setPage("scan")}>
+      <button className="home-tile touch-ripple scan" onClick={() => setPage("scan")}>
         <div>
           <strong>拍照识药</strong>
           <span>拍照识别药盒信息</span>
         </div>
-        <Camera size={54} />
+        <img src={cameraAsset} alt="" />
       </button>
-      <button className="home-tile plan" onClick={() => setPage("cabinet")}>
+      <button className="home-tile touch-ripple plan" onClick={() => setPage("cabinet")}>
         <div>
           <strong>用药计划</strong>
           <span>查看用药计划与提醒</span>
         </div>
-        <CalendarClock size={54} />
+        <img src={calendarAsset} alt="" />
       </button>
-      <button className="home-tile archive" onClick={() => setPage("profile")}>
+      <button className="home-tile touch-ripple archive" onClick={() => setPage("profile")}>
         <div>
           <strong>健康档案</strong>
           <span>个人健康档案管理</span>
         </div>
-        <UserRound size={54} />
+        <img src={profileAsset} alt="" />
       </button>
     </div>
   );

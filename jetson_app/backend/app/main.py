@@ -358,6 +358,36 @@ def settings() -> dict[str, Any]:
     )
 
 
+@app.post("/api/admin/hardware_check")
+async def hardware_check(request: Request) -> dict[str, Any]:
+    p = await parse_payload(request)
+    action = str(p.get("action") or "status").strip()
+    result: dict[str, Any]
+    if action == "status":
+        result = {
+            "forward": qsm.ensure_forward(),
+            "adb": qsm.adb_devices(),
+            "peripheral": qsm.get("/api/status", timeout=5.0),
+        }
+    elif action == "camera":
+        result = qsm.post("/api/camera/capture", timeout=20.0)
+    elif action == "vitals":
+        result = qsm.post("/api/vitals/read_all", timeout=40.0)
+        if not result.get("ok"):
+            fallback = qsm.post("/api/vitals/read", timeout=25.0)
+            if fallback.get("ok"):
+                result = fallback
+    elif action == "audio_speak":
+        text = str(p.get("text") or "智药康护外设设备语音播报测试").strip()
+        result = qsm.post("/api/audio/speak", {"text": text}, timeout=30.0)
+    elif action == "audio_asr":
+        result = qsm.post("/api/audio/asr", {}, timeout=45.0)
+    else:
+        raise HTTPException(400, "unknown hardware check action")
+    add_record("hardware_check", "success" if result.get("ok") else "failed", f"外设检查：{action}")
+    return ok(action=action, result=result)
+
+
 @app.post("/api/settings/ai_key")
 async def save_ai_key(request: Request) -> dict[str, Any]:
     p = await parse_payload(request)
