@@ -1,25 +1,83 @@
-# QSM 主控版智药康护
+# QSM368ZP-WF 智药康护终端应用
 
-`jetson_app/` 是新的 QSM 主控应用。它把原硬件板保留为外设设备网关，由 QSM 主控负责主数据库、业务流程、AI 问诊和 Chromium Kiosk 触屏 UI。
+`jetson_app/` 是“智药康护：基于 QSM368ZP-WF 的蜂窝联网 AI 用药安全管家”的核心终端应用。第一版默认主场景是“偏远社区康护站 / 村镇智慧用药服务点”，同时保留老人、慢病和家庭用药安全作为基础场景。
+
+系统不做 AI 诊断、不开药、不生成处方。AI 只用于应急辅助问询、药品辅助匹配、风险提示和用药安全核验。中/高/紧急风险必须管理员复核，或提示联系医生、村医、卫生院或救援人员。
 
 ## 架构边界
 
-- QSM 主控：FastAPI、SQLite、React/Vite、AI 问诊、药柜/档案/计划/记录主数据。
-- 外设设备：继续运行 `zykh_app/server.pl`，只负责摄像头、麦克风、喇叭、MAX30102、GY-614、UART8 开仓等外设。
-- 连接：QSM 主控通过 USB ADB 建立 `adb forward tcp:18080 tcp:8080`，再访问 `http://127.0.0.1:18080`。
-- 数据：QSM 主控从空库初始化 23 仓结构，不导入外设设备旧测试数据。
+- QSM368ZP-WF 核心终端平台：FastAPI、SQLite、React/Vite 1280x720 Kiosk、站点配置、AI 应急问询、库存和记录主数据。
+- 外设采集与执行控制平台：继续运行 `zykh_app/server.pl`，负责摄像头、麦克风、喇叭、MAX30102、GY-614、UART8 出药机构等硬件。
+- 连接：核心终端通过 USB ADB 建立 `adb forward tcp:18080 tcp:8080`，访问 `http://127.0.0.1:18080`。
+- 数据：核心终端维护本地 SQLite 主库；真实数据库、API Key、日志和隐私数据不提交。
 
-## 目录
+## 双主线功能
+
+- 今日用药提醒：承接老人、慢病、家庭用药计划、服药确认、漏服追踪和重复服药拦截。
+- AI 应急问询：面向偏远社区、村镇弱网、临时服务点等场景，采集症状/语音/体征，匹配本地库存，输出风险提示和安全核验。
+
+默认站点：
 
 ```text
-jetson_app/
-  backend/     FastAPI API、SQLite 主库、外设设备代理、AI 流式问诊
-  frontend/    React/Vite 1280x720 触屏 UI
-  scripts/     ADB 转发、后端启动、Chromium Kiosk、系统检查、自启动安装
-  data/        QSM 本地数据库、AI Key、日志；真实内容不提交
+偏远社区康护站 / 村镇智慧用药服务点
+网络模式：弱网
+AI 模式：本地AI，云端不可用时自动切 rules 兜底
+同步方式：本地记录 + 待同步状态 + 模拟同步
 ```
 
-## 首次安装
+## 本地 AI
+
+第一版只接入本地 AI 配置，不安装 Ollama，也不下载模型。推荐配置：
+
+```bash
+LOCAL_AI_PROVIDER=ollama
+LOCAL_AI_BASE_URL=http://127.0.0.1:11434
+LOCAL_AI_MODEL=qwen2.5:1.5b
+```
+
+支持 provider：
+
+```text
+ollama | llamacpp | mock | rules
+```
+
+推荐模型：
+
+```text
+Qwen2.5 1.5B / 3B 量化版
+Qwen3 1.7B / 4B 量化版
+Llama 3.2 3B
+Gemma 3 1B / 4B
+```
+
+当 Ollama、本地模型或云端 AI 不可用、超时或异常时，系统自动切换到 `rules`，保证离线演示仍可完成风险等级、候选类别、库存匹配、禁忌提醒和安全声明。
+
+## 出药保护
+
+默认：
+
+```bash
+DISPENSE_DRY_RUN=true
+```
+
+此时 `/api/dispense` 只做校验和记录，不真实调用外设出药机构。真实演示前必须现场确认安全条件，并手动设置：
+
+```bash
+DISPENSE_DRY_RUN=false
+```
+
+## 摄像头用途
+
+扫码/拍照识别不只用于药品建档，还预留以下用途：
+
+- 药品条码/二维码识别；
+- 药盒/药板拍照确认；
+- 站点码、维护码扫描；
+- 出药后二次拍照复核，降低拿错药风险；
+- 高风险事件拍照留存，方便管理员或远程人员复核；
+- 设备内部药仓状态拍摄，辅助维护。
+
+## 安装与启动
 
 ```bash
 cd /home/jetson/Documents/zykh/Zykh-QSM
@@ -31,9 +89,7 @@ npm install
 npm run build
 ```
 
-## 启动
-
-先确认外设设备的 `zykh_app/server.pl` 正在端口 `8080` 运行，然后在 QSM 主控上执行：
+启动前确认外设采集与执行控制平台的 `zykh_app/server.pl` 正在端口 `8080` 运行，然后执行：
 
 ```bash
 cd /home/jetson/Documents/zykh/Zykh-QSM
@@ -41,68 +97,45 @@ sh jetson_app/scripts/setup_adb_forward.sh
 sh jetson_app/scripts/start_qsm_app.sh
 ```
 
-后端监听：
+访问：
 
 ```text
 http://127.0.0.1:8088/
-http://127.0.0.1:8088/api/status
+http://127.0.0.1:8088/terminal
+http://127.0.0.1:8088/triage
+http://127.0.0.1:8088/admin
 ```
 
 Kiosk：
 
 ```bash
 sh jetson_app/scripts/start_kiosk.sh
-```
-
-比赛展示或触屏调试时，推荐使用 720p 包装脚本。它会先把当前显示输出切到 `1280x720`，退出 Chromium 后自动恢复原分辨率：
-
-```bash
 sh jetson_app/scripts/start_kiosk_720p.sh
 ```
 
-可选环境变量：
-
-```bash
-QSM_KIOSK_OUTPUT=HDMI-0 QSM_KIOSK_MODE=1280x720 QSM_KIOSK_RATE=60 sh jetson_app/scripts/start_kiosk_720p.sh
-```
-
-演示数据不会随服务启动自动覆盖真实数据。如需比赛展示数据，可手动执行：
+演示数据：
 
 ```bash
 sh jetson_app/scripts/seed_demo_data.sh
 ```
 
-该脚本会先备份当前 `data/zykh_qsm.db`，再写入张三档案、8 个库存药仓、3 条用药计划、最近体征和操作记录。
-
-管理后台也提供演示模式入口：
-
-```text
-/admin -> 快捷操作 -> 开启演示模式
-/admin -> 快捷操作 -> 清空演示数据
-```
-
-开发调 UI 时可以打开视觉规范预览页：
-
-```text
-http://127.0.0.1:8088/style-preview
-```
-
-该页集中展示按钮、表单、状态胶囊和颜色 token，不进入老人端 kiosk 主流程。
-
-## API
+## API 摘要
 
 - `GET /api/status`
+- `GET/POST /api/site`
 - `GET/POST /api/profile`
 - `GET/POST /api/medicines`
 - `GET/POST /api/plans`
-- `GET /api/records`
+- `POST /api/emergency/session`
+- `POST /api/ai/triage/stream`
+- `POST /api/local-ai/chat/stream`
 - `POST /api/dispense`
-- `GET/POST /api/vitals`
+- `GET /api/admin/logs`
+- `POST /api/sync/mock`
 - `POST /api/vitals/read_all`
 - `GET /api/camera/stream`
 - `POST /api/camera/capture`
 - `POST /api/medicine/scan`
-- `POST /api/ai/chat/stream`
 - `POST /api/audio/asr`
 - `POST /api/audio/speak`
 - `GET /api/settings`
@@ -115,13 +148,14 @@ http://127.0.0.1:8088/style-preview
 
 ```bash
 cd /home/jetson/Documents/zykh/Zykh-QSM
+python3 -m py_compile jetson_app/backend/app/*.py
 PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests
 
 cd jetson_app/frontend
 npm run build
 ```
 
-硬件联动时再执行：
+硬件联动检查：
 
 ```bash
 adb devices -l

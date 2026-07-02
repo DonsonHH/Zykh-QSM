@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, ChevronDown, Cpu, HeartHandshake, ShieldCheck, Wifi } from "lucide-react";
+import { Activity, ChevronDown, Cpu, HeartHandshake, RadioTower, ShieldCheck, Wifi } from "lucide-react";
 import { BottomNav } from "../components/BottomNav.jsx";
 import { StatusPill } from "../components/StatusPill.jsx";
 import { AiChatPage } from "../pages/AiChatPage.jsx";
@@ -13,10 +13,10 @@ import { useKioskScale } from "./useKioskScale.js";
 
 const pageTitles = {
   home: "首页",
-  cabinet: "药柜管理",
-  scan: "拍照识药",
-  ai: "AI 健康助手",
-  profile: "健康档案"
+  cabinet: "可用药品",
+  scan: "扫码识别",
+  ai: "AI 应急问询",
+  profile: "康护档案"
 };
 
 const terminalPages = new Set(Object.keys(pageTitles));
@@ -25,6 +25,7 @@ export function TerminalApp() {
   const data = useQsmData();
   const scale = useKioskScale();
   const [page, setPage] = useState(() => {
+    if (window.location.pathname.startsWith("/triage")) return "ai";
     const requested = new URLSearchParams(window.location.search).get("page");
     return terminalPages.has(requested) ? requested : "home";
   });
@@ -40,7 +41,7 @@ export function TerminalApp() {
   return (
     <main className="viewport terminal-viewport">
       <section className="terminal-shell kiosk-canvas" style={{ "--kiosk-scale": scale }}>
-        <TerminalTopbar now={now} status={data.status} profile={data.profile} page={page} />
+        <TerminalTopbar now={now} status={data.status} site={data.site} profile={data.profile} page={page} />
         <section className="terminal-content">
           {page === "home" && <HomePage {...common} />}
           {page === "cabinet" && <CabinetPage {...common} />}
@@ -55,10 +56,11 @@ export function TerminalApp() {
   );
 }
 
-function TerminalTopbar({ now, status, profile, page }) {
+function TerminalTopbar({ now, status, site, profile, page }) {
   const qsmOnline = Boolean(status?.qsm?.online);
   const forwardOk = Boolean(status?.qsm?.forward?.ok ?? status?.qsm?.forward);
   const mainOk = Boolean(status?.qsm_main);
+  const network = status?.network || {};
   return (
     <header className="terminal-topbar">
       <div className="brand-lockup">
@@ -66,8 +68,8 @@ function TerminalTopbar({ now, status, profile, page }) {
           <HeartHandshake size={30} />
         </div>
         <div>
-          <strong>智药康护 QSM</strong>
-          <span>{pageTitles[page]}</span>
+          <strong>智药康护终端</strong>
+          <span>{site?.station_name || "偏远社区康护站"} · {pageTitles[page]}</span>
         </div>
       </div>
       <div className="time-lockup">
@@ -75,9 +77,10 @@ function TerminalTopbar({ now, status, profile, page }) {
         <span>{formatDay(now)}</span>
       </div>
       <div className="topbar-status">
-        <StatusPill icon={Cpu} label="设备连接" value={qsmOnline ? "外设在线" : "连接中"} tone={qsmOnline ? "good" : "soft"} />
-        <StatusPill icon={Wifi} label="硬件功能" value={qsmOnline && forwardOk ? "可用" : "部分暂不可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
-        <StatusPill icon={ShieldCheck} label="系统状态" value={mainOk ? "正常" : "检查中"} tone={mainOk ? "good" : "warn"} />
+        <StatusPill icon={RadioTower} label="网络模式" value={modeLabel(network.mode || site?.network_mode)} tone={network.mode === "offline" ? "soft" : network.mode === "online" ? "good" : "warn"} />
+        <StatusPill icon={Wifi} label="AI 模式" value={aiModeLabel(network.ai_mode || site?.ai_mode)} tone={(network.ai_mode || site?.ai_mode) === "cloud" ? "good" : "warn"} />
+        <StatusPill icon={Cpu} label="外设平台" value={qsmOnline && forwardOk ? "可用" : "部分暂不可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
+        <StatusPill icon={ShieldCheck} label="同步状态" value={network.pending_sync_count ? `${network.pending_sync_count} 待同步` : (network.sync_status || "已同步")} tone={network.pending_sync_count ? "warn" : mainOk ? "good" : "soft"} />
       </div>
       <a className="admin-peek" href="/admin" aria-label="进入管理后台">
         <Activity size={18} />
@@ -86,6 +89,14 @@ function TerminalTopbar({ now, status, profile, page }) {
       </a>
     </header>
   );
+}
+
+function modeLabel(mode) {
+  return { online: "在线", weak: "弱网", offline: "离线" }[mode] || "弱网";
+}
+
+function aiModeLabel(mode) {
+  return { cloud: "云端AI", local: "本地AI", rules: "规则兜底" }[mode] || "本地AI";
 }
 
 function Toast({ message }) {

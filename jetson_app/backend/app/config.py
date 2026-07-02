@@ -22,5 +22,13 @@ QSM_ADB_AUTO_FORWARD = os.getenv("QSM_ADB_AUTO_FORWARD", "1") != "0"
 AI_API_BASE = os.getenv("AI_API_BASE", "https://api.deepseek.com/chat/completions")
 AI_MODEL = os.getenv("AI_MODEL", "deepseek-v4-flash")
 
+LOCAL_AI_PROVIDER = os.getenv("LOCAL_AI_PROVIDER", "ollama").strip().lower()
+LOCAL_AI_BASE_URL = os.getenv("LOCAL_AI_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2.5:1.5b")
+AI_CLOUD_TIMEOUT_SECONDS = float(os.getenv("AI_CLOUD_TIMEOUT_SECONDS", "18"))
+LOCAL_AI_TIMEOUT_SECONDS = float(os.getenv("LOCAL_AI_TIMEOUT_SECONDS", "10"))
+
+DISPENSE_DRY_RUN = os.getenv("DISPENSE_DRY_RUN", "true").strip().lower() not in {"0", "false", "no", "off"}
+
 KIOSK_HOST = os.getenv("QSM_HOST") or os.getenv("JETSON_HOST", "127.0.0.1")
 KIOSK_PORT = int(os.getenv("QSM_PORT") or os.getenv("JETSON_PORT", "8088"))

@@ -3,10 +3,10 @@ import { Bot, Camera, FolderHeart, Home, Package2 } from "lucide-react";
 
 const navItems = [
   { id: "home", label: "首页", icon: Home },
-  { id: "cabinet", label: "药柜", icon: Package2 },
-  { id: "scan", label: "识药", icon: Camera },
-  { id: "ai", label: "问诊", icon: Bot },
-  { id: "profile", label: "我的", icon: FolderHeart }
+  { id: "cabinet", label: "药品", icon: Package2 },
+  { id: "scan", label: "扫码", icon: Camera },
+  { id: "ai", label: "应急", icon: Bot },
+  { id: "profile", label: "档案", icon: FolderHeart }
 ];
 
 export function BottomNav({ page, onChange }) {

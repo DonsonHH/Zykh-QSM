@@ -11,7 +11,7 @@ export function ProfilePage({ profile, vitals, medicines, plans, records, setPag
   return (
     <div className="profile-page">
       <GlassCard className="profile-main-card">
-        <span className="card-eyebrow">健康档案</span>
+        <span className="card-eyebrow">康护档案</span>
         <div className="profile-hero">
           <div className="avatar xl">
             <UserRound size={54} />

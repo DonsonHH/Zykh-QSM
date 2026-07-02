@@ -123,7 +123,7 @@
 .device-grid {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 10px;
 }
 
@@ -244,6 +244,23 @@
   gap: 6px;
   max-height: 100%;
   overflow: auto;
+}
+
+.admin-log-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+
+.admin-log-summary span {
+  padding: 8px;
+  border: 1px solid rgba(126, 188, 255, 0.14);
+  border-radius: var(--radius-control);
+  background: rgba(18, 40, 68, 0.62);
+  color: #d4ebff;
+  font-size: 12px;
+  text-align: center;
 }
 
 .log-list p {
@@ -415,6 +432,11 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
+}
+
+.admin-form-grid select,
+.admin-panel select {
+  height: 44px;
 }
 
 .admin-form-grid label:nth-child(6),

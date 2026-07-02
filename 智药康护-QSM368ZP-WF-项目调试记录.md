@@ -4896,3 +4896,99 @@ settings            本地设置
 QSM 旧 zykh_app 不重构，只作为硬件接口继续保留。
 Jetson /api/dispense 会先写业务记录，再调用 QSM /api/dispense；测试中不实际触发硬件。
 ```
+
+## 第三十六步：双主线村镇康护站产品改造
+
+时间：2026-07-02
+
+本阶段确认作品名称和报名简介不变：
+
+```text
+智药康护：基于QSM368ZP-WF的蜂窝联网AI用药安全管家
+```
+
+产品主场景调整为：
+
+```text
+偏远社区康护站 / 村镇智慧用药服务点
+```
+
+保留基础场景：
+
+```text
+老人、慢病人群、家庭用药计划、定时提醒、重复服药拦截、漏服追踪
+```
+
+新增扩展场景：
+
+```text
+景区、高原、企业园区、工地、学校、救援点等弱网/无网应急药品供给场景
+```
+
+对外架构表述统一为：
+
+```text
+QSM368ZP-WF 核心终端平台
+外设采集与执行控制平台
+```
+
+新增后端能力：
+
+```text
+site_profile           站点配置
+emergency_sessions     AI 应急问询记录
+dispense_records       出药 / dry-run 记录
+network_events         网络模式切换和模拟同步事件
+offline_knowledge      本地 rules 知识库
+operator_logs          管理员操作日志
+```
+
+新增 API：
+
+```text
+GET/POST /api/site
+POST /api/emergency/session
+POST /api/ai/triage/stream
+POST /api/local-ai/chat/stream
+GET /api/admin/logs
+POST /api/sync/mock
+```
+
+安全边界：
+
+```text
+AI 不诊断
+AI 不开药
+AI 不生成处方
+AI 只做应急辅助问询、药品辅助匹配、风险提示和用药安全核验
+低风险且库存匹配、无明显禁忌时才允许进入用户取药确认
+中/高/紧急风险必须管理员复核或联系医生/救援人员
+```
+
+出药保护：
+
+```text
+DISPENSE_DRY_RUN=true
+```
+
+默认 dry-run 下 `/api/dispense` 只做校验和记录，不真实调用外设采集与执行控制平台开仓。真实演示前必须现场确认安全条件，再手动关闭 dry-run。
+
+本地 AI 策略：
+
+```text
+LOCAL_AI_PROVIDER=ollama|llamacpp|mock|rules
+LOCAL_AI_BASE_URL=http://127.0.0.1:11434
+LOCAL_AI_MODEL=qwen2.5:1.5b
+```
+
+第一版只接入配置和调用逻辑，不安装 Ollama，不下载模型。Ollama 或本地模型不可用时自动切换 rules，保证离线演示可用。
+
+UI 改造：
+
+```text
+首页：今日用药提醒 + 开始应急问询双主线
+AI 页：AI 应急问询，显示风险等级、候选药品、安全声明
+药柜页：普通用户只读可用药品 / 应急药品库存
+扫码页：药品核验、站点码、补药码、取药复核、事件留存
+管理页：站点配置、网络/AI 模拟、模拟同步、药品维护、日志和外设检查
+```

@@ -163,6 +163,26 @@ final result: passed
 - The latest QSM main stream proxy fix requires restarting `zykh-qsm.service` before the running browser sees it. Runtime restart and Git push were blocked by the current sandbox approval/usage limit; code-level checks passed.
 final result: partial-pass
 
+**2026-07-02 Dual-Track Village Care Station Pass**
+- Product framing upgraded to the confirmed dual-track direction: default scenario is `偏远社区康护站 / 村镇智慧用药服务点`; scenic spot, plateau, enterprise, construction site, school and rescue camp remain configurable extension scenarios.
+- Terminal home now keeps two primary flows:
+  - `今日用药提醒` for elderly/chronic/family medication safety.
+  - `AI 应急问询` for weak-network village station emergency medicine supply.
+- Added public-facing safety framing: AI does not diagnose, prescribe, open medicine, or generate prescriptions; it only supports emergency inquiry, medicine-category matching, risk提示 and medication-safety checks.
+- Added backend semantic layer for site profile, emergency sessions, dispense records, network events, offline knowledge and operator logs.
+- Added local AI routing with Ollama/llamacpp/mock/rules configuration. The first version connects to local providers but does not install models; failures fall back to rules for offline demos.
+- Added default `DISPENSE_DRY_RUN=true` behavior: `/api/dispense` records validation results and dry-run dispense records without triggering real hardware.
+- User terminal medicine cabinet is now read-only for available/emergency stock. Medicine entry, replenishment, inventory edits and dry-run dispense tests are admin-only.
+- Scan page renamed to `扫码/拍照识别`, covering medicine check, site code, replenishment code, pickup review and event retention.
+- Admin adds site configuration, network/AI mode simulation, mock sync, dry-run status, new logs and expanded medicine inventory fields.
+
+**Verification 2026-07-02 Dual-Track Village Care Station**
+- `python3 -m py_compile jetson_app/backend/app/*.py`: passed.
+- `PYTHONPATH=jetson_app/backend jetson_app/backend/.venv/bin/python -m pytest jetson_app/backend/tests`: 9 passed, 2 FastAPI deprecation warnings.
+- `cd jetson_app/frontend && npm run build`: passed.
+- `git diff --check`: passed.
+final result: passed
+
 **2026-07-02 Live Peripheral Repair Follow-up**
 - Restarted the local QSM main backend and the external-device Perl gateway, then rechecked the live ADB/forward path.
 - Fixed microphone recording after finding ALSA `Capture MIC Path` was `MIC OFF`; `record_audio()` now initializes the external device to `Main Mic` before `arecord`.

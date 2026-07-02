@@ -1,4 +1,4 @@
-import { Camera, Check, RefreshCw, RotateCcw, ScanLine } from "lucide-react";
+import { Camera, RefreshCw, RotateCcw, ScanLine, ShieldCheck } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { api, formBody } from "../api/client.js";
 import { GlassCard } from "../components/GlassCard.jsx";
@@ -40,24 +40,11 @@ export function ScanPage({ status, refresh, notify }) {
         box_size: data.suggestion?.box_size || "medium",
         name: medicine.name || medicine.medicine_name || ""
       });
-      notify("识别完成，请核对后入库");
+      notify("识别完成，请核对药品信息");
     } catch (err) {
       notify(err.message);
       setLive(true);
       setStreamKey(Date.now());
-    }
-  });
-
-  const [confirm, confirming] = useAsyncAction(async () => {
-    try {
-      await api("/api/medicine/scan", formBody({ ...draft, confirm: 1 }));
-      notify(`${draft.slot} 号仓已录入`);
-      await refresh();
-      setResult(null);
-      setLive(true);
-      setStreamKey(Date.now());
-    } catch (err) {
-      notify(err.message);
     }
   });
 
@@ -72,16 +59,16 @@ export function ScanPage({ status, refresh, notify }) {
       <GlassCard className="camera-panel">
         <div className="page-heading compact">
           <div>
-            <span className="card-eyebrow">拍照识药</span>
-            <h1>请将药盒放入识别框内</h1>
+            <span className="card-eyebrow">扫码/拍照识别</span>
+            <h1>药品核验、站点码与取药复核</h1>
           </div>
           <span className={`record-link ${qsmOnline && !streamFailed ? "good" : "warn"}`}>
-            {qsmOnline && !streamFailed ? "摄像头已连接 · 1280×720" : "摄像头暂不可用"}
+            {qsmOnline && !streamFailed ? "摄像头已连接 · 用于人工复核" : "摄像头暂不可用"}
           </span>
         </div>
         <div className={`camera-window ${qsmOnline && live && !streamFailed ? "live" : "idle"}`}>
           {qsmOnline && live && !streamFailed ? (
-            <img src={streamUrl} alt="外设设备摄像头实时预览" onError={() => setStreamFailed(true)} />
+            <img src={streamUrl} alt="外设采集与执行控制平台摄像头实时预览" onError={() => setStreamFailed(true)} />
           ) : (
             <div className="camera-empty">
               <Camera size={78} />
@@ -97,7 +84,7 @@ export function ScanPage({ status, refresh, notify }) {
           </div>
           <div className="camera-guide">
             <ScanLine size={22} />
-            <span>请将药盒正面放入框内</span>
+            <span>请将药盒、站点码或取到的药品放入框内</span>
           </div>
         </div>
         <div className="camera-controls">
@@ -124,39 +111,39 @@ export function ScanPage({ status, refresh, notify }) {
             </div>
             <div>
               <h2>{draft.name || "等待识别"}</h2>
-              <p>识别置信度 <strong className="confidence-pill">{result ? "98%" : "--"}</strong></p>
+              <p>用于说明核验 / 取药复核 <strong className="confidence-pill">{result ? "98%" : "--"}</strong></p>
             </div>
           </div>
         </div>
 
         <div className="confirm-section">
-          <span className="card-eyebrow">信息确认</span>
+          <span className="card-eyebrow">核验信息</span>
           <label>
             药品名称
-            <input value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+            <input value={draft.name || ""} readOnly />
           </label>
           <label>
-            追溯码
-            <input value={draft.code || ""} onChange={(event) => setDraft({ ...draft, code: event.target.value })} />
+            条码 / 站点码
+            <input value={draft.code || ""} readOnly />
           </label>
           <div className="editor-row">
             <label>
               规格
-              <input value={draft.dosage || ""} onChange={(event) => setDraft({ ...draft, dosage: event.target.value })} />
+              <input value={draft.dosage || ""} readOnly />
             </label>
             <label>
-              数量
-              <input type="number" min="0" value={draft.stock || 0} onChange={(event) => setDraft({ ...draft, stock: event.target.value })} />
+              复核数量
+              <input type="number" min="0" value={draft.stock || 0} readOnly />
             </label>
           </div>
           <div className="editor-row">
             <label>
               仓位
-              <input type="number" min="1" max="23" value={draft.slot || 1} onChange={(event) => setDraft({ ...draft, slot: event.target.value })} />
+              <input type="number" min="1" max="23" value={draft.slot || 1} readOnly />
             </label>
             <label>
               有效期
-              <input value={draft.expire_date || ""} onChange={(event) => setDraft({ ...draft, expire_date: event.target.value })} />
+              <input value={draft.expire_date || ""} readOnly />
             </label>
           </div>
           <div className="scan-actions">
@@ -164,9 +151,9 @@ export function ScanPage({ status, refresh, notify }) {
               <RotateCcw size={20} />
               重拍
             </button>
-            <button className="primary" onClick={confirm} disabled={confirming}>
-              <Check size={20} />
-              {confirming ? "入库中" : "确认入库"}
+            <button className="primary" onClick={() => notify("已记录本次拍照核验，需管理员复核时请联系值守人员")}>
+              <ShieldCheck size={20} />
+              核验完成
             </button>
           </div>
         </div>

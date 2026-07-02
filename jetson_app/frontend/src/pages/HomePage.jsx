@@ -11,12 +11,15 @@ import { VitalReadout } from "../components/VitalReadout.jsx";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
 import { latestVitals, nextPlan } from "../utils/domain.js";
 
-export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
+export function HomePage({ status, site, plans, vitals, medicines, refresh, notify, setPage }) {
   const plan = nextPlan(plans);
   const latest = latestVitals(vitals);
   const qsmOnline = Boolean(status?.qsm?.online);
+  const network = status?.network || {};
+  const stocked = medicines.filter((item) => Number(item.stock) > 0);
+  const emergencyCount = stocked.filter((item) => Number(item.is_emergency) === 1).length;
   const dispenseTitle = plan ? "开始取药" : "暂无计划";
-  const dispenseDetail = !plan ? "请先添加用药计划" : !qsmOnline ? "设备连接中，暂不可取药" : "校验计划后开仓";
+  const dispenseDetail = !plan ? "请在后台添加用药计划" : "dry-run 校验计划与记录";
 
   const [dispense, dispensing] = useAsyncAction(async () => {
     if (!plan) return notify("当前没有可执行用药计划");
@@ -43,7 +46,7 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
     <div className="home-page">
       <GlassCard className="today-card">
         <div className="card-title-row">
-          <h1>今日用药</h1>
+          <h1>今日用药提醒</h1>
           <span className="dose-state">按时</span>
         </div>
         <div className="next-dose">
@@ -66,29 +69,29 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
           detail={dispensing ? "正在校验计划并开仓" : dispenseDetail}
           tone="orange"
           onClick={dispense}
-          disabled={!qsmOnline || !plan}
+          disabled={!plan}
           busy={dispensing}
         />
       </GlassCard>
 
       <GlassCard className="ai-card">
         <div className="ai-copy">
-          <span className="card-eyebrow">AI 健康助手</span>
-          <h2>有问题？问问 AI 健康助手</h2>
-          <p>基于档案、最近体征、病例记忆和药柜库存给出建议。</p>
+          <span className="card-eyebrow">{site?.station_name || "偏远社区康护站"}</span>
+          <h2>开始 AI 应急问询</h2>
+          <p>面向村镇弱网场景，结合症状、体征、库存和禁忌做风险提示与药品辅助匹配。</p>
         </div>
         <div className="assistant-stage" aria-hidden="true">
           <img src={assistantRobot} alt="" />
         </div>
-        <BigActionButton icon={Bot} title="开始问诊" detail="支持文字与语音" tone="purple" onClick={() => setPage("ai")} />
+        <BigActionButton icon={Bot} title="开始应急问询" detail="低风险才可进入取药确认" tone="purple" onClick={() => setPage("ai")} />
       </GlassCard>
 
       <GlassCard className="vitals-card">
         <div>
-          <h1>体征监测</h1>
+          <h1>站点状态</h1>
           <div className="measure-time">
-            <span>最近测量时间</span>
-            <strong>{latest.created_at ? latest.created_at.slice(11, 16) : "--:--"}</strong>
+            <span>{site?.location_name || "村镇智慧用药服务点"}</span>
+            <strong>{modeLabel(network.mode || site?.network_mode)}</strong>
           </div>
         </div>
         <VitalReadout vitals={latest} />
@@ -105,25 +108,29 @@ export function HomePage({ status, plans, vitals, refresh, notify, setPage }) {
 
       <button className="home-tile touch-ripple scan" onClick={() => setPage("scan")}>
         <div>
-          <strong>拍照识药</strong>
-          <span>拍照识别药盒信息</span>
+          <strong>扫码/拍照识别</strong>
+          <span>药盒、站点码、取药复核</span>
         </div>
         <img src={cameraAsset} alt="" />
       </button>
       <button className="home-tile touch-ripple plan" onClick={() => setPage("cabinet")}>
         <div>
-          <strong>用药计划</strong>
-          <span>查看用药计划与提醒</span>
+          <strong>可用药品</strong>
+          <span>{stocked.length}/23 仓有库存 · 应急 {emergencyCount}</span>
         </div>
         <img src={calendarAsset} alt="" />
       </button>
       <button className="home-tile touch-ripple archive" onClick={() => setPage("profile")}>
         <div>
-          <strong>健康档案</strong>
-          <span>个人健康档案管理</span>
+          <strong>管理员复核</strong>
+          <span>{network.pending_sync_count || 0} 条待同步 · {network.sync_status || "本地记录"}</span>
         </div>
         <img src={profileAsset} alt="" />
       </button>
     </div>
   );
+}
+
+function modeLabel(mode) {
+  return { online: "在线模式", weak: "弱网模式", offline: "离线模式" }[mode] || "弱网模式";
 }

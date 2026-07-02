@@ -17,7 +17,7 @@
 
 .terminal-topbar {
   display: grid;
-  grid-template-columns: 238px 324px 1fr 168px;
+  grid-template-columns: 250px 286px 1fr 154px;
   align-items: center;
   gap: 18px;
   padding: 14px 28px 12px;
@@ -88,16 +88,16 @@
 
 .topbar-status {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .status-pill {
   position: relative;
   min-width: 0;
   min-height: 58px;
-  gap: 12px;
-  padding: 9px 15px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid rgba(154, 197, 255, 0.22);
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(19, 39, 68, 0.8), rgba(8, 24, 45, 0.74));
@@ -131,7 +131,7 @@
 
 .status-pill strong {
   display: block;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1.12;
 }
 
@@ -936,6 +936,40 @@
   min-height: 44px;
 }
 
+.public-medicine-detail .info-row,
+.safety-note-box {
+  display: grid;
+  grid-template-columns: 24px 78px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 11px;
+  border: 1px solid rgba(126, 188, 255, 0.15);
+  border-radius: var(--radius-md);
+  background: rgba(9, 27, 50, 0.58);
+}
+
+.public-medicine-detail .info-row svg {
+  color: var(--blue);
+}
+
+.public-medicine-detail .info-row span,
+.safety-note-box strong {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.public-medicine-detail .info-row strong,
+.safety-note-box span {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.safety-note-box {
+  grid-template-columns: 74px 1fr;
+}
+
 .offline-hint {
   display: flex;
   align-items: center;
@@ -961,8 +995,43 @@
 
 .camera-panel {
   display: grid;
-  grid-template-rows: auto 1fr 76px;
-  gap: 12px;
+  grid-template-rows: auto 38px 1fr 76px;
+  gap: 10px;
+}
+
+.mode-switch,
+.scene-tags,
+.triage-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mode-switch button,
+.scene-tags button,
+.triage-tools button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(126, 188, 255, 0.2);
+  border-radius: var(--radius-control);
+  background: rgba(9, 27, 50, 0.66);
+  color: var(--muted);
+}
+
+.mode-switch button.active,
+.scene-tags button.active {
+  color: #ffffff;
+  border-color: rgba(45, 140, 255, 0.55);
+  background: rgba(45, 140, 255, 0.25);
+}
+
+.admin-scan-link {
+  min-height: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--radius-control);
 }
 
 .camera-window {
@@ -1176,6 +1245,10 @@
   overflow: hidden;
 }
 
+.triage-page {
+  grid-template-columns: 280px 1fr 270px;
+}
+
 .history-panel,
 .chat-panel,
 .health-context-panel {
@@ -1187,6 +1260,23 @@
   display: grid;
   grid-template-rows: auto repeat(4, 70px);
   gap: 8px;
+}
+
+.triage-input-panel {
+  grid-template-rows: auto auto auto auto auto;
+  align-content: start;
+}
+
+.triage-input-panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.triage-input-panel textarea {
+  min-height: 66px;
+  resize: none;
 }
 
 .panel-title {
@@ -1235,6 +1325,24 @@
   grid-template-rows: 54px 1fr 46px 70px;
   gap: 8px;
   min-height: 0;
+}
+
+.triage-page .chat-panel {
+  grid-template-rows: 54px auto 1fr 70px;
+}
+
+.safety-banner {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 179, 71, 0.25);
+  border-radius: var(--radius-md);
+  background: rgba(255, 179, 71, 0.08);
+  color: #ffe0a8;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .chat-heading {
@@ -1366,6 +1474,41 @@
   align-content: start;
   gap: 10px;
   overflow: hidden;
+}
+
+.triage-result-panel {
+  align-content: start;
+}
+
+.risk-badge {
+  min-height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(126, 188, 255, 0.18);
+  background: rgba(20, 43, 74, 0.65);
+  color: var(--muted);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.risk-badge.low {
+  color: var(--green);
+  border-color: rgba(65, 224, 141, 0.34);
+  background: rgba(65, 224, 141, 0.1);
+}
+
+.risk-badge.medium,
+.risk-badge.high {
+  color: var(--orange);
+  border-color: rgba(255, 179, 71, 0.34);
+  background: rgba(255, 179, 71, 0.1);
+}
+
+.risk-badge.emergency {
+  color: var(--red);
+  border-color: rgba(255, 93, 115, 0.34);
+  background: rgba(255, 93, 115, 0.1);
 }
 
 .profile-block {

@@ -8,6 +8,8 @@ export function useQsmData() {
   const [records, setRecords] = useState([]);
   const [vitals, setVitals] = useState([]);
   const [profile, setProfile] = useState({});
+  const [site, setSite] = useState({});
+  const [adminLogs, setAdminLogs] = useState({});
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -25,6 +27,8 @@ export function useQsmData() {
     setRecords(snapshot.records);
     setVitals(snapshot.vitals);
     setProfile(snapshot.profile);
+    setSite(snapshot.site);
+    setAdminLogs(snapshot.adminLogs);
     setLoading(false);
     return snapshot;
   }, []);
@@ -45,6 +49,8 @@ export function useQsmData() {
     records,
     vitals,
     profile,
+    site,
+    adminLogs,
     loading,
     toast,
     notify,
