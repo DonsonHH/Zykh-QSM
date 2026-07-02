@@ -302,6 +302,36 @@
   height: 100%;
 }
 
+.admin-scan-workspace {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.admin-scan-workspace .scan-page {
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr) 440px;
+  gap: 14px;
+}
+
+.admin-scan-workspace .camera-panel,
+.admin-scan-workspace .scan-result-panel {
+  border-radius: 20px;
+}
+
+.admin-scan-workspace .camera-panel {
+  grid-template-rows: auto 42px minmax(0, 1fr) 44px 70px;
+}
+
+.admin-scan-workspace .camera-empty strong {
+  font-size: 28px;
+}
+
+.admin-scan-workspace .camera-empty span {
+  font-size: 18px;
+  color: #c6d8ee;
+}
+
 .admin-panel pre {
   max-height: 360px;
   overflow: auto;

@@ -1,10 +1,9 @@
 import React from "react";
-import { Bot, Camera, ClipboardList, Home, Package2 } from "lucide-react";
+import { Bot, ClipboardList, Home, Package2 } from "lucide-react";
 
 const navItems = [
   { id: "home", label: "首页", icon: Home },
   { id: "cabinet", label: "药品", icon: Package2 },
-  { id: "scan", label: "扫码", icon: Camera },
   { id: "ai", label: "问询", icon: Bot },
   { id: "profile", label: "记录", icon: ClipboardList }
 ];

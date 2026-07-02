@@ -163,6 +163,42 @@ final result: passed
 - The latest QSM main stream proxy fix requires restarting `zykh-qsm.service` before the running browser sees it. Runtime restart and Git push were blocked by the current sandbox approval/usage limit; code-level checks passed.
 final result: partial-pass
 
+**2026-07-03 Product Design Image-to-Code Redraw**
+- Source visual truth: the six user-provided 1280x720 mockups in the 2026-07-02 chat turn covering terminal home, station medicines, AI emergency inquiry, service records, admin overview and scan recognition.
+- Rebuilt the terminal shell around the mockup structure for an 11-inch touch display:
+  - Topbar keeps brand, station context, large clock, network/AI/peripheral/sync chips.
+  - Bottom nav is now four large touch entries: `首页 / 药品 / 问询 / 记录`.
+  - Ordinary terminal no longer has a scan page route or bottom-nav scan entry.
+  - `扫码识别` is linked to the admin console at `/admin?section=scan`.
+- Home redraw:
+  - Two large hero cards for `今日用药` and `AI应急问询`.
+  - Three shortcut tiles for `扫码识别 / 站点药品 / 服务记录`.
+  - Bottom station status strip for medicine cabinet occupancy, temperature and external-device availability.
+  - Fixed 720px clipping in the today-card and AI-card actions.
+- Medicine redraw:
+  - Replaced 23-slot cabinet grid with station inventory layout: left product list, right medicine detail and risk/confirm hint.
+  - Added front-end demo fallback data so the competition UI remains populated when the current local DB is empty.
+  - Tightened product-card columns so Chinese medicine names remain readable on 11-inch screens.
+- AI inquiry redraw:
+  - Kept the existing safety-bounded AI flow, but compressed the layout for 720px height.
+  - Core touch controls remain visible: symptoms, scenario tags, voice input, vitals read and start inquiry.
+  - Removed duplicate right-panel safety note that was clipped; the primary safety warning remains in the center banner.
+- Admin scan:
+  - Added admin sidebar entry `扫码识别`.
+  - Admin can open `/admin?section=scan`; scan recognition is removed from ordinary terminal routing.
+
+**Verification 2026-07-03 Product Design Image-to-Code Redraw**
+- `cd jetson_app/frontend && npm run build`: passed.
+- Chromium QA screenshots generated under ignored `jetson_app/data/ui-redraw-qa/`:
+  - `home-redraw-final.png`
+  - `medicine-redraw-final.png`
+  - `inquiry-redraw-final.png`
+  - `records-redraw-final.png`
+  - `admin-scan-redraw-final.png`
+- Screenshot note: Chromium snap on this machine needs `--window-size=1280,807 --virtual-time-budget=5000` to capture the full 1280x720 kiosk canvas after React async data loading.
+- Remaining accepted limitation: medicine product imagery uses consistent icon-style product blocks instead of exact package artwork because no final medication package asset set is committed.
+final result: passed
+
 **2026-07-02 Dual-Track Village Care Station Pass**
 - Product framing upgraded to the confirmed dual-track direction: default scenario is `偏远社区康护站 / 村镇智慧用药服务点`; scenic spot, plateau, enterprise, construction site, school and rescue camp remain configurable extension scenarios.
 - Terminal home now keeps two primary flows:

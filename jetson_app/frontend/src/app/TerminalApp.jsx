@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Activity, ChevronDown, Cpu, HeartHandshake, RadioTower, ShieldCheck, Wifi } from "lucide-react";
+import { Cpu, HeartHandshake, RadioTower, ShieldCheck, Wifi } from "lucide-react";
 import { BottomNav } from "../components/BottomNav.jsx";
 import { StatusPill } from "../components/StatusPill.jsx";
 import { AiChatPage } from "../pages/AiChatPage.jsx";
 import { CabinetPage } from "../pages/CabinetPage.jsx";
 import { HomePage } from "../pages/HomePage.jsx";
 import { ProfilePage } from "../pages/ProfilePage.jsx";
-import { ScanPage } from "../pages/ScanPage.jsx";
 import { formatClock, formatDay } from "../utils/domain.js";
 import { useQsmData } from "./useQsmData.js";
 import { useKioskScale } from "./useKioskScale.js";
@@ -14,7 +13,6 @@ import { useKioskScale } from "./useKioskScale.js";
 const pageTitles = {
   home: "首页",
   cabinet: "站点库存",
-  scan: "扫码识别",
   ai: "AI 问询",
   profile: "服务记录"
 };
@@ -45,7 +43,6 @@ export function TerminalApp() {
         <section className="terminal-content">
           {page === "home" && <HomePage {...common} />}
           {page === "cabinet" && <CabinetPage {...common} />}
-          {page === "scan" && <ScanPage {...common} />}
           {page === "ai" && <AiChatPage {...common} />}
           {page === "profile" && <ProfilePage {...common} />}
         </section>
@@ -79,14 +76,9 @@ function TerminalTopbar({ now, status, site, page }) {
       <div className="topbar-status">
         <StatusPill icon={RadioTower} label="网络模式" value={modeLabel(network.mode || site?.network_mode)} tone={network.mode === "offline" ? "soft" : network.mode === "online" ? "good" : "warn"} />
         <StatusPill icon={Wifi} label="AI 模式" value={aiModeLabel(network.ai_mode || site?.ai_mode)} tone={(network.ai_mode || site?.ai_mode) === "cloud" ? "good" : "warn"} />
-        <StatusPill icon={Cpu} label="外设平台" value={qsmOnline && forwardOk ? "可用" : "部分暂不可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
+        <StatusPill icon={Cpu} label="外设平台" value={qsmOnline && forwardOk ? "可用" : "部分可用"} tone={qsmOnline && forwardOk ? "good" : "soft"} />
         <StatusPill icon={ShieldCheck} label="同步状态" value={network.pending_sync_count ? `${network.pending_sync_count} 待同步` : (network.sync_status || "已同步")} tone={network.pending_sync_count ? "warn" : mainOk ? "good" : "soft"} />
       </div>
-      <a className="admin-peek" href="/admin" aria-label="进入管理后台">
-        <Activity size={18} />
-        <span>{site?.manager_name || "值守员"}</span>
-        <ChevronDown size={16} />
-      </a>
     </header>
   );
 }

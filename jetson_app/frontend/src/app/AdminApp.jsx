@@ -15,6 +15,7 @@ import {
   Server,
   Settings,
   Shield,
+  ScanLine,
   UserRound,
   Volume2,
   XCircle
@@ -23,6 +24,7 @@ import { api, formBody } from "../api/client.js";
 import { DeviceCard } from "../components/DeviceCard.jsx";
 import { GlassCard } from "../components/GlassCard.jsx";
 import { useAsyncAction } from "../hooks/useAsyncAction.js";
+import { ScanPage } from "../pages/ScanPage.jsx";
 import { useQsmData } from "./useQsmData.js";
 import { useKioskScale } from "./useKioskScale.js";
 
@@ -30,6 +32,7 @@ const adminNav = [
   ["overview", Home, "系统概览"],
   ["site", Radio, "站点配置"],
   ["devices", Server, "设备管理"],
+  ["scan", ScanLine, "扫码识别"],
   ["medicines", Database, "药品管理"],
   ["profile", UserRound, "服务对象"],
   ["settings", Settings, "系统设置"],
@@ -39,7 +42,7 @@ const adminNav = [
 export function AdminApp() {
   const data = useQsmData();
   const scale = useKioskScale();
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useState(() => new URLSearchParams(window.location.search).get("section") || "overview");
   const [settings, setSettings] = useState(null);
   const [apiKey, setApiKey] = useState("");
   const [slot, setSlot] = useState(1);
@@ -294,6 +297,12 @@ export function AdminApp() {
                 </button>
               </GlassCard>
               <HardwareCheckPanel checks={hardwareChecks} busy={hardwareBusy} runCheck={runHardwareCheck} qsmOnline={qsmOnline} />
+            </div>
+          )}
+
+          {section === "scan" && (
+            <div className="admin-scan-workspace">
+              <ScanPage {...data} adminMode />
             </div>
           )}
 
