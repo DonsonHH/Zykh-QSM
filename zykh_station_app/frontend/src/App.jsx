@@ -6,12 +6,14 @@ import { mockDashboard } from "./api/mockData.js";
 import { Home } from "./pages/Home.jsx";
 import { ComingSoon } from "./pages/ComingSoon.jsx";
 import { Medicines } from "./pages/Medicines.jsx";
+import { Inquiry } from "./pages/Inquiry.jsx";
 
 export function App() {
   const [page, setPage] = useState("home");
   const [dashboard, setDashboard] = useState(mockDashboard);
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
+  const [medicineFocus, setMedicineFocus] = useState(null);
   const toastTimerRef = useRef(null);
 
   useEffect(() => {
@@ -31,10 +33,16 @@ export function App() {
   }, []);
 
   function handleNav(nextPage) {
-    if (nextPage !== "home" && nextPage !== "medicines") {
+    if (nextPage !== "home" && nextPage !== "medicines" && nextPage !== "inquiry") {
       notify("下一阶段开发中");
     }
     setPage(nextPage);
+  }
+
+  function handleViewCandidates(focus) {
+    setMedicineFocus(focus);
+    setPage("medicines");
+    notify("已筛选候选药品，请继续完成用药安全核验");
   }
 
   return (
@@ -47,7 +55,9 @@ export function App() {
         {page === "home" ? (
           <Home dashboard={dashboard} onNavigate={handleNav} notify={notify} />
         ) : page === "medicines" ? (
-          <Medicines notify={notify} />
+          <Medicines notify={notify} focus={medicineFocus} />
+        ) : page === "inquiry" ? (
+          <Inquiry notify={notify} onViewCandidates={handleViewCandidates} />
         ) : (
           <ComingSoon page={page} />
         )}

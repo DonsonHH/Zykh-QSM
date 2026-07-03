@@ -7,7 +7,7 @@ import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
-export function Medicines({ notify }) {
+export function Medicines({ notify, focus }) {
   const [medicines, setMedicines] = useState([]);
   const [categories, setCategories] = useState(["全部"]);
   const [activeCategory, setActiveCategory] = useState("全部");
@@ -26,6 +26,23 @@ export function Medicines({ notify }) {
       })
       .catch((error) => notify(error.message || "药品列表加载失败"));
   }, [notify]);
+
+  useEffect(() => {
+    if (!focus || medicines.length === 0) {
+      return;
+    }
+    const focusedMedicine = focus.medicineId
+      ? medicines.find((medicine) => medicine.id === focus.medicineId)
+      : null;
+    const nextCategory =
+      focusedMedicine?.category || (categories.includes(focus.category) ? focus.category : "全部");
+    const nextMedicines =
+      nextCategory === "全部"
+        ? medicines
+        : medicines.filter((medicine) => medicine.category === nextCategory);
+    setActiveCategory(nextCategory);
+    setSelectedMedicine(focusedMedicine || nextMedicines[0] || medicines[0] || null);
+  }, [categories, focus, medicines]);
 
   const filteredMedicines = useMemo(() => {
     if (activeCategory === "全部") {
