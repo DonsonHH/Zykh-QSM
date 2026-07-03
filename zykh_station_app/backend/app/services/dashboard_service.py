@@ -30,7 +30,7 @@ class DashboardService:
         chips = [
             StatusChip(id="network", label="网络", value=self._network_label(site.network_mode), tone="warn"),
             StatusChip(id="ai", label="AI模式", value=self._ai_label(site.ai_mode), tone="warn"),
-            StatusChip(id="device", label="设备", value=qsm.status_label, tone="soft"),
+            StatusChip(id="device", label="设备", value=qsm.status_label, tone="good" if qsm.connected else "warn"),
             StatusChip(id="sync", label="同步", value=self._sync_label(site.sync_status), tone="good"),
         ]
         return ApiStatus(
@@ -38,6 +38,9 @@ class DashboardService:
             ai_mode=site.ai_mode,
             device_status=qsm.status_label,
             sync_status=site.sync_status,
+            qsm_mode=qsm.mode,
+            qsm_connected=qsm.connected,
+            qsm_error_message=qsm.error_message,
             dry_run=settings.dispense_dry_run,
             chips=chips,
         )
