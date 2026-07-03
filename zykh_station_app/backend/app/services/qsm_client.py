@@ -86,6 +86,23 @@ class QsmClient:
             "voice": "available" if payload.get("ok") else "unknown",
         }
 
+    def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "slot": slot,
+                "quantity": quantity,
+                "detail": "dry-run only",
+            }
+        return {
+            "ok": False,
+            "dry_run": False,
+            "slot": slot,
+            "quantity": quantity,
+            "detail": "real dispense is reserved for a later integration stage",
+        }
+
     def _mock_status(self) -> QsmStatus:
         return QsmStatus(
             ok=True,
