@@ -67,10 +67,11 @@ sh scripts/open_kiosk.sh
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
-QSM_TIMEOUT_SECONDS=2
+QSM_TIMEOUT_SECONDS=20
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
-DISPENSE_DRY_RUN=false
+DISPENSE_DRY_RUN=true
+ENABLE_REAL_DISPENSE=0
 AI_MODE=auto
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_MODEL=deepseek-v4-flash
@@ -105,7 +106,7 @@ sh scripts/adb_forward.sh
 QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 sh scripts/start_backend.sh
 ```
 
-第八阶段默认 `DISPENSE_DRY_RUN=false`，取药确认会调用外设网关 `/api/dispense`，同时写入本地记录。真实取药测试只允许使用已确认的安全仓位；如果要跑命令行 smoke，请先配置 `REAL_DISPENSE_TEST_SLOT`。
+默认 `DISPENSE_DRY_RUN=true`，取药确认只写入 dry-run 记录。真实取药必须同时满足 `DISPENSE_DRY_RUN=false`、`ENABLE_REAL_DISPENSE=1`、`REAL_DISPENSE_TEST_SLOT` 已配置，并且请求体显式 `confirm_real_dispense=true`。
 
 ## 演示前检查
 
@@ -136,13 +137,15 @@ curl http://127.0.0.1:8000/api/qsm/capabilities
 curl http://127.0.0.1:8000/api/device/check
 ```
 
-真实取药确认会调用外设网关。测试前必须确认安全仓位：
+真实取药确认会调用外设网关。测试前必须确认安全仓位并开启双开关：
 
 ```bash
+export DISPENSE_DRY_RUN=false
+export ENABLE_REAL_DISPENSE=1
 export REAL_DISPENSE_TEST_SLOT=1
 curl -X POST http://127.0.0.1:8000/api/dispense/confirm \
   -H "Content-Type: application/json" \
-  -d '{"medicine_id":"aspirin-enteric","slot":"A01","quantity":1,"reason":"真实联调确认","confirmed_safety_notice":true}'
+  -d '{"medicine_id":"aspirin-enteric","slot":"A01","quantity":1,"reason":"真实联调确认","confirmed_safety_notice":true,"confirm_real_dispense":true}'
 ```
 
 ## 验证

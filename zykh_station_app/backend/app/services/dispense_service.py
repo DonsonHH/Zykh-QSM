@@ -38,7 +38,7 @@ class DispenseService:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
         if request.quantity > medicine.stock:
             raise DispenseError("库存不足，无法完成取药确认。")
-        dry_run = settings.dispense_dry_run is True if force_dry_run is None else force_dry_run
+        dry_run = self._should_dry_run(request, medicine, force_dry_run)
         qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
         qsm_ok = bool(qsm_result.get("ok"))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
@@ -48,7 +48,7 @@ class DispenseService:
             self.dispense_repository.append(record)
             return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
-        message = "dry-run 已记录，本阶段不会真实出药。" if dry_run else "取药确认已完成，外设已返回成功状态。"
+        message = "dry-run 已记录，未触发真实出药。" if dry_run else "取药确认已完成，外设已返回成功状态。"
         record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
         self.dispense_repository.append(record)
         if not dry_run:
@@ -57,6 +57,28 @@ class DispenseService:
 
     def list_records(self) -> list[DispenseRecord]:
         return self.dispense_repository.list_records()
+
+    @staticmethod
+    def _should_dry_run(
+        request: DispenseConfirmRequest,
+        medicine,
+        force_dry_run: bool | None,
+    ) -> bool:
+        if force_dry_run is not None:
+            return force_dry_run
+        if settings.dispense_dry_run:
+            return True
+        if not settings.enable_real_dispense:
+            return True
+        if request.confirm_real_dispense is not True:
+            return True
+        allowed_slot = settings.real_dispense_test_slot.strip()
+        if not allowed_slot:
+            return True
+        hardware_slot = str(medicine.hardware_slot or "")
+        if allowed_slot not in {hardware_slot, medicine.slot}:
+            raise DispenseError("真实取药测试仓位与当前药品仓位不一致，已拒绝执行。")
+        return False
 
     @staticmethod
     def _build_record(

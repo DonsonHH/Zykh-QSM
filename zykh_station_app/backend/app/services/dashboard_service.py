@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..config import settings
+from ..config import real_dispense_enabled, settings
 from ..core.constants import SAFETY_NOTICE
 from ..db import now_text
 from ..schemas.dashboard import (
@@ -51,7 +51,7 @@ class DashboardService:
             qsm_mode=qsm.mode,
             qsm_connected=qsm.connected,
             qsm_error_message=qsm.error_message,
-            dry_run=settings.dispense_dry_run,
+            dry_run=not real_dispense_enabled(),
             chips=chips,
         )
 

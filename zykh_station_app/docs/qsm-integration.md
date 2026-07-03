@@ -26,7 +26,7 @@ The default mode is:
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
-QSM_TIMEOUT_SECONDS=2
+QSM_TIMEOUT_SECONDS=20
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
 QSM_VITALS_PATH=/api/vitals/read
@@ -37,7 +37,8 @@ QSM_AUDIO_SPEAK_PATH=/api/audio/speak
 QSM_AUDIO_BEEP_PATH=/api/audio/beep
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
-DISPENSE_DRY_RUN=false
+DISPENSE_DRY_RUN=true
+ENABLE_REAL_DISPENSE=0
 ```
 
 `QSM_MODE=real` calls the gateway base URL. If the gateway is not reachable, the backend returns `connected=false` and a readable `error_message`; the dashboard continues to render and shows the device as temporarily unavailable. It does not silently replace failed real calls with fake vitals, fake scan results or fake dispense success.
@@ -84,7 +85,7 @@ If any step fails, it prints a clear warning and exits without killing the app. 
 
 Host camera methods live in `services/local_camera.py`. In real mode, the service captures one image from the configured local camera and returns a structured unavailable response if the device or capture command fails.
 
-With `DISPENSE_DRY_RUN=false`, 取药确认 calls the configured gateway dispense path and writes a local record. For any command-line real dispense smoke, configure `REAL_DISPENSE_TEST_SLOT` first and test only an agreed safe slot.
+By default `DISPENSE_DRY_RUN=true`, so 取药确认 writes a local dry-run record and never calls the gateway dispense path. Real dispense requires all safety gates: `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` configured, and request body `confirm_real_dispense=true`.
 
 ## Device endpoints
 

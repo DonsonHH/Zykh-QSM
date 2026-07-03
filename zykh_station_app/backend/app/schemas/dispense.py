@@ -9,6 +9,7 @@ class DispenseConfirmRequest(BaseModel):
     quantity: int = Field(ge=1)
     reason: str
     confirmed_safety_notice: bool
+    confirm_real_dispense: bool = False
 
 
 class DispenseConfirmResponse(BaseModel):

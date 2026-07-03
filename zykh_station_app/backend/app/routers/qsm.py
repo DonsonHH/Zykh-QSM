@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
-from ..config import settings
+from ..config import real_dispense_enabled, settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
 from ..repositories.vitals_repository import VitalsRecord, VitalsRepository
@@ -129,7 +129,7 @@ def qsm_capabilities() -> QsmCapabilitiesResponse:
     return QsmCapabilitiesResponse(
         camera=LocalCameraService().capabilities(),
         vitals="mock" if client.mode != "real" else ("available" if qsm.connected else "unavailable"),
-        dispense="dry_run" if settings.dispense_dry_run else ("available" if qsm.connected else "unavailable"),
+        dispense="available" if real_dispense_enabled() and qsm.connected else "dry_run",
         voice=qsm.devices.get("voice", "unavailable"),
         qsm_connected=qsm.connected,
         mode=client.mode,

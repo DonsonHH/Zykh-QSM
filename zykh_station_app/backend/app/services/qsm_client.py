@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import socket
 from typing import Any
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from ..config import settings
+from ..config import real_dispense_enabled, settings
 from ..schemas.qsm import QsmStatus
 from .local_camera import LocalCameraService
 
@@ -37,10 +38,10 @@ class QsmClient:
 
         connected = bool(payload.get("ok", True))
         devices = self.get_device_status(payload)
-        vitals = self.read_vitals() if connected else self._unavailable_vitals()
-        vitals_status = "available" if vitals.get("source") == "real" else "fallback"
+        vitals = self._unavailable_vitals()
+        vitals_status = devices.get("vitals", "available" if connected else "unavailable")
         camera_status = str(devices.get("camera", "reserved"))
-        dispense_status = "dry-run" if settings.dispense_dry_run else str(devices.get("dispense", "reserved"))
+        dispense_status = "ready" if real_dispense_enabled() else "dry-run"
         device_status = self._device_label(connected, vitals_status, camera_status)
         error_message = None if connected else "外设网关返回不可用状态。"
 
@@ -63,15 +64,18 @@ class QsmClient:
     def read_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
             return {"temperature_c": 35.7, "heart_rate": None, "spo2": None, "source": "mock"}
-        payload, error = self._request_json(settings.qsm_vitals_all_path, method="POST")
-        if error:
-            payload, error = self._request_json(settings.qsm_vitals_path, method="POST")
-        if error:
-            temp_payload, temp_error = self._request_json(settings.qsm_temp_path, method="POST")
-            if temp_error:
-                return self._unavailable_vitals(error)
-            return self._parse_vitals(temp_payload, partial=True)
-        return self._parse_vitals(payload)
+        last_error = ""
+        for path, partial in (
+            (settings.qsm_vitals_all_path, False),
+            (settings.qsm_vitals_path, False),
+            (settings.qsm_temp_path, True),
+        ):
+            for method in ("POST", "GET"):
+                payload, error = self._request_json(path, method=method, body_format="auto")
+                if not error:
+                    return self._parse_vitals(payload, partial=partial)
+                last_error = error
+        return self._unavailable_vitals(last_error)
 
     def read_temperature(self) -> dict[str, Any]:
         if self.mode != "real":
@@ -85,17 +89,15 @@ class QsmClient:
         vitals = payload.get("vitals") or payload
         temperature_payload = payload.get("temperature") if isinstance(payload.get("temperature"), dict) else {}
         if isinstance(vitals, dict):
-            temperature = (
-                vitals.get("temperature")
-                or vitals.get("temperature_c")
-                or vitals.get("temp")
-                or vitals.get("body_temp_c")
-                or temperature_payload.get("body_temp_c")
+            temperature = self._first_present(
+                vitals,
+                ("temperature", "temperature_c", "temp", "body_temp_c"),
+                fallback=self._first_present(temperature_payload, ("body_temp_c",)),
             )
             return {
                 "temperature_c": temperature,
-                "heart_rate": vitals.get("heart_rate") or vitals.get("hr"),
-                "spo2": vitals.get("spo2") or vitals.get("blood_oxygen"),
+                "heart_rate": self._first_present(vitals, ("heart_rate", "hr")),
+                "spo2": self._first_present(vitals, ("spo2", "blood_oxygen")),
                 "source": "real",
                 "partial": partial,
                 "raw": payload,
@@ -114,7 +116,7 @@ class QsmClient:
             return {
                 "camera": "reserved",
                 "vitals": "unavailable",
-                "dispense": "dry-run" if settings.dispense_dry_run else "ready",
+                "dispense": "ready" if real_dispense_enabled() else "dry-run",
                 "voice": "reserved",
             }
         devices = payload.get("devices") if isinstance(payload.get("devices"), dict) else {}
@@ -123,7 +125,7 @@ class QsmClient:
         return {
             "camera": str(camera),
             "vitals": str(vitals),
-            "dispense": "dry-run" if settings.dispense_dry_run else "ready",
+            "dispense": "ready" if real_dispense_enabled() else "dry-run",
             "voice": str(devices.get("voice") or "reserved"),
         }
 
@@ -141,7 +143,12 @@ class QsmClient:
             }
         if self.mode != "real":
             return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": "QSM real 模式未启用。"}
-        payload, error = self._request_json(settings.qsm_dispense_path, method="POST", payload={"slot": slot, "quantity": quantity})
+        payload, error = self._request_json(
+            settings.qsm_dispense_path,
+            method="POST",
+            payload={"slot": slot, "quantity": quantity},
+            body_format="auto",
+        )
         if error:
             return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": error}
         ok = bool(payload.get("ok", payload.get("result") == "success"))
@@ -166,7 +173,7 @@ class QsmClient:
     def _qsm_action(self, path: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
         if self.mode != "real":
             return {"ok": False, "mode": self.mode, "error_message": f"{label}需要 QSM real 模式。"}
-        data, error = self._request_json(path, method="POST", payload=payload)
+        data, error = self._request_json(path, method="POST", payload=payload, body_format="auto")
         if error:
             return {"ok": False, "mode": "real", "error_message": error}
         data.setdefault("ok", True)
@@ -178,17 +185,40 @@ class QsmClient:
         path: str,
         method: str = "GET",
         payload: dict[str, Any] | None = None,
+        body_format: str = "form",
+    ) -> tuple[dict[str, Any], str | None]:
+        formats = ["none"] if method == "GET" else ([body_format] if body_format in {"form", "json"} else ["form", "json"])
+        errors: list[str] = []
+        for item in formats:
+            result, error = self._single_request_json(path, method=method, payload=payload, body_format=item)
+            if not error:
+                return result, None
+            errors.append(error)
+        return {}, errors[-1] if errors else "外设网关请求失败。"
+
+    def _single_request_json(
+        self,
+        path: str,
+        method: str,
+        payload: dict[str, Any] | None,
+        body_format: str,
     ) -> tuple[dict[str, Any], str | None]:
         try:
             data = None
             headers: dict[str, str] = {}
             if method != "GET":
-                body = urlencode(payload or {}).encode("utf-8")
+                if body_format == "json":
+                    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+                    headers["Content-Type"] = "application/json"
+                else:
+                    body = urlencode(payload or {}).encode("utf-8")
+                    headers["Content-Type"] = "application/x-www-form-urlencoded"
                 data = body
-                headers["Content-Type"] = "application/x-www-form-urlencoded"
             request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
             with urlopen(request, timeout=settings.qsm_timeout_seconds) as res:
                 body = res.read().decode("utf-8")
+            if not body:
+                return {}, "外设网关返回空响应。"
             payload = json.loads(body) if body else {}
             if isinstance(payload, dict):
                 return payload, None
@@ -197,10 +227,17 @@ class QsmClient:
             return {}, f"外设网关 HTTP {exc.code}"
         except URLError as exc:
             return {}, f"外设网关连接失败：{exc.reason}"
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             return {}, "外设网关连接超时。"
         except (OSError, json.JSONDecodeError) as exc:
             return {}, f"外设网关暂不可用：{exc}"
+
+    @staticmethod
+    def _first_present(payload: dict[str, Any], keys: tuple[str, ...], fallback: Any = None) -> Any:
+        for key in keys:
+            if key in payload and payload[key] is not None:
+                return payload[key]
+        return fallback
 
     def _real_unavailable(self, error_message: str) -> QsmStatus:
         devices = self.get_device_status()

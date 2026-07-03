@@ -70,7 +70,7 @@ Returns a single medicine detail.
 
 ### POST /api/dispense/confirm
 
-Requires the safety notice confirmation flag, writes a local 取药确认 record and, when `DISPENSE_DRY_RUN=false`, calls the QSM dispense path with the resolved hardware slot. If the gateway fails, the endpoint returns a structured failure and keeps the local record.
+Requires the safety notice confirmation flag and writes a local 取药确认 record. It calls the QSM dispense path only when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` matches the selected slot, and request body `confirm_real_dispense=true`.
 
 ### GET /api/dispense/records
 

@@ -24,7 +24,7 @@ The gateway adapter supports:
 - `QSM_MODE=mock`: stable local demo data.
 - `QSM_MODE=real`: HTTP calls to `QSM_BASE_URL`, default `http://127.0.0.1:18080`.
 - structured failure responses when the gateway is unavailable.
-- `DISPENSE_DRY_RUN=false` as the phase-eight real-device default, with local records kept for every confirmation.
+- `DISPENSE_DRY_RUN=true` as the safe default, with a separate `ENABLE_REAL_DISPENSE=1` gate for controlled physical dispense tests.
 
 Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Failed real calls are not replaced by fake success data.
 

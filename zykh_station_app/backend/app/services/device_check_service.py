@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..config import settings
+from ..config import real_dispense_enabled, settings
 from ..schemas.device import DeviceCheckResponse
 from .local_camera import LocalCameraService
 from .qsm_client import QsmClient
@@ -40,9 +40,9 @@ class DeviceCheckService:
         if not local_camera_ok:
             warnings.append("本机摄像头暂不可用。")
             recommendations.append("请检查本机摄像头模式、设备编号和摄像头连接。")
-        if settings.dispense_dry_run:
+        if not real_dispense_enabled():
             warnings.append("取药当前为 dry-run，未启用真实外设出药。")
-            recommendations.append("如需真实取药，请设置 DISPENSE_DRY_RUN=false 并先确认安全仓位。")
+            recommendations.append("真实出药必须同时设置 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1 和安全测试仓位。")
         if not recommendations:
             recommendations.append("系统检查通过，可以继续真实外设流程。")
 
@@ -56,7 +56,7 @@ class DeviceCheckService:
             local_camera_ok=local_camera_ok,
             local_camera_mode=str(camera.get("mode", settings.local_camera_mode)),
             local_camera_status=str(camera.get("status", "unavailable")),
-            dispense_dry_run=settings.dispense_dry_run,
+            dispense_dry_run=not real_dispense_enabled(),
             errors=errors,
             warnings=warnings,
             recommendations=recommendations,

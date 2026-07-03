@@ -16,7 +16,7 @@ sh scripts/adb_forward.sh
 4. Start the backend:
 
 ```bash
-QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=false sh scripts/start_backend.sh
+QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=true sh scripts/start_backend.sh
 ```
 
 5. Start the frontend:
@@ -69,7 +69,7 @@ curl http://127.0.0.1:8000/api/device/check
 4. Verify the inquiry page returns rules fallback results.
 5. Verify the Scan page can show the host-camera capture state.
 6. Verify the records page shows local records and pending sync state.
-7. Confirm `REAL_DISPENSE_TEST_SLOT` before any physical dispense smoke.
+7. Physical dispense smoke is disabled unless `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` and request confirmation are all present.
 
 ## Expected Degradation
 
