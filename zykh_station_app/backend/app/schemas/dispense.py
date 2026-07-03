@@ -16,6 +16,7 @@ class DispenseConfirmResponse(BaseModel):
     dry_run: bool
     message: str
     record_id: str | None = None
+    qsm_detail: str | None = None
 
 
 class DispenseRecord(BaseModel):
@@ -23,11 +24,14 @@ class DispenseRecord(BaseModel):
     medicine_id: str
     medicine_name: str
     slot: str
+    hardware_slot: int = 0
     quantity: int
     unit: str
     reason: str
     dry_run: bool
     message: str
+    qsm_ok: bool = False
+    qsm_detail: str = ""
     created_at: str
 
 

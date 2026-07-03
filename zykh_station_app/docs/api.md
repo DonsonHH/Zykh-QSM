@@ -33,7 +33,7 @@ Updates the station profile fields used by the terminal.
 
 ### GET /api/dashboard
 
-Returns fixed first-stage homepage data:
+Returns the homepage data assembled from local SQLite records and gateway state:
 
 - site profile;
 - top status chips;
@@ -45,7 +45,7 @@ Returns fixed first-stage homepage data:
 
 ### GET /api/qsm/status
 
-Returns mock or real peripheral gateway status. Defaults to mock mode.
+Returns real or mock peripheral gateway status. Defaults to real mode.
 
 ### GET /api/device/check
 
@@ -55,7 +55,7 @@ Returns the demonstration readiness check:
 - QSM base URL;
 - QSM status and vitals readiness;
 - host camera readiness;
-- dry-run safety flag;
+- dispense safety flag;
 - errors, warnings and recommendations.
 
 The endpoint always returns HTTP 200 for expected missing-device cases so the terminal UI can degrade gracefully.
@@ -70,11 +70,11 @@ Returns a single medicine detail.
 
 ### POST /api/dispense/confirm
 
-Writes a local 取药确认 dry-run record. Requires the safety notice confirmation flag. It never triggers physical dispense while `DISPENSE_DRY_RUN=true`.
+Requires the safety notice confirmation flag, writes a local 取药确认 record and, when `DISPENSE_DRY_RUN=false`, calls the QSM dispense path with the resolved hardware slot. If the gateway fails, the endpoint returns a structured failure and keeps the local record.
 
 ### GET /api/dispense/records
 
-Returns local dry-run records.
+Returns local dispense confirmation records.
 
 ### POST /api/inquiry/evaluate
 
@@ -90,34 +90,27 @@ Returns recent inquiry results.
 
 ### GET /api/records/summary
 
-Returns local record counters for the records page.
+Returns local SQLite record counters for the records page.
 
 ### GET /api/records/recent
 
-Returns a compact list of recent local service records, including inquiry, dry-run, vitals and scan records.
+Returns a compact list of recent local service records, including inquiry, dispense, vitals and scan records.
 
 ### GET /api/sync/status
 
-Returns local mock sync state.
+Returns local sync state. If no cloud sync endpoint is configured, the state is `未配置` with pending local records.
 
-### POST /api/sync/mock
+### POST /api/sync/run
 
-Marks the local mock sync queue as synced. It does not call a real cloud service.
+Attempts a configured cloud sync. If no endpoint is configured, it returns HTTP 200 with a `未配置` message and does not mark records as synced.
 
 ### GET /api/qsm/vitals
 
-Reads vitals through the QSM adapter. Mock mode returns:
-
-- `temperature: 35.7`
-- `heart_rate: null`
-- `spo2: null`
-- `status: partial`
-
-Real mode returns HTTP 200 with `status=unavailable` when the peripheral gateway is unreachable.
+Reads vitals through the QSM adapter and stores successful/failed readings locally. Real mode tries all configured vitals paths and returns HTTP 200 with `status=unavailable` when the peripheral gateway is unreachable.
 
 ### POST /api/qsm/camera/capture
 
-Runs the scan/capture action used by the Scan page. With the latest hardware split, the backend uses the host-side camera seam rather than the peripheral gateway camera path. Mock mode returns a sample medicine recognition result.
+Compatibility endpoint for the Scan page. With the latest hardware split, the backend uses the host-side camera seam rather than the peripheral gateway camera path. Real capture failures return the actual command/device error and do not create fake medicine results.
 
 ### POST /api/qsm/dispense/dry-run
 
@@ -144,3 +137,39 @@ Returns current peripheral capability states:
 - voice;
 - QSM connection state;
 - mode.
+
+### POST /api/vitals/read-all
+
+Reads all available vitals through QSM. It prefers `QSM_VITALS_ALL_PATH`, then falls back to `QSM_VITALS_PATH` and `QSM_TEMP_PATH`.
+
+### POST /api/camera/capture
+
+Captures one image from the host-side camera using `LOCAL_CAMERA_DEVICE`. The response includes image availability, image path when available and a structured error on failure.
+
+### POST /api/medicine/scan
+
+Captures an image, tries local barcode decoding, then Qwen visual recognition when configured. If both fail, it returns `manual_required` instead of a fake match.
+
+### POST /api/medicine/visual-recognize
+
+Runs the visual recognition fallback against an existing image path.
+
+### POST /api/audio/asr
+
+Calls the QSM audio ASR path and returns recognized text or a structured gateway error.
+
+### POST /api/audio/speak
+
+Calls the QSM speech path with text.
+
+### POST /api/audio/beep
+
+Calls the QSM beep path.
+
+### POST /api/ai/chat
+
+Calls the configured DeepSeek-compatible cloud endpoint when a key is available. Without a key or network, it returns a local rules fallback response with `source=local_fallback`.
+
+### POST /api/ai/chat/stream
+
+Streams the same AI response as server-sent events.

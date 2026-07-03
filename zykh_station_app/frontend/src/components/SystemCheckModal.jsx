@@ -70,8 +70,8 @@ export function SystemCheckModal({ open, syncLabel, onClose, notify }) {
     {
       icon: ShieldCheck,
       label: "出药控制",
-      value: check.dispense_dry_run ? "dry-run" : "需检查",
-      ok: check.dispense_dry_run
+      value: check.dispense_dry_run ? "dry-run" : "真实联动",
+      ok: !check.dispense_dry_run
     },
     {
       icon: CheckCircle2,
@@ -93,7 +93,7 @@ export function SystemCheckModal({ open, syncLabel, onClose, notify }) {
             {loading ? <Loader2 size={32} className="spin-icon" /> : <Activity size={32} />}
           </span>
           <div>
-            <p>演示前检查</p>
+            <p>外设检查</p>
             <h2 id="system-check-title">系统检查</h2>
           </div>
         </div>
@@ -121,7 +121,7 @@ export function SystemCheckModal({ open, syncLabel, onClose, notify }) {
                 ))}
               </ul>
             ) : (
-              <p>当前检查项可用于演示。</p>
+              <p>当前检查项可用于真实外设流程。</p>
             )}
           </div>
           <div>

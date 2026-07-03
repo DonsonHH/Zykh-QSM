@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class Medicine(BaseModel):
     id: str
     slot: str
+    hardware_slot: int = 0
+    barcode: str = ""
     name: str
     category: str
     tags: list[str]
@@ -30,3 +32,39 @@ class MedicineListResponse(BaseModel):
 class MedicineDetailResponse(BaseModel):
     ok: bool = True
     medicine: Medicine
+
+
+class MedicineScanRequest(BaseModel):
+    mode: str = "药品识别"
+    manual_code: str | None = None
+
+
+class MedicineScanResult(BaseModel):
+    ok: bool
+    status: str
+    image_path: str | None = None
+    image_url: str | None = None
+    barcode: str | None = None
+    medicine_id: str | None = None
+    name: str | None = None
+    match_percent: int | None = None
+    spec: str | None = None
+    quantity: str | None = None
+    expire_date: str | None = None
+    slot: str | None = None
+    source: str = "local"
+    error_message: str | None = None
+
+
+class MedicineVisualRecognizeRequest(BaseModel):
+    image_path: str | None = None
+
+
+class MedicineVisualRecognizeResponse(BaseModel):
+    ok: bool
+    source: str
+    raw_text: str | None = None
+    barcode: str | None = None
+    name: str | None = None
+    expire_date: str | None = None
+    error_message: str | None = None

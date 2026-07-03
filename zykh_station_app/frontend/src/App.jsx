@@ -12,12 +12,14 @@ import { Records } from "./pages/Records.jsx";
 import { Scan } from "./pages/Scan.jsx";
 
 export function App() {
-  const [page, setPage] = useState("home");
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialPage = initialParams.get("page") || "home";
+  const [page, setPage] = useState(initialPage);
   const [dashboard, setDashboard] = useState(mockDashboard);
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
-  const [systemCheckOpen, setSystemCheckOpen] = useState(false);
+  const [systemCheckOpen, setSystemCheckOpen] = useState(initialParams.get("systemCheck") === "1");
   const toastTimerRef = useRef(null);
 
   useEffect(() => {

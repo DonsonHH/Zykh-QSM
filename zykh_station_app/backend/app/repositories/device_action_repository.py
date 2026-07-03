@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from pydantic import BaseModel
 
-from ..config import DATA_DIR
+from .. import db
 
 
 class DeviceActionRecord(BaseModel):
@@ -16,25 +13,41 @@ class DeviceActionRecord(BaseModel):
     description: str
     target_user: str = "站点"
     status: str = "已记录"
+    sync_status: str = "待同步"
 
 
 class DeviceActionRepository:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or DATA_DIR / "device_action_records.json"
-
     def list_records(self) -> list[DeviceActionRecord]:
-        if not self.path.exists():
-            return []
-        with self.path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-        if not isinstance(payload, list):
-            return []
-        return [DeviceActionRecord(**item) for item in payload]
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, type, title, description, target_user, status, sync_status
+                FROM device_action_records
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [DeviceActionRecord(**dict(row)) for row in rows]
 
     def append(self, record: DeviceActionRecord) -> DeviceActionRecord:
-        records = self.list_records()
-        records.insert(0, record)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as file:
-            json.dump([item.model_dump() for item in records], file, ensure_ascii=False, indent=2)
+        db.init_db()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO device_action_records(
+                  id, created_at, type, title, description, target_user, status, sync_status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.created_at,
+                    record.type,
+                    record.title,
+                    record.description,
+                    record.target_user,
+                    record.status,
+                    record.sync_status,
+                ),
+            )
         return record

@@ -7,6 +7,7 @@ from ..db import now_text
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.dispense import DispenseConfirmRequest, DispenseConfirmResponse, DispenseRecord
+from .qsm_client import QsmClient
 
 
 class DispenseError(Exception):
@@ -21,11 +22,13 @@ class DispenseService:
         self,
         medicine_repository: MedicineRepository | None = None,
         dispense_repository: DispenseRepository | None = None,
+        qsm_client: QsmClient | None = None,
     ) -> None:
         self.medicine_repository = medicine_repository or MedicineRepository()
         self.dispense_repository = dispense_repository or DispenseRepository()
+        self.qsm_client = qsm_client or QsmClient()
 
-    def confirm(self, request: DispenseConfirmRequest) -> DispenseConfirmResponse:
+    def confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
         medicine = self.medicine_repository.get_by_id(request.medicine_id)
         if medicine is None:
             raise DispenseError("未找到该药品。", status_code=404)
@@ -35,25 +38,48 @@ class DispenseService:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
         if request.quantity > medicine.stock:
             raise DispenseError("库存不足，无法完成取药确认。")
-        if settings.dispense_dry_run is not True:
-            raise DispenseError("第二阶段仅支持 dry-run 取药确认，真实出药尚未启用。", status_code=409)
+        dry_run = settings.dispense_dry_run is True if force_dry_run is None else force_dry_run
+        qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
+        qsm_ok = bool(qsm_result.get("ok"))
+        qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
+        if not dry_run and not qsm_ok:
+            message = f"外设出药失败：{qsm_detail or '未返回成功状态'}"
+            record = self._build_record(request, medicine, dry_run, message, qsm_ok=False, qsm_detail=qsm_detail)
+            self.dispense_repository.append(record)
+            return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
-        record_id = f"dryrun-{uuid4().hex[:12]}"
-        message = "dry-run 已记录，本阶段不会真实出药。"
-        record = DispenseRecord(
+        message = "dry-run 已记录，本阶段不会真实出药。" if dry_run else "取药确认已完成，外设已返回成功状态。"
+        record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
+        self.dispense_repository.append(record)
+        if not dry_run:
+            self.medicine_repository.decrement_stock(medicine.id, request.quantity)
+        return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
+
+    def list_records(self) -> list[DispenseRecord]:
+        return self.dispense_repository.list_records()
+
+    @staticmethod
+    def _build_record(
+        request: DispenseConfirmRequest,
+        medicine,
+        dry_run: bool,
+        message: str,
+        qsm_ok: bool,
+        qsm_detail: str,
+    ) -> DispenseRecord:
+        record_id = f"{'dryrun' if dry_run else 'dispense'}-{uuid4().hex[:12]}"
+        return DispenseRecord(
             id=record_id,
             medicine_id=medicine.id,
             medicine_name=medicine.name,
             slot=medicine.slot,
+            hardware_slot=medicine.hardware_slot,
             quantity=request.quantity,
             unit=medicine.unit,
             reason=request.reason,
-            dry_run=True,
+            dry_run=dry_run,
             message=message,
+            qsm_ok=qsm_ok,
+            qsm_detail=qsm_detail,
             created_at=now_text(),
         )
-        self.dispense_repository.append(record)
-        return DispenseConfirmResponse(ok=True, dry_run=True, message=message, record_id=record_id)
-
-    def list_records(self) -> list[DispenseRecord]:
-        return self.dispense_repository.list_records()

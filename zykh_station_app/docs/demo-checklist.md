@@ -1,6 +1,6 @@
-# Demo Checklist
+# Device Acceptance Checklist
 
-Use this checklist before a live demonstration.
+Use this checklist before live hardware acceptance or a public run-through.
 
 ## Device And App Startup
 
@@ -16,13 +16,7 @@ sh scripts/adb_forward.sh
 4. Start the backend:
 
 ```bash
-QSM_MODE=mock DISPENSE_DRY_RUN=true sh scripts/start_backend.sh
-```
-
-For real-device checks:
-
-```bash
-QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=true sh scripts/start_backend.sh
+QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=false sh scripts/start_backend.sh
 ```
 
 5. Start the frontend:
@@ -64,21 +58,22 @@ curl http://127.0.0.1:8000/api/device/check
 - external gateway connection state;
 - host camera state;
 - vitals module state;
-- dispense control: dry-run;
+- dispense control: real linkage or dry-run, matching the environment;
 - sync state.
 
 ## Workflow Verification
 
 1. Verify the homepage loads with today medication and emergency inquiry cards.
 2. Verify the medicines page loads inventory.
-3. Complete a 取药确认 dry-run and confirm no physical dispense occurs.
+3. Open the medicines page and inspect the 取药确认 modal. Do not submit physical dispense unless the safe test slot has been agreed.
 4. Verify the inquiry page returns rules fallback results.
-5. Verify the Scan page can show the host-camera mock or real capture state.
+5. Verify the Scan page can show the host-camera capture state.
 6. Verify the records page shows local records and pending sync state.
-7. Confirm `DISPENSE_DRY_RUN=true` before every demo.
+7. Confirm `REAL_DISPENSE_TEST_SLOT` before any physical dispense smoke.
 
 ## Expected Degradation
 
 - If the external gateway is unavailable in real mode, the UI should stay usable and show the gateway as not connected.
-- If the host camera is unavailable in real mode, the Scan page should stay usable and allow mock/manual verification.
-- If the network is weak or unavailable, records remain local and can be shown as pending sync.
+- If the host camera is unavailable in real mode, the Scan page should stay usable and allow manual verification.
+- If recognition fails, the Scan page should request manual confirmation rather than filling a fake medicine.
+- If the network is weak or unavailable, records remain local and can be shown as pending sync or not configured.

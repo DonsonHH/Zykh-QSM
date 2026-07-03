@@ -1730,9 +1730,22 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.empty-list-note {
+  min-height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #c9d9ea;
+  border-radius: 18px;
+  background: #f8fbff;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 850;
+  text-align: center;
+}
+
 .recent-record-row {
   min-width: 0;
-  min-height: 56px;
+  min-height: 48px;
   display: grid;
   grid-template-columns: 42px 52px 1fr 66px;
   align-items: center;
@@ -1740,7 +1753,7 @@ a:focus-visible {
   border: 1px solid #e3edf8;
   border-radius: 18px;
   background: var(--surface-soft);
-  padding: 8px 10px;
+  padding: 5px 10px;
 }
 
 .recent-record-row time {
@@ -1756,13 +1769,14 @@ a:focus-visible {
 }
 
 .recent-record-row p {
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .recent-record-row small {
-  margin-top: 4px;
+  display: none;
 }
 
 .recent-record-row em {
@@ -1792,8 +1806,18 @@ a:focus-visible {
   gap: 14px;
 }
 
+.today-plan-panel {
+  grid-template-rows: 42px 1fr;
+  gap: 8px;
+}
+
+.today-plan-list,
+.recent-record-list {
+  overflow: hidden;
+}
+
 .today-plan-list article {
-  min-height: 44px;
+  min-height: 36px;
   display: grid;
   grid-template-columns: 58px 1fr 26px;
   align-items: center;
@@ -1801,7 +1825,7 @@ a:focus-visible {
   border: 1px solid #e3edf8;
   border-radius: 16px;
   background: var(--surface-soft);
-  padding: 8px 10px;
+  padding: 5px 9px;
 }
 
 .today-plan-list article.done {
@@ -1825,9 +1849,9 @@ a:focus-visible {
 
 .today-plan-list span {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 850;
 }
 
@@ -1837,8 +1861,9 @@ a:focus-visible {
 
 .sync-status-card {
   display: grid;
-  grid-template-rows: 42px 1fr 56px;
-  gap: 12px;
+  grid-template-rows: 36px 1fr 50px;
+  gap: 8px;
+  padding: 14px;
 }
 
 .sync-status-meta {
@@ -1857,7 +1882,7 @@ a:focus-visible {
   border-radius: 15px;
   background: var(--surface-soft);
   color: var(--muted);
-  padding: 8px 10px;
+  padding: 6px 9px;
   font-size: 14px;
   line-height: 1.1;
   font-weight: 850;
@@ -1868,11 +1893,11 @@ a:focus-visible {
   justify-content: center;
   background: #fff7ed;
   color: #8a4708;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .sync-status-card button {
-  min-height: 56px;
+  min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

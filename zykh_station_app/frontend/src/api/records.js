@@ -12,6 +12,14 @@ export function loadSyncStatus() {
   return apiGet("/api/sync/status");
 }
 
-export function runMockSync() {
-  return apiPost("/api/sync/mock", {});
+export function runSync() {
+  return apiPost("/api/sync/run", {});
+}
+
+export function loadServiceUsers() {
+  return apiGet("/api/records/service-users");
+}
+
+export function loadTodayPlans() {
+  return apiGet("/api/records/today-plans");
 }

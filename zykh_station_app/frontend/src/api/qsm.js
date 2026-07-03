@@ -5,11 +5,15 @@ export function loadQsmStatus() {
 }
 
 export function loadQsmVitals() {
-  return apiGet("/api/qsm/vitals");
+  return apiPost("/api/vitals/read-all", {});
 }
 
 export function captureQsmCamera() {
-  return apiPost("/api/qsm/camera/capture", {});
+  return apiPost("/api/camera/capture", {});
+}
+
+export function scanMedicine(payload = {}) {
+  return apiPost("/api/medicine/scan", payload);
 }
 
 export function dryRunQsmDispense(payload) {

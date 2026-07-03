@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from .. import db
 from ..schemas.medicine import Medicine
 
 
@@ -7,6 +10,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "aspirin-enteric",
         "slot": "A01",
+        "hardware_slot": 1,
+        "barcode": "",
         "name": "阿司匹林肠溶片",
         "category": "慢病常用",
         "tags": ["心脑血管", "长期管理"],
@@ -22,6 +27,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "nifedipine-controlled",
         "slot": "A02",
+        "hardware_slot": 2,
+        "barcode": "",
         "name": "硝苯地平控释片",
         "category": "慢病常用",
         "tags": ["血压管理", "控释片"],
@@ -37,6 +44,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "ibuprofen-sustained",
         "slot": "B01",
+        "hardware_slot": 3,
+        "barcode": "",
         "name": "布洛芬缓释胶囊",
         "category": "感冒发热",
         "tags": ["发热", "疼痛"],
@@ -52,6 +61,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "lianhua-qingwen",
         "slot": "B02",
+        "hardware_slot": 4,
+        "barcode": "6901070303888",
         "name": "连花清瘟胶囊",
         "category": "感冒发热",
         "tags": ["感冒", "咽痛"],
@@ -67,6 +78,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "montmorillonite-powder",
         "slot": "C01",
+        "hardware_slot": 5,
+        "barcode": "",
         "name": "蒙脱石散",
         "category": "肠胃",
         "tags": ["腹泻", "肠胃"],
@@ -82,6 +95,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "loratadine-tablet",
         "slot": "D01",
+        "hardware_slot": 6,
+        "barcode": "",
         "name": "氯雷他定片",
         "category": "过敏",
         "tags": ["过敏", "鼻炎"],
@@ -97,6 +112,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "iodophor-swab",
         "slot": "E01",
+        "hardware_slot": 7,
+        "barcode": "",
         "name": "碘伏棉签",
         "category": "外伤消毒",
         "tags": ["外伤", "消毒"],
@@ -112,6 +129,8 @@ DEFAULT_MEDICINES = [
     {
         "id": "adhesive-bandage",
         "slot": "E02",
+        "hardware_slot": 8,
+        "barcode": "",
         "name": "创可贴",
         "category": "外伤消毒",
         "tags": ["外伤", "包扎"],
@@ -129,7 +148,114 @@ DEFAULT_MEDICINES = [
 
 class MedicineRepository:
     def list_all(self) -> list[Medicine]:
-        return [Medicine(**item) for item in DEFAULT_MEDICINES]
+        self._ensure_seeded()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                       contraindications_json, stock, unit, expire_date, image_hint,
+                       is_otc, is_emergency, safety_note
+                FROM medicines
+                ORDER BY hardware_slot, slot
+                """
+            ).fetchall()
+        return [self._row_to_medicine(row) for row in rows]
 
     def get_by_id(self, medicine_id: str) -> Medicine | None:
-        return next((medicine for medicine in self.list_all() if medicine.id == medicine_id), None)
+        self._ensure_seeded()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                       contraindications_json, stock, unit, expire_date, image_hint,
+                       is_otc, is_emergency, safety_note
+                FROM medicines
+                WHERE id=?
+                """,
+                (medicine_id,),
+            ).fetchone()
+        return self._row_to_medicine(row) if row else None
+
+    def get_by_barcode(self, barcode: str) -> Medicine | None:
+        self._ensure_seeded()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                       contraindications_json, stock, unit, expire_date, image_hint,
+                       is_otc, is_emergency, safety_note
+                FROM medicines
+                WHERE barcode=?
+                """,
+                (barcode,),
+            ).fetchone()
+        return self._row_to_medicine(row) if row else None
+
+    def decrement_stock(self, medicine_id: str, quantity: int) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=MAX(stock - ?, 0), updated_at=?
+                WHERE id=?
+                """,
+                (quantity, db.now_text(), medicine_id),
+            )
+
+    def _ensure_seeded(self) -> None:
+        db.init_db()
+        with db.connect() as conn:
+            count = conn.execute("SELECT COUNT(*) AS count FROM medicines").fetchone()["count"]
+            if count:
+                return
+            conn.executemany(
+                """
+                INSERT INTO medicines(
+                  id, slot, hardware_slot, barcode, name, category, tags_json,
+                  contraindications_json, stock, unit, expire_date, image_hint,
+                  is_otc, is_emergency, safety_note, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item["id"],
+                        item["slot"],
+                        int(item["hardware_slot"]),
+                        item["barcode"],
+                        item["name"],
+                        item["category"],
+                        json.dumps(item["tags"], ensure_ascii=False),
+                        json.dumps(item["contraindications"], ensure_ascii=False),
+                        int(item["stock"]),
+                        item["unit"],
+                        item["expire_date"],
+                        item["image_hint"],
+                        1 if item["is_otc"] else 0,
+                        1 if item["is_emergency"] else 0,
+                        item["safety_note"],
+                        db.now_text(),
+                    )
+                    for item in DEFAULT_MEDICINES
+                ],
+            )
+
+    @staticmethod
+    def _row_to_medicine(row: object) -> Medicine:
+        return Medicine(
+            id=row["id"],
+            slot=row["slot"],
+            hardware_slot=int(row["hardware_slot"]),
+            barcode=row["barcode"] or "",
+            name=row["name"],
+            category=row["category"],
+            tags=json.loads(row["tags_json"]),
+            contraindications=json.loads(row["contraindications_json"]),
+            stock=int(row["stock"]),
+            unit=row["unit"],
+            expire_date=row["expire_date"],
+            image_hint=row["image_hint"],
+            is_otc=bool(row["is_otc"]),
+            is_emergency=bool(row["is_emergency"]),
+            safety_note=row["safety_note"],
+        )

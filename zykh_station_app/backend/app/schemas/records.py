@@ -29,3 +29,30 @@ class RecordsSummaryResponse(BaseModel):
 class RecentRecordsResponse(BaseModel):
     ok: bool = True
     records: list[RecentRecord]
+
+
+class ServiceUser(BaseModel):
+    id: str
+    name: str
+    age: int
+    profile: str
+    note: str
+    status: str
+
+
+class ServiceUsersResponse(BaseModel):
+    ok: bool = True
+    users: list[ServiceUser]
+
+
+class TodayPlan(BaseModel):
+    id: str
+    time: str
+    medicine: str
+    status: str
+    target_user: str
+
+
+class TodayPlansResponse(BaseModel):
+    ok: bool = True
+    plans: list[TodayPlan]

@@ -35,7 +35,7 @@ export function MedicationSummaryCard({ medication, onOpenPlan }) {
         </span>
         <div>
           <strong>
-            下一条：{medication.featured_subject || "固定服务对象"} ·{" "}
+            下一条：{medication.featured_subject || "服务对象"} ·{" "}
             {medication.featured_medicine || "暂无计划"}
           </strong>
         </div>

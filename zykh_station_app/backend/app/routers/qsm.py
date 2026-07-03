@@ -4,8 +4,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
+from ..config import settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
+from ..repositories.vitals_repository import VitalsRecord, VitalsRepository
 from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.qsm import (
     QsmCameraCaptureResponse,
@@ -43,6 +45,18 @@ def qsm_vitals() -> QsmVitalsResponse:
         measured_at=now_text(),
         error_message=vitals.get("error_message") if isinstance(vitals.get("error_message"), str) else None,
     )
+    VitalsRepository().append(
+        VitalsRecord(
+            id=f"vitals-{uuid4().hex[:12]}",
+            temperature=response.temperature,
+            heart_rate=response.heart_rate,
+            spo2=response.spo2,
+            status=response.status,
+            source=str(vitals.get("source", client.mode)),
+            error_message=response.error_message or "",
+            measured_at=response.measured_at,
+        )
+    )
     DeviceActionRepository().append(
         DeviceActionRecord(
             id=f"device-{uuid4().hex[:12]}",
@@ -67,7 +81,7 @@ def qsm_camera_capture() -> QsmCameraCaptureResponse:
         image_available=bool(payload.get("image_available")),
         image_path=payload.get("image_path"),
         image_url=payload.get("image_url"),
-        mock_recognition_result=payload.get("mock_recognition_result"),
+        mock_recognition_result=None,
         error_message=payload.get("error_message"),
     )
     DeviceActionRepository().append(
@@ -95,7 +109,8 @@ def qsm_dispense_dry_run(request: QsmDryRunRequest) -> QsmDryRunResponse:
                 quantity=request.quantity,
                 reason=request.reason,
                 confirmed_safety_notice=True,
-            )
+            ),
+            force_dry_run=True,
         )
     except DispenseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -114,8 +129,8 @@ def qsm_capabilities() -> QsmCapabilitiesResponse:
     return QsmCapabilitiesResponse(
         camera=LocalCameraService().capabilities(),
         vitals="mock" if client.mode != "real" else ("available" if qsm.connected else "unavailable"),
-        dispense="dry_run",
-        voice="mock" if client.mode != "real" else qsm.devices.get("voice", "unavailable"),
+        dispense="dry_run" if settings.dispense_dry_run else ("available" if qsm.connected else "unavailable"),
+        voice=qsm.devices.get("voice", "unavailable"),
         qsm_connected=qsm.connected,
         mode=client.mode,
     )

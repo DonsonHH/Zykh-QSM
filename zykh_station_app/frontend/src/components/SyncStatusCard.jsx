@@ -19,7 +19,7 @@ export function SyncStatusCard({ syncStatus, syncing, onSync }) {
       </div>
       <button type="button" onClick={onSync} disabled={syncing || pending === 0}>
         <RefreshCw size={21} aria-hidden="true" />
-        {syncing ? "同步中..." : "模拟同步"}
+        {syncing ? "同步中..." : "尝试同步"}
       </button>
     </section>
   );

@@ -30,20 +30,21 @@ class DeviceCheckService:
 
         if qsm_status.mode == "real" and not qsm_status.connected:
             warnings.append("外设网关未连接。")
-            recommendations.append("请确认设备连接、端口转发和外设网关服务，或切回 mock 模式。")
+            recommendations.append("请确认设备连接、端口转发和外设网关服务。")
         if qsm_status.mode != "real":
-            recommendations.append("当前为 mock 演示模式，真实联调前请手动切换为 real 模式。")
+            warnings.append("当前未启用真实外设模式。")
+            recommendations.append("请设置 QSM_MODE=real。")
         if not vitals_ok:
             warnings.append("体征模块暂不可用。")
             recommendations.append("请检查体征外设和外设网关体征接口。")
         if not local_camera_ok:
             warnings.append("本机摄像头暂不可用。")
             recommendations.append("请检查本机摄像头模式、设备编号和摄像头连接。")
-        if not settings.dispense_dry_run:
-            errors.append("DISPENSE_DRY_RUN 未开启。")
-            recommendations.append("演示和联调阶段请保持 DISPENSE_DRY_RUN=true。")
+        if settings.dispense_dry_run:
+            warnings.append("取药当前为 dry-run，未启用真实外设出药。")
+            recommendations.append("如需真实取药，请设置 DISPENSE_DRY_RUN=false 并先确认安全仓位。")
         if not recommendations:
-            recommendations.append("系统检查通过，可以继续演示主流程。")
+            recommendations.append("系统检查通过，可以继续真实外设流程。")
 
         return DeviceCheckResponse(
             ok=len(errors) == 0,

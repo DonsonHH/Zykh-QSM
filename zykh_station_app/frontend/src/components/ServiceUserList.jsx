@@ -1,21 +1,15 @@
 import React from "react";
 import { UserRound } from "lucide-react";
 
-const serviceUsers = [
-  { id: "zhangsan", name: "张三", age: 65, profile: "高血压", note: "今日有计划", status: "重点关注" },
-  { id: "lisi", name: "李四", age: 72, profile: "糖尿病", note: "随访对象", status: "随访" },
-  { id: "wangwu", name: "王五", age: 58, profile: "长期胃病", note: "近期有问询", status: "观察" }
-];
-
-export function ServiceUserList() {
+export function ServiceUserList({ users = [] }) {
   return (
     <section className="records-panel service-users-panel">
       <div className="records-panel-heading">
-        <p>固定服务对象</p>
+        <p>服务对象</p>
         <h2>服务对象</h2>
       </div>
       <div className="service-user-list">
-        {serviceUsers.map((user) => (
+        {users.map((user) => (
           <article key={user.id} className="service-user-card">
             <span className="service-user-icon" aria-hidden="true">
               <UserRound size={24} />
@@ -30,6 +24,7 @@ export function ServiceUserList() {
             <em>{user.status}</em>
           </article>
         ))}
+        {users.length === 0 && <p className="empty-list-note">暂无服务对象记录</p>}
       </div>
     </section>
   );

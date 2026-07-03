@@ -1,22 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, BadgeCheck, Camera, CheckCircle2, Keyboard, Pill, RotateCcw, ScanLine } from "lucide-react";
-import { captureQsmCamera, loadQsmCapabilities } from "../api/qsm.js";
+import { loadQsmCapabilities, scanMedicine } from "../api/qsm.js";
 
 const scanModes = ["药品识别", "站点码", "取药确认"];
 
-const emptyResult = {
-  name: "连花清瘟胶囊",
-  match_percent: 98,
-  barcode: "6901070303888",
-  spec: "24粒/盒",
-  quantity: "18盒",
-  expire_date: "2026-12-20",
-  slot: "B02"
-};
-
 export function Scan({ notify, onNavigate }) {
   const [activeMode, setActiveMode] = useState(scanModes[0]);
-  const [cameraStatus, setCameraStatus] = useState("mock");
+  const [cameraStatus, setCameraStatus] = useState("checking");
   const [result, setResult] = useState(null);
   const [capturing, setCapturing] = useState(false);
 
@@ -28,15 +18,15 @@ export function Scan({ notify, onNavigate }) {
 
   function handleCapture() {
     setCapturing(true);
-    captureQsmCamera()
+    scanMedicine({ mode: activeMode })
       .then((data) => {
-        setCameraStatus(data.status || "unavailable");
-        if (data.status === "unavailable" || data.ok === false) {
+        setCameraStatus(data.ok ? "available" : data.status || "unavailable");
+        if (data.ok === false) {
           setResult(null);
-          notify("摄像头暂不可用，可手动输入条码完成核验");
+          notify(data.error_message || "未识别到药品信息，请人工核验");
           return;
         }
-        setResult(data.mock_recognition_result || emptyResult);
+        setResult(data);
         notify("识别结果已生成，请人工核验");
       })
       .catch(() => {
@@ -48,8 +38,21 @@ export function Scan({ notify, onNavigate }) {
   }
 
   function handleManualInput() {
-    setResult(emptyResult);
-    notify("已载入手动核验示例，请继续人工确认");
+    const manualCode = window.prompt("请输入药品条码");
+    if (!manualCode) {
+      return;
+    }
+    scanMedicine({ manual_code: manualCode.trim(), mode: activeMode })
+      .then((data) => {
+        if (data.ok === false) {
+          setResult({ barcode: manualCode.trim(), name: "待人工核验", match_percent: 0, spec: "--", quantity: "--", expire_date: "--", slot: "--" });
+          notify(data.error_message || "条码未匹配，请人工核验");
+          return;
+        }
+        setResult(data);
+        notify("条码已匹配，请人工核验");
+      })
+      .catch((error) => notify(error.message || "手动核验失败"));
   }
 
   return (
@@ -82,11 +85,19 @@ export function Scan({ notify, onNavigate }) {
           <span aria-hidden="true">
             {cameraStatus === "unavailable" ? <ScanLine size={54} /> : <Camera size={58} />}
           </span>
-          <strong>{cameraStatus === "unavailable" ? "摄像头暂不可用" : "摄像头入口已就绪"}</strong>
+          <strong>
+            {cameraStatus === "checking"
+              ? "正在检查摄像头"
+              : cameraStatus === "unavailable"
+                ? "摄像头暂不可用"
+                : "摄像头入口已就绪"}
+          </strong>
           <p>
-            {cameraStatus === "unavailable"
-              ? "可手动输入条码，或从记录中完成核验。"
-              : `当前模式：${activeMode}，拍照后请人工确认识别结果。`}
+            {cameraStatus === "checking"
+              ? "请稍候，正在读取本机摄像头状态。"
+              : cameraStatus === "unavailable"
+                ? "可手动输入条码，或从记录中完成核验。"
+                : `当前模式：${activeMode}，拍照后请人工确认识别结果。`}
           </p>
         </div>
 
@@ -129,28 +140,28 @@ export function Scan({ notify, onNavigate }) {
             <div className="match-card">
               <Pill size={28} aria-hidden="true" />
               <span>匹配度</span>
-              <strong>{result.match_percent}%</strong>
+              <strong>{result.match_percent ?? 0}%</strong>
             </div>
             <div className="scan-meta-grid">
               <article>
                 <span>条码</span>
-                <strong>{result.barcode}</strong>
+                <strong>{result.barcode || "--"}</strong>
               </article>
               <article>
                 <span>规格</span>
-                <strong>{result.spec}</strong>
+                <strong>{result.spec || "--"}</strong>
               </article>
               <article>
                 <span>数量</span>
-                <strong>{result.quantity}</strong>
+                <strong>{result.quantity || "--"}</strong>
               </article>
               <article>
                 <span>有效期</span>
-                <strong>{result.expire_date}</strong>
+                <strong>{result.expire_date || "--"}</strong>
               </article>
               <article>
                 <span>仓位</span>
-                <strong>{result.slot}</strong>
+                <strong>{result.slot || "--"}</strong>
               </article>
             </div>
           </>

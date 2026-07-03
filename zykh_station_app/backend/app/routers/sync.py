@@ -16,3 +16,8 @@ def sync_status() -> SyncStatus:
 @router.post("/mock", response_model=SyncMockResponse)
 def mock_sync() -> SyncMockResponse:
     return SyncService().mock_sync()
+
+
+@router.post("/run", response_model=SyncMockResponse)
+def run_sync() -> SyncMockResponse:
+    return SyncService().mock_sync()

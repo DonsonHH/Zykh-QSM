@@ -3,7 +3,7 @@ import { Activity, Mic, SearchCheck } from "lucide-react";
 
 const scenes = ["村镇", "家庭", "高原", "景区"];
 
-export function InquiryForm({ form, submitting, onChange, onSubmit, onPlaceholder }) {
+export function InquiryForm({ form, submitting, readingVitals, listening, onChange, onSubmit, onReadVitals, onVoiceInput }) {
   function updateField(field, value) {
     onChange({ ...form, [field]: value });
   }
@@ -70,19 +70,17 @@ export function InquiryForm({ form, submitting, onChange, onSubmit, onPlaceholde
       </label>
 
       <div className="inquiry-tool-row">
-        <button type="button" onClick={() => onPlaceholder("语音输入将在后续阶段接入")}>
+        <button type="button" onClick={onVoiceInput} disabled={listening}>
           <Mic size={21} aria-hidden="true" />
-          语音输入
+          {listening ? "识别中" : "语音输入"}
         </button>
         <button
           type="button"
-          onClick={() => {
-            updateField("include_vitals", true);
-            onPlaceholder("体征读取本阶段为占位，已标记需要参考体征");
-          }}
+          onClick={onReadVitals}
+          disabled={readingVitals}
         >
           <Activity size={21} aria-hidden="true" />
-          读取体征
+          {readingVitals ? "读取中" : "读取体征"}
         </button>
       </div>
 

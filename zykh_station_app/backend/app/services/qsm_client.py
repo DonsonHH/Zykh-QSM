@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -36,7 +37,7 @@ class QsmClient:
 
         connected = bool(payload.get("ok", True))
         devices = self.get_device_status(payload)
-        vitals = self.read_vitals() if connected else self._fallback_vitals()
+        vitals = self.read_vitals() if connected else self._unavailable_vitals()
         vitals_status = "available" if vitals.get("source") == "real" else "fallback"
         camera_status = str(devices.get("camera", "reserved"))
         dispense_status = "dry-run" if settings.dispense_dry_run else str(devices.get("dispense", "reserved"))
@@ -62,21 +63,44 @@ class QsmClient:
     def read_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
             return {"temperature_c": 35.7, "heart_rate": None, "spo2": None, "source": "mock"}
-        payload, error = self._request_json(settings.qsm_vitals_path, method="POST")
+        payload, error = self._request_json(settings.qsm_vitals_all_path, method="POST")
         if error:
-            return self._fallback_vitals(error)
+            payload, error = self._request_json(settings.qsm_vitals_path, method="POST")
+        if error:
+            temp_payload, temp_error = self._request_json(settings.qsm_temp_path, method="POST")
+            if temp_error:
+                return self._unavailable_vitals(error)
+            return self._parse_vitals(temp_payload, partial=True)
+        return self._parse_vitals(payload)
+
+    def read_temperature(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {"temperature_c": 35.7, "source": "mock"}
+        payload, error = self._request_json(settings.qsm_temp_path, method="POST")
+        if error:
+            return self._unavailable_vitals(error)
+        return self._parse_vitals(payload, partial=True)
+
+    def _parse_vitals(self, payload: dict[str, Any], partial: bool = False) -> dict[str, Any]:
         vitals = payload.get("vitals") or payload
+        temperature_payload = payload.get("temperature") if isinstance(payload.get("temperature"), dict) else {}
         if isinstance(vitals, dict):
-            return {
-                "temperature_c": vitals.get("temperature")
+            temperature = (
+                vitals.get("temperature")
                 or vitals.get("temperature_c")
                 or vitals.get("temp")
-                or 35.7,
+                or vitals.get("body_temp_c")
+                or temperature_payload.get("body_temp_c")
+            )
+            return {
+                "temperature_c": temperature,
                 "heart_rate": vitals.get("heart_rate") or vitals.get("hr"),
                 "spo2": vitals.get("spo2") or vitals.get("blood_oxygen"),
                 "source": "real",
+                "partial": partial,
+                "raw": payload,
             }
-        return self._fallback_vitals("体征数据格式不可识别。")
+        return self._unavailable_vitals("体征数据格式不可识别。")
 
     def get_device_status(self, payload: dict[str, Any] | None = None) -> dict[str, str]:
         if self.mode != "real":
@@ -115,17 +139,54 @@ class QsmClient:
                 "quantity": quantity,
                 "detail": "dry-run only",
             }
+        if self.mode != "real":
+            return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": "QSM real 模式未启用。"}
+        payload, error = self._request_json(settings.qsm_dispense_path, method="POST", payload={"slot": slot, "quantity": quantity})
+        if error:
+            return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": error}
+        ok = bool(payload.get("ok", payload.get("result") == "success"))
         return {
-            "ok": False,
+            "ok": ok,
             "dry_run": False,
             "slot": slot,
             "quantity": quantity,
-            "detail": "real dispense is reserved for a later integration stage",
+            "detail": payload.get("detail") or payload.get("error") or payload.get("result") or "外设网关已返回。",
+            "raw": payload,
         }
 
-    def _request_json(self, path: str, method: str = "GET") -> tuple[dict[str, Any], str | None]:
+    def audio_asr(self, duration: int = 4) -> dict[str, Any]:
+        return self._qsm_action(settings.qsm_audio_asr_path, {"duration": duration}, "语音识别")
+
+    def audio_speak(self, text: str) -> dict[str, Any]:
+        return self._qsm_action(settings.qsm_audio_speak_path, {"text": text}, "语音播报")
+
+    def audio_beep(self) -> dict[str, Any]:
+        return self._qsm_action(settings.qsm_audio_beep_path, {}, "提示音")
+
+    def _qsm_action(self, path: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
+        if self.mode != "real":
+            return {"ok": False, "mode": self.mode, "error_message": f"{label}需要 QSM real 模式。"}
+        data, error = self._request_json(path, method="POST", payload=payload)
+        if error:
+            return {"ok": False, "mode": "real", "error_message": error}
+        data.setdefault("ok", True)
+        data["mode"] = "real"
+        return data
+
+    def _request_json(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
         try:
-            request = Request(f"{self.base_url}{path}", data=b"" if method != "GET" else None, method=method)
+            data = None
+            headers: dict[str, str] = {}
+            if method != "GET":
+                body = urlencode(payload or {}).encode("utf-8")
+                data = body
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+            request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
             with urlopen(request, timeout=settings.qsm_timeout_seconds) as res:
                 body = res.read().decode("utf-8")
             payload = json.loads(body) if body else {}
@@ -154,13 +215,13 @@ class QsmClient:
             dispense_status=devices["dispense"],
             error_message=error_message,
             status_label="暂不可用",
-            vitals=self._fallback_vitals(error_message),
+            vitals=self._unavailable_vitals(error_message),
             devices=devices,
             detail="外设网关暂不可用",
         )
 
-    def _fallback_vitals(self, error_message: str | None = None) -> dict[str, Any]:
-        payload: dict[str, Any] = {"temperature_c": 35.7, "heart_rate": None, "spo2": None, "source": "fallback"}
+    def _unavailable_vitals(self, error_message: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"temperature_c": None, "heart_rate": None, "spo2": None, "source": "unavailable"}
         if error_message:
             payload["error_message"] = error_message
         return payload
@@ -187,5 +248,5 @@ class QsmClient:
             status_label="部分可用",
             vitals=self.read_vitals(),
             devices=self.get_device_status(),
-            detail="mock 模式用于本机首页闭环演示",
+            detail="mock 模式用于本机闭环检查",
         )

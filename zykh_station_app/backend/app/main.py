@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import db
 from .config import settings
-from .routers import dashboard, device, dispense, health, inquiry, medicines, qsm, records, site, status, sync
+from .routers import ai, audio, camera, dashboard, device, dispense, health, inquiry, medicines, qsm, records, site, status, sync, vitals
 
 
 def create_app() -> FastAPI:
@@ -23,6 +23,10 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(device.router)
     app.include_router(qsm.router)
+    app.include_router(vitals.router)
+    app.include_router(camera.router)
+    app.include_router(audio.router)
+    app.include_router(ai.router)
     app.include_router(medicines.router)
     app.include_router(dispense.router)
     app.include_router(inquiry.router)

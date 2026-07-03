@@ -20,13 +20,13 @@ fail() {
   info "FAIL $1"
 }
 
-warn_mock() {
-  warn "未完成外设网关端口转发；本机主应用仍可继续使用 QSM_MODE=mock。"
+warn_real() {
+  warn "未完成外设网关端口转发；真实外设联调前请检查连接和网关服务。"
 }
 
 if ! command -v adb >/dev/null 2>&1; then
   fail "未找到 adb 命令。"
-  warn_mock
+  warn_real
   exit 0
 fi
 ok "已找到 adb 命令。"
@@ -34,7 +34,7 @@ ok "已找到 adb 命令。"
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
 if [ -z "$DEVICES" ]; then
   warn "未检测到已连接的外设网关设备。"
-  warn_mock
+  warn_real
   exit 0
 fi
 
@@ -56,5 +56,5 @@ if $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1; 
 fi
 
 fail "端口转发失败。"
-warn_mock
+warn_real
 exit 0

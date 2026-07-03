@@ -1,32 +1,41 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-from ..config import DATA_DIR
+from .. import db
 from ..schemas.inquiry import InquiryResult
 
 
 class InquiryRepository:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or DATA_DIR / "inquiry_records.json"
-
     def list_records(self) -> list[InquiryResult]:
-        if not self.path.exists():
-            return []
-        with self.path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-        if not isinstance(payload, list):
-            return []
-        return [InquiryResult(**item) for item in payload]
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json
+                FROM inquiry_records
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        return [InquiryResult(**json.loads(row["payload_json"])) for row in rows]
 
     def get_by_id(self, inquiry_id: str) -> InquiryResult | None:
-        return next((record for record in self.list_records() if record.inquiry_id == inquiry_id), None)
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM inquiry_records WHERE inquiry_id=?",
+                (inquiry_id,),
+            ).fetchone()
+        return InquiryResult(**json.loads(row["payload_json"])) if row else None
 
     def append(self, result: InquiryResult) -> InquiryResult:
-        records = self.list_records()
-        records.insert(0, result)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as file:
-            json.dump([item.model_dump() for item in records], file, ensure_ascii=False, indent=2)
+        db.init_db()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO inquiry_records(inquiry_id, payload_json, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (result.inquiry_id, json.dumps(result.model_dump(), ensure_ascii=False), result.created_at),
+            )
         return result

@@ -45,6 +45,13 @@ export function Medicines({ notify, focus, onNavigate }) {
     setSelectedMedicine(focusedMedicine || nextMedicines[0] || medicines[0] || null);
   }, [categories, focus, medicines]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("dispenseModal") === "1" && selectedMedicine) {
+      setModalOpen(true);
+    }
+  }, [selectedMedicine]);
+
   const filteredMedicines = useMemo(() => {
     if (activeCategory === "全部") {
       return medicines;
@@ -81,8 +88,10 @@ export function Medicines({ notify, focus, onNavigate }) {
         return loadQsmStatus()
           .then((qsm) => {
             const message =
-              qsm.mode === "real" && qsm.connected === false
-                ? "外设暂不可用，已完成本地 dry-run 记录。"
+              data.ok === false
+                ? data.message
+                : qsm.mode === "real" && qsm.connected === false
+                ? "外设暂不可用，已保留本地取药记录。"
                 : data.message;
             setModalResult(message);
             notify(message);

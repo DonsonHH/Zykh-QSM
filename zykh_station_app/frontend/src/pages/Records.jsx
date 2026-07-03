@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { loadRecentRecords, loadRecordsSummary, loadSyncStatus, runMockSync } from "../api/records.js";
+import {
+  loadRecentRecords,
+  loadRecordsSummary,
+  loadServiceUsers,
+  loadSyncStatus,
+  loadTodayPlans,
+  runSync
+} from "../api/records.js";
 import { RecentRecordList } from "../components/RecentRecordList.jsx";
 import { RecordSummaryCards } from "../components/RecordSummaryCards.jsx";
 import { ServiceUserList } from "../components/ServiceUserList.jsx";
@@ -7,24 +14,28 @@ import { SyncStatusCard } from "../components/SyncStatusCard.jsx";
 import { TodayPlanList } from "../components/TodayPlanList.jsx";
 
 const defaultSummary = {
-  today_service_users: 3,
-  pending_sync_count: 12,
-  local_record_count: 387,
-  today_plan_count: 3
+  today_service_users: 0,
+  pending_sync_count: 0,
+  local_record_count: 0,
+  today_plan_count: 0
 };
 
 export function Records({ notify }) {
   const [summary, setSummary] = useState(defaultSummary);
   const [records, setRecords] = useState([]);
   const [syncStatus, setSyncStatus] = useState(null);
+  const [serviceUsers, setServiceUsers] = useState([]);
+  const [todayPlans, setTodayPlans] = useState([]);
   const [syncing, setSyncing] = useState(false);
 
   function refreshRecords() {
-    return Promise.all([loadRecordsSummary(), loadRecentRecords(), loadSyncStatus()])
-      .then(([summaryResponse, recentResponse, syncResponse]) => {
+    return Promise.all([loadRecordsSummary(), loadRecentRecords(), loadSyncStatus(), loadServiceUsers(), loadTodayPlans()])
+      .then(([summaryResponse, recentResponse, syncResponse, usersResponse, plansResponse]) => {
         setSummary(summaryResponse.summary || defaultSummary);
         setRecords(recentResponse.records || []);
         setSyncStatus(syncResponse);
+        setServiceUsers(usersResponse.users || []);
+        setTodayPlans(plansResponse.plans || []);
       })
       .catch((error) => notify(error.message || "记录数据加载失败"));
   }
@@ -33,14 +44,14 @@ export function Records({ notify }) {
     refreshRecords();
   }, []);
 
-  function handleMockSync() {
+  function handleSync() {
     setSyncing(true);
-    runMockSync()
+    runSync()
       .then((data) => {
-        notify(data.message || "模拟同步完成");
+        notify(data.message || "同步状态已更新");
         return refreshRecords();
       })
-      .catch((error) => notify(error.message || "模拟同步失败"))
+      .catch((error) => notify(error.message || "同步失败"))
       .finally(() => setSyncing(false));
   }
 
@@ -48,11 +59,11 @@ export function Records({ notify }) {
     <main className="records-page" id="main-content">
       <RecordSummaryCards summary={summary} />
       <div className="records-main-grid">
-        <ServiceUserList />
+        <ServiceUserList users={serviceUsers} />
         <RecentRecordList records={records} />
         <div className="records-side-stack">
-          <TodayPlanList />
-          <SyncStatusCard syncStatus={syncStatus} syncing={syncing} onSync={handleMockSync} />
+          <TodayPlanList plans={todayPlans} />
+          <SyncStatusCard syncStatus={syncStatus} syncing={syncing} onSync={handleSync} />
         </div>
       </div>
     </main>

@@ -1,13 +1,7 @@
 import React from "react";
 import { CheckCircle2, Clock3 } from "lucide-react";
 
-const todayPlans = [
-  { id: "plan-0800", time: "08:00", medicine: "阿司匹林肠溶片", status: "已执行" },
-  { id: "plan-1830", time: "18:30", medicine: "降压片", status: "待执行" },
-  { id: "plan-2000", time: "20:00", medicine: "胃药片", status: "待执行" }
-];
-
-export function TodayPlanList() {
+export function TodayPlanList({ plans = [] }) {
   return (
     <section className="records-panel today-plan-panel">
       <div className="records-panel-heading">
@@ -15,7 +9,7 @@ export function TodayPlanList() {
         <h2>计划概览</h2>
       </div>
       <div className="today-plan-list">
-        {todayPlans.map((plan) => {
+        {plans.map((plan) => {
           const done = plan.status === "已执行";
           const Icon = done ? CheckCircle2 : Clock3;
           return (
@@ -29,6 +23,7 @@ export function TodayPlanList() {
             </article>
           );
         })}
+        {plans.length === 0 && <p className="empty-list-note">暂无今日计划</p>}
       </div>
     </section>
   );

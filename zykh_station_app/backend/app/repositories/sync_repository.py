@@ -1,35 +1,39 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from ..config import DATA_DIR
+from .. import db
 from ..schemas.sync import SyncStatus
 
 
 DEFAULT_SYNC_STATUS = SyncStatus(
     sync_status="待同步",
-    pending_count=12,
+    pending_count=0,
     last_sync_at="未同步",
-    network_mode="弱网",
+    network_mode="本地记录",
 )
 
 
 class SyncRepository:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or DATA_DIR / "sync_state.json"
-
     def get_status(self) -> SyncStatus:
-        if not self.path.exists():
-            return DEFAULT_SYNC_STATUS
-        with self.path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-        if not isinstance(payload, dict):
-            return DEFAULT_SYNC_STATUS
-        return SyncStatus(**payload)
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT sync_status, pending_count, last_sync_at, network_mode FROM sync_state WHERE id=1"
+            ).fetchone()
+        return SyncStatus(**dict(row)) if row else DEFAULT_SYNC_STATUS
 
     def save_status(self, status: SyncStatus) -> SyncStatus:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", encoding="utf-8") as file:
-            json.dump(status.model_dump(), file, ensure_ascii=False, indent=2)
+        db.init_db()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_state(id, sync_status, pending_count, last_sync_at, network_mode)
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  sync_status=excluded.sync_status,
+                  pending_count=excluded.pending_count,
+                  last_sync_at=excluded.last_sync_at,
+                  network_mode=excluded.network_mode
+                """,
+                (status.sync_status, status.pending_count, status.last_sync_at, status.network_mode),
+            )
         return status

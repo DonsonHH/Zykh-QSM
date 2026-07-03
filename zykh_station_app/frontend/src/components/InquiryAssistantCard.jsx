@@ -2,7 +2,16 @@ import React from "react";
 import { ClipboardCheck, MessageCircleHeart } from "lucide-react";
 import { SafetyNotice } from "./SafetyNotice.jsx";
 
-export function InquiryAssistantCard({ result }) {
+export function InquiryAssistantCard({ result, assistantState }) {
+  const channelLabel =
+    assistantState?.source === "cloud"
+      ? "云通道"
+      : assistantState?.source === "local_fallback"
+        ? "本地兜底"
+        : assistantState?.loading
+          ? "检查中"
+          : "待提交";
+
   return (
     <section className="inquiry-assistant-panel" aria-label="问询说明">
       <div className="inquiry-panel-heading">
@@ -25,6 +34,7 @@ export function InquiryAssistantCard({ result }) {
         {result ? (
           <ul>
             <li>识别风险等级：{result.risk_label}</li>
+            <li>问询通道：{channelLabel}</li>
             <li>候选类别：{result.suggested_categories.join(" / ") || "暂无"}</li>
             <li>{result.can_proceed_to_dispense ? "可查看候选药品并继续安全核验" : "暂不进入取药确认"}</li>
           </ul>
