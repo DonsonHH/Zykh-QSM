@@ -2,13 +2,22 @@
 
 ## Overview
 
-The local master application talks to QSM368ZP-WF through one gateway adapter:
+The local master application talks to QSM368ZP-WF through one gateway adapter for peripheral functions:
 
 ```text
 React/Vite UI -> FastAPI -> services/qsm_client.py -> http://127.0.0.1:18080
 ```
 
-QSM owns peripheral collection and execution control. The local app owns UI, workflow, local records, risk prompts, candidate medicine matching, and dry-run confirmation.
+QSM owns temperature, heart rate/blood oxygen, audio and cabinet-control peripherals. The local app owns UI, workflow, local records, risk prompts, candidate medicine matching, dry-run confirmation and host-side camera capture.
+
+Latest hardware split:
+
+```text
+Host app: React/Vite, FastAPI, SQLite, inquiry workflow, camera recognition, touch UI.
+Peripheral gateway: temperature, heart rate/blood oxygen, audio, cabinet control.
+```
+
+Camera capture no longer depends on the peripheral gateway. The business endpoint `/api/qsm/camera/capture` is kept as a stable app-facing action, but internally it calls the host-side camera seam.
 
 ## Modes
 
@@ -18,12 +27,24 @@ The default mode is:
 QSM_MODE=mock
 QSM_BASE_URL=http://127.0.0.1:18080
 QSM_TIMEOUT_SECONDS=2
+QSM_STATUS_PATH=/api/status
+QSM_VITALS_PATH=/api/vitals/read
+QSM_CAMERA_CAPTURE_PATH=/api/camera/capture
+QSM_DISPENSE_PATH=/api/dispense
+LOCAL_CAMERA_DEVICE=/dev/video0
 DISPENSE_DRY_RUN=true
 ```
 
 `QSM_MODE=mock` returns stable demo data without requiring the external gateway.
 
 `QSM_MODE=real` calls the gateway base URL. If the gateway is not reachable, the backend returns `connected=false` and a readable `error_message`; the dashboard continues to render and shows the device as temporarily unavailable.
+
+The path settings are reserved for gateway deployments that expose different HTTP paths. Stage six uses:
+
+- `QSM_STATUS_PATH` for external gateway status.
+- `QSM_VITALS_PATH` for external gateway vitals.
+- `QSM_DISPENSE_PATH` as the reserved physical dispense path.
+- `QSM_CAMERA_CAPTURE_PATH` only as a reserved legacy path; current camera capture is host-side.
 
 ## Port forwarding
 
@@ -48,12 +69,34 @@ If any step fails, it prints a clear warning and exits without breaking the app;
 - `get_qsm_status()`
 - `read_vitals()`
 - `get_device_status()`
-- `capture_camera()`
 - `dispense(slot, dry_run=True)`
 
-Camera capture is a reserved seam in this stage. It may return a structured unavailable response when the gateway does not expose an image endpoint.
+Host camera methods live in `services/local_camera.py`. In mock mode, camera capture returns a stable medicine-recognition sample. In real mode, the service checks the configured local camera device and returns a structured unavailable response if the device is missing.
 
 `dispense(..., dry_run=True)` never triggers physical dispense. With `DISPENSE_DRY_RUN=true`, 取药确认 only writes local records and returns the dry-run message.
+
+## Stage six endpoints
+
+```text
+GET  /api/qsm/vitals
+POST /api/qsm/camera/capture
+POST /api/qsm/dispense/dry-run
+GET  /api/qsm/capabilities
+```
+
+Mock mode:
+
+- vitals returns temperature `35.7`, with heart rate and blood oxygen unavailable.
+- camera capture returns the sample medicine recognition result.
+- dispense dry-run writes a local dry-run record.
+- capabilities returns mock/dry-run states.
+
+Real mode without gateway:
+
+- status and vitals return HTTP 200 with unavailable state.
+- camera capture still follows host-side camera availability.
+- dry-run remains local and does not open a cabinet.
+- capabilities returns `qsm_connected=false` when the gateway is unreachable.
 
 ## Verification
 
@@ -72,3 +115,5 @@ curl http://127.0.0.1:8000/api/qsm/status
 ```
 
 Expected behavior: HTTP 200, `connected=false`, and `error_message` set.
+
+Stage six still does not perform physical dispense. Keep `DISPENSE_DRY_RUN=true` for all demonstrations.

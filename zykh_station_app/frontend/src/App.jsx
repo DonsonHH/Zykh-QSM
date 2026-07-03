@@ -8,6 +8,7 @@ import { ComingSoon } from "./pages/ComingSoon.jsx";
 import { Medicines } from "./pages/Medicines.jsx";
 import { Inquiry } from "./pages/Inquiry.jsx";
 import { Records } from "./pages/Records.jsx";
+import { Scan } from "./pages/Scan.jsx";
 
 export function App() {
   const [page, setPage] = useState("home");
@@ -34,7 +35,13 @@ export function App() {
   }, []);
 
   function handleNav(nextPage) {
-    if (nextPage !== "home" && nextPage !== "medicines" && nextPage !== "inquiry" && nextPage !== "records") {
+    if (
+      nextPage !== "home" &&
+      nextPage !== "medicines" &&
+      nextPage !== "inquiry" &&
+      nextPage !== "records" &&
+      nextPage !== "scan"
+    ) {
       notify("下一阶段开发中");
     }
     setPage(nextPage);
@@ -56,11 +63,13 @@ export function App() {
         {page === "home" ? (
           <Home dashboard={dashboard} onNavigate={handleNav} notify={notify} />
         ) : page === "medicines" ? (
-          <Medicines notify={notify} focus={medicineFocus} />
+          <Medicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />
         ) : page === "inquiry" ? (
           <Inquiry notify={notify} onViewCandidates={handleViewCandidates} />
         ) : page === "records" ? (
           <Records notify={notify} />
+        ) : page === "scan" ? (
+          <Scan notify={notify} onNavigate={handleNav} />
         ) : (
           <ComingSoon page={page} />
         )}

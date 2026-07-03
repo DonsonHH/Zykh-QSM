@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from ..config import settings
 from ..schemas.qsm import QsmStatus
+from .local_camera import LocalCameraService
 
 
 class QsmClient:
@@ -29,7 +30,7 @@ class QsmClient:
         if self.mode != "real":
             return self._mock_status()
 
-        payload, error = self._request_json("/api/status")
+        payload, error = self._request_json(settings.qsm_status_path)
         if error:
             return self._real_unavailable(error)
 
@@ -61,15 +62,18 @@ class QsmClient:
     def read_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
             return {"temperature_c": 35.7, "heart_rate": None, "spo2": None, "source": "mock"}
-        payload, error = self._request_json("/api/vitals/read_all")
+        payload, error = self._request_json(settings.qsm_vitals_path, method="POST")
         if error:
             return self._fallback_vitals(error)
         vitals = payload.get("vitals") or payload
         if isinstance(vitals, dict):
             return {
-                "temperature_c": vitals.get("temperature") or vitals.get("temperature_c") or 35.7,
-                "heart_rate": vitals.get("heart_rate"),
-                "spo2": vitals.get("spo2"),
+                "temperature_c": vitals.get("temperature")
+                or vitals.get("temperature_c")
+                or vitals.get("temp")
+                or 35.7,
+                "heart_rate": vitals.get("heart_rate") or vitals.get("hr"),
+                "spo2": vitals.get("spo2") or vitals.get("blood_oxygen"),
                 "source": "real",
             }
         return self._fallback_vitals("体征数据格式不可识别。")
@@ -100,17 +104,7 @@ class QsmClient:
         }
 
     def capture_camera(self) -> dict[str, Any]:
-        if self.mode != "real":
-            return {"ok": True, "mode": "mock", "status": "mock", "image": None}
-        payload, error = self._request_json("/api/camera/capture")
-        if error:
-            return {"ok": False, "mode": "real", "status": "reserved", "image": None, "error_message": error}
-        return {
-            "ok": bool(payload.get("ok", True)),
-            "mode": "real",
-            "status": str(payload.get("status", "available")),
-            "image": payload.get("image") or payload.get("image_base64"),
-        }
+        return LocalCameraService().capture(self.mode)
 
     def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
         if dry_run:
@@ -129,9 +123,10 @@ class QsmClient:
             "detail": "real dispense is reserved for a later integration stage",
         }
 
-    def _request_json(self, path: str) -> tuple[dict[str, Any], str | None]:
+    def _request_json(self, path: str, method: str = "GET") -> tuple[dict[str, Any], str | None]:
         try:
-            with urlopen(f"{self.base_url}{path}", timeout=settings.qsm_timeout_seconds) as res:
+            request = Request(f"{self.base_url}{path}", data=b"" if method != "GET" else None, method=method)
+            with urlopen(request, timeout=settings.qsm_timeout_seconds) as res:
                 body = res.read().decode("utf-8")
             payload = json.loads(body) if body else {}
             if isinstance(payload, dict):

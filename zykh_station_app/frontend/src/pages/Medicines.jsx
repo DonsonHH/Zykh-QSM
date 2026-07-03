@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicines } from "../api/medicines.js";
+import { loadQsmStatus } from "../api/qsm.js";
 import { CategoryTabs } from "../components/CategoryTabs.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
-export function Medicines({ notify, focus }) {
+export function Medicines({ notify, focus, onNavigate }) {
   const [medicines, setMedicines] = useState([]);
   const [categories, setCategories] = useState(["全部"]);
   const [activeCategory, setActiveCategory] = useState("全部");
@@ -77,8 +78,19 @@ export function Medicines({ notify, focus }) {
     setModalError("");
     confirmDispense(payload)
       .then((data) => {
-        setModalResult(data.message);
-        notify(data.message);
+        return loadQsmStatus()
+          .then((qsm) => {
+            const message =
+              qsm.mode === "real" && qsm.connected === false
+                ? "外设暂不可用，已完成本地 dry-run 记录。"
+                : data.message;
+            setModalResult(message);
+            notify(message);
+          })
+          .catch(() => {
+            setModalResult(data.message);
+            notify(data.message);
+          });
       })
       .catch((error) => setModalError(error.message || "取药确认失败"))
       .finally(() => setSubmitting(false));
@@ -92,7 +104,11 @@ export function Medicines({ notify, focus }) {
             <h2>站点药品</h2>
             <p>{medicines.length}/23 仓有库存</p>
           </div>
-          <button className="scan-button" type="button" onClick={() => notify("扫码识别将在取药流程后续接入")}>
+          <button
+            className="scan-button"
+            type="button"
+            onClick={() => (onNavigate ? onNavigate("scan") : notify("扫码识别入口暂不可用"))}
+          >
             <ScanLine size={24} aria-hidden="true" />
             <span>扫码识别</span>
           </button>

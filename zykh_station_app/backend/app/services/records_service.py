@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..repositories.device_action_repository import DeviceActionRepository
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..schemas.records import RecentRecord, RecordsSummary
@@ -65,10 +66,12 @@ class RecordsService:
         self,
         inquiry_repository: InquiryRepository | None = None,
         dispense_repository: DispenseRepository | None = None,
+        device_action_repository: DeviceActionRepository | None = None,
         sync_service: SyncService | None = None,
     ) -> None:
         self.inquiry_repository = inquiry_repository or InquiryRepository()
         self.dispense_repository = dispense_repository or DispenseRepository()
+        self.device_action_repository = device_action_repository or DeviceActionRepository()
         self.sync_service = sync_service or SyncService()
 
     def get_summary(self) -> RecordsSummary:
@@ -76,7 +79,10 @@ class RecordsService:
         return RecordsSummary(
             today_service_users=3,
             pending_sync_count=sync_status.pending_count,
-            local_record_count=387 + len(self.inquiry_repository.list_records()) + len(self.dispense_repository.list_records()),
+            local_record_count=387
+            + len(self.inquiry_repository.list_records())
+            + len(self.dispense_repository.list_records())
+            + len(self.device_action_repository.list_records()),
             today_plan_count=3,
         )
 
@@ -85,10 +91,17 @@ class RecordsService:
         records = self._mock_records(sync_status.sync_status)
         inquiry_records = self._inquiry_records(sync_status.sync_status)
         dispense_records = self._dispense_records(sync_status.sync_status)
+        device_records = self._device_records(sync_status.sync_status)
         if inquiry_records:
             records = self._replace_record_type(records, "AI应急问询", inquiry_records[0])
         if dispense_records:
             records = self._replace_record_type(records, "取药确认", dispense_records[0])
+        replaced_device_types: set[str] = set()
+        for device_record in device_records:
+            if device_record.type in replaced_device_types:
+                continue
+            records = self._replace_record_type(records, device_record.type, device_record)
+            replaced_device_types.add(device_record.type)
         return records[:5]
 
     def _inquiry_records(self, sync_status: str) -> list[RecentRecord]:
@@ -119,6 +132,21 @@ class RecordsService:
                 sync_status=sync_status,
             )
             for record in self.dispense_repository.list_records()
+        ]
+
+    def _device_records(self, sync_status: str) -> list[RecentRecord]:
+        return [
+            RecentRecord(
+                id=record.id,
+                time=self._time_part(record.created_at),
+                type=record.type,
+                title=record.title,
+                description=record.description,
+                target_user=record.target_user,
+                status=record.status,
+                sync_status=sync_status,
+            )
+            for record in self.device_action_repository.list_records()
         ]
 
     def _mock_records(self, sync_status: str) -> list[RecentRecord]:
