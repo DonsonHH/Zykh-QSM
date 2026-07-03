@@ -7,6 +7,7 @@ import { Home } from "./pages/Home.jsx";
 import { ComingSoon } from "./pages/ComingSoon.jsx";
 import { Medicines } from "./pages/Medicines.jsx";
 import { Inquiry } from "./pages/Inquiry.jsx";
+import { Records } from "./pages/Records.jsx";
 
 export function App() {
   const [page, setPage] = useState("home");
@@ -33,7 +34,7 @@ export function App() {
   }, []);
 
   function handleNav(nextPage) {
-    if (nextPage !== "home" && nextPage !== "medicines" && nextPage !== "inquiry") {
+    if (nextPage !== "home" && nextPage !== "medicines" && nextPage !== "inquiry" && nextPage !== "records") {
       notify("下一阶段开发中");
     }
     setPage(nextPage);
@@ -58,6 +59,8 @@ export function App() {
           <Medicines notify={notify} focus={medicineFocus} />
         ) : page === "inquiry" ? (
           <Inquiry notify={notify} onViewCandidates={handleViewCandidates} />
+        ) : page === "records" ? (
+          <Records notify={notify} />
         ) : (
           <ComingSoon page={page} />
         )}

@@ -1330,6 +1330,360 @@ a:focus-visible {
   font-weight: 900;
 }
 
+/* records */
+.records-page {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 104px 1fr;
+  gap: 14px;
+}
+
+.record-summary-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.record-summary-card,
+.records-panel,
+.sync-status-card {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.record-summary-card {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+}
+
+.record-summary-card > span {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+}
+
+.record-summary-card.blue > span {
+  background: #eaf2ff;
+  color: var(--primary);
+}
+
+.record-summary-card.orange > span {
+  background: #fff7ed;
+  color: #b75b09;
+}
+
+.record-summary-card.purple > span {
+  background: #f3f0ff;
+  color: var(--purple);
+}
+
+.record-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.1;
+  font-weight: 850;
+}
+
+.record-summary-card strong {
+  color: var(--text);
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-summary-card small {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.records-main-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 360px;
+  gap: 14px;
+}
+
+.records-panel,
+.sync-status-card {
+  overflow: hidden;
+  padding: 16px;
+}
+
+.records-panel-heading p,
+.sync-status-card p {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  font-weight: 850;
+}
+
+.records-panel-heading h2,
+.sync-status-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 25px;
+  line-height: 1.05;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.service-users-panel,
+.recent-records-panel,
+.today-plan-panel {
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  gap: 12px;
+}
+
+.service-user-list,
+.recent-record-list,
+.today-plan-list {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.service-user-card {
+  min-width: 0;
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 10px 12px;
+}
+
+.service-user-icon,
+.recent-record-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: #eaf2ff;
+  color: var(--primary);
+}
+
+.service-user-card strong,
+.recent-record-row strong,
+.today-plan-list strong {
+  display: block;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.08;
+  font-weight: 900;
+}
+
+.service-user-card p,
+.recent-record-row p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.1;
+  font-weight: 750;
+}
+
+.service-user-card small,
+.recent-record-row small {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-user-card em {
+  align-self: start;
+  border-radius: 999px;
+  background: #effcf7;
+  color: #087c68;
+  padding: 6px 9px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.recent-record-row {
+  min-width: 0;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 42px 52px 1fr 66px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 8px 10px;
+}
+
+.recent-record-row time {
+  color: var(--primary);
+  font-size: 17px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-record-row div {
+  min-width: 0;
+}
+
+.recent-record-row p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-record-row small {
+  margin-top: 4px;
+}
+
+.recent-record-row em {
+  justify-self: end;
+  border-radius: 999px;
+  padding: 7px 9px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.recent-record-row em.pending {
+  background: #fff7ed;
+  color: #8a4708;
+}
+
+.recent-record-row em.synced {
+  background: #effcf7;
+  color: #087c68;
+}
+
+.records-side-stack {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 210px 1fr;
+  gap: 14px;
+}
+
+.today-plan-list article {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 58px 1fr 26px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #e3edf8;
+  border-radius: 16px;
+  background: var(--surface-soft);
+  padding: 8px 10px;
+}
+
+.today-plan-list article.done {
+  background: #effcf7;
+  border-color: #b8eadc;
+}
+
+.today-plan-list time {
+  color: var(--primary);
+  font-size: 17px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.today-plan-list strong {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-plan-list span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.today-plan-list svg {
+  color: var(--teal);
+}
+
+.sync-status-card {
+  display: grid;
+  grid-template-rows: 42px 1fr 56px;
+  gap: 12px;
+}
+
+.sync-status-meta {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sync-status-meta span,
+.sync-status-meta strong {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 15px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.1;
+  font-weight: 850;
+}
+
+.sync-status-meta strong {
+  grid-column: 1 / 3;
+  justify-content: center;
+  background: #fff7ed;
+  color: #8a4708;
+  font-size: 18px;
+}
+
+.sync-status-card button {
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 18px;
+  background: var(--primary);
+  color: white;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.sync-status-card button:disabled {
+  cursor: not-allowed;
+  background: #b9c8df;
+}
+
 /* components */
 .card {
   min-width: 0;
