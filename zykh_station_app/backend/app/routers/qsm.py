@@ -59,7 +59,7 @@ def qsm_vitals() -> QsmVitalsResponse:
 @router.post("/camera/capture", response_model=QsmCameraCaptureResponse)
 def qsm_camera_capture() -> QsmCameraCaptureResponse:
     client = QsmClient()
-    payload = LocalCameraService().capture(client.mode)
+    payload = LocalCameraService().capture()
     response = QsmCameraCaptureResponse(
         ok=bool(payload.get("ok")),
         mode=str(payload.get("mode", client.mode)),
@@ -112,7 +112,7 @@ def qsm_capabilities() -> QsmCapabilitiesResponse:
     client = QsmClient()
     qsm = client.get_qsm_status()
     return QsmCapabilitiesResponse(
-        camera=LocalCameraService().capabilities(client.mode),
+        camera=LocalCameraService().capabilities(),
         vitals="mock" if client.mode != "real" else ("available" if qsm.connected else "unavailable"),
         dispense="dry_run",
         voice="mock" if client.mode != "real" else qsm.devices.get("voice", "unavailable"),

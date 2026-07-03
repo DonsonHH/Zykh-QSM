@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
+import { SystemCheckModal } from "./components/SystemCheckModal.jsx";
 import { loadDashboard } from "./api/dashboard.js";
 import { mockDashboard } from "./api/mockData.js";
 import { Home } from "./pages/Home.jsx";
@@ -16,6 +17,7 @@ export function App() {
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
+  const [systemCheckOpen, setSystemCheckOpen] = useState(false);
   const toastTimerRef = useRef(null);
 
   useEffect(() => {
@@ -59,7 +61,12 @@ export function App() {
         跳到主要内容
       </a>
       <section className="kiosk-frame" aria-label="智药康护终端">
-        <TopBar site={dashboard.site} chips={dashboard.chips} now={now} />
+        <TopBar
+          site={dashboard.site}
+          chips={dashboard.chips}
+          now={now}
+          onOpenSystemCheck={() => setSystemCheckOpen(true)}
+        />
         {page === "home" ? (
           <Home dashboard={dashboard} onNavigate={handleNav} notify={notify} />
         ) : page === "medicines" ? (
@@ -74,6 +81,12 @@ export function App() {
           <ComingSoon page={page} />
         )}
         <BottomNav page={page} onChange={handleNav} />
+        <SystemCheckModal
+          open={systemCheckOpen}
+          syncLabel={dashboard?.chips?.find((chip) => chip.id === "sync")?.value || "本地记录"}
+          notify={notify}
+          onClose={() => setSystemCheckOpen(false)}
+        />
         <div className={`toast ${toast ? "show" : ""}`} aria-live="polite">
           {toast}
         </div>

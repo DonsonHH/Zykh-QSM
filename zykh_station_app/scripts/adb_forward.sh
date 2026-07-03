@@ -8,19 +8,32 @@ info() {
   printf '%s\n' "$1"
 }
 
+ok() {
+  info "OK   $1"
+}
+
+warn() {
+  info "WARN $1"
+}
+
+fail() {
+  info "FAIL $1"
+}
+
 warn_mock() {
-  info "未完成外设网关端口转发；本机主应用仍可继续使用 QSM_MODE=mock。"
+  warn "未完成外设网关端口转发；本机主应用仍可继续使用 QSM_MODE=mock。"
 }
 
 if ! command -v adb >/dev/null 2>&1; then
-  info "未找到 adb 命令。"
+  fail "未找到 adb 命令。"
   warn_mock
   exit 0
 fi
+ok "已找到 adb 命令。"
 
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
 if [ -z "$DEVICES" ]; then
-  info "未检测到已连接的外设网关设备。"
+  warn "未检测到已连接的外设网关设备。"
   warn_mock
   exit 0
 fi
@@ -28,19 +41,20 @@ fi
 DEVICE_COUNT="$(printf '%s\n' "$DEVICES" | wc -l | tr -d ' ')"
 if [ "$DEVICE_COUNT" -gt 1 ]; then
   SERIAL="$(printf '%s\n' "$DEVICES" | head -n 1)"
-  info "检测到多个设备，使用第一个设备：$SERIAL"
+  warn "检测到多个设备，使用第一个设备：$SERIAL"
   ADB_PREFIX="adb -s $SERIAL"
 else
   ADB_PREFIX="adb"
 fi
+ok "已检测到外设网关设备。"
 
 info "正在建立端口转发：127.0.0.1:${HOST_PORT} -> 设备 tcp:${DEVICE_PORT}"
 if $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1; then
-  info "端口转发已建立。"
+  ok "端口转发已建立。"
   info "后端 real 模式可使用：QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:${HOST_PORT}"
   exit 0
 fi
 
-info "端口转发失败。"
+fail "端口转发失败。"
 warn_mock
 exit 0

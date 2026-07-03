@@ -37,11 +37,17 @@ Stage six adds business-facing QSM action endpoints:
 
 The camera endpoint name is kept for UI compatibility, but it does not proxy to the gateway camera path in the current hardware split.
 
+Stage seven adds a device check workflow:
+
+- `services/device_check_service.py` aggregates gateway, vitals, host camera and dry-run state.
+- `/api/device/check` returns HTTP 200 with warnings and recommendations when real hardware is unavailable.
+- `scripts/check_devices.sh` performs command-line pre-demo checks and reports `OK`, `WARN` and `FAIL` lines without stopping the app.
+
 ## Frontend layers
 
 - `App.jsx`: top-level shell, current page state and toast feedback.
 - `pages/`: Home, Medicines, Inquiry, Records and Scan pages.
-- `components/`: terminal layout primitives and touch controls.
+- `components/`: terminal layout primitives, touch controls and the lightweight system-check modal.
 - `api/`: fetch client, dashboard API and mock fallback data.
 - `styles/`: token-driven terminal styling.
 
@@ -49,4 +55,4 @@ The terminal is designed around a 1280x720 landscape canvas for an 11-inch touch
 
 ## Safety boundary
 
-Through stage six, the system does not perform physical dispense. Drug access remains a dry-run confirmation workflow, and high-risk inquiry outcomes remain blocked from 取药确认.
+Through stage seven, the system does not perform physical dispense. Drug access remains a dry-run confirmation workflow, and high-risk inquiry outcomes remain blocked from 取药确认.

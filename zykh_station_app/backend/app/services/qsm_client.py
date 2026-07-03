@@ -104,7 +104,7 @@ class QsmClient:
         }
 
     def capture_camera(self) -> dict[str, Any]:
-        return LocalCameraService().capture(self.mode)
+        return LocalCameraService().capture()
 
     def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
         if dry_run:

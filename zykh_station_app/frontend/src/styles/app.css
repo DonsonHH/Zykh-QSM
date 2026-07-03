@@ -192,11 +192,20 @@ a:focus-visible {
   font-size: 16px;
 }
 
+.status-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+  justify-self: stretch;
+}
+
 .status-row {
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  justify-self: stretch;
 }
 
 .status-chip {
@@ -232,6 +241,23 @@ a:focus-visible {
   border-color: #b8eadc;
   background: #effcf7;
   color: #087c68;
+}
+
+.system-check-button {
+  width: 56px;
+  min-height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 6px 16px rgba(15, 35, 70, 0.04);
+}
+
+.system-check-button:hover {
+  border-color: #b9d0ec;
+  background: #eaf2ff;
 }
 
 /* home */
@@ -883,6 +909,183 @@ a:focus-visible {
   cursor: not-allowed;
   background: #b9c8df;
   box-shadow: none;
+}
+
+.system-check-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: grid;
+  place-items: center;
+  background: rgba(23, 32, 51, 0.34);
+  padding: 24px;
+}
+
+.system-check-modal {
+  position: relative;
+  width: 760px;
+  max-height: 672px;
+  display: grid;
+  grid-template-rows: 66px 166px 1fr 58px;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 35, 70, 0.2);
+  padding: 24px;
+}
+
+.system-check-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.system-check-heading > span {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  background: #eaf2ff;
+  color: var(--primary);
+}
+
+.system-check-heading p {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.system-check-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.spin-icon {
+  animation: spin 900ms linear infinite;
+}
+
+.system-check-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-check-grid article {
+  min-width: 0;
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.system-check-grid article.ok {
+  border-color: #b8eadc;
+  background: #effcf7;
+}
+
+.system-check-grid article.warn {
+  border-color: #f5d19b;
+  background: #fff7ed;
+}
+
+.system-check-grid svg {
+  color: var(--primary);
+}
+
+.system-check-grid article.ok svg {
+  color: #087c68;
+}
+
+.system-check-grid article.warn svg {
+  color: #8a4708;
+}
+
+.system-check-grid span {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.05;
+  font-weight: 850;
+}
+
+.system-check-grid strong {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-check-notes {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-check-notes > div {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: #fbfdff;
+  padding: 12px 14px;
+}
+
+.system-check-notes strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.1;
+  font-weight: 900;
+}
+
+.system-check-notes ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 19px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 750;
+}
+
+.system-check-notes p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 750;
+}
+
+.system-check-actions {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+}
+
+.system-check-actions .primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
 }
 
 /* inquiry */
@@ -2220,6 +2423,12 @@ a:focus-visible {
 .bottom-nav button.active {
   background: #eaf2ff;
   color: var(--primary);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

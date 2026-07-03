@@ -1,9 +1,9 @@
 import React from "react";
-import { HeartHandshake } from "lucide-react";
+import { HeartHandshake, SlidersHorizontal } from "lucide-react";
 import { StatusChip } from "./StatusChip.jsx";
 import { formatClock, formatDay } from "../utils/time.js";
 
-export function TopBar({ site, chips, now }) {
+export function TopBar({ site, chips, now, onOpenSystemCheck }) {
   return (
     <header className="top-bar">
       <div className="brand-block">
@@ -23,10 +23,15 @@ export function TopBar({ site, chips, now }) {
         <span>{formatDay(now)}</span>
       </div>
 
-      <div className="status-row" aria-label="系统状态">
-        {(chips || []).map((chip) => (
-          <StatusChip key={chip.id} chip={chip} />
-        ))}
+      <div className="status-controls">
+        <div className="status-row" aria-label="系统状态">
+          {(chips || []).map((chip) => (
+            <StatusChip key={chip.id} chip={chip} />
+          ))}
+        </div>
+        <button className="system-check-button" type="button" onClick={onOpenSystemCheck} aria-label="打开系统检查">
+          <SlidersHorizontal size={24} aria-hidden="true" />
+        </button>
       </div>
     </header>
   );

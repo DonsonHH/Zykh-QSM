@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,21 +23,21 @@ MOCK_RECOGNITION_RESULT = {
 class LocalCameraService:
     """Host-side camera seam.
 
-    The current hardware split keeps camera capture on the host. Stage six only
-    needs a stable capture/scan entry, so real mode performs a lightweight
-    device availability check and returns a structured unavailable response
-    instead of depending on a camera library.
+    The current hardware split keeps camera capture on the host. This service
+    intentionally avoids hard dependencies on camera libraries; real mode uses
+    a lightweight device availability check and returns structured status.
     """
 
-    def __init__(self, device_path: str | None = None) -> None:
-        self.device_path = device_path or settings.local_camera_device
+    def __init__(self, mode: str | None = None, device: str | None = None) -> None:
+        self.mode = (mode or settings.local_camera_mode or "mock").lower()
+        self.device = device or settings.local_camera_device
 
-    def capture(self, mode: str) -> dict[str, Any]:
-        if mode != "real":
+    def capture(self) -> dict[str, Any]:
+        if self.mode != "real":
             return self._mock_capture()
 
-        device = Path(self.device_path)
-        if not device.exists():
+        check = self.check()
+        if not check["ok"]:
             return {
                 "ok": False,
                 "mode": "real",
@@ -44,7 +45,7 @@ class LocalCameraService:
                 "image_available": False,
                 "image_path": None,
                 "mock_recognition_result": None,
-                "error_message": "本机摄像头暂不可用。",
+                "error_message": check["error_message"],
                 "captured_at": now_text(),
             }
 
@@ -59,10 +60,52 @@ class LocalCameraService:
             "captured_at": now_text(),
         }
 
-    def capabilities(self, mode: str) -> str:
-        if mode != "real":
+    def check(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {
+                "ok": True,
+                "mode": "mock",
+                "status": "mock",
+                "device": self.device,
+                "error_message": None,
+            }
+
+        device_path = self._resolve_device_path()
+        if device_path is None and os.name == "nt":
+            return {
+                "ok": True,
+                "mode": "real",
+                "status": "available",
+                "device": self.device,
+                "error_message": None,
+            }
+        if device_path and device_path.exists():
+            return {
+                "ok": True,
+                "mode": "real",
+                "status": "available",
+                "device": str(device_path),
+                "error_message": None,
+            }
+        return {
+            "ok": False,
+            "mode": "real",
+            "status": "unavailable",
+            "device": str(device_path or self.device),
+            "error_message": "本机摄像头暂不可用。",
+        }
+
+    def capabilities(self) -> str:
+        if self.mode != "real":
             return "mock"
-        return "available" if Path(self.device_path).exists() else "unavailable"
+        return "available" if self.check()["ok"] else "unavailable"
+
+    def _resolve_device_path(self) -> Path | None:
+        if self.device.isdigit():
+            if os.name == "nt":
+                return None
+            return Path(f"/dev/video{self.device}")
+        return Path(self.device)
 
     @staticmethod
     def _mock_capture() -> dict[str, Any]:

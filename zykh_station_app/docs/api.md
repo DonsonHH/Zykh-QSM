@@ -47,6 +47,19 @@ Returns fixed first-stage homepage data:
 
 Returns mock or real peripheral gateway status. Defaults to mock mode.
 
+### GET /api/device/check
+
+Returns the demonstration readiness check:
+
+- QSM mode and connection state;
+- QSM base URL;
+- QSM status and vitals readiness;
+- host camera readiness;
+- dry-run safety flag;
+- errors, warnings and recommendations.
+
+The endpoint always returns HTTP 200 for expected missing-device cases so the terminal UI can degrade gracefully.
+
 ### GET /api/medicines
 
 Returns the station medicine list and available categories.

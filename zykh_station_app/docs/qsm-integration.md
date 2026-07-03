@@ -31,7 +31,8 @@ QSM_STATUS_PATH=/api/status
 QSM_VITALS_PATH=/api/vitals/read
 QSM_CAMERA_CAPTURE_PATH=/api/camera/capture
 QSM_DISPENSE_PATH=/api/dispense
-LOCAL_CAMERA_DEVICE=/dev/video0
+LOCAL_CAMERA_MODE=mock
+LOCAL_CAMERA_DEVICE=0
 DISPENSE_DRY_RUN=true
 ```
 
@@ -45,6 +46,8 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_VITALS_PATH` for external gateway vitals.
 - `QSM_DISPENSE_PATH` as the reserved physical dispense path.
 - `QSM_CAMERA_CAPTURE_PATH` only as a reserved legacy path; current camera capture is host-side.
+
+`LOCAL_CAMERA_MODE=mock` returns a stable recognition sample. `LOCAL_CAMERA_MODE=real` checks the configured host camera device. On Linux, `LOCAL_CAMERA_DEVICE=0` maps to `/dev/video0`; a direct path such as `/dev/video2` is also supported.
 
 ## Port forwarding
 
@@ -117,3 +120,23 @@ curl http://127.0.0.1:8000/api/qsm/status
 Expected behavior: HTTP 200, `connected=false`, and `error_message` set.
 
 Stage six still does not perform physical dispense. Keep `DISPENSE_DRY_RUN=true` for all demonstrations.
+
+## Stage seven check workflow
+
+Use the scripted check before real-device demonstrations:
+
+```bash
+cd zykh_station_app
+sh scripts/adb_forward.sh
+sh scripts/check_devices.sh
+```
+
+`check_devices.sh` reports `OK`, `WARN` and `FAIL` lines and does not stop the project when a peripheral is missing.
+
+The backend also exposes:
+
+```text
+GET /api/device/check
+```
+
+It returns HTTP 200 in mock mode, real mode without a gateway, and real mode with a gateway. When real mode is unavailable, the response includes warnings and recommendations instead of raising a server error.
