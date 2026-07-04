@@ -9,7 +9,7 @@ const icons = {
 
 export function HomeStatusStrip({ stats, onOpenVitals }) {
   return (
-    <section className="stat-strip" aria-label="站点状态摘要">
+    <section className="stat-strip" aria-label="家庭终端状态摘要">
       {(stats || []).map((stat) => {
         const Icon = icons[stat.id] || Activity;
         const clickable = stat.id === "temperature" && typeof onOpenVitals === "function";

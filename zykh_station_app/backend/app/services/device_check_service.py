@@ -41,8 +41,8 @@ class DeviceCheckService:
             warnings.append("本机摄像头暂不可用。")
             recommendations.append("请检查本机摄像头模式、设备编号和摄像头连接。")
         if not real_dispense_enabled():
-            warnings.append("取药当前为 dry-run，未启用真实外设出药。")
-            recommendations.append("真实出药必须同时设置 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1 和安全测试仓位。")
+            warnings.append("开柜当前未启用真实联动。")
+            recommendations.append("真实开柜需要 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1，并完成取药安全确认。")
         if not recommendations:
             recommendations.append("系统检查通过，可以继续真实外设流程。")
 

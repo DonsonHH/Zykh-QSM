@@ -42,11 +42,12 @@ export function SystemCheckModal({ open, syncLabel, onClose, notify }) {
   }
 
   const alertItems = [...(check.errors || []), ...(check.warnings || [])];
+  const modeLabel = check.qsm_mode === "real" ? "真实模式" : "本地模式";
   const rows = [
     {
       icon: Activity,
       label: "当前模式",
-      value: check.qsm_mode,
+      value: modeLabel,
       ok: check.qsm_mode === "mock" || check.qsm_connected
     },
     {
@@ -69,8 +70,8 @@ export function SystemCheckModal({ open, syncLabel, onClose, notify }) {
     },
     {
       icon: ShieldCheck,
-      label: "出药控制",
-      value: check.dispense_dry_run ? "dry-run" : "真实联动",
+      label: "开柜控制",
+      value: check.dispense_dry_run ? "未启用" : "真实联动",
       ok: !check.dispense_dry_run
     },
     {

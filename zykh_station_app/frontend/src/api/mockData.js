@@ -1,8 +1,8 @@
 export const mockDashboard = {
   ok: true,
   site: {
-    station_name: "偏远社区康护站",
-    service_name: "村镇智慧用药服务点"
+    station_name: "智药康护家用终端",
+    service_name: "偏远家庭弱网用药服务"
   },
   chips: [
     { id: "network", label: "网络", value: "未连接", tone: "warn" },
@@ -14,7 +14,7 @@ export const mockDashboard = {
     pending_people: 0,
     pending_plans: 0,
     next_time: "--:--",
-    featured_subject: "站点",
+    featured_subject: "家庭药柜",
     featured_medicine: "等待后端数据"
   },
   inquiry: {
@@ -23,7 +23,7 @@ export const mockDashboard = {
     action_label: "开始问询"
   },
   quick_actions: [
-    { id: "scan", title: "扫码识别", subtitle: "药盒 / 条码 / 站点码", tone: "green" },
+    { id: "scan", title: "扫码识别", subtitle: "药盒 / 条码 / 药柜编号", tone: "green" },
     { id: "vitals", title: "身体状态测量", subtitle: "额温 / 心率 / 血氧", tone: "blue" },
     { id: "records", title: "服务记录", subtitle: "本地记录与同步", tone: "purple" }
   ],

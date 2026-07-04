@@ -16,7 +16,7 @@ sh scripts/adb_forward.sh
 4. Start the backend:
 
 ```bash
-QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=true sh scripts/start_backend.sh
+QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 DISPENSE_DRY_RUN=false ENABLE_REAL_DISPENSE=1 sh scripts/start_backend.sh
 ```
 
 5. Start the frontend:
@@ -58,18 +58,18 @@ curl http://127.0.0.1:8000/api/device/check
 - external gateway connection state;
 - host camera state;
 - vitals module state;
-- dispense control: real linkage or dry-run, matching the environment;
+- cabinet control: real linkage or temporarily disabled, matching the environment;
 - sync state.
 
 ## Workflow Verification
 
 1. Verify the homepage loads with today medication and emergency inquiry cards.
 2. Verify the medicines page loads inventory.
-3. Open the medicines page and inspect the 取药确认 modal. Do not submit physical dispense unless the safe test slot has been agreed.
+3. Open the medicines page and inspect the 取药确认 modal. Submit physical cabinet open only when the selected slot is safe to test.
 4. Verify the inquiry page returns rules fallback results.
 5. Verify the Scan page can show the host-camera capture state.
 6. Verify the records page shows local records and pending sync state.
-7. Physical dispense smoke is disabled unless `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` and request confirmation are all present.
+7. Physical cabinet smoke requires `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1` and request confirmation. Set `REAL_DISPENSE_TEST_SLOT` when you need to restrict testing to one slot.
 
 ## Expected Degradation
 

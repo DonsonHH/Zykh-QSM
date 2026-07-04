@@ -133,7 +133,7 @@ class MedicineScanService:
                 image_path=image_path,
                 barcode=normalized_barcode,
                 source=source,
-                error_message="条码未匹配到站点药品，请人工核验。",
+                error_message="条码未匹配到家庭药柜药品，请人工核验。",
             )
         return MedicineScanResult(
             ok=True,

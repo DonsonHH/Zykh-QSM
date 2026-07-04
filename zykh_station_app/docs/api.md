@@ -10,7 +10,7 @@ http://127.0.0.1:8000
 
 ### GET /api/health
 
-Returns service, database, QSM mode and dry-run status.
+Returns service, database, QSM mode and cabinet-control mode.
 
 ### GET /api/status
 
@@ -20,12 +20,12 @@ Returns top-level station status for the terminal shell:
 - AI mode;
 - peripheral device status;
 - sync status;
-- dry-run flag;
+- cabinet-control mode;
 - status chips.
 
 ### GET /api/site
 
-Returns the station profile displayed by the terminal.
+Returns the home terminal profile displayed by the terminal.
 
 ### POST /api/site
 
@@ -62,7 +62,7 @@ The endpoint always returns HTTP 200 for expected missing-device cases so the te
 
 ### GET /api/medicines
 
-Returns the station medicine list and available categories.
+Returns the home cabinet medicine list and available categories.
 
 ### GET /api/medicines/{medicine_id}
 
@@ -70,7 +70,7 @@ Returns a single medicine detail.
 
 ### POST /api/dispense/confirm
 
-Requires the safety notice confirmation flag and writes a local 取药确认 record. It calls the QSM dispense path only when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` matches the selected slot, and request body `confirm_real_dispense=true`.
+Requires the safety notice confirmation flag and writes a local 取药确认 record. By default it calls the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is optional; when configured, only the matching slot can open.
 
 ### GET /api/dispense/records
 

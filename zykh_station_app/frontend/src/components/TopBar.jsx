@@ -13,7 +13,7 @@ export function TopBar({ site, chips, now, onOpenSystemCheck }) {
         <div>
           <h1>智药康护终端</h1>
           <p>
-            {site?.station_name || "偏远社区康护站"} · {site?.service_name || "村镇智慧用药服务点"}
+            {site?.station_name || "智药康护家用终端"} · {site?.service_name || "偏远家庭弱网用药服务"}
           </p>
         </div>
       </div>

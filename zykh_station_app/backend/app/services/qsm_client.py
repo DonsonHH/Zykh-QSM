@@ -187,6 +187,13 @@ class QsmClient:
         return LocalCameraService().capture()
 
     def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
+        payload: dict[str, Any] = {"slot": slot, "quantity": quantity}
+        try:
+            numeric_slot = int(slot)
+            if 1 <= numeric_slot <= 23:
+                payload["control_code"] = numeric_slot - 1
+        except ValueError:
+            pass
         if dry_run:
             return {
                 "ok": True,
@@ -200,7 +207,7 @@ class QsmClient:
         payload, error = self._request_json(
             settings.qsm_dispense_path,
             method="POST",
-            payload={"slot": slot, "quantity": quantity},
+            payload=payload,
             body_format="auto",
         )
         if error:

@@ -66,8 +66,8 @@ class DispenseService:
             raise DispenseError("请先确认现场安全，避免误开柜门。")
 
         allowed_slot = settings.real_dispense_test_slot.strip()
-        dry_run = settings.dispense_dry_run or not settings.enable_real_dispense or not allowed_slot
-        if not dry_run and allowed_slot != str(request.slot):
+        dry_run = settings.dispense_dry_run or not settings.enable_real_dispense
+        if not dry_run and allowed_slot and allowed_slot != str(request.slot):
             raise DispenseError("真实开柜测试仓位与请求仓位不一致，已拒绝执行。")
 
         qsm_result = self.qsm_client.dispense(str(request.slot), request.quantity, dry_run=dry_run)
@@ -116,7 +116,7 @@ class DispenseService:
             return True
         allowed_slot = settings.real_dispense_test_slot.strip()
         if not allowed_slot:
-            return True
+            return False
         hardware_slot = str(medicine.hardware_slot or "")
         if allowed_slot not in {hardware_slot, medicine.slot}:
             raise DispenseError("真实取药测试仓位与当前药品仓位不一致，已拒绝执行。")

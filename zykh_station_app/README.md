@@ -101,8 +101,8 @@ QSM_TIMEOUT_SECONDS=2
 QSM_VITALS_PREFER_FULL=false
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
-DISPENSE_DRY_RUN=true
-ENABLE_REAL_DISPENSE=0
+DISPENSE_DRY_RUN=false
+ENABLE_REAL_DISPENSE=1
 AI_MODE=auto
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_MODEL=deepseek-v4-flash
@@ -122,7 +122,23 @@ AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境�
 export AI_API_KEY_FILE=/userdata/zykh_app/data/ai-api-key.txt
 ```
 
-无网或未配置密钥时，问询接口标记为“本地兜底”，使用现有 rules 逻辑，不假装离线大模型已经完成。
+无网或未配置密钥时，问询接口标记为“本地兜底”，使用现有 rules 逻辑，不假装离线大模型已经完成。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+
+## QSM 4G 联网
+
+日常联网优先使用 QSM 上的 EC200A/SIM 数据链路。进入 QSM shell 后运行：
+
+```bash
+/userdata/zykh_app/scripts/start_4g.sh
+```
+
+仓库内提供同名脚本模板：
+
+```bash
+sh scripts/start_4g.sh
+```
+
+该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。只有 SIM 卡无信号或 4G 链路失败时，问询才应落到本地兜底。
 
 ## QSM real 模式验证
 
@@ -139,7 +155,7 @@ sh scripts/adb_forward.sh
 QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 sh scripts/start_backend.sh
 ```
 
-默认 `DISPENSE_DRY_RUN=true`，取药确认只写入 dry-run 记录。真实取药必须同时满足 `DISPENSE_DRY_RUN=false`、`ENABLE_REAL_DISPENSE=1`、`REAL_DISPENSE_TEST_SLOT` 已配置，并且请求体显式 `confirm_real_dispense=true`。
+默认真实开柜联动：`DISPENSE_DRY_RUN=false` 且 `ENABLE_REAL_DISPENSE=1`。取药确认仍必须勾选安全确认，后端会核对药品、仓位和库存，然后调用外设网关 `/api/dispense`。如需限制测试仓位，可设置 `REAL_DISPENSE_TEST_SLOT=1`；如需演示 dry-run，可临时设置 `DISPENSE_DRY_RUN=true`。
 
 ## 演示前检查
 
@@ -170,12 +186,9 @@ curl http://127.0.0.1:8000/api/qsm/capabilities
 curl http://127.0.0.1:8000/api/device/check
 ```
 
-真实取药确认会调用外设网关。测试前必须确认安全仓位并开启双开关：
+真实取药确认会调用外设网关。测试前请确认柜门附近安全：
 
 ```bash
-export DISPENSE_DRY_RUN=false
-export ENABLE_REAL_DISPENSE=1
-export REAL_DISPENSE_TEST_SLOT=1
 curl -X POST http://127.0.0.1:8000/api/dispense/confirm \
   -H "Content-Type: application/json" \
   -d '{"medicine_id":"aspirin-enteric","slot":"A01","quantity":1,"reason":"真实联调确认","confirmed_safety_notice":true,"confirm_real_dispense":true}'
@@ -191,7 +204,7 @@ cd zykh_station_app/frontend && npm run build
 ## 阶段计划
 
 1. 首页闭环和新架构基线；
-2. 药品页 + 取药确认 dry-run；
+2. 药品页 + 取药确认流程；
 3. 问询页 + AI rules 兜底；
 4. 记录页 + 同步队列；
 5. QSM real/mock 双模式接入验证；

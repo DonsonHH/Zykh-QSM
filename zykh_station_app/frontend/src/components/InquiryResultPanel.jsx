@@ -94,7 +94,7 @@ export function InquiryResultPanel({ result, onViewCandidates }) {
           查看候选药品
         </button>
       ) : (
-        <div className="blocked-action">建议联系医生、村医或值守人员</div>
+        <div className="blocked-action">建议联系医生、家人或远程协助人员</div>
       )}
     </aside>
   );

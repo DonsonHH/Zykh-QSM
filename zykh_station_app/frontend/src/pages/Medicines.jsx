@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicines } from "../api/medicines.js";
-import { loadQsmStatus } from "../api/qsm.js";
 import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { CategoryTabs } from "../components/CategoryTabs.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
@@ -90,21 +89,8 @@ export function Medicines({ notify, focus, onNavigate }) {
     setModalError("");
     confirmDispense(payload)
       .then((data) => {
-        return loadQsmStatus()
-          .then((qsm) => {
-            const message =
-              data.ok === false
-                ? data.message
-                : qsm.mode === "real" && qsm.connected === false
-                ? "外设暂不可用，已保留本地取药记录。"
-                : data.message;
-            setModalResult(message);
-            notify(message);
-          })
-          .catch(() => {
-            setModalResult(data.message);
-            notify(data.message);
-          });
+        setModalResult(data.message);
+        notify(data.message);
       })
       .catch((error) => setModalError(error.message || "取药确认失败"))
       .finally(() => setSubmitting(false));
@@ -112,10 +98,10 @@ export function Medicines({ notify, focus, onNavigate }) {
 
   return (
     <main className="medicines-page" id="main-content">
-      <section className="medicines-main-panel">
+      <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""}`}>
         <div className="medicines-heading">
           <div>
-            <h2>站点药品</h2>
+            <h2>家庭药柜</h2>
             <p>{medicines.length}/23 仓有库存</p>
           </div>
           <div className="medicines-heading-actions">
@@ -148,9 +134,7 @@ export function Medicines({ notify, focus, onNavigate }) {
 
         {viewMode === "category" ? (
           <CategoryTabs categories={categories} activeCategory={activeCategory} onChange={handleCategoryChange} />
-        ) : (
-          <p className="cabinet-map-note">按实体药柜位置选择仓门，空仓位以浅色显示。</p>
-        )}
+        ) : null}
 
         {viewMode === "category" ? (
           <div className="medicine-grid" aria-label="药品列表">

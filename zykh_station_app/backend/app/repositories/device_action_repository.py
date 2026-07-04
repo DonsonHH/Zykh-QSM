@@ -11,7 +11,7 @@ class DeviceActionRecord(BaseModel):
     type: str
     title: str
     description: str
-    target_user: str = "站点"
+    target_user: str = "家庭药柜"
     status: str = "已记录"
     sync_status: str = "待同步"
 

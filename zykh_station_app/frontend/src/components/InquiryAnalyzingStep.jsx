@@ -1,7 +1,7 @@
 import React from "react";
 import { CheckCircle2, LoaderCircle } from "lucide-react";
 
-const progressItems = ["整理症状信息", "检查风险关键词", "核对过敏/禁忌", "匹配站点药品类别"];
+const progressItems = ["整理症状信息", "检查风险关键词", "核对过敏/禁忌", "匹配家庭药柜类别"];
 
 export function InquiryAnalyzingStep() {
   return (

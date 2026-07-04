@@ -1,5 +1,7 @@
 # QSM Real Connection Audit
 
+> Historical audit snapshot. It records the previous dry-run safety baseline at the time of that check. Current runtime defaults are real-device first: `QSM_MODE=real`, `LOCAL_CAMERA_MODE=real`, `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`.
+
 ## Overall Verdict
 
 - QSM gateway deployed: yes
@@ -109,7 +111,7 @@ POST /api/ai/chat -> 200 ok=false, DNS temporary failure
 - Station AI key was not configured in env, `.env.local`, or `/userdata/zykh_app/data/ai-api-key.txt`; `previous_work.md` contains a historical key reference but it was not copied.
 - QSM camera capture route returned a camera pipeline error; host-side local camera remains the working camera path.
 - QSM audio speak and ASR timed out and can block the single Perl gateway process long enough to require restart.
-- Previous station default allowed real dispense too easily; it has been changed back to dry-run plus a double safety gate.
+- Historical note: at the time of this audit, cabinet action was kept non-physical while safety gates were being verified. Current defaults are documented in README and qsm-integration.md.
 
 ## Fixes Applied
 

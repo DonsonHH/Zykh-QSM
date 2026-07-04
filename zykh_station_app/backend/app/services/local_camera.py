@@ -30,33 +30,48 @@ class LocalCameraService:
         if not check["ok"]:
             return self._unavailable(check["error_message"])
 
-        image_dir = DATA_DIR / "captures"
-        image_dir.mkdir(parents=True, exist_ok=True)
-        image_path = image_dir / f"capture-{now_text().replace(' ', '-').replace(':', '')}.jpg"
-        device = str(check["device"])
-        command = self._capture_command(device, image_path)
-        if not command:
+        devices = self._capture_device_candidates(check.get("device"))
+        command_available = any(self._capture_command(str(device), DATA_DIR / "captures" / "probe.jpg") for device in devices)
+        if not command_available:
             return self._unavailable("未找到可用摄像头抓拍命令，请配置 LOCAL_CAMERA_CAPTURE_CMD。")
 
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return self._unavailable(f"摄像头抓拍失败：{exc}")
+        image_dir = DATA_DIR / "captures"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        errors: list[str] = []
+        for device_path in devices:
+            image_path = image_dir / f"capture-{now_text().replace(' ', '-').replace(':', '')}.jpg"
+            device = str(device_path)
+            command = self._capture_command(device, image_path)
+            if not command:
+                continue
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                errors.append(f"{device}: {exc}")
+                continue
 
-        if image_path.exists() and image_path.stat().st_size > 0:
-            return {
-                "ok": True,
-                "mode": "real",
-                "status": "available",
-                "image_available": True,
-                "image_path": str(image_path),
-                "image_url": None,
-                "error_message": None,
-                "captured_at": now_text(),
-                "command": " ".join(command),
-            }
-        stderr = (result.stderr or result.stdout or "").strip()
-        return self._unavailable(f"摄像头未生成图片：{stderr[:240]}")
+            if image_path.exists() and image_path.stat().st_size > 0:
+                return {
+                    "ok": True,
+                    "mode": "real",
+                    "status": "available",
+                    "image_available": True,
+                    "image_path": str(image_path),
+                    "image_url": None,
+                    "error_message": None,
+                    "captured_at": now_text(),
+                    "device": device,
+                    "command": " ".join(command),
+                }
+            stderr = (result.stderr or result.stdout or "").strip()
+            errors.append(f"{device}: {stderr[:180] or '未生成图片'}")
+            try:
+                if image_path.exists() and image_path.stat().st_size == 0:
+                    image_path.unlink()
+            except OSError:
+                pass
+
+        return self._unavailable(f"摄像头未生成图片：{'；'.join(errors)[-500:]}")
 
     def _unavailable(self, message: str) -> dict[str, Any]:
         return {
@@ -113,16 +128,43 @@ class LocalCameraService:
             return Path(f"/dev/video{self.device}")
         return Path(self.device)
 
+    def _capture_device_candidates(self, checked_device: object | None) -> list[Path]:
+        if self.device != "auto":
+            resolved = self._resolve_device_path()
+            return [resolved] if resolved else []
+        candidates: list[Path] = []
+        if checked_device:
+            candidates.append(Path(str(checked_device)))
+        candidates.extend(self._auto_device_paths())
+        seen: set[str] = set()
+        unique: list[Path] = []
+        for path in candidates:
+            key = str(path)
+            if key in seen or not path.exists():
+                continue
+            seen.add(key)
+            unique.append(path)
+        return unique
+
     @staticmethod
     def _auto_device_path() -> Path | None:
-        preferred = [Path("/dev/video23"), Path("/dev/video0"), Path("/dev/video5"), Path("/dev/video-camera0")]
-        for path in preferred:
-            if path.exists():
-                return path
-        for path in sorted(Path("/dev").glob("video*")):
-            if path.exists():
-                return path
-        return None
+        paths = LocalCameraService._auto_device_paths()
+        return paths[0] if paths else None
+
+    @staticmethod
+    def _auto_device_paths() -> list[Path]:
+        preferred = [Path("/dev/video23"), Path("/dev/video5"), Path("/dev/video0"), Path("/dev/video-camera0")]
+        ordered = [path for path in preferred if path.exists()]
+        ordered.extend(path for path in sorted(Path("/dev").glob("video*")) if path.exists())
+        result: list[Path] = []
+        seen: set[str] = set()
+        for path in ordered:
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
 
     def _capture_command(self, device: str, image_path: Path) -> list[str] | None:
         if settings.local_camera_capture_cmd:

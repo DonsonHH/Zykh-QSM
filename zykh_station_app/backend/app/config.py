@@ -83,13 +83,13 @@ class Settings:
     showapi_app_key_file: Path = Path(_env("SHOWAPI_APP_KEY_FILE", "/userdata/zykh_app/data/showapi-app-key.txt"))
     sync_endpoint: str = _env("SYNC_ENDPOINT", "")
     real_dispense_test_slot: str = _env("REAL_DISPENSE_TEST_SLOT", "")
-    enable_real_dispense: bool = _env("ENABLE_REAL_DISPENSE", "0").strip().lower() in {
+    enable_real_dispense: bool = _env("ENABLE_REAL_DISPENSE", "1").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
-    dispense_dry_run: bool = _env("DISPENSE_DRY_RUN", "true").strip().lower() not in {
+    dispense_dry_run: bool = _env("DISPENSE_DRY_RUN", "false").strip().lower() not in {
         "0",
         "false",
         "no",
@@ -104,5 +104,4 @@ def real_dispense_enabled() -> bool:
     return (
         settings.dispense_dry_run is False
         and settings.enable_real_dispense is True
-        and bool(settings.real_dispense_test_slot.strip())
     )

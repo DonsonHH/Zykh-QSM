@@ -59,7 +59,7 @@ CATEGORY_RULES = [
     (("腹泻", "胃痛", "肚子痛", "腹痛", "呕吐"), ["肠胃"]),
     (("过敏", "瘙痒", "皮疹", "鼻炎"), ["过敏"]),
     (("擦伤", "破皮", "划伤", "小伤口"), ["外伤消毒"]),
-    (("血压", "慢病", "长期用药", "心脑血管"), ["慢病常用"]),
+    (("血压", "慢病", "长期用药", "心脑血管"), ["家庭常用"]),
 ]
 
 CONTRAINDICATION_RULES = {
@@ -90,7 +90,7 @@ class RulesEngine:
         medicines = self._candidate_medicines(categories, request.allergy_or_contraindication)
         has_stock = any(medicine.stock > 0 for medicine in medicines)
         can_proceed = risk_level == "low" and not warnings and has_stock
-        if "慢病常用" in categories:
+        if "家庭常用" in categories:
             can_proceed = False
 
         return RuleEvaluation(
@@ -152,6 +152,9 @@ class RulesEngine:
         candidates = [medicine for medicine in stocked if medicine.category in category_set and medicine.is_otc]
         return [medicine for medicine in candidates if not self._conflicts_with_allergy(medicine, allergy_text)]
 
+    def candidate_medicines_for(self, categories: list[str], allergy_text: str) -> list[CandidateMedicine]:
+        return [self._to_candidate(medicine) for medicine in self._candidate_medicines(categories, allergy_text)]
+
     def _conflicts_with_allergy(self, medicine: Medicine, allergy_text: str) -> bool:
         for allergy_keyword, medicine_keywords in MEDICINE_CONFLICT_KEYWORDS.items():
             if allergy_keyword in allergy_text and any(keyword in medicine.name for keyword in medicine_keywords):
@@ -163,7 +166,7 @@ class RulesEngine:
             id=medicine.id,
             name=medicine.name,
             category=medicine.category,
-            slot=medicine.slot,
+            slot=str(medicine.hardware_slot or medicine.slot),
             stock=medicine.stock,
             unit=medicine.unit,
             safety_note=medicine.safety_note,
@@ -190,24 +193,24 @@ class RulesEngine:
 
     def _safety_notice(self, risk_level: RiskLevel, can_proceed: bool, categories: list[str]) -> str:
         if risk_level in {"high", "emergency"}:
-            return "存在明显高风险信号，本系统不进入取药确认，请立即联系医生、村医或救援人员。"
+            return "存在明显高风险信号，本系统不进入取药确认，请立即联系医生或救援人员。"
         if risk_level == "medium":
-            return "当前信息存在不确定或持续症状，本系统仅提供风险提示，请先联系村医或现场值守人员。"
-        if "慢病常用" in categories:
+            return "当前信息存在不确定或持续症状，本系统仅提供风险提示，请先联系医生、家人或远程协助人员。"
+        if "家庭常用" in categories:
             return "慢病相关药品需按已有计划或医嘱核验，本次问询不直接进入取药确认。"
         if can_proceed:
             return "当前仅可查看候选药品类别和安全提示，后续取药仍需完成用药安全核验。"
-        return "已识别过敏或禁忌信息，请先由医生、村医或现场值守人员核验。"
+        return "已识别过敏或禁忌信息，请先由医生或远程协助人员核验。"
 
     def _next_steps(self, risk_level: RiskLevel, can_proceed: bool, categories: list[str]) -> list[str]:
         if risk_level == "emergency":
             return ["立即联系医生或救援人员", "保持现场有人陪同", "不要自行取药处理"]
         if risk_level == "high":
-            return ["尽快联系医生或村医", "由现场值守人员协助判断", "暂不进入取药确认"]
+            return ["尽快联系医生或救援人员", "由家人陪同观察", "暂不进入取药确认"]
         if risk_level == "medium":
-            return ["联系村医或现场值守人员", "补充体征和既往用药信息", "暂不进入取药确认"]
-        if "慢病常用" in categories:
-            return ["核对已有用药计划或医嘱", "由村医或值守人员确认后再处理"]
+            return ["联系医生或远程协助人员", "补充体征和既往用药信息", "暂不进入取药确认"]
+        if "家庭常用" in categories:
+            return ["核对已有用药计划或医嘱", "由医生或家人确认后再处理"]
         if can_proceed:
             return ["查看候选药品类别和安全提示", "在药品页完成用药安全核验", "通过取药确认流程记录操作"]
-        return ["先核验过敏/禁忌信息", "必要时联系医生、村医或值守人员"]
+        return ["先核验过敏/禁忌信息", "必要时联系医生或远程协助人员"]

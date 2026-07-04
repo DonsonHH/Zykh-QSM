@@ -25,7 +25,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       medicine_id: medicine.id,
       slot: medicine.slot,
       quantity,
-      reason: "站点药品页取药确认",
+      reason: "家庭药柜取药确认",
       confirmed_safety_notice: checked,
       confirm_real_dispense: checked
     });

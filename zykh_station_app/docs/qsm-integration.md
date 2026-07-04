@@ -38,8 +38,8 @@ QSM_AUDIO_SPEAK_PATH=/api/audio/speak
 QSM_AUDIO_BEEP_PATH=/api/audio/beep
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
-DISPENSE_DRY_RUN=true
-ENABLE_REAL_DISPENSE=0
+DISPENSE_DRY_RUN=false
+ENABLE_REAL_DISPENSE=1
 ```
 
 `QSM_MODE=real` calls the gateway base URL. If the gateway is not reachable, the backend returns `connected=false` and a readable `error_message`; the dashboard continues to render and shows the device as temporarily unavailable. It does not silently replace failed real calls with fake vitals, fake scan results or fake dispense success.
@@ -87,7 +87,7 @@ If any step fails, it prints a clear warning and exits without killing the app. 
 
 Host camera methods live in `services/local_camera.py`. In real mode, the service captures one image from the configured local camera and returns a structured unavailable response if the device or capture command fails.
 
-By default `DISPENSE_DRY_RUN=true`, so 取药确认 writes a local dry-run record and never calls the gateway dispense path. Real dispense requires all safety gates: `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, `REAL_DISPENSE_TEST_SLOT` configured, and request body `confirm_real_dispense=true`.
+By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. 取药确认 still requires the safety checkbox and request body `confirm_real_dispense=true`, writes a local record, then calls the gateway dispense path. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 
 ## Device endpoints
 
@@ -135,7 +135,8 @@ Medicine scan follows this order:
 
 Inquiry AI follows this order:
 
-- call the configured DeepSeek-compatible cloud endpoint when `AI_API_KEY` or `AI_API_KEY_FILE` is available;
+- call the configured DeepSeek-compatible cloud endpoint from the host when `AI_API_KEY` or `AI_API_KEY_FILE` is available;
+- if the host route fails in real mode, try the QSM 4G cloud route through `QSM_AI_CHAT_PATH`;
 - return a marked `local_fallback` rules response when offline or unconfigured.
 
 ## Stage seven check workflow

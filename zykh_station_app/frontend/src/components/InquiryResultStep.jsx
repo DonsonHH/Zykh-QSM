@@ -9,6 +9,12 @@ export function InquiryResultStep({ result, blockedReason, onViewCandidates, onR
   const medicines = result?.candidate_medicines || [];
   const warnings = result?.contraindication_warnings || [];
   const nextSteps = blockedReason ? [blockedReason] : result?.next_steps || [];
+  const channelLabel =
+    result?.ai_source === "cloud"
+      ? "云通道"
+      : result?.ai_source === "qsm_cloud"
+        ? "QSM 4G 云通道"
+        : "本地兜底";
 
   return (
     <section className="inquiry-result-step">
@@ -17,6 +23,7 @@ export function InquiryResultStep({ result, blockedReason, onViewCandidates, onR
           <p>问询结果</p>
           <h2>结构化风险提示</h2>
           <span>{result.symptoms_summary}</span>
+          <small className="result-ai-channel">{channelLabel}</small>
         </div>
         <RiskBadge level={result.risk_level} label={result.risk_label} />
       </div>
@@ -45,7 +52,7 @@ export function InquiryResultStep({ result, blockedReason, onViewCandidates, onR
               ))}
             </div>
           ) : (
-            <p className="muted-line">暂无可匹配库存，请联系现场人员。</p>
+            <p className="muted-line">暂无可匹配库存，请联系家人或远程协助人员。</p>
           )}
         </section>
 
@@ -83,7 +90,7 @@ export function InquiryResultStep({ result, blockedReason, onViewCandidates, onR
           查看候选药品
         </button>
       ) : (
-        <div className="blocked-action result-flow-blocked">建议联系医生、村医或现场值守人员</div>
+        <div className="blocked-action result-flow-blocked">建议联系医生、家人或远程协助人员</div>
       )}
 
       <div className="result-bottom-actions">

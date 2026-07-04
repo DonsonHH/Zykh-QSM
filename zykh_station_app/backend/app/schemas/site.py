@@ -4,10 +4,10 @@ from pydantic import BaseModel, Field
 
 
 class SiteProfile(BaseModel):
-    station_name: str = Field(default="偏远社区康护站")
-    service_name: str = Field(default="村镇智慧用药服务点")
-    location: str = Field(default="本地服务站")
-    manager: str = Field(default="值守人员")
+    station_name: str = Field(default="智药康护家用终端")
+    service_name: str = Field(default="偏远家庭弱网用药服务")
+    location: str = Field(default="家庭药柜")
+    manager: str = Field(default="家庭成员")
     network_mode: str = Field(default="weak")
     ai_mode: str = Field(default="rules")
     sync_status: str = Field(default="synced")

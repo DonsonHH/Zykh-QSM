@@ -11,7 +11,7 @@ const initialForm = {
   duration: "",
   used_medicines: "",
   allergy_or_contraindication: "",
-  scene_type: "村镇",
+  scene_type: "家庭",
   include_vitals: false
 };
 
@@ -34,6 +34,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   const [step, setStep] = useState(initialDraft?.step || "start");
   const [form, setForm] = useState(initialDraft?.form || initialForm);
   const [allergyChoice, setAllergyChoice] = useState(initialDraft?.allergyChoice || "");
+  const [followupStage, setFollowupStage] = useState(initialDraft?.followupStage || "duration");
   const [result, setResult] = useState(null);
   const [listening, setListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState("");
@@ -43,15 +44,11 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, allergyChoice, vitalsMessage }));
+      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, allergyChoice, followupStage, vitalsMessage }));
     } catch {
       // sessionStorage is optional; losing a draft must not block inquiry.
     }
-  }, [step, form, allergyChoice, vitalsMessage]);
-
-  function updateSymptoms(value) {
-    setForm((current) => ({ ...current, symptoms_text: value }));
-  }
+  }, [step, form, allergyChoice, followupStage, vitalsMessage]);
 
   function handleQuickSymptom(symptom) {
     setForm((current) => ({ ...current, symptoms_text: symptom }));
@@ -59,16 +56,17 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
 
   function handleNext() {
     if (!form.symptoms_text.trim()) {
-      notify("请先说出或输入症状");
+      notify("请先说出症状或点击症状按钮");
       return;
     }
+    setFollowupStage("duration");
     setStep("followup");
   }
 
   function handleVoiceInput() {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
-      const message = "当前语音输入不可用，请手动输入。";
+      const message = "当前语音输入不可用，可点击下方症状按钮。";
       setVoiceMessage(message);
       notify(message);
       return;
@@ -93,7 +91,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
         .join("")
         .trim();
       if (!text) {
-        setVoiceMessage("未识别到有效语音，请手动输入。");
+        setVoiceMessage("未识别到有效语音，可点击症状按钮。");
         return;
       }
       setForm((current) => ({
@@ -104,7 +102,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     };
 
     recognition.onerror = () => {
-      const message = "当前语音输入不可用，请手动输入。";
+      const message = "当前语音输入不可用，可点击下方症状按钮。";
       setVoiceMessage(message);
       notify(message);
     };
@@ -120,6 +118,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   function handleOpenVitals() {
     const nextForm = { ...form, include_vitals: true };
     setForm(nextForm);
+    setFollowupStage("review");
     setVitalsMessage("请按测量页引导读取体征，完成后返回问询继续。");
     try {
       window.sessionStorage.setItem(
@@ -128,6 +127,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
           step: "followup",
           form: nextForm,
           allergyChoice,
+          followupStage: "review",
           vitalsMessage: "请按测量页引导读取体征，完成后返回问询继续。"
         })
       );
@@ -195,6 +195,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     setStep("start");
     setForm(initialForm);
     setAllergyChoice("");
+    setFollowupStage("duration");
     setResult(null);
     setVoiceMessage("");
     setVitalsMessage("");
@@ -214,7 +215,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
             symptomsText={form.symptoms_text}
             listening={listening}
             voiceMessage={voiceMessage}
-            onSymptomsChange={updateSymptoms}
             onQuickSymptom={handleQuickSymptom}
             onVoiceInput={handleVoiceInput}
             onNext={handleNext}
@@ -223,10 +223,12 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
           <InquiryFollowupStep
             form={form}
             allergyChoice={allergyChoice}
+            followupStage={followupStage}
             readingVitals={false}
             vitalsMessage={vitalsMessage}
             onFormChange={setForm}
             onAllergyChoice={setAllergyChoice}
+            onStageChange={setFollowupStage}
             onReadVitals={handleOpenVitals}
             onBack={() => setStep("start")}
             onAnalyze={handleAnalyze}

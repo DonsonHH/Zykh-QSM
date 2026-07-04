@@ -1,12 +1,11 @@
 import React from "react";
-import { ArrowRight, Keyboard, Mic } from "lucide-react";
+import { ArrowRight, Mic } from "lucide-react";
 import { SymptomQuickChips } from "./SymptomQuickChips.jsx";
 
 export function InquiryStartStep({
   symptomsText,
   listening,
   voiceMessage,
-  onSymptomsChange,
   onQuickSymptom,
   onVoiceInput,
   onNext
@@ -24,20 +23,6 @@ export function InquiryStartStep({
         <strong>{listening ? "正在听取症状" : "点击说出症状"}</strong>
       </button>
       {voiceMessage ? <div className="voice-status">{voiceMessage}</div> : null}
-
-      <label className="manual-symptom-box" htmlFor="inquiry-symptoms">
-        <span>
-          <Keyboard size={21} aria-hidden="true" />
-          也可以手动输入症状
-        </span>
-        <textarea
-          id="inquiry-symptoms"
-          value={symptomsText}
-          onChange={(event) => onSymptomsChange(event.target.value)}
-          placeholder="例如：轻微腹泻、流涕、皮肤瘙痒"
-          rows={3}
-        />
-      </label>
 
       <SymptomQuickChips selected={symptomsText} onSelect={onQuickSymptom} />
 

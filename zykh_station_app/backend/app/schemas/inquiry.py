@@ -13,7 +13,7 @@ class InquiryEvaluateRequest(BaseModel):
     duration: str = ""
     used_medicines: str = ""
     allergy_or_contraindication: str = ""
-    scene_type: str = "村镇"
+    scene_type: str = "家庭"
     include_vitals: bool = False
 
 
@@ -39,6 +39,8 @@ class InquiryResult(BaseModel):
     next_steps: list[str]
     can_proceed_to_dispense: bool
     created_at: str
+    ai_source: str = "local_fallback"
+    ai_message: str = "本地规则兜底"
 
 
 class InquiryRecordResponse(BaseModel):

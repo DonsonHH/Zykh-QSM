@@ -136,11 +136,11 @@ export function Scan({ notify, onNavigate }) {
     lastCodeRef.current = code;
     matchingRef.current = true;
     setLiveStatus("matched");
-    setLiveMessage(`识别到 ${code}，正在匹配站点药品。`);
+    setLiveMessage(`识别到 ${code}，正在匹配家庭药柜药品。`);
     scanMedicine({ manual_code: code, mode: scanMode })
       .then((data) => {
         applyScanResult(data, code);
-        setLiveMessage(data.ok ? "已匹配站点药品，请人工核验。" : "条码未匹配，请人工核验或重扫。");
+        setLiveMessage(data.ok ? "已匹配家庭药柜药品，请人工核验。" : "条码未匹配，请人工核验或重扫。");
       })
       .catch((error) => {
         setResult({ barcode: code, name: "待人工核验", match_percent: 0, spec: "--", quantity: "--", expire_date: "--", slot: "--" });
@@ -210,7 +210,7 @@ export function Scan({ notify, onNavigate }) {
           }
           applyScanResult(data);
           setLiveStatus("matched");
-          setLiveMessage("已匹配站点药品，请人工核验。");
+          setLiveMessage("已匹配家庭药柜药品，请人工核验。");
           return;
         }
         setLiveStatus("scanning");
