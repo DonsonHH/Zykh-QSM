@@ -9,7 +9,11 @@ KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
 KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
 KIOSK_SCALE="${KIOSK_SCALE:-1}"
 KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
+KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
+BROWSER_PID=""
+RESTORE_OUTPUT=""
+RESTORE_MODE=""
 
 mkdir -p "$RUN_DIR"
 
@@ -20,6 +24,56 @@ log() {
 warn() {
   printf '[kiosk] WARN: %s\n' "$*" >&2
 }
+
+current_mode_for_output() {
+  xrandr --query | awk -v output="$1" '
+    $1 == output && $2 == "connected" { found = 1; next }
+    found && /^[[:space:]]/ && /\*/ { print $1; exit }
+    found && /^[^[:space:]]/ { found = 0 }
+  '
+}
+
+restore_resolution() {
+  if [ "$KIOSK_RESTORE_RESOLUTION" != "1" ]; then
+    return 0
+  fi
+  if [ -z "$RESTORE_OUTPUT" ] || [ -z "$RESTORE_MODE" ]; then
+    return 0
+  fi
+  if ! command -v xrandr >/dev/null 2>&1; then
+    return 0
+  fi
+  if xrandr --output "$RESTORE_OUTPUT" --mode "$RESTORE_MODE" >/dev/null 2>&1; then
+    log "显示输出 $RESTORE_OUTPUT 已恢复到 $RESTORE_MODE。"
+  else
+    warn "无法恢复显示输出 $RESTORE_OUTPUT 到 $RESTORE_MODE。"
+  fi
+}
+
+stop_browser() {
+  if [ -n "$BROWSER_PID" ] && kill -0 "$BROWSER_PID" >/dev/null 2>&1; then
+    kill "$BROWSER_PID" >/dev/null 2>&1 || true
+    wait "$BROWSER_PID" 2>/dev/null || true
+  fi
+}
+
+on_exit() {
+  status="$?"
+  trap - EXIT INT TERM
+  stop_browser
+  restore_resolution
+  exit "$status"
+}
+
+on_signal() {
+  trap - EXIT INT TERM
+  stop_browser
+  restore_resolution
+  exit 130
+}
+
+trap on_exit EXIT
+trap on_signal INT TERM
 
 backend_ready() {
   curl -fsS --max-time 1 "$BACKEND_URL/api/health" >/dev/null 2>&1
@@ -108,6 +162,9 @@ set_kiosk_resolution() {
     return 0
   fi
 
+  RESTORE_OUTPUT="$output"
+  RESTORE_MODE="$(current_mode_for_output "$output" || true)"
+
   mode="${KIOSK_WIDTH}x${KIOSK_HEIGHT}"
   if xrandr --output "$output" --mode "$mode" >/dev/null 2>&1; then
     log "显示输出 $output 已切换到 $mode。"
@@ -172,4 +229,7 @@ if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
     --disable-dev-shm-usage
 fi
 
-exec "$@"
+"$@" &
+BROWSER_PID="$!"
+wait "$BROWSER_PID"
+BROWSER_PID=""
