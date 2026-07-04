@@ -82,13 +82,13 @@ export function InquiryFollowupStep({
           <div className="followup-option-row">
             <button type="button" className={form.include_vitals ? "active" : ""} onClick={onReadVitals} disabled={readingVitals}>
               <Activity size={20} aria-hidden="true" />
-              {readingVitals ? "读取中" : "读取体征"}
+              {readingVitals ? "读取中" : "进入测量"}
             </button>
             <button type="button" className={!form.include_vitals ? "active soft" : "soft"} onClick={() => update("include_vitals", false)}>
               跳过
             </button>
           </div>
-          <p className="vitals-message">{vitalsMessage || "体征可选，设备暂不可用时仍可继续问询。"}</p>
+          <p className="vitals-message">{vitalsMessage || "体征可选，将进入独立测量页完成引导。"}</p>
         </section>
       </div>
 

@@ -26,6 +26,12 @@ class QsmVitalsResponse(BaseModel):
     temperature: float | None = None
     heart_rate: int | None = None
     spo2: int | None = None
+    finger_detected: bool | None = None
+    quality: str | None = None
+    message: str | None = None
+    sample_count: int | None = None
+    partial: bool | None = None
+    source: str | None = None
     measured_at: str
     error_message: str | None = None
 

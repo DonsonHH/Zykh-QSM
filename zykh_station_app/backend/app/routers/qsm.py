@@ -30,9 +30,9 @@ def qsm_status() -> QsmStatus:
 
 
 @router.get("/vitals", response_model=QsmVitalsResponse)
-def qsm_vitals() -> QsmVitalsResponse:
+def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
     client = QsmClient()
-    vitals = client.read_vitals()
+    vitals = client.read_full_vitals() if full else client.read_vitals()
     source = str(vitals.get("source", "fallback"))
     status = _vitals_status(client.mode, source)
     response = QsmVitalsResponse(
@@ -42,6 +42,12 @@ def qsm_vitals() -> QsmVitalsResponse:
         temperature=_float_or_none(vitals.get("temperature_c")),
         heart_rate=_int_or_none(vitals.get("heart_rate")),
         spo2=_int_or_none(vitals.get("spo2")),
+        finger_detected=_bool_or_none(vitals.get("finger_detected")),
+        quality=str(vitals.get("quality")) if vitals.get("quality") is not None else None,
+        message=str(vitals.get("message")) if vitals.get("message") is not None else None,
+        sample_count=_int_or_none(vitals.get("sample_count")),
+        partial=_bool_or_none(vitals.get("partial")),
+        source=str(vitals.get("source", client.mode)),
         measured_at=now_text(),
         error_message=vitals.get("error_message") if isinstance(vitals.get("error_message"), str) else None,
     )
@@ -156,7 +162,26 @@ def _int_or_none(value: object) -> int | None:
         return None
 
 
+def _bool_or_none(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+    return None
+
+
 def _vitals_record_title(response: QsmVitalsResponse) -> str:
+    if response.heart_rate is not None or response.spo2 is not None:
+        parts = []
+        if response.heart_rate is not None:
+            parts.append(f"心率 {response.heart_rate}次/分")
+        if response.spo2 is not None:
+            parts.append(f"血氧 {response.spo2}%")
+        return "，".join(parts)
     if response.temperature is None:
         return "体征设备暂不可用"
     return f"体温 {response.temperature:.1f}℃"
@@ -165,6 +190,8 @@ def _vitals_record_title(response: QsmVitalsResponse) -> str:
 def _vitals_record_description(response: QsmVitalsResponse) -> str:
     if response.status == "unavailable":
         return "体征读取未完成，已保留本地记录。"
+    if response.finger_detected is False:
+        return "未检测到手指或信号偏弱，请按引导重新放置手指后再测量。"
     heart_rate = f"{response.heart_rate}次/分" if response.heart_rate is not None else "暂不可用"
     spo2 = f"{response.spo2}%" if response.spo2 is not None else "暂不可用"
     return f"心率 {heart_rate}，血氧 {spo2}。"

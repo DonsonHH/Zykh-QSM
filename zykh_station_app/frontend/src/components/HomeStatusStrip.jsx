@@ -7,19 +7,19 @@ const icons = {
   device: Activity
 };
 
-export function HomeStatusStrip({ stats, readingVitals, onReadVitals }) {
+export function HomeStatusStrip({ stats, onOpenVitals }) {
   return (
     <section className="stat-strip" aria-label="站点状态摘要">
       {(stats || []).map((stat) => {
         const Icon = icons[stat.id] || Activity;
-        const clickable = stat.id === "temperature" && typeof onReadVitals === "function";
+        const clickable = stat.id === "temperature" && typeof onOpenVitals === "function";
         const content = (
           <>
             <Icon size={24} aria-hidden="true" />
             <span>{stat.label}</span>
             <strong>
-              {readingVitals && stat.id === "temperature" ? "读取中" : stat.value}
-              {stat.unit && !(readingVitals && stat.id === "temperature") && <small>{stat.unit}</small>}
+              {stat.value}
+              {stat.unit && <small>{stat.unit}</small>}
             </strong>
           </>
         );
@@ -29,7 +29,7 @@ export function HomeStatusStrip({ stats, readingVitals, onReadVitals }) {
               key={stat.id}
               className={`stat-item stat-button ${stat.tone || "soft"}`}
               type="button"
-              onClick={onReadVitals}
+              onClick={onOpenVitals}
             >
               {content}
             </button>

@@ -10,6 +10,7 @@ import { Medicines } from "./pages/Medicines.jsx";
 import { Inquiry } from "./pages/Inquiry.jsx";
 import { Records } from "./pages/Records.jsx";
 import { Scan } from "./pages/Scan.jsx";
+import { Vitals } from "./pages/Vitals.jsx";
 
 export function App() {
   const initialParams = new URLSearchParams(window.location.search);
@@ -19,6 +20,7 @@ export function App() {
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
+  const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [systemCheckOpen, setSystemCheckOpen] = useState(initialParams.get("systemCheck") === "1");
   const toastTimerRef = useRef(null);
 
@@ -38,15 +40,19 @@ export function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(""), 2800);
   }, []);
 
-  function handleNav(nextPage) {
+  function handleNav(nextPage, options = {}) {
     if (
       nextPage !== "home" &&
       nextPage !== "medicines" &&
       nextPage !== "inquiry" &&
       nextPage !== "records" &&
-      nextPage !== "scan"
+      nextPage !== "scan" &&
+      nextPage !== "vitals"
     ) {
       notify("下一阶段开发中");
+    }
+    if (nextPage === "vitals") {
+      setVitalsReturnPage(options.returnTo || page || "home");
     }
     setPage(nextPage);
   }
@@ -79,6 +85,8 @@ export function App() {
           <Records notify={notify} />
         ) : page === "scan" ? (
           <Scan notify={notify} onNavigate={handleNav} />
+        ) : page === "vitals" ? (
+          <Vitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
         ) : (
           <ComingSoon page={page} />
         )}

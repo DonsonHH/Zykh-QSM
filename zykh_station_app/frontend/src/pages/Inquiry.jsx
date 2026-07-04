@@ -1,6 +1,5 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { evaluateInquiry } from "../api/inquiry.js";
-import { loadQsmVitals } from "../api/qsm.js";
 import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryFollowupStep } from "../components/InquiryFollowupStep.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
@@ -16,17 +15,39 @@ const initialForm = {
   include_vitals: false
 };
 
+const draftKey = "zykh-inquiry-draft";
+
+function readDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(draftKey);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function Inquiry({ notify, onViewCandidates, onNavigate }) {
-  const [step, setStep] = useState("start");
-  const [form, setForm] = useState(initialForm);
-  const [allergyChoice, setAllergyChoice] = useState("");
+  const initialDraft = readDraft();
+  const [step, setStep] = useState(initialDraft?.step || "start");
+  const [form, setForm] = useState(initialDraft?.form || initialForm);
+  const [allergyChoice, setAllergyChoice] = useState(initialDraft?.allergyChoice || "");
   const [result, setResult] = useState(null);
-  const [readingVitals, setReadingVitals] = useState(false);
   const [listening, setListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState("");
-  const [vitalsMessage, setVitalsMessage] = useState("");
+  const [vitalsMessage, setVitalsMessage] = useState(initialDraft?.vitalsMessage || "");
   const [blockedReason, setBlockedReason] = useState("");
   const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, allergyChoice, vitalsMessage }));
+    } catch {
+      // sessionStorage is optional; losing a draft must not block inquiry.
+    }
+  }, [step, form, allergyChoice, vitalsMessage]);
 
   function updateSymptoms(value) {
     setForm((current) => ({ ...current, symptoms_text: value }));
@@ -96,34 +117,24 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     recognition.start();
   }
 
-  function handleReadVitals() {
-    setReadingVitals(true);
-    setVitalsMessage("正在读取体征……");
-    loadQsmVitals()
-      .then((data) => {
-        if (data.ok === false) {
-          const message = "体征设备暂不可用，可继续问询。";
-          setVitalsMessage(message);
-          notify(message);
-          return;
-        }
-        const vitalsText = [
-          data.temperature != null ? `体温${data.temperature}℃` : "",
-          data.heart_rate != null ? `心率${data.heart_rate}` : "",
-          data.spo2 != null ? `血氧${data.spo2}%` : ""
-        ]
-          .filter(Boolean)
-          .join("，");
-        setForm((current) => ({ ...current, include_vitals: true }));
-        setVitalsMessage(vitalsText || "体征读取完成，部分数据暂不可用。");
-        notify(vitalsText ? `体征已读取：${vitalsText}` : "体征读取完成，部分数据暂不可用");
-      })
-      .catch(() => {
-        const message = "体征设备暂不可用，可继续问询。";
-        setVitalsMessage(message);
-        notify(message);
-      })
-      .finally(() => setReadingVitals(false));
+  function handleOpenVitals() {
+    const nextForm = { ...form, include_vitals: true };
+    setForm(nextForm);
+    setVitalsMessage("请按测量页引导读取体征，完成后返回问询继续。");
+    try {
+      window.sessionStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          step: "followup",
+          form: nextForm,
+          allergyChoice,
+          vitalsMessage: "请按测量页引导读取体征，完成后返回问询继续。"
+        })
+      );
+    } catch {
+      // sessionStorage is optional; navigation can continue without it.
+    }
+    onNavigate("vitals", { returnTo: "inquiry" });
   }
 
   function handleAnalyze() {
@@ -188,6 +199,11 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     setVoiceMessage("");
     setVitalsMessage("");
     setBlockedReason("");
+    try {
+      window.sessionStorage.removeItem(draftKey);
+    } catch {
+      // sessionStorage is optional.
+    }
   }
 
   return (
@@ -207,11 +223,11 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
           <InquiryFollowupStep
             form={form}
             allergyChoice={allergyChoice}
-            readingVitals={readingVitals}
+            readingVitals={false}
             vitalsMessage={vitalsMessage}
             onFormChange={setForm}
             onAllergyChoice={setAllergyChoice}
-            onReadVitals={handleReadVitals}
+            onReadVitals={handleOpenVitals}
             onBack={() => setStep("start")}
             onAnalyze={handleAnalyze}
           />

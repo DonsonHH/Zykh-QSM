@@ -11,4 +11,4 @@ router = APIRouter(prefix="/api/vitals", tags=["vitals"])
 
 @router.post("/read-all", response_model=QsmVitalsResponse)
 def read_all_vitals() -> QsmVitalsResponse:
-    return qsm_vitals()
+    return qsm_vitals(full=True)

@@ -95,6 +95,12 @@ a:focus-visible {
   background: var(--bg);
 }
 
+.kiosk-frame > main {
+  min-height: 0;
+  align-self: stretch;
+  overflow: hidden;
+}
+
 .toast {
   position: absolute;
   left: 50%;
@@ -2425,6 +2431,272 @@ a:focus-visible {
 .sync-status-card button:disabled {
   cursor: not-allowed;
   background: #b9c8df;
+}
+
+/* vitals */
+.vitals-page {
+  min-height: 0;
+  align-self: stretch;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.26fr) minmax(360px, 0.74fr);
+  gap: 16px;
+}
+
+.vitals-guide-panel,
+.vitals-result-panel {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  overflow: hidden;
+}
+
+.vitals-guide-panel {
+  display: grid;
+  grid-template-rows: 64px 1fr 82px 64px;
+  gap: 14px;
+}
+
+.vitals-result-panel {
+  display: grid;
+  grid-template-rows: 64px 1fr 110px 64px;
+  gap: 14px;
+}
+
+.vitals-page-heading,
+.vitals-result-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.vitals-page-heading p,
+.vitals-result-heading p {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 850;
+}
+
+.vitals-page-heading h2,
+.vitals-result-heading h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1.08;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-guide-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vitals-guide-card {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+  border: 1px solid #dbe7f3;
+  border-radius: 24px;
+  background: #f8fbff;
+  padding: 22px;
+}
+
+.vitals-guide-card.face {
+  background: #eff6ff;
+}
+
+.vitals-guide-card.finger {
+  background: #effcf7;
+}
+
+.vitals-guide-card > span {
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 8px 20px rgba(15, 35, 70, 0.06);
+}
+
+.vitals-guide-card.finger > span {
+  color: #087c68;
+}
+
+.vitals-guide-card h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.vitals-guide-card strong {
+  display: block;
+  color: var(--text);
+  font-size: 27px;
+  line-height: 1.16;
+  font-weight: 900;
+}
+
+.vitals-guide-card p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 19px;
+  line-height: 1.35;
+  font-weight: 750;
+}
+
+.vitals-progress {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.vitals-progress article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.vitals-progress article span {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #c9d8e8;
+}
+
+.vitals-progress article.active span,
+.vitals-progress article.running span {
+  background: var(--primary);
+}
+
+.vitals-progress article.done span {
+  background: #0f9f8f;
+}
+
+.vitals-progress strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.12;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-action-row,
+.vitals-result-actions {
+  display: grid;
+  grid-template-columns: 1fr 170px;
+  gap: 12px;
+}
+
+.vitals-action-row .primary-action,
+.vitals-result-actions .primary-action,
+.vitals-result-actions .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.vitals-metric-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.vitals-metric {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 38px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #e3edf8;
+  border-radius: 20px;
+  background: var(--surface-soft);
+  padding: 12px 14px;
+}
+
+.vitals-metric svg {
+  color: var(--primary);
+}
+
+.vitals-metric span {
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.vitals-metric strong {
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-status-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid #e3edf8;
+  border-radius: 20px;
+  background: #fbfdff;
+  padding: 14px 16px;
+}
+
+.vitals-result-panel.good .vitals-status-card {
+  border-color: #b8eadc;
+  background: #effcf7;
+}
+
+.vitals-result-panel.warn .vitals-status-card {
+  border-color: #f5d19b;
+  background: #fff7ed;
+}
+
+.vitals-status-card strong {
+  color: var(--text);
+  font-size: 21px;
+  line-height: 1.15;
+  font-weight: 900;
+}
+
+.vitals-status-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.28;
+  font-weight: 780;
 }
 
 /* scan */

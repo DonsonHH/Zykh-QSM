@@ -72,6 +72,19 @@ class QsmClient:
 
         return self._read_full_vitals()
 
+    def read_full_vitals(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {
+                "temperature_c": 35.7,
+                "heart_rate": 78,
+                "spo2": 97,
+                "source": "mock",
+                "finger_detected": True,
+                "quality": "mock",
+                "message": "mock full vitals",
+            }
+        return self._read_full_vitals()
+
     def _read_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
         last_error = ""
         for path, partial in (
@@ -80,7 +93,12 @@ class QsmClient:
             (settings.qsm_temp_path, True),
         ):
             for method in ("POST", "GET"):
-                payload, error = self._request_json(path, method=method, body_format="auto")
+                payload, error = self._request_json(
+                    path,
+                    method=method,
+                    body_format="auto",
+                    timeout=settings.qsm_vitals_timeout_seconds,
+                )
                 if not error:
                     return self._parse_vitals(payload, partial=partial)
                 last_error = error
@@ -96,18 +114,45 @@ class QsmClient:
 
     def _parse_vitals(self, payload: dict[str, Any], partial: bool = False) -> dict[str, Any]:
         vitals = payload.get("vitals") or payload
+        sensors = payload.get("sensors") if isinstance(payload.get("sensors"), dict) else {}
+        max30102 = sensors.get("max30102", {}).get("data") if isinstance(sensors.get("max30102"), dict) else {}
+        gy614 = sensors.get("gy614", {}).get("data") if isinstance(sensors.get("gy614"), dict) else {}
+        max30102 = max30102 if isinstance(max30102, dict) else {}
+        gy614 = gy614 if isinstance(gy614, dict) else {}
         temperature_payload = payload.get("temperature") if isinstance(payload.get("temperature"), dict) else {}
         if isinstance(vitals, dict):
-            temperature = self._first_present(temperature_payload, ("body_temp_c", "target_temp_c"))
+            temperature = self._first_present(gy614, ("body_temp_c", "target_temp_c"))
+            if temperature is None:
+                temperature = self._first_present(temperature_payload, ("body_temp_c", "target_temp_c"))
             if temperature is None:
                 temperature = self._first_present(vitals, ("temperature_c", "temp", "body_temp_c", "temperature"))
             if isinstance(temperature, dict):
                 temperature = self._first_present(temperature, ("body_temp_c", "target_temp_c"))
+            finger_detected = self._first_present(max30102, ("finger_detected",))
+            if finger_detected is None:
+                finger_detected = self._first_present(vitals, ("finger_detected",))
+            quality = self._first_present(max30102, ("quality",), fallback=self._first_present(vitals, ("quality",)))
+            message = self._first_present(max30102, ("message",), fallback=self._first_present(vitals, ("message",)))
+            heart_rate = self._first_present(max30102, ("heart_rate_bpm",))
+            if heart_rate is None:
+                heart_rate = self._first_present(vitals, ("heart_rate", "hr"))
+            spo2 = self._first_present(max30102, ("spo2_percent",))
+            if spo2 is None:
+                spo2 = self._first_present(vitals, ("spo2", "blood_oxygen"))
+            if finger_detected is False:
+                if self._is_zeroish(heart_rate):
+                    heart_rate = None
+                if self._is_zeroish(spo2):
+                    spo2 = None
             return {
                 "temperature_c": temperature,
-                "heart_rate": self._first_present(vitals, ("heart_rate", "hr")),
-                "spo2": self._first_present(vitals, ("spo2", "blood_oxygen")),
+                "heart_rate": heart_rate,
+                "spo2": spo2,
                 "source": "real",
+                "finger_detected": finger_detected,
+                "quality": quality,
+                "message": message,
+                "sample_count": self._first_present(max30102, ("sample_count",), fallback=self._first_present(vitals, ("sample_count",))),
                 "partial": partial,
                 "raw": payload,
             }
@@ -251,6 +296,13 @@ class QsmClient:
             if key in payload and payload[key] is not None:
                 return payload[key]
         return fallback
+
+    @staticmethod
+    def _is_zeroish(value: Any) -> bool:
+        try:
+            return float(value) == 0
+        except (TypeError, ValueError):
+            return False
 
     def _real_unavailable(self, error_message: str) -> QsmStatus:
         devices = self.get_device_status()
