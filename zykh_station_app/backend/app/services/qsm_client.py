@@ -64,6 +64,15 @@ class QsmClient:
     def read_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
             return {"temperature_c": 35.7, "heart_rate": None, "spo2": None, "source": "mock"}
+        if not settings.qsm_vitals_prefer_full:
+            temperature = self.read_temperature()
+            if temperature.get("source") == "real":
+                return temperature
+            return self._read_full_vitals(fallback_error=str(temperature.get("error_message", "")))
+
+        return self._read_full_vitals()
+
+    def _read_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
         last_error = ""
         for path, partial in (
             (settings.qsm_vitals_all_path, False),
@@ -75,7 +84,7 @@ class QsmClient:
                 if not error:
                     return self._parse_vitals(payload, partial=partial)
                 last_error = error
-        return self._unavailable_vitals(last_error)
+        return self._unavailable_vitals(last_error or fallback_error)
 
     def read_temperature(self) -> dict[str, Any]:
         if self.mode != "real":
@@ -89,11 +98,11 @@ class QsmClient:
         vitals = payload.get("vitals") or payload
         temperature_payload = payload.get("temperature") if isinstance(payload.get("temperature"), dict) else {}
         if isinstance(vitals, dict):
-            temperature = self._first_present(
-                vitals,
-                ("temperature", "temperature_c", "temp", "body_temp_c"),
-                fallback=self._first_present(temperature_payload, ("body_temp_c",)),
-            )
+            temperature = self._first_present(temperature_payload, ("body_temp_c", "target_temp_c"))
+            if temperature is None:
+                temperature = self._first_present(vitals, ("temperature_c", "temp", "body_temp_c", "temperature"))
+            if isinstance(temperature, dict):
+                temperature = self._first_present(temperature, ("body_temp_c", "target_temp_c"))
             return {
                 "temperature_c": temperature,
                 "heart_rate": self._first_present(vitals, ("heart_rate", "hr")),
@@ -186,14 +195,17 @@ class QsmClient:
         method: str = "GET",
         payload: dict[str, Any] | None = None,
         body_format: str = "form",
+        timeout: float | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         formats = ["none"] if method == "GET" else ([body_format] if body_format in {"form", "json"} else ["form", "json"])
         errors: list[str] = []
         for item in formats:
-            result, error = self._single_request_json(path, method=method, payload=payload, body_format=item)
+            result, error = self._single_request_json(path, method=method, payload=payload, body_format=item, timeout=timeout)
             if not error:
                 return result, None
             errors.append(error)
+            if "超时" in error:
+                return {}, error
         return {}, errors[-1] if errors else "外设网关请求失败。"
 
     def _single_request_json(
@@ -202,6 +214,7 @@ class QsmClient:
         method: str,
         payload: dict[str, Any] | None,
         body_format: str,
+        timeout: float | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         try:
             data = None
@@ -215,7 +228,7 @@ class QsmClient:
                     headers["Content-Type"] = "application/x-www-form-urlencoded"
                 data = body
             request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
-            with urlopen(request, timeout=settings.qsm_timeout_seconds) as res:
+            with urlopen(request, timeout=timeout or settings.qsm_timeout_seconds) as res:
                 body = res.read().decode("utf-8")
             if not body:
                 return {}, "外设网关返回空响应。"

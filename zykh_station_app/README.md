@@ -57,6 +57,18 @@ http://127.0.0.1:5173
 
 ```bash
 cd zykh_station_app
+sh scripts/launch_kiosk.sh
+```
+
+`launch_kiosk.sh` 会检查并启动后端、前端，尝试把显示器切到 `1280x720`，然后用 Chromium kiosk 模式全屏打开页面。可选参数：
+
+```bash
+KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
+```
+
+如果本机服务已经启动，只想全屏打开浏览器，可以运行：
+
+```bash
 sh scripts/open_kiosk.sh
 ```
 
@@ -67,7 +79,8 @@ sh scripts/open_kiosk.sh
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
-QSM_TIMEOUT_SECONDS=20
+QSM_TIMEOUT_SECONDS=2
+QSM_VITALS_PREFER_FULL=false
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
 DISPENSE_DRY_RUN=true
@@ -80,6 +93,8 @@ AI_MODEL=deepseek-v4-flash
 real 模式用于本机访问外设网关。如果 real 模式不可用，后端返回结构化错误并让首页显示“暂不可用”，不会用假体征或假识别结果掩盖问题。`QSM_MODE=mock` 只保留为本地闭环检查选项。
 
 当前硬件分工：摄像头由本机主应用直接检测和抓拍；体征、音频和药仓控制通过外设网关。`/api/qsm/camera/capture` 是现有业务流程的兼容入口，内部走本机摄像头服务，不依赖外设网关摄像头接口。
+
+体征读取默认优先走外设网关的额温接口，避免心率血氧或一键全测接口长时间阻塞终端页面。如需专项联调 MAX30102/一键全测，可设置 `QSM_VITALS_PREFER_FULL=true`。
 
 `LOCAL_CAMERA_MODE=real` 会检查 `LOCAL_CAMERA_DEVICE`，`auto` 会优先探测常见 FF Camera 设备和 `/dev/video*`。如需本地闭环检查，可手动设置 `LOCAL_CAMERA_MODE=mock`。
 

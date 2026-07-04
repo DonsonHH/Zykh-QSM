@@ -26,7 +26,8 @@ The default mode is:
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
-QSM_TIMEOUT_SECONDS=20
+QSM_TIMEOUT_SECONDS=2
+QSM_VITALS_PREFER_FULL=false
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
 QSM_VITALS_PATH=/api/vitals/read
@@ -48,7 +49,8 @@ ENABLE_REAL_DISPENSE=0
 The path settings are reserved for gateway deployments that expose different HTTP paths. Stage six uses:
 
 - `QSM_STATUS_PATH` for external gateway status.
-- `QSM_VITALS_ALL_PATH`, `QSM_VITALS_PATH` and `QSM_TEMP_PATH` for external gateway vitals.
+- `QSM_TEMP_PATH` for the default quick temperature read.
+- `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
 

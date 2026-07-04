@@ -45,7 +45,13 @@ class Settings:
     db_path: Path = Path(_env("ZYKH_STATION_DB", str(DATA_DIR / "station.db")))
     qsm_mode: str = _env("QSM_MODE", "real").strip().lower()
     qsm_api_base: str = _env("QSM_BASE_URL", _env("QSM_API_BASE", "http://127.0.0.1:18080")).rstrip("/")
-    qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "20"))
+    qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "2"))
+    qsm_vitals_prefer_full: bool = _env("QSM_VITALS_PREFER_FULL", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     qsm_status_path: str = _env("QSM_STATUS_PATH", "/api/status")
     qsm_vitals_path: str = _env("QSM_VITALS_PATH", "/api/vitals/read")
     qsm_vitals_all_path: str = _env("QSM_VITALS_ALL_PATH", "/api/vitals/read_all")

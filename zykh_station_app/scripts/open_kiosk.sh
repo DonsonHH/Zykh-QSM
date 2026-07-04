@@ -2,6 +2,21 @@
 set -eu
 
 APP_URL="${1:-http://127.0.0.1:5173}"
+KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
+KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
+KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
+KIOSK_SCALE="${KIOSK_SCALE:-1}"
+
+if [ "${KIOSK_SKIP_RESOLUTION:-0}" != "1" ] && command -v xrandr >/dev/null 2>&1; then
+  OUTPUT="$KIOSK_OUTPUT"
+  if [ -z "$OUTPUT" ]; then
+    OUTPUT="$(xrandr --query | awk '/ connected/{print $1; exit}')"
+  fi
+  if [ -n "$OUTPUT" ]; then
+    xrandr --output "$OUTPUT" --mode "${KIOSK_WIDTH}x${KIOSK_HEIGHT}" >/dev/null 2>&1 || \
+      xrandr --size "${KIOSK_WIDTH}x${KIOSK_HEIGHT}" >/dev/null 2>&1 || true
+  fi
+fi
 
 if command -v chromium >/dev/null 2>&1; then
   BROWSER="chromium"
@@ -16,7 +31,9 @@ fi
 
 exec "$BROWSER" \
   --kiosk "$APP_URL" \
-  --window-size=1280,720 \
-  --force-device-scale-factor=1 \
+  --start-fullscreen \
+  --window-position=0,0 \
+  --window-size="${KIOSK_WIDTH},${KIOSK_HEIGHT}" \
+  --force-device-scale-factor="$KIOSK_SCALE" \
   --disable-pinch \
   --overscroll-history-navigation=0
