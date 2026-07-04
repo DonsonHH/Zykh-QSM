@@ -66,6 +66,12 @@ sh scripts/launch_kiosk.sh
 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
+脚本默认加了 Chromium 兼容参数，避免部分设备上出现 `ANGLE/EGL failed to create drawable` 这类图形初始化错误。如需关闭这组兼容参数：
+
+```bash
+KIOSK_SAFE_GRAPHICS=0 sh scripts/launch_kiosk.sh
+```
+
 如果本机服务已经启动，只想全屏打开浏览器，可以运行：
 
 ```bash

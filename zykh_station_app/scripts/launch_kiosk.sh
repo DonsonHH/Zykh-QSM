@@ -8,6 +8,7 @@ KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
 KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
 KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
 KIOSK_SCALE="${KIOSK_SCALE:-1}"
+KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 
 mkdir -p "$RUN_DIR"
@@ -149,7 +150,7 @@ if [ "${KIOSK_DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-exec "$BROWSER" \
+set -- "$BROWSER" \
   --kiosk "$APP_URL" \
   --start-fullscreen \
   --window-position=0,0 \
@@ -160,3 +161,15 @@ exec "$BROWSER" \
   --no-first-run \
   --disable-session-crashed-bubble \
   --user-data-dir="$ROOT_DIR/data/chromium-kiosk"
+
+if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
+  set -- "$@" \
+    --ozone-platform=x11 \
+    --disable-gpu \
+    --disable-gpu-compositing \
+    --disable-accelerated-2d-canvas \
+    --disable-features=Vulkan \
+    --disable-dev-shm-usage
+fi
+
+exec "$@"

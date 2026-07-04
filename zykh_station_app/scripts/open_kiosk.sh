@@ -6,6 +6,7 @@ KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
 KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
 KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
 KIOSK_SCALE="${KIOSK_SCALE:-1}"
+KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 
 if [ "${KIOSK_SKIP_RESOLUTION:-0}" != "1" ] && command -v xrandr >/dev/null 2>&1; then
   OUTPUT="$KIOSK_OUTPUT"
@@ -29,7 +30,7 @@ else
   exit 1
 fi
 
-exec "$BROWSER" \
+set -- "$BROWSER" \
   --kiosk "$APP_URL" \
   --start-fullscreen \
   --window-position=0,0 \
@@ -37,3 +38,15 @@ exec "$BROWSER" \
   --force-device-scale-factor="$KIOSK_SCALE" \
   --disable-pinch \
   --overscroll-history-navigation=0
+
+if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
+  set -- "$@" \
+    --ozone-platform=x11 \
+    --disable-gpu \
+    --disable-gpu-compositing \
+    --disable-accelerated-2d-canvas \
+    --disable-features=Vulkan \
+    --disable-dev-shm-usage
+fi
+
+exec "$@"
