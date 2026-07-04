@@ -8,9 +8,14 @@ KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
 KIOSK_SCALE="${KIOSK_SCALE:-1}"
 KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
+KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
 RESTORE_OUTPUT=""
 RESTORE_MODE=""
+
+mkdir -p "$RUN_DIR"
 
 log() {
   printf '[kiosk] %s\n' "$*"
@@ -18,6 +23,16 @@ log() {
 
 warn() {
   printf '[kiosk] WARN: %s\n' "$*" >&2
+}
+
+start_browser() {
+  if [ "$KIOSK_BROWSER_LOG" = "terminal" ]; then
+    "$@" &
+  else
+    log "浏览器日志：$RUN_DIR/chromium.log"
+    "$@" >"$RUN_DIR/chromium.log" 2>&1 &
+  fi
+  BROWSER_PID="$!"
 }
 
 current_mode_for_output() {
@@ -109,11 +124,16 @@ if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
     --disable-gpu \
     --disable-gpu-compositing \
     --disable-accelerated-2d-canvas \
-    --disable-features=Vulkan \
+    --disable-background-networking \
+    --disable-component-update \
+    --disable-default-apps \
+    --disable-extensions \
+    --disable-sync \
+    --metrics-recording-only \
+    --disable-features=Vulkan,OptimizationGuideOnDeviceModel \
     --disable-dev-shm-usage
 fi
 
-"$@" &
-BROWSER_PID="$!"
+start_browser "$@"
 wait "$BROWSER_PID"
 BROWSER_PID=""

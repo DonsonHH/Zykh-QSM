@@ -78,6 +78,12 @@ KIOSK_RESTORE_RESOLUTION=0 sh scripts/launch_kiosk.sh
 KIOSK_SAFE_GRAPHICS=0 sh scripts/launch_kiosk.sh
 ```
 
+Chromium/Snap 的 GTK、GCM、GPU 等后台日志默认写入 `data/run/chromium.log`，终端只显示启动流程。如需直接在终端看浏览器日志：
+
+```bash
+KIOSK_BROWSER_LOG=terminal sh scripts/launch_kiosk.sh
+```
+
 如果本机服务已经启动，只想全屏打开浏览器，可以运行：
 
 ```bash
