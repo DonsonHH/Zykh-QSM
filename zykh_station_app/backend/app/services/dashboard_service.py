@@ -82,7 +82,7 @@ class DashboardService:
             ),
             quick_actions=[
                 QuickAction(id="scan", title="扫码识别", subtitle="药盒 / 条码 / 站点码", tone="green"),
-                QuickAction(id="medicines", title="站点药品", subtitle="查看库存与说明", tone="blue"),
+                QuickAction(id="vitals", title="身体状态测量", subtitle="额温 / 心率 / 血氧", tone="blue"),
                 QuickAction(id="records", title="服务记录", subtitle="本地记录与同步", tone="purple"),
             ],
             stats=[

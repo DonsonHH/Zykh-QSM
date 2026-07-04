@@ -270,8 +270,8 @@ a:focus-visible {
 .home-page {
   min-height: 0;
   display: grid;
-  grid-template-rows: 300px 78px 52px;
-  gap: 14px;
+  grid-template-rows: minmax(0, 1fr) 86px;
+  gap: 16px;
 }
 
 .hero-grid {
@@ -2457,13 +2457,13 @@ a:focus-visible {
 
 .vitals-guide-panel {
   display: grid;
-  grid-template-rows: 64px 1fr 82px 64px;
-  gap: 14px;
+  grid-template-rows: 64px minmax(0, 1fr) 84px 58px 64px;
+  gap: 10px;
 }
 
 .vitals-result-panel {
   display: grid;
-  grid-template-rows: 64px 1fr 110px 64px;
+  grid-template-rows: 64px 1fr 122px;
   gap: 14px;
 }
 
@@ -2507,14 +2507,14 @@ a:focus-visible {
 .vitals-guide-card {
   min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
   gap: 16px;
   border: 1px solid #dbe7f3;
   border-radius: 24px;
   background: #f8fbff;
-  padding: 22px;
+  padding: 18px;
 }
 
 .vitals-guide-card.face {
@@ -2526,8 +2526,8 @@ a:focus-visible {
 }
 
 .vitals-guide-card > span {
-  width: 74px;
-  height: 74px;
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
   border-radius: 24px;
@@ -2541,9 +2541,9 @@ a:focus-visible {
 }
 
 .vitals-guide-card h3 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: var(--muted);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
   font-weight: 900;
 }
@@ -2551,17 +2551,106 @@ a:focus-visible {
 .vitals-guide-card strong {
   display: block;
   color: var(--text);
-  font-size: 27px;
+  font-size: 24px;
   line-height: 1.16;
   font-weight: 900;
 }
 
 .vitals-guide-card p {
-  margin: 12px 0 0;
+  margin: 9px 0 0;
   color: var(--muted);
-  font-size: 19px;
-  line-height: 1.35;
+  font-size: 17px;
+  line-height: 1.28;
   font-weight: 750;
+}
+
+.vitals-measure-console {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #dbe7f3;
+  border-radius: 22px;
+  background: #fbfdff;
+  padding: 10px 14px;
+}
+
+.vitals-measure-console.measuring {
+  border-color: #b9d4fb;
+  background: linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
+}
+
+.vitals-measure-console.done {
+  border-color: #b8eadc;
+  background: #effcf7;
+}
+
+.vitals-ring {
+  --progress: 0%;
+  position: relative;
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--primary) var(--progress), #dbe7f3 0);
+}
+
+.vitals-measure-console.measuring .vitals-ring {
+  animation: vitals-breathe 1.2s ease-in-out infinite;
+}
+
+.vitals-ring::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: inherit;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px #e3edf8;
+}
+
+.vitals-ring div {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+}
+
+.vitals-ring strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.vitals-ring span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.vitals-console-copy {
+  min-width: 0;
+}
+
+.vitals-console-copy strong {
+  display: block;
+  color: var(--text);
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.vitals-console-copy p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 780;
 }
 
 .vitals-progress {
@@ -2580,7 +2669,8 @@ a:focus-visible {
   border: 1px solid #e3edf8;
   border-radius: 18px;
   background: var(--surface-soft);
-  padding: 12px;
+  padding: 10px 12px;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
 .vitals-progress article span {
@@ -2593,6 +2683,16 @@ a:focus-visible {
 .vitals-progress article.active span,
 .vitals-progress article.running span {
   background: var(--primary);
+}
+
+.vitals-progress article.running {
+  border-color: #b9d4fb;
+  background: #eaf2ff;
+  transform: translateY(-1px);
+}
+
+.vitals-progress article.running span {
+  animation: vitals-dot 900ms ease-in-out infinite;
 }
 
 .vitals-progress article.done span {
@@ -2609,20 +2709,23 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.vitals-action-row,
-.vitals-result-actions {
+.vitals-action-row {
   display: grid;
   grid-template-columns: 1fr 170px;
   gap: 12px;
 }
 
-.vitals-action-row .primary-action,
-.vitals-result-actions .primary-action,
-.vitals-result-actions .secondary-action {
+.vitals-action-row .primary-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 9px;
+}
+
+.vitals-action-row .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .vitals-metric-grid {
@@ -2682,6 +2785,11 @@ a:focus-visible {
 .vitals-result-panel.warn .vitals-status-card {
   border-color: #f5d19b;
   background: #fff7ed;
+}
+
+.vitals-result-panel.active .vitals-status-card {
+  border-color: #b9d4fb;
+  background: #eff6ff;
 }
 
 .vitals-status-card strong {
@@ -3238,6 +3346,28 @@ a:focus-visible {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes vitals-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.18);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 10px rgba(37, 99, 235, 0);
+  }
+}
+
+@keyframes vitals-dot {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.35);
   }
 }
 

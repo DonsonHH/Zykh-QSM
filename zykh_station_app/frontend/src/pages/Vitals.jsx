@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from "react";
-import { Activity, ArrowLeft, HeartPulse, RotateCcw, ScanFace, Thermometer } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, ArrowLeft, HeartPulse, ScanFace, Thermometer } from "lucide-react";
 import { loadQsmVitals } from "../api/qsm.js";
 
+const measurementSeconds = 15;
 const initialSteps = [
   { id: "head", label: "额头对准屏幕上方", state: "idle" },
   { id: "finger", label: "手指保持稳定", state: "idle" },
@@ -12,23 +13,60 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
   const [phase, setPhase] = useState("idle");
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [countdown, setCountdown] = useState(measurementSeconds);
+  const requestIdRef = useRef(0);
 
   const returnLabel = returnPage === "inquiry" ? "返回问询" : "返回首页";
-  const status = useMemo(() => describeVitals(result, errorMessage), [result, errorMessage]);
+  const status = useMemo(() => describeVitals(result, errorMessage, phase, countdown), [countdown, errorMessage, phase, result]);
+  const elapsedSeconds = measurementSeconds - countdown;
+  const progressPercent =
+    phase === "done" ? 100 : phase === "measuring" ? Math.min(100, Math.round((elapsedSeconds / measurementSeconds) * 100)) : 0;
   const steps = useMemo(
     () =>
       initialSteps.map((step, index) => ({
         ...step,
-        state: phase === "measuring" ? (index < 2 ? "active" : "running") : phase === "done" ? "done" : "idle"
+        state:
+          phase === "done"
+            ? "done"
+            : phase !== "measuring"
+              ? "idle"
+              : index === 0
+                ? elapsedSeconds < 3
+                  ? "running"
+                  : "done"
+                : index === 1
+                  ? elapsedSeconds < 12
+                    ? "active"
+                    : "done"
+                  : elapsedSeconds < 12
+                    ? "idle"
+                    : "running"
       })),
-    [phase]
+    [elapsedSeconds, phase]
   );
 
+  useEffect(() => {
+    if (phase !== "measuring") {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [phase]);
+
   function handleMeasure() {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setPhase("measuring");
+    setCountdown(measurementSeconds);
+    setResult(null);
     setErrorMessage("");
     loadQsmVitals()
       .then((data) => {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
         setResult(data);
         setPhase("done");
         if (data.ok === false || data.status === "unavailable") {
@@ -48,6 +86,9 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
         notify("体征测量已完成");
       })
       .catch((error) => {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
         const message = error.message || "体征设备暂不可用，可稍后重试。";
         setErrorMessage(message);
         setPhase("done");
@@ -96,6 +137,27 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           </article>
         </div>
 
+        <section className={`vitals-measure-console ${phase}`} aria-label="测量倒计时">
+          <div className="vitals-ring" style={{ "--progress": `${progressPercent}%` }}>
+            <div>
+              <strong>{phase === "measuring" ? countdown : result ? "完成" : "准备"}</strong>
+              <span>{phase === "measuring" ? "秒" : "测量"}</span>
+            </div>
+          </div>
+          <div className="vitals-console-copy">
+            <strong>{phase === "measuring" ? "请保持当前姿势" : result ? "可重新测量" : "准备好后开始"}</strong>
+            <p>
+              {phase === "measuring"
+                ? countdown > 0
+                  ? "额头和手指都不要移动，系统正在读取传感器信号。"
+                  : "正在等待外设返回稳定读数，请继续保持姿势。"
+                : result
+                  ? "如手指信号不稳定，请按提示重新放置后再测。"
+                  : "测量开始后会自动倒计时，并同步读取额温、心率和血氧。"}
+            </p>
+          </div>
+        </section>
+
         <div className="vitals-progress" aria-label="测量进度">
           {steps.map((step) => (
             <article key={step.id} className={step.state}>
@@ -137,16 +199,6 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           <strong>{status.summary}</strong>
           <p>{status.detail}</p>
         </div>
-
-        <div className="vitals-result-actions">
-          <button className="secondary-action compact" type="button" onClick={handleMeasure} disabled={phase === "measuring"}>
-            <RotateCcw size={22} aria-hidden="true" />
-            <span>重新测量</span>
-          </button>
-          <button className="primary-action" type="button" onClick={handleBack}>
-            {returnLabel}
-          </button>
-        </div>
       </section>
     </main>
   );
@@ -170,7 +222,19 @@ function formatMetric(value, unit, fractionDigits = 0) {
   return `${numeric.toFixed(fractionDigits)}${unit}`;
 }
 
-function describeVitals(result, errorMessage) {
+function describeVitals(result, errorMessage, phase, countdown) {
+  if (phase === "measuring") {
+    return {
+      tone: "active",
+      title: "测量中",
+      summary: "正在读取体征信号",
+      detail:
+        countdown > 0
+          ? `请保持额头对准和手指稳定，剩余约 ${countdown} 秒。`
+          : "正在等待外设返回稳定读数，请继续保持姿势。"
+    };
+  }
+
   if (!result && !errorMessage) {
     return {
       tone: "idle",

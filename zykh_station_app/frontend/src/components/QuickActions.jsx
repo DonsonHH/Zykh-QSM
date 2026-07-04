@@ -1,9 +1,10 @@
 import React from "react";
-import { Camera, ClipboardList, PackageCheck } from "lucide-react";
+import { Camera, ClipboardList, HeartPulse, PackageCheck } from "lucide-react";
 
 const icons = {
   scan: Camera,
   medicines: PackageCheck,
+  vitals: HeartPulse,
   records: ClipboardList
 };
 
