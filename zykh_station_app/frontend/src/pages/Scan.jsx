@@ -2,10 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, BadgeCheck, Camera, CheckCircle2, Keyboard, Pill, RotateCcw, ScanLine } from "lucide-react";
 import { loadQsmCapabilities, scanMedicine, scanMedicineFrame } from "../api/qsm.js";
 
-const scanModes = ["药品识别", "站点码", "取药确认"];
+const scanMode = "药品识别";
 
 export function Scan({ notify, onNavigate }) {
-  const [activeMode, setActiveMode] = useState(scanModes[0]);
   const [cameraStatus, setCameraStatus] = useState("checking");
   const [liveMessage, setLiveMessage] = useState("正在打开本机摄像头...");
   const [liveStatus, setLiveStatus] = useState("checking");
@@ -17,13 +16,8 @@ export function Scan({ notify, onNavigate }) {
   const detectorRef = useRef(null);
   const serverScanRef = useRef(false);
   const scanTimerRef = useRef(null);
-  const activeModeRef = useRef(activeMode);
   const lastCodeRef = useRef("");
   const matchingRef = useRef(false);
-
-  useEffect(() => {
-    activeModeRef.current = activeMode;
-  }, [activeMode]);
 
   useEffect(() => {
     let stopped = false;
@@ -143,7 +137,7 @@ export function Scan({ notify, onNavigate }) {
     matchingRef.current = true;
     setLiveStatus("matched");
     setLiveMessage(`识别到 ${code}，正在匹配站点药品。`);
-    scanMedicine({ manual_code: code, mode: activeModeRef.current })
+    scanMedicine({ manual_code: code, mode: scanMode })
       .then((data) => {
         applyScanResult(data, code);
         setLiveMessage(data.ok ? "已匹配站点药品，请人工核验。" : "条码未匹配，请人工核验或重扫。");
@@ -180,27 +174,40 @@ export function Scan({ notify, onNavigate }) {
     return true;
   }
 
-  function scanCurrentFrame() {
+  function capturePreviewFrame(targetWidth = 720, quality = 0.78) {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
-      return;
+      return null;
     }
-    matchingRef.current = true;
-    const targetWidth = 640;
     const targetHeight = Math.round((video.videoHeight / video.videoWidth) * targetWidth) || 480;
     canvas.width = targetWidth;
     canvas.height = targetHeight;
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) {
-      matchingRef.current = false;
-      return;
+      return null;
     }
     context.drawImage(video, 0, 0, targetWidth, targetHeight);
-    const imageData = canvas.toDataURL("image/jpeg", 0.74);
-    scanMedicineFrame({ image_data: imageData, mode: activeModeRef.current })
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  function scanCurrentFrame() {
+    const imageData = capturePreviewFrame(640, 0.74);
+    if (!imageData) {
+      return;
+    }
+    matchingRef.current = true;
+    scanMedicineFrame({ image_data: imageData, mode: scanMode })
       .then((data) => {
         if (data.ok) {
+          if (data.barcode && data.barcode === lastCodeRef.current) {
+            setLiveStatus("matched");
+            setLiveMessage("已识别当前条码，请人工核验。");
+            return;
+          }
+          if (data.barcode) {
+            lastCodeRef.current = data.barcode;
+          }
           applyScanResult(data);
           setLiveStatus("matched");
           setLiveMessage("已匹配站点药品，请人工核验。");
@@ -222,15 +229,19 @@ export function Scan({ notify, onNavigate }) {
   }
 
   function handleCapture() {
+    const imageData = capturePreviewFrame(960, 0.82);
+    if (!imageData) {
+      notify("摄像头预览未就绪，请稍候或手动输入条码");
+      return;
+    }
     setCapturing(true);
-    scanMedicine({ mode: activeMode })
+    scanMedicineFrame({ image_data: imageData, mode: scanMode })
       .then((data) => {
         applyScanResult(data);
       })
       .catch(() => {
-        setCameraStatus("unavailable");
         setResult(null);
-        notify("摄像头暂不可用，可手动输入条码完成核验");
+        notify("当前画面未完成识别，可手动输入条码完成核验");
       })
       .finally(() => setCapturing(false));
   }
@@ -240,7 +251,7 @@ export function Scan({ notify, onNavigate }) {
     if (!manualCode) {
       return;
     }
-    scanMedicine({ manual_code: manualCode.trim(), mode: activeMode })
+    scanMedicine({ manual_code: manualCode.trim(), mode: scanMode })
       .then((data) => {
         applyScanResult(data, manualCode.trim());
       })
@@ -258,19 +269,6 @@ export function Scan({ notify, onNavigate }) {
             <p>扫码识别</p>
             <h2>拍照 / 条码核验</h2>
           </div>
-        </div>
-
-        <div className="scan-mode-row" aria-label="识别模式">
-          {scanModes.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={mode === activeMode ? "active" : ""}
-              onClick={() => setActiveMode(mode)}
-            >
-              {mode}
-            </button>
-          ))}
         </div>
 
         <div className={`camera-stage live ${cameraStatus === "unavailable" ? "unavailable" : ""}`}>

@@ -146,7 +146,7 @@ class MedicineScanService:
             spec=medicine.image_hint,
             quantity=f"{medicine.stock}{medicine.unit}",
             expire_date=medicine.expire_date,
-            slot=medicine.slot,
+            slot=str(medicine.hardware_slot or medicine.slot),
             source=source,
         )
 

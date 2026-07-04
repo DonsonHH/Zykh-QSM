@@ -21,7 +21,7 @@ export function MedicineCard({ medicine, selected, onSelect }) {
           {medicine.stock}
           {medicine.unit}
         </b>
-        <em>{medicine.slot}</em>
+        <em>{medicine.hardware_slot || medicine.slot}</em>
       </span>
     </button>
   );

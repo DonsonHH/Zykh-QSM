@@ -3,12 +3,15 @@ import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicines } from "../api/medicines.js";
 import { loadQsmStatus } from "../api/qsm.js";
+import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { CategoryTabs } from "../components/CategoryTabs.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
 export function Medicines({ notify, focus, onNavigate }) {
+  const initialMedicineView =
+    new URLSearchParams(window.location.search).get("medicineView") === "cabinet" ? "cabinet" : "category";
   const [medicines, setMedicines] = useState([]);
   const [categories, setCategories] = useState(["全部"]);
   const [activeCategory, setActiveCategory] = useState("全部");
@@ -17,6 +20,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [submitting, setSubmitting] = useState(false);
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
+  const [viewMode, setViewMode] = useState(initialMedicineView);
 
   useEffect(() => {
     loadMedicines()
@@ -42,6 +46,7 @@ export function Medicines({ notify, focus, onNavigate }) {
         ? medicines
         : medicines.filter((medicine) => medicine.category === nextCategory);
     setActiveCategory(nextCategory);
+    setViewMode("category");
     setSelectedMedicine(focusedMedicine || nextMedicines[0] || medicines[0] || null);
   }, [categories, focus, medicines]);
 
@@ -113,31 +118,64 @@ export function Medicines({ notify, focus, onNavigate }) {
             <h2>站点药品</h2>
             <p>{medicines.length}/23 仓有库存</p>
           </div>
-          <button
-            className="scan-button"
-            type="button"
-            onClick={() => (onNavigate ? onNavigate("scan") : notify("扫码识别入口暂不可用"))}
-          >
-            <ScanLine size={24} aria-hidden="true" />
-            <span>扫码识别</span>
-          </button>
+          <div className="medicines-heading-actions">
+            <div className="medicine-view-toggle" aria-label="药品显示方式">
+              <button
+                type="button"
+                className={viewMode === "category" ? "active" : ""}
+                onClick={() => setViewMode("category")}
+              >
+                分类
+              </button>
+              <button
+                type="button"
+                className={viewMode === "cabinet" ? "active" : ""}
+                onClick={() => setViewMode("cabinet")}
+              >
+                编号
+              </button>
+            </div>
+            <button
+              className="scan-button"
+              type="button"
+              onClick={() => (onNavigate ? onNavigate("scan") : notify("扫码识别入口暂不可用"))}
+            >
+              <ScanLine size={24} aria-hidden="true" />
+              <span>扫码识别</span>
+            </button>
+          </div>
         </div>
 
-        <CategoryTabs categories={categories} activeCategory={activeCategory} onChange={handleCategoryChange} />
+        {viewMode === "category" ? (
+          <CategoryTabs categories={categories} activeCategory={activeCategory} onChange={handleCategoryChange} />
+        ) : (
+          <p className="cabinet-map-note">按实体药柜位置选择仓门，空仓位以浅色显示。</p>
+        )}
 
-        <div className="medicine-grid" aria-label="药品列表">
-          {visibleMedicines.map((medicine) => (
-            <MedicineCard
-              key={medicine.id}
-              medicine={medicine}
-              selected={selectedMedicine?.id === medicine.id}
-              onSelect={setSelectedMedicine}
-            />
-          ))}
-        </div>
+        {viewMode === "category" ? (
+          <div className="medicine-grid" aria-label="药品列表">
+            {visibleMedicines.map((medicine) => (
+              <MedicineCard
+                key={medicine.id}
+                medicine={medicine}
+                selected={selectedMedicine?.id === medicine.id}
+                onSelect={setSelectedMedicine}
+              />
+            ))}
+          </div>
+        ) : (
+          <CabinetSlotMap
+            medicines={medicines}
+            selectedMedicine={selectedMedicine}
+            onSelect={setSelectedMedicine}
+            notify={notify}
+          />
+        )}
 
         <p className="medicine-list-note">
-          当前显示 {visibleMedicines.length}/{filteredMedicines.length} 种，切换分类查看更多药品。
+          {viewMode === "category"
+            ? `当前显示 ${visibleMedicines.length}/${filteredMedicines.length} 种，切换分类查看更多药品。`
+            : "点击编号仓门查看对应药品；取药确认仍需完成安全核验。"}
         </p>
       </section>
 
