@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import io
+import math
 import re
 import subprocess
+import wave
 from uuid import uuid4
 
 from fastapi import APIRouter
@@ -38,8 +42,8 @@ def host_audio_status() -> dict[str, object]:
         "microphones": microphones,
         "speaker_route": "qsm",
         "speaker_available": QsmClient().get_qsm_status().connected,
-        "relay_supported": False,
-        "relay_note": "当前外设网关支持提示音和文字播报；原声音频低延迟转发需要板端增加音频上传播放接口。",
+        "relay_supported": True,
+        "relay_note": "可将本机生成或采集的短音频发送到外设喇叭播放；实时连续转发需要前端持续推送音频片段。",
     }
 
 
@@ -68,17 +72,24 @@ def audio_beep() -> dict[str, object]:
 @router.post("/relay-test")
 def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
     text = request.text.strip() or "外放测试，声音链路正常。"
-    result = QsmClient().audio_speak(text)
+    audio_b64 = base64.b64encode(_notice_wav_bytes()).decode("ascii")
+    result = QsmClient().audio_play_base64(audio_b64, "wav")
+    mode = "uploaded-audio"
+    if not result.get("ok"):
+        result = QsmClient().audio_speak(text)
+        mode = "tts"
     if not result.get("ok"):
         result = QsmClient().audio_beep(request.volume)
+        mode = "beep"
     ok = bool(result.get("ok"))
     _record("外放测试", "外设外放", "已请求外设播放声音。" if ok else str(result.get("error_message") or "外放测试失败。"), ok)
     return {
         "ok": ok,
         "message": result.get("detail") or result.get("error_message") or "",
         "raw": result,
-        "relay_supported": False,
-        "relay_note": "当前使用外设文字播报或提示音验证声音链路。",
+        "relay_mode": mode,
+        "relay_supported": True,
+        "relay_note": "优先发送本机音频到外设喇叭播放，失败时退回文字播报或提示音。",
     }
 
 
@@ -145,3 +156,21 @@ def _sanitize_audio_label(value: str) -> str:
     if "NVIDIA" in text or board_name in text:
         return "板载麦克风"
     return text or "本机麦克风"
+
+
+def _notice_wav_bytes() -> bytes:
+    rate = 16000
+    duration = 0.72
+    samples = int(rate * duration)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        frames = bytearray()
+        for index in range(samples):
+            freq = 660 if index < samples * 0.52 else 980
+            amp = int(11000 * math.sin(2 * math.pi * freq * index / rate))
+            frames.extend(int(amp).to_bytes(2, byteorder="little", signed=True))
+        wav.writeframes(bytes(frames))
+    return buffer.getvalue()

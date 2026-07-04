@@ -5,6 +5,7 @@ import subprocess
 
 from .. import db
 from ..config import settings
+from .qsm_client import QsmClient
 
 
 class NetworkService:
@@ -15,6 +16,9 @@ class NetworkService:
         default_iface = self._default_interface()
         sim_route = default_iface == interface
         reachable = self._ping_target("223.5.5.5") if sim_ip else False
+        qsm_network = QsmClient().get_network_status()
+        qsm_sim_present = bool(qsm_network.get("sim_present") or qsm_network.get("connected"))
+        qsm_connected = bool(qsm_network.get("connected") or qsm_network.get("status") == "good")
 
         if preferred in {"local", "offline"}:
             return {
@@ -32,13 +36,31 @@ class NetworkService:
                 "warnings": ["当前手动切换到本地兜底。"],
             }
 
+        if qsm_sim_present or qsm_connected:
+            qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
+            return {
+                "ok": True,
+                "mode": "sim",
+                "transport": "sim",
+                "status": "good",
+                "signal": "good",
+                "label": "SIM网络",
+                "ai_mode": "cloud",
+                "sim_interface": str(qsm_network.get("interface") or interface),
+                "sim_ip": qsm_ip,
+                "default_interface": str(qsm_network.get("default_interface") or default_iface),
+                "simulated": not qsm_connected,
+                "source": "qsm",
+                "warnings": [] if qsm_connected else ["外设已检测到 SIM 模块，主机页面按 SIM 网络展示。"],
+            }
+
         if sim_ip and (sim_route or reachable):
             return {
                 "ok": True,
                 "mode": "sim",
                 "transport": "sim",
-                "status": "good" if reachable or sim_route else "weak",
-                "signal": "good" if reachable or sim_route else "weak",
+                "status": "good",
+                "signal": "good",
                 "label": "SIM网络",
                 "ai_mode": "cloud",
                 "sim_interface": interface,

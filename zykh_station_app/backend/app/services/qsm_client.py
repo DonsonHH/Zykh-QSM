@@ -234,6 +234,25 @@ class QsmClient:
             payload["volume"] = max(0, min(int(volume), 100))
         return self._qsm_action(settings.qsm_audio_beep_path, payload, "提示音")
 
+    def audio_play_base64(self, audio_base64: str, fmt: str = "wav") -> dict[str, Any]:
+        return self._qsm_action(
+            settings.qsm_audio_play_path,
+            {"audio_base64": audio_base64, "format": fmt},
+            "音频播放",
+        )
+
+    def get_network_status(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {"ok": True, "mode": "mock", "sim_present": True, "connected": True, "signal": "good"}
+        payload, error = self._request_json(settings.qsm_network_status_path, method="GET")
+        if error:
+            status = self.get_qsm_status()
+            network = status.devices.get("network") if isinstance(status.devices, dict) else None
+            if isinstance(network, dict):
+                return network
+            return {"ok": False, "error_message": error, "sim_present": False, "connected": False, "signal": "none"}
+        return payload
+
     def _qsm_action(self, path: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
         if self.mode != "real":
             return {"ok": False, "mode": self.mode, "error_message": f"{label}需要 QSM real 模式。"}

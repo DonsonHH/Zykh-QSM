@@ -4,7 +4,6 @@ import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryFollowupStep } from "../components/InquiryFollowupStep.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { InquiryStartStep } from "../components/InquiryStartStep.jsx";
-import { SafetyNotice } from "../components/SafetyNotice.jsx";
 
 const initialForm = {
   symptoms_text: "",
@@ -245,19 +244,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
           />
         ) : null}
       </section>
-
-      <aside className="inquiry-side-note" aria-label="安全提示">
-        <strong>安全边界</strong>
-        <SafetyNotice>本系统仅提供风险提示、药品信息匹配和禁忌核验，不能替代专业人员判断。</SafetyNotice>
-        <div>
-          <span>流程</span>
-          <p>先描述症状，再补充持续时间、已用药、过敏禁忌和体征信息。</p>
-        </div>
-        <div>
-          <span>取药</span>
-          <p>只有低风险、无明显禁忌且库存可用时，才会进入候选药品查看。</p>
-        </div>
-      </aside>
     </main>
   );
 }

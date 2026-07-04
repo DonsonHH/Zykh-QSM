@@ -70,7 +70,6 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
         </article>
       </div>
 
-      <p className="detail-safety">{medicine.safety_note}</p>
       <button className="primary-action detail-action" type="button" onClick={onConfirm}>
         进入取药确认
       </button>

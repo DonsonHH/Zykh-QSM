@@ -115,9 +115,9 @@ export function InquiryFollowupStep({
   return (
     <section className="inquiry-followup-step guided">
       <div className="inquiry-flow-heading compact">
-        <p>补充关键信息</p>
+        <p>AI 问询 · 补充关键信息</p>
         <h2>{form.symptoms_text}</h2>
-        <span>系统会逐步询问持续时间、用药情况、禁忌和体征。</span>
+        <span>请根据 AI 提问点击回答，无需手动输入。</span>
       </div>
 
       <div className="guided-progress" aria-label="问询进度">
@@ -140,8 +140,12 @@ export function InquiryFollowupStep({
         </section>
       ) : (
         <section className="guided-question-card">
+          <div className="guided-chat-thread" aria-label="AI 问询对话">
+            <article className="assistant-bubble">我已记录你的不适：{form.symptoms_text}</article>
+            <article className="assistant-bubble active">{question.title}</article>
+          </div>
           <p>{question.eyebrow}</p>
-          <h3>{question.title}</h3>
+          <h3>请选择最符合的一项</h3>
           <small>{question.hint}</small>
           <div className={`guided-option-grid ${currentStage}`}>
             {question.options.map(([label, value]) => (

@@ -37,11 +37,7 @@ class RecordsService:
 
     def get_recent_records(self) -> list[RecentRecord]:
         sync_status = self.sync_service.get_status()
-        records = (
-            self._inquiry_records(sync_status.sync_status)
-            + self._dispense_records(sync_status.sync_status)
-            + self._device_records(sync_status.sync_status)
-        )
+        records = self._dispense_records(sync_status.sync_status)
         return sorted(records, key=lambda record: record.time, reverse=True)[:8]
 
     def list_service_users(self) -> list[ServiceUser]:
@@ -80,9 +76,9 @@ class RecordsService:
             RecentRecord(
                 id=record.id,
                 time=self._time_part(record.created_at),
-                type="取药确认",
-                title=record.medicine_name,
-                description=f"{'dry-run' if record.dry_run else '真实取药'}记录：{record.quantity}{record.unit}。{record.qsm_detail}",
+                type="取药记录",
+                title=f"张三取走{record.medicine_name}",
+                description=f"{record.quantity}{record.unit}",
                 target_user="张三",
                 status="已记录" if record.qsm_ok or record.dry_run else "失败",
                 sync_status=sync_status,

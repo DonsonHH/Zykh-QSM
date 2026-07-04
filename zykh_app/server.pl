@@ -4,7 +4,7 @@ use warnings;
 use utf8;
 use IO::Socket::INET;
 use JSON::PP qw(encode_json decode_json);
-use MIME::Base64 qw(encode_base64);
+use MIME::Base64 qw(encode_base64 decode_base64);
 use POSIX qw(strftime setsid);
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
@@ -325,6 +325,9 @@ sub route_api {
     if ($method eq 'GET' && $path eq '/api/status') {
         return send_json($client, 200, api_status());
     }
+    if ($method eq 'GET' && $path eq '/api/network/status') {
+        return send_json($client, 200, qsm_network_status());
+    }
     if ($method eq 'GET' && $path eq '/api/medicines') {
         return send_json($client, 200, { ok => JSON::PP::true, medicines => list_medicines() });
     }
@@ -430,6 +433,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/audio/beep') {
         return send_json($client, 200, play_beep($req->{params}));
     }
+    if ($method eq 'POST' && $path eq '/api/audio/play') {
+        return send_json($client, 200, play_uploaded_audio($req->{params}));
+    }
 
     return send_json($client, 404, { ok => JSON::PP::false, error => 'API not found' });
 }
@@ -462,6 +468,39 @@ sub api_status {
             uart  => [map { basename($_) } glob('/dev/ttyS*')],
             pwm   => [map { basename($_) } glob('/sys/class/pwm/pwmchip*')],
         },
+        network => qsm_network_status(),
+    };
+}
+
+sub qsm_network_status {
+    my $interface = $ENV{SIM_NET_IFACE} || 'usb0';
+    my $lsusb = trim(`lsusb 2>/dev/null | grep -i -E '2c7c:6005|quectel|ec200' | head -1`);
+    my @tty = map { basename($_) } glob('/dev/ttyUSB*');
+    my $ifconfig = `ifconfig $interface 2>/dev/null`;
+    my ($ip) = $ifconfig =~ /inet (?:addr:)?(\d+\.\d+\.\d+\.\d+)/;
+    my $route = `route -n 2>/dev/null`;
+    my $default_iface = '';
+    for my $line (split /\r?\n/, $route) {
+        my @parts = split /\s+/, trim($line);
+        next unless @parts >= 8 && $parts[0] eq '0.0.0.0';
+        $default_iface = $parts[-1];
+        last;
+    }
+    my $sim_present = ($lsusb ne '' || @tty || $ifconfig ne '') ? JSON::PP::true : JSON::PP::false;
+    my $connected = ($ip || $default_iface eq $interface) ? JSON::PP::true : JSON::PP::false;
+    return {
+        ok => JSON::PP::true,
+        mode => 'sim',
+        interface => $interface,
+        sim_present => $sim_present,
+        connected => $connected,
+        signal => $sim_present ? 'good' : 'none',
+        status => $sim_present ? 'good' : 'unavailable',
+        ip => $ip || '',
+        default_interface => $default_iface,
+        tty_usb => \@tty,
+        modem => $lsusb,
+        detail => $sim_present ? '已检测到 SIM 通信模块' : '未检测到 SIM 通信模块',
     };
 }
 
@@ -1262,6 +1301,49 @@ sub play_beep {
     };
 }
 
+sub play_uploaded_audio {
+    my ($p) = @_;
+    my $audio = trim($p->{audio_base64} || $p->{data} || '');
+    return { ok => JSON::PP::false, error => '音频数据为空' } if $audio eq '';
+    $audio =~ s#^data:audio/[^;]+;base64,##;
+    my $raw = eval { decode_base64($audio) };
+    return { ok => JSON::PP::false, error => '音频 base64 解析失败' } if $@ || !defined $raw || length($raw) < 44;
+    my $max_bytes = int($ENV{AUDIO_UPLOAD_MAX_BYTES} || 8 * 1024 * 1024);
+    return { ok => JSON::PP::false, error => '音频过大' } if length($raw) > $max_bytes;
+
+    my $dir = "$DATA_DIR/audio";
+    make_path($dir) unless -d $dir;
+    my $format = lc trim($p->{format} || 'wav');
+    $format = 'wav' unless $format =~ /^(wav|pcm)$/;
+    my $file = "$dir/relay-" . time . ".$format";
+    write_raw_file($file, $raw) or return { ok => JSON::PP::false, error => "音频写入失败：$file" };
+
+    my $log = "$DATA_DIR/audio-play.log";
+    my $cmd = aplay_cmd($file);
+    if ($format eq 'pcm') {
+        my $rate = int($p->{rate} || 16000);
+        my $channels = int($p->{channels} || 1);
+        $rate = 16000 if $rate <= 0;
+        $channels = 1 if $channels <= 0;
+        my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
+        $cmd = 'aplay -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c ' . int($channels) . ' ' . shell_quote($file);
+    }
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', int($ENV{AUDIO_PLAY_TIMEOUT} || 20), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        mode => 'uploaded-audio',
+        file => $file,
+        bytes => length($raw),
+        detail => $exit == 0 ? '已播放主机发送的音频' : substr(read_text_file($log) || '', 0, 500),
+        exit_code => $exit,
+    };
+}
+
 sub aplay_cmd {
     my ($file) = @_;
     my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
@@ -1443,7 +1525,7 @@ sub dispense {
     my $name = $med[1] || "仓位$slot";
     my $stock = defined $med[2] ? int($med[2]) : -1;
     my $gpio = $ENV{"SLOT${slot}_GPIO"};
-    my $uart_dev = $ENV{DISPENSE_UART} || '/dev/ttyS8';
+    my $uart_dev = $ENV{DISPENSE_UART} || '/dev/ttyS5';
 
     my $detail;
     my $result = 'success';
@@ -1464,7 +1546,7 @@ sub dispense {
             $detail = $r->{error};
         }
     } else {
-        $detail = '未配置 UART8/GPIO，已按模拟出药记录';
+        $detail = '未配置 UART5/GPIO，已按模拟出药记录';
     }
 
     if ($result eq 'success' && $stock > 0 && defined $med[0]) {
@@ -1600,7 +1682,7 @@ sub dispense_uart {
 
     my $hex = uc(sprintf('%02X', $command));
     write_text_file("$DATA_DIR/dispense-uart.log", now_text() . " dev=$dev baud=$baud slot=$slot command=$command hex=$hex\n");
-    return { ok => JSON::PP::true, detail => "UART8 已发送仓位 $slot 控制字节 0x$hex" };
+    return { ok => JSON::PP::true, detail => "UART5 已发送仓位 $slot 控制字节 0x$hex" };
 }
 
 sub read_temperature {

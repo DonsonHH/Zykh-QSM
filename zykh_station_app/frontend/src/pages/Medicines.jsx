@@ -3,17 +3,14 @@ import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicines } from "../api/medicines.js";
 import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
-import { CategoryTabs } from "../components/CategoryTabs.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
 export function Medicines({ notify, focus, onNavigate }) {
   const initialMedicineView =
-    new URLSearchParams(window.location.search).get("medicineView") === "cabinet" ? "cabinet" : "category";
+    new URLSearchParams(window.location.search).get("medicineView") === "cabinet" ? "cabinet" : "list";
   const [medicines, setMedicines] = useState([]);
-  const [categories, setCategories] = useState(["全部"]);
-  const [activeCategory, setActiveCategory] = useState("全部");
   const [selectedMedicine, setSelectedMedicine] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -25,7 +22,6 @@ export function Medicines({ notify, focus, onNavigate }) {
     loadMedicines()
       .then((data) => {
         setMedicines(data.medicines || []);
-        setCategories(data.categories || ["全部"]);
         setSelectedMedicine((data.medicines || [])[0] || null);
       })
       .catch((error) => notify(error.message || "药品列表加载失败"));
@@ -38,16 +34,12 @@ export function Medicines({ notify, focus, onNavigate }) {
     const focusedMedicine = focus.medicineId
       ? medicines.find((medicine) => medicine.id === focus.medicineId)
       : null;
-    const nextCategory =
-      focusedMedicine?.category || (categories.includes(focus.category) ? focus.category : "全部");
-    const nextMedicines =
-      nextCategory === "全部"
-        ? medicines
-        : medicines.filter((medicine) => medicine.category === nextCategory);
-    setActiveCategory(nextCategory);
-    setViewMode("category");
-    setSelectedMedicine(focusedMedicine || nextMedicines[0] || medicines[0] || null);
-  }, [categories, focus, medicines]);
+    const categoryMedicine = focus.category
+      ? medicines.find((medicine) => medicine.category === focus.category)
+      : null;
+    setViewMode("list");
+    setSelectedMedicine(focusedMedicine || categoryMedicine || medicines[0] || null);
+  }, [focus, medicines]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -56,23 +48,7 @@ export function Medicines({ notify, focus, onNavigate }) {
     }
   }, [selectedMedicine]);
 
-  const filteredMedicines = useMemo(() => {
-    if (activeCategory === "全部") {
-      return medicines;
-    }
-    return medicines.filter((medicine) => medicine.category === activeCategory);
-  }, [activeCategory, medicines]);
-
-  const visibleMedicines = filteredMedicines.slice(0, 6);
-
-  function handleCategoryChange(nextCategory) {
-    setActiveCategory(nextCategory);
-    const nextMedicines =
-      nextCategory === "全部"
-        ? medicines
-        : medicines.filter((medicine) => medicine.category === nextCategory);
-    setSelectedMedicine(nextMedicines[0] || null);
-  }
+  const visibleMedicines = useMemo(() => medicines.filter((medicine) => medicine.stock > 0), [medicines]);
 
   function openConfirm() {
     if (!selectedMedicine) {
@@ -108,10 +84,10 @@ export function Medicines({ notify, focus, onNavigate }) {
             <div className="medicine-view-toggle" aria-label="药品显示方式">
               <button
                 type="button"
-                className={viewMode === "category" ? "active" : ""}
-                onClick={() => setViewMode("category")}
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => setViewMode("list")}
               >
-                分类
+                名称
               </button>
               <button
                 type="button"
@@ -132,11 +108,7 @@ export function Medicines({ notify, focus, onNavigate }) {
           </div>
         </div>
 
-        {viewMode === "category" ? (
-          <CategoryTabs categories={categories} activeCategory={activeCategory} onChange={handleCategoryChange} />
-        ) : null}
-
-        {viewMode === "category" ? (
+        {viewMode === "list" ? (
           <div className="medicine-grid" aria-label="药品列表">
             {visibleMedicines.map((medicine) => (
               <MedicineCard
@@ -157,8 +129,8 @@ export function Medicines({ notify, focus, onNavigate }) {
         )}
 
         <p className="medicine-list-note">
-          {viewMode === "category"
-            ? `当前显示 ${visibleMedicines.length}/${filteredMedicines.length} 种，切换分类查看更多药品。`
+          {viewMode === "list"
+            ? `当前显示 ${visibleMedicines.length} 种有库存药品。`
             : "点击编号仓门查看对应药品；取药确认仍需完成安全核验。"}
         </p>
       </section>
