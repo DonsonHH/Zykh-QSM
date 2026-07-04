@@ -1,9 +1,14 @@
 import React from "react";
-import { HeartHandshake, SlidersHorizontal } from "lucide-react";
-import { StatusChip } from "./StatusChip.jsx";
+import { HeartHandshake, Signal, SignalLow, SlidersHorizontal, WifiOff } from "lucide-react";
 import { formatClock, formatDay } from "../utils/time.js";
 
-export function TopBar({ site, chips, now, onOpenSystemCheck }) {
+export function TopBar({ site, networkStatus, now, onOpenSystemCheck }) {
+  const signal = networkStatus?.signal || networkStatus?.status || "weak";
+  const isGood = signal === "good";
+  const isOffline = signal === "none" || networkStatus?.mode === "local";
+  const NetworkIcon = isOffline ? WifiOff : isGood ? Signal : SignalLow;
+  const label = isOffline ? "本地兜底" : networkStatus?.label || "SIM网络";
+
   return (
     <header className="top-bar">
       <div className="brand-block">
@@ -24,10 +29,10 @@ export function TopBar({ site, chips, now, onOpenSystemCheck }) {
       </div>
 
       <div className="status-controls">
-        <div className="status-row" aria-label="系统状态">
-          {(chips || []).map((chip) => (
-            <StatusChip key={chip.id} chip={chip} />
-          ))}
+        <div className={`network-indicator ${isGood ? "good" : isOffline ? "offline" : "weak"}`} aria-label={`网络状态：${label}`}>
+          <NetworkIcon size={28} aria-hidden="true" />
+          <span>{label}</span>
+          <strong>{isGood ? "信号良好" : isOffline ? "无网本地" : "信号偏弱"}</strong>
         </div>
         <button className="system-check-button" type="button" onClick={onOpenSystemCheck} aria-label="打开系统检查">
           <SlidersHorizontal size={24} aria-hidden="true" />

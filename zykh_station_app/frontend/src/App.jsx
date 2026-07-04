@@ -3,6 +3,7 @@ import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { SystemCheckModal } from "./components/SystemCheckModal.jsx";
 import { loadDashboard } from "./api/dashboard.js";
+import { loadNetworkStatus } from "./api/network.js";
 import { mockDashboard } from "./api/mockData.js";
 import { Home } from "./pages/Home.jsx";
 import { ComingSoon } from "./pages/ComingSoon.jsx";
@@ -22,15 +23,22 @@ export function App() {
   const [medicineFocus, setMedicineFocus] = useState(null);
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [systemCheckOpen, setSystemCheckOpen] = useState(initialParams.get("systemCheck") === "1");
+  const [networkStatus, setNetworkStatus] = useState(null);
   const toastTimerRef = useRef(null);
 
   useEffect(() => {
     loadDashboard().then(setDashboard);
+    loadNetworkStatus().then(setNetworkStatus).catch(() => setNetworkStatus(null));
     const clock = window.setInterval(() => setNow(new Date()), 1000);
     const refresh = window.setInterval(() => loadDashboard().then(setDashboard), 30000);
+    const networkRefresh = window.setInterval(
+      () => loadNetworkStatus().then(setNetworkStatus).catch(() => setNetworkStatus(null)),
+      15000
+    );
     return () => {
       window.clearInterval(clock);
       window.clearInterval(refresh);
+      window.clearInterval(networkRefresh);
     };
   }, []);
 
@@ -71,7 +79,7 @@ export function App() {
       <section className="kiosk-frame" aria-label="智药康护终端">
         <TopBar
           site={dashboard.site}
-          chips={dashboard.chips}
+          networkStatus={networkStatus}
           now={now}
           onOpenSystemCheck={() => setSystemCheckOpen(true)}
         />
@@ -94,6 +102,8 @@ export function App() {
         <SystemCheckModal
           open={systemCheckOpen}
           syncLabel={dashboard?.chips?.find((chip) => chip.id === "sync")?.value || "本地记录"}
+          networkStatus={networkStatus}
+          onNetworkStatusChange={setNetworkStatus}
           notify={notify}
           onClose={() => setSystemCheckOpen(false)}
         />

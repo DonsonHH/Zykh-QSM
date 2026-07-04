@@ -20,6 +20,10 @@ export function scanMedicineFrame(payload = {}) {
   return apiPost("/api/medicine/scan-frame", payload);
 }
 
+export function registerScannedMedicine(payload = {}) {
+  return apiPost("/api/medicine/scan/register", payload);
+}
+
 export function dryRunQsmDispense(payload) {
   return apiPost("/api/qsm/dispense/dry-run", payload);
 }

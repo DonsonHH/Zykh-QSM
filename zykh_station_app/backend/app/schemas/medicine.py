@@ -61,6 +61,25 @@ class MedicineScanResult(BaseModel):
     error_message: str | None = None
 
 
+class MedicineScanRegisterRequest(BaseModel):
+    barcode: str | None = None
+    name: str | None = None
+    spec: str | None = None
+    expire_date: str | None = None
+    slot: int | None = None
+    stock: int = 1
+    unit: str = "盒"
+    category: str = "扫码录入"
+    safety_note: str | None = None
+
+
+class MedicineScanRegisterResponse(BaseModel):
+    ok: bool
+    created: bool
+    message: str
+    medicine: Medicine | None = None
+
+
 class MedicineVisualRecognizeRequest(BaseModel):
     image_path: str | None = None
 

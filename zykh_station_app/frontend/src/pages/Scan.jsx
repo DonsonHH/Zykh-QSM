@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BadgeCheck, Camera, CheckCircle2, Keyboard, Pill, RotateCcw, ScanLine } from "lucide-react";
-import { loadQsmCapabilities, scanMedicine, scanMedicineFrame } from "../api/qsm.js";
+import { ArrowLeft, BadgeCheck, Camera, CheckCircle2, PackagePlus, Pill, ScanLine } from "lucide-react";
+import { loadQsmCapabilities, registerScannedMedicine, scanMedicine, scanMedicineFrame } from "../api/qsm.js";
 
 const scanMode = "药品识别";
 
@@ -9,7 +9,7 @@ export function Scan({ notify, onNavigate }) {
   const [liveMessage, setLiveMessage] = useState("正在打开本机摄像头...");
   const [liveStatus, setLiveStatus] = useState("checking");
   const [result, setResult] = useState(null);
-  const [capturing, setCapturing] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -37,7 +37,7 @@ export function Scan({ notify, onNavigate }) {
       if (!navigator.mediaDevices?.getUserMedia) {
         setCameraStatus("unavailable");
         setLiveStatus("unavailable");
-        setLiveMessage("当前浏览器无法打开摄像头，可使用拍照识别或手动输入。");
+        setLiveMessage("当前浏览器无法打开摄像头，请检查本机摄像头开关或连接。");
         return;
       }
 
@@ -65,7 +65,7 @@ export function Scan({ notify, onNavigate }) {
       } catch (error) {
         setCameraStatus("unavailable");
         setLiveStatus("unavailable");
-        setLiveMessage(error?.message || "摄像头暂不可用，可手动输入条码完成核验。");
+        setLiveMessage(error?.message || "摄像头暂不可用，请检查本机摄像头后重试。");
       }
     }
 
@@ -114,7 +114,7 @@ export function Scan({ notify, onNavigate }) {
         if (!detector && serverScanRef.current && video?.readyState >= 2 && !matchingRef.current) {
           scanCurrentFrame();
         }
-        scanTimerRef.current = window.setTimeout(tick, serverScanRef.current ? 1100 : 650);
+        scanTimerRef.current = window.setTimeout(tick, 1000);
       };
       tick();
     }
@@ -228,34 +228,43 @@ export function Scan({ notify, onNavigate }) {
       });
   }
 
-  function handleCapture() {
-    const imageData = capturePreviewFrame(960, 0.82);
-    if (!imageData) {
-      notify("摄像头预览未就绪，请稍候或手动输入条码");
+  function handleRegisterMedicine() {
+    if (!result) {
       return;
     }
-    setCapturing(true);
-    scanMedicineFrame({ image_data: imageData, mode: scanMode })
-      .then((data) => {
-        applyScanResult(data);
-      })
-      .catch(() => {
-        setResult(null);
-        notify("当前画面未完成识别，可手动输入条码完成核验");
-      })
-      .finally(() => setCapturing(false));
-  }
-
-  function handleManualInput() {
-    const manualCode = window.prompt("请输入药品条码");
-    if (!manualCode) {
+    const barcode = result.barcode && result.barcode !== "--" ? result.barcode : "";
+    if (!barcode && !result.name) {
+      notify("未识别到可录入信息，请调整药盒位置");
       return;
     }
-    scanMedicine({ manual_code: manualCode.trim(), mode: scanMode })
+    setRegistering(true);
+    registerScannedMedicine({
+      barcode,
+      name: result.name || "待核验药品",
+      spec: result.spec || "",
+      expire_date: result.expire_date || "",
+      stock: 1,
+      unit: "盒",
+      category: "扫码录入"
+    })
       .then((data) => {
-        applyScanResult(data, manualCode.trim());
+        if (!data.ok) {
+          notify(data.message || "录入失败，请在药品页核对空仓");
+          return;
+        }
+        setResult({
+          ...result,
+          medicine_id: data.medicine?.id || result.medicine_id,
+          name: data.medicine?.name || result.name,
+          slot: data.medicine?.hardware_slot || data.medicine?.slot || result.slot,
+          quantity: data.medicine ? `${data.medicine.stock}${data.medicine.unit}` : result.quantity,
+          expire_date: data.medicine?.expire_date || result.expire_date,
+          match_percent: result.match_percent ?? (data.created ? 88 : 99)
+        });
+        notify(data.message || "已录入药柜");
       })
-      .catch((error) => notify(error.message || "手动核验失败"));
+      .catch((error) => notify(error.message || "录入失败"))
+      .finally(() => setRegistering(false));
   }
 
   return (
@@ -278,7 +287,7 @@ export function Scan({ notify, onNavigate }) {
                 <ScanLine size={54} />
               </span>
               <strong>摄像头暂不可用</strong>
-              <p>{liveMessage || "可手动输入条码，或从记录中完成核验。"}</p>
+              <p>{liveMessage || "请检查本机摄像头连接后重试。"}</p>
             </>
           ) : (
             <>
@@ -292,40 +301,11 @@ export function Scan({ notify, onNavigate }) {
               </div>
               <div className={`live-scan-badge ${liveStatus}`}>
                 <Camera size={18} aria-hidden="true" />
-                <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "实时扫码中" : "摄像头预览"}</strong>
+                <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "每秒识别" : "摄像头预览"}</strong>
                 <span>{liveMessage}</span>
               </div>
             </>
           )}
-        </div>
-
-        <div className="scan-action-row">
-          <button className="primary-action" type="button" onClick={handleCapture} disabled={capturing}>
-            <Camera size={24} aria-hidden="true" />
-            <span>{capturing ? "识别中..." : "拍照识别"}</span>
-          </button>
-          <button className="secondary-action compact" type="button" onClick={handleManualInput}>
-            <Keyboard size={22} aria-hidden="true" />
-            <span>手动输入</span>
-          </button>
-          <button
-            className="secondary-action compact"
-            type="button"
-            onClick={() => {
-              setResult(null);
-              lastCodeRef.current = "";
-              matchingRef.current = false;
-              setLiveStatus(detectorRef.current || serverScanRef.current ? "scanning" : "preview");
-              setLiveMessage(
-                detectorRef.current || serverScanRef.current
-                  ? "请将条码或二维码放入取景框，系统会自动识别。"
-                  : "请调整药盒位置后拍照识别。"
-              );
-            }}
-          >
-            <RotateCcw size={22} aria-hidden="true" />
-            <span>重新扫码</span>
-          </button>
         </div>
       </section>
 
@@ -374,7 +354,7 @@ export function Scan({ notify, onNavigate }) {
           <div className="scan-empty-state">
             <ScanLine size={44} aria-hidden="true" />
             <strong>暂无识别结果</strong>
-            <p>请拍照识别，或使用手动输入完成条码核验。</p>
+            <p>请将药盒条码对准取景框，系统会每秒自动核验。</p>
           </div>
         )}
 
@@ -382,11 +362,11 @@ export function Scan({ notify, onNavigate }) {
           <button
             className="primary-action"
             type="button"
-            disabled={!result}
-            onClick={() => notify("核验完成，已保留本地记录")}
+            disabled={!result || registering}
+            onClick={handleRegisterMedicine}
           >
-            <CheckCircle2 size={24} aria-hidden="true" />
-            <span>完成核验</span>
+            {registering ? <CheckCircle2 size={24} aria-hidden="true" /> : <PackagePlus size={24} aria-hidden="true" />}
+            <span>{registering ? "录入中..." : "完成核验并录入"}</span>
           </button>
           <button className="secondary-action compact" type="button" onClick={() => onNavigate("medicines")}>
             查看药品

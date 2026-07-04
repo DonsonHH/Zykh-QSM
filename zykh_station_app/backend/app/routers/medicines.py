@@ -6,6 +6,8 @@ from ..schemas.medicine import (
     MedicineDetailResponse,
     MedicineListResponse,
     MedicineScanFrameRequest,
+    MedicineScanRegisterRequest,
+    MedicineScanRegisterResponse,
     MedicineScanRequest,
     MedicineScanResult,
     MedicineVisualRecognizeRequest,
@@ -38,6 +40,11 @@ def scan_medicine(request: MedicineScanRequest) -> MedicineScanResult:
 @router.post("/medicine/scan-frame", response_model=MedicineScanResult)
 def scan_medicine_frame(request: MedicineScanFrameRequest) -> MedicineScanResult:
     return MedicineScanService().scan_frame(request.image_data)
+
+
+@router.post("/medicine/scan/register", response_model=MedicineScanRegisterResponse)
+def register_scan_result(request: MedicineScanRegisterRequest) -> MedicineScanRegisterResponse:
+    return MedicineService().register_scan_result(request)
 
 
 @router.post("/medicine/visual-recognize", response_model=MedicineVisualRecognizeResponse)

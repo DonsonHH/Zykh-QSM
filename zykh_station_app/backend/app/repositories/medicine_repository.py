@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from uuid import uuid4
 
 from .. import db
 from ..schemas.medicine import Medicine
@@ -193,6 +195,84 @@ class MedicineRepository:
             ).fetchone()
         return self._row_to_medicine(row) if row else None
 
+    def create_from_scan(
+        self,
+        *,
+        barcode: str,
+        name: str,
+        spec: str = "",
+        expire_date: str = "",
+        stock: int = 1,
+        unit: str = "盒",
+        category: str = "扫码录入",
+        hardware_slot: int | None = None,
+        safety_note: str = "",
+    ) -> Medicine:
+        self._ensure_seeded()
+        normalized_barcode = barcode.strip()
+        existing = self.get_by_barcode(normalized_barcode) if normalized_barcode else None
+        if existing:
+            return existing
+
+        slot_number = hardware_slot or self.first_empty_hardware_slot()
+        slot_label = f"S{slot_number:02d}"
+        medicine_id = self._scan_id(name, normalized_barcode)
+        stock = max(int(stock or 1), 1)
+        safety = safety_note or "扫码录入药品，开柜前请核对药盒、有效期和家庭用药记录。"
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO medicines(
+                  id, slot, hardware_slot, barcode, name, category, tags_json,
+                  contraindications_json, stock, unit, expire_date, image_hint,
+                  is_otc, is_emergency, safety_note, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  barcode=excluded.barcode,
+                  name=excluded.name,
+                  category=excluded.category,
+                  stock=excluded.stock,
+                  unit=excluded.unit,
+                  expire_date=excluded.expire_date,
+                  image_hint=excluded.image_hint,
+                  safety_note=excluded.safety_note,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    medicine_id,
+                    slot_label,
+                    slot_number,
+                    normalized_barcode,
+                    name.strip() or "待核验药品",
+                    category.strip() or "扫码录入",
+                    json.dumps(["扫码录入", "待核验"], ensure_ascii=False),
+                    json.dumps(["请人工核对药品说明"], ensure_ascii=False),
+                    stock,
+                    unit.strip() or "盒",
+                    expire_date.strip(),
+                    spec.strip() or "扫码录入",
+                    1,
+                    0,
+                    safety,
+                    db.now_text(),
+                ),
+            )
+        created = self.get_by_id(medicine_id)
+        if created is None:
+            raise RuntimeError("扫码药品录入失败。")
+        return created
+
+    def first_empty_hardware_slot(self) -> int:
+        self._ensure_seeded()
+        with db.connect() as conn:
+            rows = conn.execute("SELECT hardware_slot FROM medicines WHERE stock > 0").fetchall()
+        used = {int(row["hardware_slot"]) for row in rows}
+        for slot in range(1, 24):
+            if slot not in used:
+                return slot
+        return 23
+
     def decrement_stock(self, medicine_id: str, quantity: int) -> None:
         with db.connect() as conn:
             conn.execute(
@@ -310,3 +390,11 @@ class MedicineRepository:
             is_emergency=bool(row["is_emergency"]),
             safety_note=row["safety_note"],
         )
+
+    @staticmethod
+    def _scan_id(name: str, barcode: str) -> str:
+        if barcode:
+            safe_barcode = re.sub(r"[^A-Za-z0-9_-]+", "-", barcode)[:36].strip("-")
+            return f"scan-{safe_barcode or uuid4().hex[:10]}"
+        safe_name = re.sub(r"[^A-Za-z0-9\u4e00-\u9fff_-]+", "-", name.strip())[:24].strip("-")
+        return f"scan-{safe_name or uuid4().hex[:10]}"

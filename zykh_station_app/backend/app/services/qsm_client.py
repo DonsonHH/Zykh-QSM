@@ -228,8 +228,11 @@ class QsmClient:
     def audio_speak(self, text: str) -> dict[str, Any]:
         return self._qsm_action(settings.qsm_audio_speak_path, {"text": text}, "语音播报")
 
-    def audio_beep(self) -> dict[str, Any]:
-        return self._qsm_action(settings.qsm_audio_beep_path, {}, "提示音")
+    def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if volume is not None:
+            payload["volume"] = max(0, min(int(volume), 100))
+        return self._qsm_action(settings.qsm_audio_beep_path, payload, "提示音")
 
     def _qsm_action(self, path: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
         if self.mode != "real":
