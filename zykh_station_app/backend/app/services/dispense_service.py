@@ -6,7 +6,13 @@ from ..config import settings
 from ..db import now_text
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.medicine_repository import MedicineRepository
-from ..schemas.dispense import DispenseConfirmRequest, DispenseConfirmResponse, DispenseRecord
+from ..schemas.dispense import (
+    DispenseConfirmRequest,
+    DispenseConfirmResponse,
+    DispenseOpenRequest,
+    DispenseOpenResponse,
+    DispenseRecord,
+)
 from .qsm_client import QsmClient
 
 
@@ -43,17 +49,53 @@ class DispenseService:
         qsm_ok = bool(qsm_result.get("ok"))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if not dry_run and not qsm_ok:
-            message = f"外设出药失败：{qsm_detail or '未返回成功状态'}"
+            message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
             record = self._build_record(request, medicine, dry_run, message, qsm_ok=False, qsm_detail=qsm_detail)
             self.dispense_repository.append(record)
             return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
-        message = "dry-run 已记录，未触发真实出药。" if dry_run else "取药确认已完成，外设已返回成功状态。"
+        message = "dry-run 已记录，未触发真实开柜。" if dry_run else "取药确认已完成，柜门已打开。"
         record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
         self.dispense_repository.append(record)
         if not dry_run:
             self.medicine_repository.decrement_stock(medicine.id, request.quantity)
         return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
+
+    def open_cabinet(self, request: DispenseOpenRequest) -> DispenseOpenResponse:
+        if request.confirmed_open is not True:
+            raise DispenseError("请先确认现场安全，避免误开柜门。")
+
+        allowed_slot = settings.real_dispense_test_slot.strip()
+        dry_run = settings.dispense_dry_run or not settings.enable_real_dispense or not allowed_slot
+        if not dry_run and allowed_slot != str(request.slot):
+            raise DispenseError("真实开柜测试仓位与请求仓位不一致，已拒绝执行。")
+
+        qsm_result = self.qsm_client.dispense(str(request.slot), request.quantity, dry_run=dry_run)
+        qsm_ok = bool(qsm_result.get("ok"))
+        qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
+        if dry_run:
+            return DispenseOpenResponse(
+                ok=True,
+                dry_run=True,
+                slot=request.slot,
+                message="dry-run 已记录，未触发真实开柜。",
+                qsm_detail=qsm_detail,
+            )
+        if not qsm_ok:
+            return DispenseOpenResponse(
+                ok=False,
+                dry_run=False,
+                slot=request.slot,
+                message=f"外设开柜失败：{qsm_detail or '未返回成功状态'}",
+                qsm_detail=qsm_detail,
+            )
+        return DispenseOpenResponse(
+            ok=True,
+            dry_run=False,
+            slot=request.slot,
+            message=f"{request.slot}号柜门已打开。",
+            qsm_detail=qsm_detail,
+        )
 
     def list_records(self) -> list[DispenseRecord]:
         return self.dispense_repository.list_records()

@@ -2903,6 +2903,7 @@ a:focus-visible {
 }
 
 .camera-stage {
+  position: relative;
   min-height: 0;
   display: grid;
   place-items: center;
@@ -2914,12 +2915,132 @@ a:focus-visible {
   color: var(--primary);
   text-align: center;
   padding: 18px;
+  overflow: hidden;
 }
 
 .camera-stage.unavailable {
   border-color: #f5d19b;
   background: #fff7ed;
   color: #8a4708;
+}
+
+.camera-stage.live {
+  padding: 0;
+  background: #0f172a;
+  border-style: solid;
+  color: white;
+}
+
+.camera-preview {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: block;
+  object-fit: cover;
+  background: #0f172a;
+}
+
+.scan-frame-buffer {
+  display: none;
+}
+
+.scan-frame {
+  position: absolute;
+  inset: 52px 86px 58px;
+  border: 2px solid rgba(255, 255, 255, 0.56);
+  border-radius: 26px;
+  box-shadow: 0 0 0 999px rgba(15, 23, 42, 0.2);
+}
+
+.scan-frame span {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-color: #34d399;
+}
+
+.scan-frame span:nth-child(1) {
+  top: -2px;
+  left: -2px;
+  border-top: 5px solid;
+  border-left: 5px solid;
+  border-top-left-radius: 22px;
+}
+
+.scan-frame span:nth-child(2) {
+  top: -2px;
+  right: -2px;
+  border-top: 5px solid;
+  border-right: 5px solid;
+  border-top-right-radius: 22px;
+}
+
+.scan-frame span:nth-child(3) {
+  right: -2px;
+  bottom: -2px;
+  border-right: 5px solid;
+  border-bottom: 5px solid;
+  border-bottom-right-radius: 22px;
+}
+
+.scan-frame span:nth-child(4) {
+  bottom: -2px;
+  left: -2px;
+  border-bottom: 5px solid;
+  border-left: 5px solid;
+  border-bottom-left-radius: 22px;
+}
+
+.live-scan-badge {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 28px auto 1fr;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(219, 231, 243, 0.34);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  padding: 10px 14px;
+  text-align: left;
+  box-shadow: 0 12px 30px rgba(15, 35, 70, 0.16);
+}
+
+.live-scan-badge svg {
+  color: var(--primary);
+}
+
+.live-scan-badge strong {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.live-scan-badge span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-scan-badge.matched {
+  border-color: #b8eadc;
+  background: #effcf7;
+}
+
+.live-scan-badge.matched svg,
+.live-scan-badge.matched strong {
+  color: #087c68;
 }
 
 .camera-stage strong,

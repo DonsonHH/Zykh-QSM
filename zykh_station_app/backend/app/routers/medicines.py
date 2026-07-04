@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from ..schemas.medicine import (
     MedicineDetailResponse,
     MedicineListResponse,
+    MedicineScanFrameRequest,
     MedicineScanRequest,
     MedicineScanResult,
     MedicineVisualRecognizeRequest,
@@ -32,6 +33,11 @@ def get_medicine(medicine_id: str) -> MedicineDetailResponse:
 @router.post("/medicine/scan", response_model=MedicineScanResult)
 def scan_medicine(request: MedicineScanRequest) -> MedicineScanResult:
     return MedicineScanService().scan(request.manual_code)
+
+
+@router.post("/medicine/scan-frame", response_model=MedicineScanResult)
+def scan_medicine_frame(request: MedicineScanFrameRequest) -> MedicineScanResult:
+    return MedicineScanService().scan_frame(request.image_data)
 
 
 @router.post("/medicine/visual-recognize", response_model=MedicineVisualRecognizeResponse)

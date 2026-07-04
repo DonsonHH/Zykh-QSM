@@ -227,6 +227,7 @@ set -- "$BROWSER" \
   --disable-pinch \
   --overscroll-history-navigation=0 \
   --no-first-run \
+  --use-fake-ui-for-media-stream \
   --disable-session-crashed-bubble \
   --user-data-dir="$ROOT_DIR/data/chromium-kiosk"
 

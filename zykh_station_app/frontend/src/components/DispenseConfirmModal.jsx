@@ -26,7 +26,8 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       slot: medicine.slot,
       quantity,
       reason: "站点药品页取药确认",
-      confirmed_safety_notice: checked
+      confirmed_safety_notice: checked,
+      confirm_real_dispense: checked
     });
   }
 
@@ -49,8 +50,8 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
 
         <div className="modal-medicine-meta">
           <article>
-            <span>仓位</span>
-            <strong>{medicine.slot}</strong>
+            <span>柜门</span>
+            <strong>{medicine.hardware_slot || medicine.slot}</strong>
           </article>
           <article>
             <span>库存</span>
@@ -103,7 +104,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
             checked={checked}
             onChange={(event) => setChecked(event.target.checked)}
           />
-          <span>我已阅读药品说明与安全提示</span>
+          <span>我已阅读药品说明与安全提示，并确认现场可开柜</span>
         </label>
 
         {error && <p className="modal-message error">{error}</p>}
@@ -114,7 +115,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
             取消
           </button>
           <button className="primary-action" type="button" disabled={!checked || submitting} onClick={handleSubmit}>
-            {submitting ? "记录中..." : "确认取药"}
+            {submitting ? "开柜中..." : "确认并开柜"}
           </button>
         </div>
       </section>

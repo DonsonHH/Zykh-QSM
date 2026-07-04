@@ -10,7 +10,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from ..config import settings
+from ..config import DATA_DIR, settings
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.medicine import MedicineScanResult, MedicineVisualRecognizeResponse
 from .local_camera import LocalCameraService
@@ -46,6 +46,21 @@ class MedicineScanService:
             image_path=str(image_path) if image_path else None,
             source=visual.source,
             error_message=visual.error_message or "未识别到清晰条码或药盒信息，请人工核验。",
+        )
+
+    def scan_frame(self, image_data: str) -> MedicineScanResult:
+        image_path, error = self._save_scan_frame(image_data)
+        if error:
+            return MedicineScanResult(ok=False, status="invalid_frame", source="live-frame", error_message=error)
+        barcode = self._decode_barcode(str(image_path))
+        if barcode:
+            return self._result_from_barcode(barcode, str(image_path), "live-frame")
+        return MedicineScanResult(
+            ok=False,
+            status="no_code",
+            image_path=str(image_path),
+            source="live-frame",
+            error_message="当前画面未识别到条码或二维码。",
         )
 
     def visual_recognize(self, image_path: str | None) -> MedicineVisualRecognizeResponse:
@@ -109,13 +124,14 @@ class MedicineScanService:
         )
 
     def _result_from_barcode(self, barcode: str, image_path: str | None, source: str) -> MedicineScanResult:
-        medicine = self.repository.get_by_barcode(barcode)
+        normalized_barcode = self._normalize_barcode(barcode)
+        medicine = self.repository.get_by_barcode(normalized_barcode)
         if not medicine:
             return MedicineScanResult(
                 ok=False,
                 status="unknown_barcode",
                 image_path=image_path,
-                barcode=barcode,
+                barcode=normalized_barcode,
                 source=source,
                 error_message="条码未匹配到站点药品，请人工核验。",
             )
@@ -123,7 +139,7 @@ class MedicineScanService:
             ok=True,
             status="matched",
             image_path=image_path,
-            barcode=barcode,
+            barcode=normalized_barcode,
             medicine_id=medicine.id,
             name=medicine.name,
             match_percent=99,
@@ -134,7 +150,20 @@ class MedicineScanService:
             source=source,
         )
 
+    @staticmethod
+    def _normalize_barcode(value: str) -> str:
+        cleaned = value.strip()
+        digit_match = re.search(r"\b\d{8,14}\b", cleaned)
+        return digit_match.group(0) if digit_match else cleaned
+
     def _decode_barcode(self, image_path: str) -> str | None:
+        local_result = self._decode_with_pyzbar(image_path)
+        if local_result:
+            return local_result
+        system_result = self._decode_with_system_python(image_path)
+        if system_result:
+            return system_result
+
         command = settings.medicine_scan_cmd
         if not command:
             found = shutil.which("zykh-scan-code") or shutil.which("zbarimg")
@@ -160,6 +189,82 @@ class MedicineScanService:
                 return str(candidate).strip()
         match = re.search(r"\b\d{8,14}\b", text)
         return match.group(0) if match else None
+
+    @staticmethod
+    def _decode_with_pyzbar(image_path: str) -> str | None:
+        try:
+            from PIL import Image
+            from pyzbar.pyzbar import decode
+        except (ImportError, OSError):
+            return None
+
+        try:
+            codes = decode(Image.open(image_path))
+        except (OSError, ValueError):
+            return None
+
+        for code in codes:
+            raw = getattr(code, "data", b"")
+            if isinstance(raw, bytes):
+                try:
+                    text = raw.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    text = raw.decode("latin-1", errors="ignore").strip()
+            else:
+                text = str(raw).strip()
+            if text:
+                return text
+        return None
+
+    @staticmethod
+    def _decode_with_system_python(image_path: str) -> str | None:
+        python_bin = shutil.which("python3") or shutil.which("python")
+        if not python_bin:
+            return None
+        script = (
+            "from PIL import Image\n"
+            "from pyzbar.pyzbar import decode\n"
+            "import sys\n"
+            "codes = decode(Image.open(sys.argv[1]))\n"
+            "if codes:\n"
+            "    raw = codes[0].data\n"
+            "    print(raw.decode('utf-8', errors='ignore') if isinstance(raw, bytes) else str(raw))\n"
+        )
+        try:
+            result = subprocess.run(
+                [python_bin, "-c", script, image_path],
+                capture_output=True,
+                text=True,
+                timeout=6,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        text = (result.stdout or "").strip()
+        return text or None
+
+    @staticmethod
+    def _save_scan_frame(image_data: str) -> tuple[Path | None, str | None]:
+        if not image_data:
+            return None, "未收到摄像头画面。"
+        payload = image_data.strip()
+        if "," in payload and payload.startswith("data:image"):
+            payload = payload.split(",", 1)[1]
+        try:
+            raw = base64.b64decode(payload, validate=True)
+        except (ValueError, OSError) as exc:
+            return None, f"画面数据无法解析：{exc}"
+        if len(raw) < 100:
+            return None, "画面数据为空。"
+
+        image_dir = DATA_DIR / "captures"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        image_path = image_dir / "scan-frame-latest.jpg"
+        try:
+            image_path.write_bytes(raw)
+        except OSError as exc:
+            return None, f"保存画面失败：{exc}"
+        return image_path, None
 
     @staticmethod
     def _try_json(text: str) -> Any:

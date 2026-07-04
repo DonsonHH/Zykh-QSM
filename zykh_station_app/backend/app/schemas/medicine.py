@@ -39,6 +39,11 @@ class MedicineScanRequest(BaseModel):
     manual_code: str | None = None
 
 
+class MedicineScanFrameRequest(BaseModel):
+    mode: str = "药品识别"
+    image_data: str
+
+
 class MedicineScanResult(BaseModel):
     ok: bool
     status: str

@@ -211,7 +211,7 @@ class QsmClient:
             "dry_run": False,
             "slot": slot,
             "quantity": quantity,
-            "detail": payload.get("detail") or payload.get("error") or payload.get("result") or "外设网关已返回。",
+            "detail": payload.get("message") or payload.get("detail") or payload.get("error") or payload.get("result") or "外设网关已返回。",
             "raw": payload,
         }
 

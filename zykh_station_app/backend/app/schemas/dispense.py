@@ -12,11 +12,26 @@ class DispenseConfirmRequest(BaseModel):
     confirm_real_dispense: bool = False
 
 
+class DispenseOpenRequest(BaseModel):
+    slot: int = Field(ge=1, le=23)
+    quantity: int = Field(default=1, ge=1)
+    reason: str = "现场开柜确认"
+    confirmed_open: bool = False
+
+
 class DispenseConfirmResponse(BaseModel):
     ok: bool
     dry_run: bool
     message: str
     record_id: str | None = None
+    qsm_detail: str | None = None
+
+
+class DispenseOpenResponse(BaseModel):
+    ok: bool
+    dry_run: bool
+    slot: int
+    message: str
     qsm_detail: str | None = None
 
 
