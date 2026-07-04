@@ -28,10 +28,7 @@ class RecordsService:
         return RecordsSummary(
             today_service_users=len(self.list_service_users()),
             pending_sync_count=sync_status.pending_count,
-            local_record_count=len(self.inquiry_repository.list_records())
-            + len(self.dispense_repository.list_records())
-            + len(self.device_action_repository.list_records())
-            + self.vitals_repository.count(),
+            local_record_count=len(self.dispense_repository.list_records()),
             today_plan_count=len(self.list_today_plans()),
         )
 

@@ -44,6 +44,7 @@ def init_db() -> None:
               slot TEXT NOT NULL,
               hardware_slot INTEGER NOT NULL,
               barcode TEXT DEFAULT '',
+              manufacturer TEXT DEFAULT '',
               name TEXT NOT NULL,
               category TEXT NOT NULL,
               tags_json TEXT NOT NULL,
@@ -59,6 +60,7 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(conn, "medicines", "manufacturer", "TEXT DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dispense_records (
@@ -150,6 +152,12 @@ def init_db() -> None:
             """
         )
         _seed_service_data(conn)
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def health_check() -> dict[str, object]:

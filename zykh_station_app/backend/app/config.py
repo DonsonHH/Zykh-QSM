@@ -69,7 +69,7 @@ class Settings:
     host_mic_device: str = _env("HOST_MIC_DEVICE", "default")
     network_preferred_mode: str = _env("NETWORK_PREFERRED_MODE", "sim").strip().lower()
     network_sim_interface: str = _env("NETWORK_SIM_INTERFACE", "usb0")
-    network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "true").strip().lower() in {
+    network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "false").strip().lower() in {
         "1",
         "true",
         "yes",

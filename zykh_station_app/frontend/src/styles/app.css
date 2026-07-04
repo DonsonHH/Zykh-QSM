@@ -598,8 +598,10 @@ a:focus-visible {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 74px;
   gap: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .cabinet-map {
@@ -754,15 +756,15 @@ a:focus-visible {
 
 .medicine-card {
   min-width: 0;
-  min-height: 0;
+  min-height: 72px;
   display: grid;
-  grid-template-columns: 52px 1fr auto;
+  grid-template-columns: 46px 1fr auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid var(--border);
   border-radius: 20px;
   background: var(--surface-soft);
-  padding: 12px 14px;
+  padding: 9px 11px;
   text-align: left;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
@@ -773,8 +775,8 @@ a:focus-visible {
 }
 
 .medicine-box {
-  width: 50px;
-  height: 50px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border-radius: 16px;
@@ -792,7 +794,7 @@ a:focus-visible {
 .medicine-card-copy strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.15;
   font-weight: 900;
   text-overflow: ellipsis;
@@ -800,33 +802,33 @@ a:focus-visible {
 }
 
 .medicine-card-copy small {
-  margin-top: 7px;
+  margin-top: 5px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 750;
 }
 
 .medicine-card-meta {
   align-items: flex-end;
-  gap: 7px;
+  gap: 6px;
 }
 
 .medicine-card-meta b {
   color: var(--text);
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
 }
 
 .medicine-card-meta em {
-  min-width: 52px;
+  min-width: 48px;
   border-radius: 14px;
   background: white;
   color: var(--primary);
-  padding: 6px 10px;
+  padding: 5px 9px;
   text-align: center;
-  font-size: 15px;
+  font-size: 13px;
   font-style: normal;
   font-weight: 850;
 }
@@ -839,10 +841,10 @@ a:focus-visible {
 }
 
 .medicine-detail-panel {
-  display: grid;
-  grid-template-rows: 58px 34px 62px 82px 58px 56px;
-  gap: 8px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
   padding: 16px;
 }
 
@@ -856,6 +858,11 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.detail-heading h2 {
+  font-size: 26px;
+  line-height: 1.08;
 }
 
 .detail-icon,
@@ -972,7 +979,7 @@ a:focus-visible {
 }
 
 .detail-action {
-  margin-top: 0;
+  margin-top: auto;
 }
 
 .modal-layer {

@@ -54,7 +54,7 @@ class DispenseService:
             self.dispense_repository.append(record)
             return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
-        message = "dry-run 已记录，未触发真实开柜。" if dry_run else "取药确认已完成，柜门已打开。"
+        message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
         record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
         self.dispense_repository.append(record)
         if not dry_run:
@@ -78,7 +78,7 @@ class DispenseService:
                 ok=True,
                 dry_run=True,
                 slot=request.slot,
-                message="dry-run 已记录，未触发真实开柜。",
+                message="本地测试记录已保存，未打开柜门。",
                 qsm_detail=qsm_detail,
             )
         if not qsm_ok:

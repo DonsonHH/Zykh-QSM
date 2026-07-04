@@ -18,7 +18,7 @@ class NetworkService:
         reachable = self._ping_target("223.5.5.5") if sim_ip else False
         qsm_network = QsmClient().get_network_status()
         qsm_sim_present = bool(qsm_network.get("sim_present") or qsm_network.get("connected"))
-        qsm_connected = bool(qsm_network.get("connected") or qsm_network.get("status") == "good")
+        qsm_connected = bool(qsm_network.get("connected"))
 
         if preferred in {"local", "offline"}:
             return {
@@ -36,7 +36,7 @@ class NetworkService:
                 "warnings": ["当前手动切换到本地兜底。"],
             }
 
-        if qsm_sim_present or qsm_connected:
+        if qsm_connected:
             qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
             return {
                 "ok": True,
@@ -49,9 +49,27 @@ class NetworkService:
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
-                "simulated": not qsm_connected,
+                "simulated": False,
                 "source": "qsm",
-                "warnings": [] if qsm_connected else ["外设已检测到 SIM 模块，主机页面按 SIM 网络展示。"],
+                "warnings": [],
+            }
+
+        if qsm_sim_present:
+            qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
+            return {
+                "ok": True,
+                "mode": "local",
+                "transport": "local",
+                "status": "offline",
+                "signal": "none",
+                "label": "本地兜底",
+                "ai_mode": "local_fallback",
+                "sim_interface": str(qsm_network.get("interface") or interface),
+                "sim_ip": qsm_ip,
+                "default_interface": str(qsm_network.get("default_interface") or default_iface),
+                "simulated": False,
+                "source": "qsm",
+                "warnings": ["外设已检测到 SIM 模块，但数据网络未连通。"],
             }
 
         if sim_ip and (sim_route or reachable):
@@ -68,22 +86,6 @@ class NetworkService:
                 "default_interface": default_iface,
                 "simulated": False,
                 "warnings": [] if sim_route else ["SIM接口已获取地址，但默认出口未走 SIM。"],
-            }
-
-        if settings.network_demo_simulate:
-            return {
-                "ok": True,
-                "mode": "sim",
-                "transport": "sim",
-                "status": "good",
-                "signal": "good",
-                "label": "SIM网络",
-                "ai_mode": "cloud",
-                "sim_interface": interface,
-                "sim_ip": sim_ip,
-                "default_interface": default_iface,
-                "simulated": True,
-                "warnings": ["未检测到 SIM 出口，演示模式显示为可用。"],
             }
 
         return {

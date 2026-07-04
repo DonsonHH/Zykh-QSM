@@ -8,6 +8,7 @@ class Medicine(BaseModel):
     slot: str
     hardware_slot: int = 0
     barcode: str = ""
+    manufacturer: str = ""
     name: str
     category: str
     tags: list[str]

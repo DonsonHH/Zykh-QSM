@@ -14,7 +14,7 @@ export function MedicineCard({ medicine, selected, onSelect }) {
       </span>
       <span className="medicine-card-copy">
         <strong>{medicine.name}</strong>
-        <small>{medicine.category}</small>
+        <small>{medicine.manufacturer ? `${medicine.manufacturer} · ${medicine.category}` : medicine.category}</small>
       </span>
       <span className="medicine-card-meta">
         <b>

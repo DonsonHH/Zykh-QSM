@@ -124,7 +124,7 @@ def qsm_dispense_dry_run(request: QsmDryRunRequest) -> QsmDryRunResponse:
     qsm = client.get_qsm_status()
     message = result.message
     if qsm.mode == "real" and not qsm.connected:
-        message = "外设暂不可用，已完成本地 dry-run 记录。"
+        message = "外设暂不可用，已完成本地测试记录。"
     return QsmDryRunResponse(ok=result.ok, dry_run=True, message=message, record_id=result.record_id)
 
 

@@ -487,20 +487,25 @@ sub qsm_network_status {
         last;
     }
     my $sim_present = ($lsusb ne '' || @tty || $ifconfig ne '') ? JSON::PP::true : JSON::PP::false;
-    my $connected = ($ip || $default_iface eq $interface) ? JSON::PP::true : JSON::PP::false;
+    my $connected = ($ip && $default_iface eq $interface) ? JSON::PP::true : JSON::PP::false;
+    my $signal = $connected ? 'good' : 'none';
+    my $status = $connected ? 'good' : 'unavailable';
+    my $detail = $connected
+        ? 'SIM 数据网络已连通'
+        : ($sim_present ? '已检测到 SIM 通信模块，但未确认数据网络连通' : '未检测到 SIM 通信模块');
     return {
         ok => JSON::PP::true,
         mode => 'sim',
         interface => $interface,
         sim_present => $sim_present,
         connected => $connected,
-        signal => $sim_present ? 'good' : 'none',
-        status => $sim_present ? 'good' : 'unavailable',
+        signal => $signal,
+        status => $status,
         ip => $ip || '',
         default_interface => $default_iface,
         tty_usb => \@tty,
         modem => $lsusb,
-        detail => $sim_present ? '已检测到 SIM 通信模块' : '未检测到 SIM 通信模块',
+        detail => $detail,
     };
 }
 

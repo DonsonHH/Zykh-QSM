@@ -243,7 +243,15 @@ class QsmClient:
 
     def get_network_status(self) -> dict[str, Any]:
         if self.mode != "real":
-            return {"ok": True, "mode": "mock", "sim_present": True, "connected": True, "signal": "good"}
+            return {
+                "ok": False,
+                "mode": self.mode,
+                "sim_present": False,
+                "connected": False,
+                "signal": "none",
+                "status": "unavailable",
+                "error_message": "QSM real 模式未启用，无法读取真实 SIM 状态。",
+            }
         payload, error = self._request_json(settings.qsm_network_status_path, method="GET")
         if error:
             status = self.get_qsm_status()

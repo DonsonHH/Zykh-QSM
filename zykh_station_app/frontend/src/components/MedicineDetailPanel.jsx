@@ -25,6 +25,7 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
 
       <div className="detail-pill-row">
         <span>{medicine.hardware_slot || medicine.slot}号仓</span>
+        {medicine.manufacturer && <span>{medicine.manufacturer}</span>}
         <span>{medicine.category}</span>
         <span>{medicine.is_otc ? "常备药" : "需核验"}</span>
         {medicine.is_emergency && <span>应急可用</span>}
