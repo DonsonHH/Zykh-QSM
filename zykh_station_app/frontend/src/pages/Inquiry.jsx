@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { evaluateInquiry } from "../api/inquiry.js";
 import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
+import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryFollowupStep } from "../components/InquiryFollowupStep.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { InquiryStartStep } from "../components/InquiryStartStep.jsx";
@@ -30,11 +31,13 @@ function readDraft() {
 
 export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   const initialDraft = readDraft();
+  const urlMode = new URLSearchParams(window.location.search).get("inquiryMode") === "chat" ? "chat" : "";
   const [step, setStep] = useState(initialDraft?.step || "start");
   const [form, setForm] = useState(initialDraft?.form || initialForm);
   const [allergyChoice, setAllergyChoice] = useState(initialDraft?.allergyChoice || "");
   const [followupStage, setFollowupStage] = useState(initialDraft?.followupStage || "duration");
   const [result, setResult] = useState(null);
+  const [flowMode, setFlowMode] = useState(urlMode || initialDraft?.flowMode || "guided");
   const [listening, setListening] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState("");
   const [vitalsMessage, setVitalsMessage] = useState(initialDraft?.vitalsMessage || "");
@@ -43,11 +46,11 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, allergyChoice, followupStage, vitalsMessage }));
+      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, allergyChoice, followupStage, vitalsMessage, flowMode }));
     } catch {
       // sessionStorage is optional; losing a draft must not block inquiry.
     }
-  }, [step, form, allergyChoice, followupStage, vitalsMessage]);
+  }, [step, form, allergyChoice, followupStage, vitalsMessage, flowMode]);
 
   function handleQuickSymptom(symptom) {
     setForm((current) => ({ ...current, symptoms_text: symptom }));
@@ -179,6 +182,37 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     }, 520);
   }
 
+  function analyzeChatTranscript(transcript) {
+    const symptoms = transcript.trim();
+    if (!symptoms) {
+      notify("请先完成一轮对话");
+      return;
+    }
+    const nextForm = {
+      symptoms_text: symptoms,
+      duration: "对话问询已补充",
+      used_medicines: "见对话记录",
+      allergy_or_contraindication: "",
+      scene_type: "家庭",
+      include_vitals: true
+    };
+    setForm(nextForm);
+    setAllergyChoice("无");
+    setBlockedReason("");
+    setStep("analyzing");
+    window.setTimeout(() => {
+      evaluateInquiry(nextForm)
+        .then((data) => {
+          setResult(data);
+          setStep("result");
+        })
+        .catch((error) => {
+          notify(error.message || "问询失败，请重试");
+          setStep("start");
+        });
+    }, 520);
+  }
+
   function handleViewCandidates() {
     if (!result?.can_proceed_to_dispense || blockedReason) {
       return;
@@ -196,6 +230,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     setAllergyChoice("");
     setFollowupStage("duration");
     setResult(null);
+    setFlowMode("guided");
     setVoiceMessage("");
     setVitalsMessage("");
     setBlockedReason("");
@@ -210,6 +245,22 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     <main className="inquiry-page" id="main-content">
       <section className="inquiry-flow-card" aria-label="AI 应急问询流程">
         {step === "start" ? (
+          <>
+            <div className="inquiry-mode-switch" aria-label="问询方式">
+              <button type="button" className={flowMode === "guided" ? "active" : ""} onClick={() => setFlowMode("guided")}>
+                引导问询
+              </button>
+              <button type="button" className={flowMode === "chat" ? "active" : ""} onClick={() => setFlowMode("chat")}>
+                AI 对话
+              </button>
+            </div>
+            {flowMode === "chat" ? (
+              <InquiryChatStep
+                notify={notify}
+                onStructuredAnalyze={analyzeChatTranscript}
+                onOpenVitals={handleOpenVitals}
+              />
+            ) : (
           <InquiryStartStep
             symptomsText={form.symptoms_text}
             listening={listening}
@@ -218,6 +269,8 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
             onVoiceInput={handleVoiceInput}
             onNext={handleNext}
           />
+            )}
+          </>
         ) : step === "followup" ? (
           <InquiryFollowupStep
             form={form}

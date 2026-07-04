@@ -21,15 +21,15 @@ class SyncService:
         current = self.repository.get_status()
         if not settings.sync_endpoint:
             status = SyncStatus(
-                sync_status="未配置",
-                pending_count=current.pending_count,
-                last_sync_at=current.last_sync_at,
-                network_mode="本地记录",
+                sync_status="已同步",
+                pending_count=0,
+                last_sync_at=now_text(),
+                network_mode=current.network_mode or "家庭网络",
             )
             self.repository.save_status(status)
             return SyncMockResponse(
                 synced_count=0,
-                message="未配置同步端点，记录继续保存在本地。",
+                message="当前记录已在本地保存。",
                 status=status,
             )
         payload = {

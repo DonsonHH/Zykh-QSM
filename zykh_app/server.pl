@@ -1227,6 +1227,11 @@ sub speak_text {
     my $text = trim($p->{text} || '');
     return { ok => JSON::PP::false, error => '播报文本为空' } if $text eq '';
     $text = substr($text, 0, int($ENV{TTS_MAX_CHARS} || 240));
+    my $vol = speaker_volume($p->{volume});
+    my $play = sub {
+        my ($file) = @_;
+        return speaker_setup_cmd($vol) . ' && ' . aplay_cmd($file);
+    };
 
     my $dir = "$DATA_DIR/audio";
     make_path($dir) unless -d $dir;
@@ -1243,7 +1248,7 @@ sub speak_text {
                ' --output ' . shell_quote($out) .
                ' --model ' . shell_quote($ENV{TTS_MODEL} || 'qwen3-tts-instruct-flash-realtime') .
                ' --voice ' . shell_quote($ENV{TTS_VOICE} || 'Cherry') .
-               ' && ' . aplay_cmd($out);
+               ' && ' . $play->($out);
         $mode = 'qwen-tts';
     } elsif ($ENV{TTS_CMD}) {
         $cmd = $ENV{TTS_CMD};
@@ -1254,12 +1259,12 @@ sub speak_text {
         $mode = 'espeak';
     } elsif (trim(`which flite 2>/dev/null`) ne '') {
         my $out = "$dir/tts.wav";
-        $cmd = 'flite -t ' . shell_quote($text) . ' -o ' . shell_quote($out) . ' && ' . aplay_cmd($out);
+        $cmd = 'flite -t ' . shell_quote($text) . ' -o ' . shell_quote($out) . ' && ' . $play->($out);
         $mode = 'flite';
     } elsif (trim(`which aplay 2>/dev/null`) ne '') {
         my $tone = "$dir/tts-notice.wav";
         write_notice_wav($tone);
-        $cmd = aplay_cmd($tone);
+        $cmd = $play->($tone);
         $mode = 'notice-tone';
     } else {
         return { ok => JSON::PP::false, error => '板端未找到 TTS 或 aplay 播放命令', mode => 'none' };
@@ -1278,6 +1283,7 @@ sub speak_text {
     return {
         ok => $ok,
         mode => $mode,
+        volume => $vol,
         detail => $ok ? $detail : '语音播报失败：' . substr(read_text_file($log) || '', 0, 300),
         exit_code => $exit,
     };
@@ -1324,14 +1330,16 @@ sub play_uploaded_audio {
     write_raw_file($file, $raw) or return { ok => JSON::PP::false, error => "音频写入失败：$file" };
 
     my $log = "$DATA_DIR/audio-play.log";
-    my $cmd = aplay_cmd($file);
+    my $vol = speaker_volume($p->{volume});
+    my $setup = speaker_setup_cmd($vol);
+    my $cmd = $setup . ' && ' . aplay_cmd($file);
     if ($format eq 'pcm') {
         my $rate = int($p->{rate} || 16000);
         my $channels = int($p->{channels} || 1);
         $rate = 16000 if $rate <= 0;
         $channels = 1 if $channels <= 0;
         my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
-        $cmd = 'aplay -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c ' . int($channels) . ' ' . shell_quote($file);
+        $cmd = $setup . ' && aplay -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c ' . int($channels) . ' ' . shell_quote($file);
     }
     my $rc;
     {
@@ -1344,6 +1352,7 @@ sub play_uploaded_audio {
         mode => 'uploaded-audio',
         file => $file,
         bytes => length($raw),
+        volume => $vol,
         detail => $exit == 0 ? '已播放主机发送的音频' : substr(read_text_file($log) || '', 0, 500),
         exit_code => $exit,
     };
@@ -1353,6 +1362,21 @@ sub aplay_cmd {
     my ($file) = @_;
     my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
     return 'aplay -q -D ' . shell_quote($device) . ' ' . shell_quote($file);
+}
+
+sub speaker_volume {
+    my ($value) = @_;
+    my $vol = defined($value) && "$value" ne '' ? int($value) : int($ENV{SPK_VOL} || 230);
+    $vol = 0 if $vol < 0;
+    $vol = 255 if $vol > 255;
+    return $vol;
+}
+
+sub speaker_setup_cmd {
+    my ($vol) = @_;
+    my $card = int($ENV{AUDIO_CARD} || 0);
+    return 'amixer -c ' . int($card) . ' cset numid=1 2 >/dev/null 2>&1 && ' .
+           'amixer -c ' . int($card) . ' cset numid=5 ' . int($vol) . ',' . int($vol) . ' >/dev/null 2>&1';
 }
 
 sub write_notice_wav {
@@ -1525,6 +1549,10 @@ sub dispense {
     my $slot = int($p->{slot} || 0);
     return { ok => JSON::PP::false, error => '仓位必填' } if $slot <= 0;
     return { ok => JSON::PP::false, error => '仓位超出范围：1-23' } if $slot > 23;
+    my $control_code = exists $p->{control_code} && "$p->{control_code}" =~ /^\d+$/
+        ? int($p->{control_code})
+        : $slot - 1;
+    return { ok => JSON::PP::false, error => '控制码超出范围：0-22' } if $control_code < 0 || $control_code > 22;
 
     my @med = sqlite_row('SELECT id,name,stock FROM medicines WHERE slot=' . int($slot) . ' ORDER BY id LIMIT 1;');
     my $name = $med[1] || "仓位$slot";
@@ -1535,7 +1563,7 @@ sub dispense {
     my $detail;
     my $result = 'success';
     if ($uart_dev && -e $uart_dev && ($ENV{DISPENSE_MODE} || 'uart') eq 'uart') {
-        my $r = dispense_uart($uart_dev, $slot);
+        my $r = dispense_uart($uart_dev, $slot, $control_code);
         if ($r->{ok}) {
             $detail = $r->{detail};
         } else {
@@ -1562,6 +1590,8 @@ sub dispense {
         ok => ($result eq 'success' ? JSON::PP::true : JSON::PP::false),
         result => $result,
         detail => $detail,
+        slot => $slot,
+        control_code => $control_code,
         records => list_records(),
         medicines => list_medicines(),
     };
@@ -1668,9 +1698,11 @@ sub read_vitals {
 }
 
 sub dispense_uart {
-    my ($dev, $slot) = @_;
+    my ($dev, $slot, $control_code) = @_;
     return { ok => JSON::PP::false, error => 'UART 设备不存在：' . ($dev || '') } unless $dev && -e $dev;
     return { ok => JSON::PP::false, error => '仓位超出单字节范围' } if $slot < 1 || $slot > 255;
+    $control_code = $slot - 1 unless defined $control_code;
+    return { ok => JSON::PP::false, error => '控制码超出单字节范围' } if $control_code < 0 || $control_code > 255;
 
     my $baud = int($ENV{DISPENSE_UART_BAUD} || 9600);
     $baud = 9600 if $baud <= 0;
@@ -1679,15 +1711,15 @@ sub dispense_uart {
 
     open my $fh, '>', $dev or return { ok => JSON::PP::false, error => "打开 UART 失败：$dev $!" };
     binmode($fh);
-    my $command = $slot - 1;
+    my $command = int($control_code);
     my $payload = pack('C', $command);
     my $ok = print {$fh} $payload;
     close($fh);
     return { ok => JSON::PP::false, error => "UART 写入失败：$!" } unless $ok;
 
     my $hex = uc(sprintf('%02X', $command));
-    write_text_file("$DATA_DIR/dispense-uart.log", now_text() . " dev=$dev baud=$baud slot=$slot command=$command hex=$hex\n");
-    return { ok => JSON::PP::true, detail => "UART5 已发送仓位 $slot 控制字节 0x$hex" };
+    write_text_file("$DATA_DIR/dispense-uart.log", now_text() . " dev=$dev baud=$baud slot=$slot control_code=$command hex=$hex\n");
+    return { ok => JSON::PP::true, detail => "UART5 已发送 $slot 号仓控制字节 0x$hex（控制码 $command）" };
 }
 
 sub read_temperature {

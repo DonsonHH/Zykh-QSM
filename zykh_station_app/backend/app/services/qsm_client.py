@@ -225,19 +225,25 @@ class QsmClient:
     def audio_asr(self, duration: int = 4) -> dict[str, Any]:
         return self._qsm_action(settings.qsm_audio_asr_path, {"duration": duration}, "语音识别")
 
-    def audio_speak(self, text: str) -> dict[str, Any]:
-        return self._qsm_action(settings.qsm_audio_speak_path, {"text": text}, "语音播报")
+    def audio_speak(self, text: str, volume: int | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"text": text}
+        if volume is not None:
+            payload["volume"] = max(0, min(int(volume), 255))
+        return self._qsm_action(settings.qsm_audio_speak_path, payload, "语音播报")
 
     def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         if volume is not None:
-            payload["volume"] = max(0, min(int(volume), 100))
+            payload["volume"] = max(0, min(int(volume), 255))
         return self._qsm_action(settings.qsm_audio_beep_path, payload, "提示音")
 
-    def audio_play_base64(self, audio_base64: str, fmt: str = "wav") -> dict[str, Any]:
+    def audio_play_base64(self, audio_base64: str, fmt: str = "wav", volume: int | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"audio_base64": audio_base64, "format": fmt}
+        if volume is not None:
+            payload["volume"] = max(0, min(int(volume), 255))
         return self._qsm_action(
             settings.qsm_audio_play_path,
-            {"audio_base64": audio_base64, "format": fmt},
+            payload,
             "音频播放",
         )
 

@@ -8,6 +8,7 @@ export function TopBar({ site, networkStatus, now, onOpenSystemCheck }) {
   const isOffline = signal === "none" || networkStatus?.mode === "local";
   const NetworkIcon = isOffline ? WifiOff : isGood ? Signal : SignalLow;
   const label = isOffline ? "本地兜底" : networkStatus?.label || "SIM网络";
+  const statusText = isGood ? "信号良好" : isOffline ? "无网本地" : "正在检测";
 
   return (
     <header className="top-bar">
@@ -32,7 +33,7 @@ export function TopBar({ site, networkStatus, now, onOpenSystemCheck }) {
         <div className={`network-indicator ${isGood ? "good" : isOffline ? "offline" : "weak"}`} aria-label={`网络状态：${label}`}>
           <NetworkIcon size={28} aria-hidden="true" />
           <span>{label}</span>
-          <strong>{isGood ? "信号良好" : isOffline ? "无网本地" : "信号偏弱"}</strong>
+          <strong>{statusText}</strong>
         </div>
         <button className="system-check-button" type="button" onClick={onOpenSystemCheck} aria-label="打开系统检查">
           <SlidersHorizontal size={24} aria-hidden="true" />

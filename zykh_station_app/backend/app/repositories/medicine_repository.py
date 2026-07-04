@@ -8,7 +8,7 @@ from .. import db
 from ..schemas.medicine import Medicine
 
 
-MEDICINE_SEED_VERSION = "home-real-cabinet-v2"
+MEDICINE_SEED_VERSION = "home-real-cabinet-v3"
 
 DEFAULT_MEDICINES = [
     {

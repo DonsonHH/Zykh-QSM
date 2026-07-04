@@ -1,11 +1,5 @@
 import React from "react";
-import { Bot, CheckCircle2, ShieldCheck } from "lucide-react";
-
-const fallbackLines = [
-  "整理症状和禁忌信息",
-  "给出风险提示与药品信息匹配",
-  "不做诊断或处方"
-];
+import { Bot, HeartPulse, MessageCircle, ShieldCheck } from "lucide-react";
 
 export function InquiryEntryCard({ inquiry, onStart }) {
   return (
@@ -20,18 +14,19 @@ export function InquiryEntryCard({ inquiry, onStart }) {
         </div>
       </div>
 
-      <ul className="inquiry-list" aria-label="问询范围">
-        {fallbackLines.map((line) => (
-          <li key={line}>
-            <CheckCircle2 size={24} aria-hidden="true" />
-            <span>{line}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="safety-note">
-        <ShieldCheck size={24} aria-hidden="true" />
-        <span>先核验风险，再进入取药确认。</span>
+      <div className="inquiry-visual-panel" aria-hidden="true">
+        <article>
+          <MessageCircle size={32} />
+          <span>说出不适</span>
+        </article>
+        <article>
+          <HeartPulse size={32} />
+          <span>读取体征</span>
+        </article>
+        <article>
+          <ShieldCheck size={32} />
+          <span>安全核验</span>
+        </article>
       </div>
 
       <button className="primary-action secondary" type="button" onClick={onStart}>

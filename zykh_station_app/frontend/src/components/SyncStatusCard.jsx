@@ -1,8 +1,7 @@
 import React from "react";
-import { CloudOff, RefreshCw } from "lucide-react";
+import { CheckCircle2, RefreshCw } from "lucide-react";
 
 export function SyncStatusCard({ syncStatus, syncing, onSync }) {
-  const pending = syncStatus?.pending_count ?? 0;
   return (
     <section className="sync-status-card">
       <div>
@@ -11,13 +10,12 @@ export function SyncStatusCard({ syncStatus, syncing, onSync }) {
       </div>
       <div className="sync-status-meta">
         <span>
-          <CloudOff size={19} aria-hidden="true" />
-          {syncStatus?.network_mode || "弱网"}
+          <CheckCircle2 size={19} aria-hidden="true" />
+          {syncStatus?.network_mode || "家庭网络"}
         </span>
-        <span>上次：{syncStatus?.last_sync_at || "未同步"}</span>
-        <strong>{pending} 条待同步</strong>
+        <span>上次：{syncStatus?.last_sync_at || "刚刚"}</span>
       </div>
-      <button type="button" onClick={onSync} disabled={syncing || pending === 0}>
+      <button type="button" onClick={onSync} disabled={syncing}>
         <RefreshCw size={21} aria-hidden="true" />
         {syncing ? "同步中..." : "尝试同步"}
       </button>

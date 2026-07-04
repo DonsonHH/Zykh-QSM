@@ -8,12 +8,12 @@ export function readSpeech(duration = 4) {
   return apiPost("/api/audio/asr", { duration });
 }
 
-export function speakText(text) {
-  return apiPost("/api/audio/speak", { text });
+export function speakText(text, volume) {
+  return apiPost("/api/audio/speak", { text, volume });
 }
 
-export function playBeep() {
-  return apiPost("/api/audio/beep", {});
+export function playBeep(volume) {
+  return apiPost("/api/audio/beep", { volume });
 }
 
 export function testAudioRelay(payload = {}) {

@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/audio", tags=["audio"])
 
 class SpeakRequest(BaseModel):
     text: str
+    volume: int | None = None
 
 
 class AsrRequest(BaseModel):
@@ -29,7 +30,17 @@ class AsrRequest(BaseModel):
 
 class RelayTestRequest(BaseModel):
     text: str = "外放测试，声音链路正常。"
-    volume: int = 80
+    volume: int = 230
+
+
+class BeepRequest(BaseModel):
+    volume: int | None = None
+
+
+class PlayAudioRequest(BaseModel):
+    audio_base64: str
+    format: str = "wav"
+    volume: int = 230
 
 
 @router.get("/host/status")
@@ -57,14 +68,14 @@ def audio_asr(request: AsrRequest) -> dict[str, object]:
 
 @router.post("/speak")
 def audio_speak(request: SpeakRequest) -> dict[str, object]:
-    result = QsmClient().audio_speak(request.text)
+    result = QsmClient().audio_speak(request.text, request.volume)
     _record("语音播报", "语音播报", "已请求外设播报。" if result.get("ok") else str(result.get("error_message") or "播报失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
 
 
 @router.post("/beep")
-def audio_beep() -> dict[str, object]:
-    result = QsmClient().audio_beep()
+def audio_beep(request: BeepRequest | None = None) -> dict[str, object]:
+    result = QsmClient().audio_beep(request.volume if request else None)
     _record("提示音", "提示音测试", "已请求外设播放提示音。" if result.get("ok") else str(result.get("error_message") or "提示音失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
 
@@ -73,13 +84,14 @@ def audio_beep() -> dict[str, object]:
 def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
     text = request.text.strip() or "外放测试，声音链路正常。"
     audio_b64 = base64.b64encode(_notice_wav_bytes()).decode("ascii")
-    result = QsmClient().audio_play_base64(audio_b64, "wav")
+    volume = max(0, min(int(request.volume), 255))
+    result = QsmClient().audio_play_base64(audio_b64, "wav", volume)
     mode = "uploaded-audio"
     if not result.get("ok"):
-        result = QsmClient().audio_speak(text)
+        result = QsmClient().audio_speak(text, volume)
         mode = "tts"
     if not result.get("ok"):
-        result = QsmClient().audio_beep(request.volume)
+        result = QsmClient().audio_beep(volume)
         mode = "beep"
     ok = bool(result.get("ok"))
     _record("外放测试", "外设外放", "已请求外设播放声音。" if ok else str(result.get("error_message") or "外放测试失败。"), ok)
@@ -90,6 +102,19 @@ def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
         "relay_mode": mode,
         "relay_supported": True,
         "relay_note": "优先发送本机音频到外设喇叭播放，失败时退回文字播报或提示音。",
+    }
+
+
+@router.post("/play")
+def audio_play(request: PlayAudioRequest) -> dict[str, object]:
+    volume = max(0, min(int(request.volume), 255))
+    result = QsmClient().audio_play_base64(request.audio_base64, request.format, volume)
+    ok = bool(result.get("ok"))
+    _record("音频转发", "外设外放", "已发送音频到外设喇叭。" if ok else str(result.get("error_message") or "音频转发失败。"), ok)
+    return {
+        "ok": ok,
+        "message": result.get("detail") or result.get("error_message") or "",
+        "raw": result,
     }
 
 

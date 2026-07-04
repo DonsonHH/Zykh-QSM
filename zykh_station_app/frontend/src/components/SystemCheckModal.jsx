@@ -36,7 +36,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const [check, setCheck] = useState(fallbackCheck);
   const [network, setNetwork] = useState(networkStatus || null);
   const [audio, setAudio] = useState(null);
-  const [volume, setVolume] = useState(80);
+  const [volume, setVolume] = useState(230);
   const [loading, setLoading] = useState(false);
   const [testingAudio, setTestingAudio] = useState(false);
   const [switchingNetwork, setSwitchingNetwork] = useState(false);
@@ -192,8 +192,8 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
               </button>
             </div>
             <label className="settings-range">
-              <span>外放音量 {volume}%</span>
-              <input type="range" min="20" max="100" step="5" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
+              <span>外放音量 SPK_VOL {volume}</span>
+              <input type="range" min="0" max="255" step="5" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
             </label>
             <button className="secondary-action settings-test-button" type="button" onClick={runAudioTest} disabled={testingAudio}>
               <Volume2 size={22} aria-hidden="true" />
@@ -206,7 +206,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
               麦克风：{audio?.microphone_available ? audio.microphones?.[0]?.label || "可用" : "未检测到"}
             </p>
             <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查连接"}</p>
-            <p>声音：外放由外设执行，原声实时转发需板端增加音频播放接口。</p>
+            <p>声音：外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。</p>
           </div>
           <div className="settings-control-panel">
             <strong>提示</strong>
