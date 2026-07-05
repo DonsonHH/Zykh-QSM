@@ -20,3 +20,8 @@ def network_status() -> dict[str, object]:
 @router.post("/mode")
 def set_network_mode(request: NetworkModeRequest) -> dict[str, object]:
     return NetworkService().set_mode(request.mode)
+
+
+@router.post("/start-4g")
+def start_4g_network() -> dict[str, object]:
+    return NetworkService().start_4g()

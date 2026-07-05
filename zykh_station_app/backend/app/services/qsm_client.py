@@ -32,7 +32,7 @@ class QsmClient:
         if self.mode != "real":
             return self._mock_status()
 
-        payload, error = self._request_json(settings.qsm_status_path)
+        payload, error = self._request_json(settings.qsm_status_path, timeout=settings.qsm_network_timeout_seconds)
         if error:
             return self._real_unavailable(error)
 
@@ -258,7 +258,11 @@ class QsmClient:
                 "status": "unavailable",
                 "error_message": "QSM real 模式未启用，无法读取真实 SIM 状态。",
             }
-        payload, error = self._request_json(settings.qsm_network_status_path, method="GET")
+        payload, error = self._request_json(
+            settings.qsm_network_status_path,
+            method="GET",
+            timeout=settings.qsm_network_timeout_seconds,
+        )
         if error:
             status = self.get_qsm_status()
             network = status.devices.get("network") if isinstance(status.devices, dict) else None
@@ -267,10 +271,24 @@ class QsmClient:
             return {"ok": False, "error_message": error, "sim_present": False, "connected": False, "signal": "none"}
         return payload
 
-    def _qsm_action(self, path: str, payload: dict[str, Any], label: str) -> dict[str, Any]:
+    def start_4g_network(self) -> dict[str, Any]:
+        return self._qsm_action(
+            settings.qsm_network_start_4g_path,
+            {},
+            "SIM 网络启动",
+            timeout=settings.qsm_network_timeout_seconds + 70,
+        )
+
+    def _qsm_action(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        label: str,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         if self.mode != "real":
             return {"ok": False, "mode": self.mode, "error_message": f"{label}需要 QSM real 模式。"}
-        data, error = self._request_json(path, method="POST", payload=payload, body_format="auto")
+        data, error = self._request_json(path, method="POST", payload=payload, body_format="auto", timeout=timeout)
         if error:
             return {"ok": False, "mode": "real", "error_message": error}
         data.setdefault("ok", True)

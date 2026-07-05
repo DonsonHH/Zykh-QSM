@@ -11,8 +11,10 @@ KIOSK_SCALE="${KIOSK_SCALE:-1}"
 KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
+KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
+AUDIO_RELAY_PID=""
 RESTORE_OUTPUT=""
 RESTORE_MODE=""
 
@@ -68,10 +70,33 @@ stop_browser() {
   fi
 }
 
+start_audio_relay_if_needed() {
+  if [ "$KIOSK_AUDIO_RELAY" != "1" ]; then
+    return 0
+  fi
+  if [ ! -x "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" ]; then
+    warn "未找到音频转发脚本，跳过外设外放转发。"
+    return 0
+  fi
+  log "启动本机音频转发到外设喇叭..."
+  BACKEND_URL="$BACKEND_URL" sh "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" >"$RUN_DIR/audio-relay.log" 2>&1 &
+  AUDIO_RELAY_PID="$!"
+  echo "$AUDIO_RELAY_PID" >"$RUN_DIR/audio-relay.pid"
+}
+
+stop_audio_relay() {
+  if [ -n "$AUDIO_RELAY_PID" ] && kill -0 "$AUDIO_RELAY_PID" >/dev/null 2>&1; then
+    kill "$AUDIO_RELAY_PID" >/dev/null 2>&1 || true
+    wait "$AUDIO_RELAY_PID" 2>/dev/null || true
+    log "本机音频转发已停止。"
+  fi
+}
+
 on_exit() {
   status="$?"
   trap - EXIT INT TERM
   stop_browser
+  stop_audio_relay
   restore_resolution
   exit "$status"
 }
@@ -79,6 +104,7 @@ on_exit() {
 on_signal() {
   trap - EXIT INT TERM
   stop_browser
+  stop_audio_relay
   restore_resolution
   exit 130
 }
@@ -203,8 +229,10 @@ find_browser() {
 }
 
 start_backend_if_needed
+sh "$ROOT_DIR/scripts/ensure_qsm_gateway.sh" || true
 start_frontend_if_needed
 set_kiosk_resolution
+start_audio_relay_if_needed
 
 BROWSER="$(find_browser || true)"
 if [ -z "$BROWSER" ]; then

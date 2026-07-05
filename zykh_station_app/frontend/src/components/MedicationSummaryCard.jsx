@@ -16,9 +16,9 @@ export function MedicationSummaryCard({ medication }) {
         <div>
           <p>当前时间</p>
           <strong>{formatClock(now)}</strong>
-          <span>{formatDay(now)}</span>
+          <span className="home-time-date">{formatDay(now)}</span>
         </div>
-        <span aria-hidden="true">
+        <span className="home-time-icon" aria-hidden="true">
           <Clock3 size={42} />
         </span>
       </div>

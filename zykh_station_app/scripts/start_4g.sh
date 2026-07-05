@@ -2,6 +2,7 @@
 set -u
 
 USB_IFACE="${QSM_4G_IFACE:-usb0}"
+AT_PORT="${EC200A_AT_PORT:-/dev/ttyUSB2}"
 DNS_FILE="${QSM_DNS_FILE:-/tmp/resolv.conf}"
 PING_IP="${QSM_PING_IP:-223.5.5.5}"
 PING_HOST="${QSM_PING_HOST:-www.baidu.com}"
@@ -42,6 +43,30 @@ fi
 echo "===== Modem ports ====="
 ls -l /dev/ttyUSB* 2>/dev/null || warn "No /dev/ttyUSB* device found."
 
+echo "===== SIM / LTE status ====="
+if [ -e "$AT_PORT" ]; then
+  stty -F "$AT_PORT" 115200 raw -echo 2>/dev/null || true
+  rm -f /tmp/zykh_sim_status.txt
+  timeout 12 cat "$AT_PORT" >/tmp/zykh_sim_status.txt 2>/dev/null &
+  AT_READER="$!"
+  sleep 0.4
+  for AT_CMD in 'AT' 'AT+CMEE=2' 'AT+CPIN?' 'AT+CSQ' 'AT+CREG?' 'AT+CGREG?' 'AT+CEREG?' 'AT+COPS?' 'AT+QNWINFO'; do
+    printf '%s\r\n' "$AT_CMD" > "$AT_PORT"
+    sleep 0.5
+  done
+  sleep 0.4
+  kill "$AT_READER" 2>/dev/null || true
+  wait "$AT_READER" 2>/dev/null || true
+  sed -E 's/(ICCID|QCCID):?[[:space:]]*[0-9]+/\1: ****/Ig; s/^[[:space:]]*[0-9]{14,20}[[:space:]]*$/****/g' /tmp/zykh_sim_status.txt 2>/dev/null || true
+  if grep -q '+CPIN: READY' /tmp/zykh_sim_status.txt 2>/dev/null; then
+    ok "SIM is READY."
+  else
+    warn "SIM is not confirmed READY."
+  fi
+else
+  warn "AT port not found: ${AT_PORT}"
+fi
+
 echo "===== Kernel hints ====="
 dmesg 2>/dev/null | grep -i -E 'usb|ttyUSB|option|cdc|ether|quectel|ec200' | tail -40 || true
 
@@ -67,9 +92,19 @@ cat "$DNS_FILE"
 
 echo "===== ${USB_IFACE} ====="
 ifconfig "$USB_IFACE" 2>/dev/null || warn "${USB_IFACE} not available."
+if ifconfig "$USB_IFACE" 2>/dev/null | grep -q 'inet addr:10\.'; then
+  ok "${USB_IFACE} has 10.x.x.x address."
+else
+  warn "${USB_IFACE} does not have a 10.x.x.x address."
+fi
 
 echo "===== route ====="
 route -n 2>/dev/null || warn "route command failed."
+if route -n 2>/dev/null | awk -v iface="$USB_IFACE" '$1 == "0.0.0.0" && $8 == iface { found=1 } END { exit(found ? 0 : 1) }'; then
+  ok "Default route uses ${USB_IFACE}."
+else
+  warn "Default route does not use ${USB_IFACE}."
+fi
 
 echo "===== Test IP ====="
 run_step "Ping ${PING_IP}" ping -c 4 "$PING_IP"

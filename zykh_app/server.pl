@@ -328,6 +328,9 @@ sub route_api {
     if ($method eq 'GET' && $path eq '/api/network/status') {
         return send_json($client, 200, qsm_network_status());
     }
+    if ($method eq 'POST' && $path eq '/api/network/start_4g') {
+        return send_json($client, 200, start_qsm_4g_network());
+    }
     if ($method eq 'GET' && $path eq '/api/medicines') {
         return send_json($client, 200, { ok => JSON::PP::true, medicines => list_medicines() });
     }
@@ -476,8 +479,10 @@ sub qsm_network_status {
     my $interface = $ENV{SIM_NET_IFACE} || 'usb0';
     my $lsusb = trim(`lsusb 2>/dev/null | grep -i -E '2c7c:6005|quectel|ec200' | head -1`);
     my @tty = map { basename($_) } glob('/dev/ttyUSB*');
+    my $at = read_ec200a_at_status();
     my $ifconfig = `ifconfig $interface 2>/dev/null`;
     my ($ip) = $ifconfig =~ /inet (?:addr:)?(\d+\.\d+\.\d+\.\d+)/;
+    my $ip_is_4g = ($ip && $ip =~ /^10\./) ? 1 : 0;
     my $route = `route -n 2>/dev/null`;
     my $default_iface = '';
     for my $line (split /\r?\n/, $route) {
@@ -486,13 +491,25 @@ sub qsm_network_status {
         $default_iface = $parts[-1];
         last;
     }
-    my $sim_present = ($lsusb ne '' || @tty || $ifconfig ne '') ? JSON::PP::true : JSON::PP::false;
-    my $connected = ($ip && $default_iface eq $interface) ? JSON::PP::true : JSON::PP::false;
-    my $signal = $connected ? 'good' : 'none';
-    my $status = $connected ? 'good' : 'unavailable';
-    my $detail = $connected
-        ? 'SIM 数据网络已连通'
-        : ($sim_present ? '已检测到 SIM 通信模块，但未确认数据网络连通' : '未检测到 SIM 通信模块');
+    my $route_ok = $default_iface eq $interface ? 1 : 0;
+    my $ping_ok = ($ip_is_4g && $route_ok) ? ping_once($ENV{SIM_PING_IP} || '223.5.5.5') : 0;
+    my $sim_present = ($lsusb ne '' || @tty || $ifconfig ne '' || $at->{at_ok}) ? JSON::PP::true : JSON::PP::false;
+    my $connected_bool = ($ip_is_4g && $route_ok && ($ping_ok || $at->{registered})) ? 1 : 0;
+    my $connected = $connected_bool ? JSON::PP::true : JSON::PP::false;
+    my $signal = $connected_bool ? 'good' : ($sim_present ? 'weak' : 'none');
+    my $status = $connected_bool ? 'good' : ($sim_present ? 'weak' : 'unavailable');
+    my $detail;
+    if ($connected_bool) {
+        $detail = 'SIM 数据网络已连通';
+    } elsif ($at->{sim_ready} && $at->{registered}) {
+        $detail = 'SIM 已就绪并注册网络，但数据出口未连通';
+    } elsif ($at->{sim_ready}) {
+        $detail = 'SIM 已就绪，尚未确认网络注册';
+    } elsif ($sim_present) {
+        $detail = '已检测到 SIM 通信模块，但 SIM 或数据网络未就绪';
+    } else {
+        $detail = '未检测到 SIM 通信模块';
+    }
     return {
         ok => JSON::PP::true,
         mode => 'sim',
@@ -502,11 +519,169 @@ sub qsm_network_status {
         signal => $signal,
         status => $status,
         ip => $ip || '',
+        ip_is_4g => $ip_is_4g ? JSON::PP::true : JSON::PP::false,
+        route_ok => $route_ok ? JSON::PP::true : JSON::PP::false,
+        ping_ok => $ping_ok ? JSON::PP::true : JSON::PP::false,
         default_interface => $default_iface,
         tty_usb => \@tty,
         modem => $lsusb,
+        at => $at,
         detail => $detail,
     };
+}
+
+sub start_qsm_4g_network {
+    my $script = $ENV{QSM_4G_SCRIPT} || "$HOME_DIR/scripts/start_4g.sh";
+    return {
+        ok => JSON::PP::false,
+        error => '4G 启动脚本不存在',
+        script => $script,
+        network => qsm_network_status(),
+    } unless -f $script;
+
+    my $log = "$DATA_DIR/start-4g.log";
+    my $cmd = 'sh ' . shell_quote($script) . ' >' . shell_quote($log) . ' 2>&1';
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', int($ENV{QSM_4G_TIMEOUT} || 75), 'sh', '-c', $cmd);
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    my $raw = redact_modem_identity(substr(read_text_file($log) || '', -1500));
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        script => $script,
+        exit_code => $exit,
+        detail => $raw,
+        network => qsm_network_status(),
+    };
+}
+
+sub read_ec200a_at_status {
+    my $port = $ENV{EC200A_AT_PORT} || '/dev/ttyUSB2';
+    return {
+        at_ok => JSON::PP::false,
+        at_port => $port,
+        sim_ready => JSON::PP::false,
+        registered => JSON::PP::false,
+        error => 'AT 口不存在',
+    } unless $port && -e $port;
+
+    my $out = '/tmp/zykh_ec200a_at_status.txt';
+    my @commands = (
+        'AT', 'AT+CMEE=2',
+        'AT+CPIN?', 'AT+CSQ', 'AT+CREG?', 'AT+CGREG?', 'AT+CEREG?', 'AT+COPS?', 'AT+QNWINFO', 'AT+QCCID', 'AT+CIMI',
+        'AT+CPIN?', 'AT+CSQ', 'AT+CREG?', 'AT+CGREG?', 'AT+CEREG?', 'AT+COPS?', 'AT+QNWINFO',
+    );
+    my $send = '';
+    for my $command (@commands) {
+        $send .= 'printf ' . shell_quote("$command\r\n") . ' > "$PORT"; sleep 0.45; ';
+    }
+    my $shell = 'PORT=' . shell_quote($port) . '; OUT=' . shell_quote($out) . '; ' .
+        'stty -F "$PORT" 115200 raw -echo 2>/dev/null; rm -f "$OUT"; ' .
+        'timeout 12 cat "$PORT" > "$OUT" 2>/dev/null & reader=$!; sleep 0.45; ' .
+        $send .
+        'sleep 0.45; kill "$reader" 2>/dev/null; wait "$reader" 2>/dev/null; cat "$OUT" 2>/dev/null';
+    my $raw = `$shell`;
+    $raw ||= '';
+    my $clean = normalize_at_text($raw);
+    my $at_ok = $clean =~ /\bOK\b/ ? 1 : 0;
+    my ($cpin) = $clean =~ /\+CPIN:\s*([A-Z ]+)/i;
+    my $sim_ready = defined $cpin && $cpin =~ /READY/i ? 1 : 0;
+    my ($csq) = $clean =~ /\+CSQ:\s*(\d+),/i;
+    my $csq_value = defined $csq ? int($csq) : 99;
+    my $signal_dbm = $csq_value == 99 ? '' : (-113 + 2 * $csq_value);
+    my $creg = parse_registration_state($clean, 'CREG');
+    my $cgreg = parse_registration_state($clean, 'CGREG');
+    my $cereg = parse_registration_state($clean, 'CEREG');
+    my $registered = (($creg =~ /^[15]$/) || ($cgreg =~ /^[15]$/) || ($cereg =~ /^[15]$/)) ? 1 : 0;
+    my @operator_values = $clean =~ /\+COPS:[^\n]*"([^"\n]+)"/ig;
+    my $operator = @operator_values ? $operator_values[-1] : '';
+    my @network_info_values = $clean =~ /\+QNWINFO:\s*([^\n]+)/ig;
+    my $network_info = @network_info_values ? trim($network_info_values[-1]) : '';
+    my ($iccid) = $clean =~ /\+QCCID:\s*(\d+)/i;
+    my @number_lines = $clean =~ /^\s*(\d{14,20})\s*$/mg;
+    my $imsi = '';
+    for my $number (@number_lines) {
+        next if defined $iccid && $number eq $iccid;
+        if (length($number) >= 14 && length($number) <= 16) {
+            $imsi = $number;
+            last;
+        }
+    }
+
+    return {
+        at_ok => $at_ok ? JSON::PP::true : JSON::PP::false,
+        at_port => $port,
+        sim_ready => $sim_ready ? JSON::PP::true : JSON::PP::false,
+        registered => $registered ? JSON::PP::true : JSON::PP::false,
+        signal_csq => $csq_value,
+        signal_dbm => $signal_dbm,
+        creg => $creg,
+        cgreg => $cgreg,
+        cereg => $cereg,
+        operator => $operator || '',
+        network_info => $network_info || '',
+        iccid_masked => mask_sensitive_number($iccid || ''),
+        imsi_masked => mask_sensitive_number($imsi || ''),
+        error => $at_ok ? '' : 'AT 指令未返回 OK',
+    };
+}
+
+sub parse_registration_state {
+    my ($raw, $name) = @_;
+    for my $line (split /\n/, normalize_at_text($raw || '')) {
+        next unless $line =~ /^\s*\+\Q$name\E:\s*(.*)$/i;
+        my @numbers = $1 =~ /(\d+)/g;
+        return '' unless @numbers;
+        return defined $numbers[1] ? "$numbers[1]" : "$numbers[0]";
+    }
+    return '';
+}
+
+sub at_line_payload {
+    my ($raw, $name) = @_;
+    for my $line (split /\n/, normalize_at_text($raw || '')) {
+        next unless $line =~ /^\s*\+\Q$name\E:\s*(.*)$/i;
+        return trim($1 || '');
+    }
+    return '';
+}
+
+sub normalize_at_text {
+    my ($text) = @_;
+    $text = '' unless defined $text;
+    $text =~ s/\r/\n/g;
+    $text =~ s/[^\x09\x0A\x0D\x20-\x7E]//g;
+    return $text;
+}
+
+sub mask_sensitive_number {
+    my ($value) = @_;
+    $value = trim($value || '');
+    return '' if $value eq '';
+    return $value if length($value) <= 8;
+    return substr($value, 0, 4) . '****' . substr($value, -4);
+}
+
+sub redact_modem_identity {
+    my ($text) = @_;
+    $text = '' unless defined $text;
+    $text =~ s/(\+QCCID:\s*)\d+/$1****/ig;
+    $text =~ s/^\s*\d{14,20}\s*$/****/mg;
+    return $text;
+}
+
+sub ping_once {
+    my ($target) = @_;
+    return 0 unless $target;
+    $target =~ s/[^A-Za-z0-9\.\-]//g;
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('sh', '-c', 'timeout 4 ping -c 1 -W 2 ' . shell_quote($target) . ' >/dev/null 2>&1');
+    }
+    return $rc == 0 ? 1 : 0;
 }
 
 sub list_medicines {

@@ -65,6 +65,8 @@ class Settings:
     qsm_audio_beep_path: str = _env("QSM_AUDIO_BEEP_PATH", "/api/audio/beep")
     qsm_audio_play_path: str = _env("QSM_AUDIO_PLAY_PATH", "/api/audio/play")
     qsm_network_status_path: str = _env("QSM_NETWORK_STATUS_PATH", "/api/network/status")
+    qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")
+    qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "14"))
     qsm_ai_chat_path: str = _env("QSM_AI_CHAT_PATH", "/api/ai/chat")
     host_mic_device: str = _env("HOST_MIC_DEVICE", "default")
     network_preferred_mode: str = _env("NETWORK_PREFERRED_MODE", "sim").strip().lower()

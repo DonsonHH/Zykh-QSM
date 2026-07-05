@@ -7,3 +7,7 @@ export function loadNetworkStatus() {
 export function setNetworkMode(mode) {
   return apiPost("/api/network/mode", { mode });
 }
+
+export function startQsm4g() {
+  return apiPost("/api/network/start-4g", {});
+}

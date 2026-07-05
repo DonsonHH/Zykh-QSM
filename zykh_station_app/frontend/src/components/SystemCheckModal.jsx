@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { loadHostAudioStatus, testAudioRelay } from "../api/audio.js";
 import { loadDeviceCheck } from "../api/device.js";
-import { loadNetworkStatus, setNetworkMode } from "../api/network.js";
+import { loadNetworkStatus, setNetworkMode, startQsm4g } from "../api/network.js";
 
 const fallbackCheck = {
   qsm_mode: "mock",
@@ -40,6 +40,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const [loading, setLoading] = useState(false);
   const [testingAudio, setTestingAudio] = useState(false);
   const [switchingNetwork, setSwitchingNetwork] = useState(false);
+  const [starting4g, setStarting4g] = useState(false);
 
   function refresh() {
     setLoading(true);
@@ -87,6 +88,20 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       .then((result) => notify(result.ok ? "已请求外设外放测试" : result.message || "外放测试失败"))
       .catch((error) => notify(error.message || "外放测试失败"))
       .finally(() => setTestingAudio(false));
+  }
+
+  function run4gStart() {
+    setStarting4g(true);
+    startQsm4g()
+      .then((result) => {
+        if (result.network) {
+          setNetwork(result.network);
+          onNetworkStatusChange?.(result.network);
+        }
+        notify(result.ok ? "4G 联网检查完成" : "4G 联网未完成，请检查 SIM 和外设网络");
+      })
+      .catch((error) => notify(error.message || "4G 联网启动失败"))
+      .finally(() => setStarting4g(false));
   }
 
   if (!open) {
@@ -191,6 +206,10 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
                 本地兜底
               </button>
             </div>
+            <button className="secondary-action settings-test-button" type="button" onClick={run4gStart} disabled={starting4g}>
+              <Signal size={22} aria-hidden="true" />
+              <span>{starting4g ? "联网中..." : "启动4G联网"}</span>
+            </button>
             <label className="settings-range">
               <span>外放音量 SPK_VOL {volume}</span>
               <input type="range" min="0" max="255" step="5" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />

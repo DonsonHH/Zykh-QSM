@@ -81,6 +81,7 @@ export function App() {
           site={dashboard.site}
           networkStatus={networkStatus}
           now={now}
+          page={page}
           onOpenSystemCheck={() => setSystemCheckOpen(true)}
         />
         {page === "home" ? (

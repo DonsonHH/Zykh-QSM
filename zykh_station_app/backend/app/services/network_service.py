@@ -110,6 +110,17 @@ class NetworkService:
         db.set_setting("network_mode", normalized)
         return self.status()
 
+    def start_4g(self) -> dict[str, object]:
+        db.set_setting("network_mode", "sim")
+        result = QsmClient().start_4g_network()
+        status = self.status()
+        return {
+            "ok": bool(result.get("ok")) and bool(status.get("signal") == "good"),
+            "message": result.get("detail") or result.get("error_message") or "",
+            "raw": result,
+            "network": status,
+        }
+
     @staticmethod
     def _interface_ipv4(interface: str) -> str:
         if not interface:
