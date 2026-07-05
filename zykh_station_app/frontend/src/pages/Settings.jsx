@@ -44,6 +44,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
   const [speakerVolume, setSpeakerVolume] = useState(230);
   const [micVolume, setMicVolume] = useState(70);
   const [networkMode, setNetworkModeState] = useState(networkStatus?.mode || "sim");
+  const localNetworkMode = networkMode === "local";
   const selectedMedicine = useMemo(
     () => medicines.find((medicine) => medicine.id === selectedId) || medicines[0] || null,
     [medicines, selectedId]
@@ -396,40 +397,50 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
 
         <article className="settings-card network-admin-card">
           <header>
-            {networkMode === "local" ? <WifiOff size={28} aria-hidden="true" /> : <Signal size={28} aria-hidden="true" />}
+            {localNetworkMode ? <WifiOff size={28} aria-hidden="true" /> : <Signal size={28} aria-hidden="true" />}
             <div>
               <p>网络状态</p>
-              <h3>{networkMode === "local" ? "本地离线显示" : "外设 SIM 状态"}</h3>
+              <h3>{localNetworkMode ? "本地化运行" : "外设 SIM 状态"}</h3>
             </div>
           </header>
 
           <div className="settings-network-mode">
-            <button type="button" className={networkMode !== "local" ? "active" : ""} onClick={() => switchNetworkMode("sim")}>
+            <button type="button" className={!localNetworkMode ? "active" : ""} onClick={() => switchNetworkMode("sim")}>
               SIM 状态
             </button>
-            <button type="button" className={networkMode === "local" ? "active" : ""} onClick={() => switchNetworkMode("local")}>
+            <button type="button" className={localNetworkMode ? "active" : ""} onClick={() => switchNetworkMode("local")}>
               本地离线
             </button>
           </div>
 
           <div className="settings-network-state">
             <span>当前显示</span>
-            <strong>{networkStatus?.label || (networkMode === "local" ? "本地兜底" : "SIM网络")}</strong>
+            <strong>{localNetworkMode ? "本地兜底" : networkStatus?.label || "SIM网络"}</strong>
             <p>
-              {networkMode === "local"
-                ? "仅显示本地兜底模式，不修改系统网络。"
+              {localNetworkMode
+                ? "本地化显示已启用，问询说明切换为本地兜底；不修改系统网络和外设链路。"
                 : "读取外设 SIM 卡状态；本机仍可保持当前 Wi-Fi 或有线网络。"}
             </p>
           </div>
 
           <div className="settings-network-details">
-            <span>信号：{networkStatus?.signal || "--"}</span>
-            <span>接口：{networkStatus?.sim_interface || "--"}</span>
-            <span>地址：{networkStatus?.sim_ip || "--"}</span>
+            {localNetworkMode ? (
+              <>
+                <span>状态：本地化运行</span>
+                <span>AI：本地规则兜底</span>
+                <span>外部网络：未使用</span>
+              </>
+            ) : (
+              <>
+                <span>信号：{networkStatus?.signal || "--"}</span>
+                <span>接口：{networkStatus?.sim_interface || "--"}</span>
+                <span>地址：{networkStatus?.sim_ip || "--"}</span>
+              </>
+            )}
           </div>
 
           <button className="settings-wide-button" type="button" onClick={refreshNetwork}>
-            刷新网络状态
+            {localNetworkMode ? "刷新本地状态" : "刷新网络状态"}
           </button>
         </article>
       </section>

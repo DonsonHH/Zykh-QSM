@@ -8,7 +8,13 @@ export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
   const simConnected = Boolean(networkStatus?.sim_connected);
   const simPresent = Boolean(networkStatus?.sim_present);
   const simSignal = networkStatus?.sim_signal || (simConnected ? "good" : simPresent ? "weak" : "none");
-  const localMode = networkStatus?.mode === "local" || (!wifiConnected && !simConnected);
+  const explicitLocalMode = networkStatus?.mode === "local";
+  const localMode = explicitLocalMode || (!wifiConnected && !simConnected);
+  const displayWifiConnected = explicitLocalMode ? false : wifiConnected;
+  const displayWifiSignal = explicitLocalMode ? "none" : wifiSignal;
+  const displaySimConnected = explicitLocalMode ? false : simConnected;
+  const displaySimPresent = explicitLocalMode ? false : simPresent;
+  const displaySimSignal = explicitLocalMode ? "none" : simSignal;
   const showHeaderClock = page !== "home";
   const dayText = formatDay(now);
   const [dateText, weekText = ""] = dayText.split(/(?=星期)/);
@@ -36,15 +42,15 @@ export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
           </div>
         ) : null}
         <div className={`network-cluster ${localMode ? "offline" : ""}`} aria-label="网络状态">
-          <div className={`mini-network ${wifiSignal === "good" ? "good" : wifiConnected ? "weak" : "offline"}`}>
-            {wifiConnected ? <Wifi size={22} aria-hidden="true" /> : <WifiOff size={22} aria-hidden="true" />}
+          <div className={`mini-network ${displayWifiSignal === "good" ? "good" : displayWifiConnected ? "weak" : "offline"}`}>
+            {displayWifiConnected ? <Wifi size={22} aria-hidden="true" /> : <WifiOff size={22} aria-hidden="true" />}
             <span>WiFi</span>
-            <strong>{wifiConnected ? "已连接" : "未连接"}</strong>
+            <strong>{explicitLocalMode ? "未使用" : displayWifiConnected ? "已连接" : "未连接"}</strong>
           </div>
-          <div className={`mini-network ${simSignal === "good" ? "good" : simPresent ? "weak" : "offline"}`}>
-            {simSignal === "good" ? <Signal size={22} aria-hidden="true" /> : <SignalLow size={22} aria-hidden="true" />}
+          <div className={`mini-network ${displaySimSignal === "good" ? "good" : displaySimPresent ? "weak" : "offline"}`}>
+            {displaySimSignal === "good" ? <Signal size={22} aria-hidden="true" /> : <SignalLow size={22} aria-hidden="true" />}
             <span>SIM</span>
-            <strong>{simConnected ? "可用" : simPresent ? "待连接" : "未检测"}</strong>
+            <strong>{explicitLocalMode ? "未使用" : displaySimConnected ? "可用" : displaySimPresent ? "待连接" : "未检测"}</strong>
           </div>
           {localMode ? <em>本地模式</em> : null}
         </div>

@@ -111,15 +111,15 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const alertItems = [...(check.errors || []), ...(check.warnings || [])];
   const modeLabel = check.qsm_mode === "real" ? "真实模式" : "本地模式";
   const currentNetwork = network || networkStatus || {};
-  const networkGood = currentNetwork.signal === "good";
   const networkLocal = currentNetwork.mode === "local";
+  const networkGood = !networkLocal && currentNetwork.signal === "good";
   const NetworkIcon = networkLocal ? WifiOff : Signal;
   const rows = [
     {
       icon: NetworkIcon,
       label: "网络状态",
-      value: networkLocal ? "本地兜底" : currentNetwork.label || "SIM网络",
-      ok: networkGood || currentNetwork.simulated
+      value: networkLocal ? "本地化运行" : currentNetwork.label || "SIM网络",
+      ok: !networkLocal && (networkGood || currentNetwork.simulated)
     },
     {
       icon: Activity,
@@ -206,9 +206,9 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
                 本地兜底
               </button>
             </div>
-            <button className="secondary-action settings-test-button" type="button" onClick={run4gStart} disabled={starting4g}>
+            <button className="secondary-action settings-test-button" type="button" onClick={run4gStart} disabled={starting4g || networkLocal}>
               <Signal size={22} aria-hidden="true" />
-              <span>{starting4g ? "联网中..." : "启动4G联网"}</span>
+              <span>{networkLocal ? "本地模式无需联网" : starting4g ? "联网中..." : "启动4G联网"}</span>
             </button>
             <label className="settings-range">
               <span>外放音量 SPK_VOL {volume}</span>
@@ -225,7 +225,10 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
               麦克风：{audio?.microphone_available ? audio.microphones?.[0]?.label || "可用" : "未检测到"}
             </p>
             <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查连接"}</p>
-            <p>声音：外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。</p>
+            <p>
+              声音：
+              {networkLocal ? "本地模式下仍可使用外设喇叭播放提示音。" : "外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。"}
+            </p>
           </div>
           <div className="settings-control-panel">
             <strong>提示</strong>

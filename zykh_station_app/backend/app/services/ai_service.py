@@ -5,6 +5,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .. import db
 from ..config import settings
 from ..repositories.medicine_repository import MedicineRepository
 from ..repositories.vitals_repository import VitalsRepository
@@ -14,7 +15,9 @@ from ..schemas.inquiry import InquiryEvaluateRequest
 class AiService:
     def chat(self, message: str) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if settings.ai_mode == "local" or not key:
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return self._local_reply(message, "当前为本地模式，已使用本地兜底。")
+        if not key:
             return self._local_reply(message, "未配置云端密钥，已使用本地兜底。")
 
         payload = {
@@ -54,7 +57,9 @@ class AiService:
 
     def evaluate_inquiry(self, request: InquiryEvaluateRequest) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if settings.ai_mode == "local" or not key:
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return {"ok": False, "source": "local_fallback", "message": "当前为本地模式，已使用本地规则兜底。"}
+        if not key:
             return {"ok": False, "source": "local_fallback", "message": "未配置云端密钥，已使用本地规则兜底。"}
 
         payload = {
@@ -233,6 +238,10 @@ class AiService:
         parsed["source"] = "qsm_cloud"
         parsed["message"] = "QSM 4G 云通道已完成结构化分析。"
         return parsed
+
+    @staticmethod
+    def _network_local_mode() -> bool:
+        return db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() in {"local", "offline"}
 
     @staticmethod
     def _read_key(value: str, path) -> str:
