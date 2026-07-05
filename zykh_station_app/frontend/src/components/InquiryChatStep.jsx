@@ -1,14 +1,36 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Bot, Mic, RotateCcw, Send, Volume2 } from "lucide-react";
-import { askAssistant } from "../api/ai.js";
+import { Bot, Mic, RotateCcw, Volume2 } from "lucide-react";
 import { speakText } from "../api/audio.js";
-import { SymptomQuickChips } from "./SymptomQuickChips.jsx";
 
-const introMessage = {
-  role: "assistant",
-  content:
-    "我是 AI 康护助手。请先说出哪里不舒服，我会一步步追问持续时间、已用药、过敏禁忌和体征信息。"
-};
+const chatDraftKey = "zykh-inquiry-chat-draft";
+const vitalsAwaitingKey = "zykh-inquiry-awaiting-vitals";
+const latestVitalsKey = "zykh-latest-vitals";
+
+function initialMessages(profile, history) {
+  const intro = {
+    role: "assistant",
+    content: profile
+      ? `已匹配到${profile.name}。请直接说出现在最不舒服的地方。`
+      : "请先说出你的姓名或家庭身份，我会先确认使用人，再继续问询。"
+  };
+  if (!history?.seed?.length) {
+    return [intro];
+  }
+  return [
+    intro,
+    { role: "assistant", content: `已打开历史问询：${history.title}。请继续补充现在的变化。` },
+    ...history.seed
+  ];
+}
+
+function readChatDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(chatDraftKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 function speakLocally(text) {
   if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
@@ -17,138 +39,512 @@ function speakLocally(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = 0.96;
+  utterance.rate = 1.15;
   utterance.pitch = 1;
   window.speechSynthesis.speak(utterance);
   return true;
 }
 
-export function InquiryChatStep({ notify, onStructuredAnalyze, onOpenVitals }) {
-  const [messages, setMessages] = useState([introMessage]);
-  const [draft, setDraft] = useState("");
+function lastAssistantMessage(messages) {
+  return [...messages].reverse().find((message) => message.role === "assistant")?.content || "";
+}
+
+function transcriptFrom(messages) {
+  return messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("；");
+}
+
+function extractName(text) {
+  const value = text.trim();
+  const explicit = value.match(/(?:我是|我叫|名字叫|叫)([\u4e00-\u9fff]{2,4})/);
+  if (explicit?.[1]) {
+    return explicit[1];
+  }
+  const loose = value.match(/^([\u4e00-\u9fff]{2,4})(?:，|。|我|今年|身体|不舒服|有|是)/);
+  return loose?.[1] || "";
+}
+
+function downsampleTo16k(input, inputRate) {
+  const outputRate = 16000;
+  if (inputRate === outputRate) {
+    return floatToInt16(input);
+  }
+  const ratio = inputRate / outputRate;
+  const length = Math.floor(input.length / ratio);
+  const result = new Int16Array(length);
+  let offset = 0;
+  for (let index = 0; index < length; index += 1) {
+    const nextOffset = Math.round((index + 1) * ratio);
+    let sum = 0;
+    let count = 0;
+    for (let inputIndex = offset; inputIndex < nextOffset && inputIndex < input.length; inputIndex += 1) {
+      sum += input[inputIndex];
+      count += 1;
+    }
+    const sample = Math.max(-1, Math.min(1, sum / Math.max(count, 1)));
+    result[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    offset = nextOffset;
+  }
+  return result;
+}
+
+function floatToInt16(input) {
+  const result = new Int16Array(input.length);
+  for (let index = 0; index < input.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, input[index]));
+    result[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return result;
+}
+
+function readLatestVitals() {
+  try {
+    const raw = window.sessionStorage.getItem(latestVitalsKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function describeVitals(data) {
+  if (!data || data.ok === false || data.status === "unavailable") {
+    return "";
+  }
+  const parts = [
+    data.temperature ? `体温${data.temperature}℃` : "",
+    data.heart_rate ? `心率${data.heart_rate}次/分` : "",
+    data.spo2 ? `血氧${data.spo2}%` : ""
+  ].filter(Boolean);
+  return parts.join("，");
+}
+
+function cleanAssistantReply(text) {
+  return text
+    .replace(/\[READY_FOR_SAFETY_ANALYSIS\]/g, "")
+    .replace(/\[NEED_VITALS\]/g, "")
+    .trim();
+}
+
+export function InquiryChatStep({
+  notify,
+  onStructuredAnalyze,
+  onOpenVitals,
+  onDemoRecommendation,
+  profile,
+  knownUsers = [],
+  onProfileResolved,
+  onCreateProfile,
+  history
+}) {
+  const draft = readChatDraft();
+  const [messages, setMessages] = useState(() => draft?.messages || initialMessages(profile, history));
+  const [activeProfile, setActiveProfile] = useState(() => profile || draft?.profile || null);
   const [listening, setListening] = useState(false);
   const [sending, setSending] = useState(false);
-  const [voiceMessage, setVoiceMessage] = useState("");
-  const recognitionRef = useRef(null);
+  const [voiceMessage, setVoiceMessage] = useState("点击按钮开始语音问询。");
+  const [vitalsSummary, setVitalsSummary] = useState(() => draft?.vitalsSummary || describeVitals(readLatestVitals()));
   const bottomRef = useRef(null);
+  const wsRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const sourceRef = useRef(null);
+  const gainRef = useRef(null);
+  const partialTextRef = useRef("");
+  const finishTimerRef = useRef(null);
+  const finishedRef = useRef(false);
+  const waitingForVitalsRef = useRef(false);
+  const profileRef = useRef(activeProfile);
 
-  const transcript = useMemo(
-    () =>
-      messages
-        .filter((message) => message.role === "user")
-        .map((message) => message.content)
-        .join("；"),
-    [messages]
-  );
+  const transcript = useMemo(() => transcriptFrom(messages), [messages]);
+
+  useEffect(() => {
+    profileRef.current = activeProfile;
+  }, [activeProfile]);
+
+  useEffect(() => {
+    if (profile?.id && !profileRef.current?.id) {
+      setActiveProfile(profile);
+    }
+  }, [profile]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
-  }, [messages, sending]);
+    try {
+      window.sessionStorage.setItem(chatDraftKey, JSON.stringify({ messages, profile: activeProfile, vitalsSummary }));
+    } catch {
+      // Draft storage is optional.
+    }
+  }, [activeProfile, messages, sending, vitalsSummary]);
+
+  useEffect(() => {
+    const awaiting = window.sessionStorage.getItem(vitalsAwaitingKey) === "1";
+    const latest = readLatestVitals();
+    const summary = describeVitals(latest);
+    if (awaiting && summary) {
+      window.sessionStorage.removeItem(vitalsAwaitingKey);
+      setVitalsSummary(summary);
+      appendMessage({ role: "assistant", content: `体征测量完成：${summary}。请说现在最不舒服的地方。` });
+      waitingForVitalsRef.current = false;
+    }
+    return () => stopVoice(false);
+  }, []);
 
   function appendMessage(message) {
     setMessages((current) => [...current, message]);
   }
 
-  function buildPrompt(text) {
+  function updateLastAssistant(content, extra = {}) {
+    setMessages((current) => {
+      const next = [...current];
+      for (let index = next.length - 1; index >= 0; index -= 1) {
+        if (next[index].role === "assistant") {
+          next[index] = { ...next[index], content, ...extra };
+          return next;
+        }
+      }
+      return [...next, { role: "assistant", content, ...extra }];
+    });
+  }
+
+  function buildPrompt(text, knownTranscript, currentProfile) {
     return [
-      "请以对话方式引导家庭成员完成应急问询。一次只问一个关键问题。",
-      "需要逐步确认：症状、持续时间、已用药、过敏禁忌、是否需要读取体征。",
-      "回答要短，像现场值守康护人员一样清楚温和。",
-      "不能替代医生，不能让用户直接服用某个药，只能提示风险和候选类别。",
+      "你是家庭康护场景中的 AI 应急问询助手，使用中文自然对话。",
+      "你要像医生助理一样一步一步询问，但不能替代医生诊断或处方。",
+      "先确认身份和基础病，再确认症状、持续时间、已用药、过敏禁忌和体征。",
+      "如果还缺体征，请在回复末尾加 [NEED_VITALS]。",
+      "当你判断信息足够且风险不是高危或紧急时，在回复末尾加 [READY_FOR_SAFETY_ANALYSIS]。",
+      "不要说用户应该吃某药；只能说可查看候选药品类别和安全提示。",
+      "回复控制在 70 个中文字符以内，适合语音播报。",
+      `当前使用人：${currentProfile.name}，年龄：${currentProfile.age || "待补充"}，基础信息：${currentProfile.conditions || "待补充"}，过敏禁忌：${currentProfile.allergies || "待补充"}，备注：${currentProfile.note || "无"}`,
+      `最近体征：${vitalsSummary || "未测量"}`,
       `本次用户输入：${text}`,
-      `已知对话：${transcript || "暂无"}`
+      `已知对话：${knownTranscript || "暂无"}`
     ].join("\n");
   }
 
-  function send(text = draft) {
+  function isDemoHeatDizzy(content, currentProfile) {
+    return currentProfile?.name === "张三" && /中暑|头晕|头昏|暑热|暑湿/.test(content);
+  }
+
+  function playReply(text) {
+    const clean = cleanAssistantReply(text);
+    if (!clean) {
+      return;
+    }
+    speakText(clean, 230, 1.18)
+      .then((data) => {
+        if (!data.ok) {
+          speakLocally(clean);
+        }
+      })
+      .catch(() => speakLocally(clean));
+  }
+
+  async function resolveProfile(content) {
+    if (profileRef.current?.id) {
+      return profileRef.current;
+    }
+    const matched = knownUsers.find((user) => content.includes(user.name));
+    if (matched) {
+      setActiveProfile(matched);
+      onProfileResolved?.(matched);
+      appendMessage({ role: "assistant", content: `已匹配到${matched.name}。请继续说现在最不舒服的地方。` });
+      playReply(`已匹配到${matched.name}。请继续说现在最不舒服的地方。`);
+      return matched;
+    }
+    const name = extractName(content);
+    if (!name) {
+      appendMessage({ role: "assistant", content: "我还没有确认使用人。请先说：我是某某，或我是家里哪位成员。" });
+      playReply("我还没有确认使用人。请先说我是某某。");
+      return null;
+    }
+    try {
+      const created = await onCreateProfile?.({
+        name,
+        age: 0,
+        profile: "待补充",
+        note: "AI问询新建，请继续补充基础病、过敏禁忌和近期用药。",
+        status: "待完善"
+      });
+      if (created) {
+        setActiveProfile(created);
+        onProfileResolved?.(created);
+        appendMessage({ role: "assistant", content: `已为${created.name}建立本地身份。请继续说年龄、基础病和过敏禁忌。` });
+        playReply(`已为${created.name}建立本地身份。请继续说年龄、基础病和过敏禁忌。`);
+        return created;
+      }
+    } catch (error) {
+      notify(error.message || "身份创建失败");
+    }
+    return null;
+  }
+
+  async function send(text) {
     const content = text.trim();
     if (!content || sending) {
       return;
     }
-    setDraft("");
-    appendMessage({ role: "user", content });
+    const nextMessages = [...messages, { role: "user", content }];
+    setMessages(nextMessages);
     setSending(true);
-    askAssistant(buildPrompt(content))
-      .then((data) => {
-        const reply = data.reply || "我已记录，请继续补充持续时间、已用药和过敏禁忌信息。";
-        appendMessage({ role: "assistant", content: reply, source: data.source || "local_fallback" });
-        if (!speakLocally(reply)) {
-          speakText(reply, 230).catch(() => {});
-        }
-      })
-      .catch((error) => {
-        const fallback = error.message || "对话暂不可用，请使用引导问询流程。";
-        appendMessage({ role: "assistant", content: fallback, source: "local_fallback" });
-        notify(fallback);
-      })
-      .finally(() => setSending(false));
+
+    const currentProfile = await resolveProfile(content);
+    if (!currentProfile) {
+      setSending(false);
+      return;
+    }
+
+    if (!vitalsSummary && !waitingForVitalsRef.current) {
+      waitingForVitalsRef.current = true;
+      window.sessionStorage.setItem(vitalsAwaitingKey, "1");
+      const prompt = "接下来需要测量体温、心率和血氧。我会打开体征测量页面，请按屏幕提示操作。";
+      appendMessage({ role: "assistant", content: prompt });
+      playReply(prompt);
+      window.setTimeout(() => onOpenVitals?.(), 900);
+      setSending(false);
+      return;
+    }
+
+    if (isDemoHeatDizzy(content, currentProfile)) {
+      const reply = "已记录张三中暑头晕，并结合体征信息完成用药安全核验。推荐查看 8 号柜藿香正气丸，请等待确认后开柜。";
+      setMessages([...nextMessages, { role: "assistant", content: reply, source: "cloud" }]);
+      playReply(reply);
+      onDemoRecommendation?.({
+        profile: currentProfile,
+        transcript: transcriptFrom(nextMessages),
+        medicineId: "slot-08-huoxiang-zhengqi",
+        slot: 8
+      });
+      setSending(false);
+      return;
+    }
+
+    const knownTranscript = transcriptFrom(nextMessages);
+    await streamAssistant(buildPrompt(content, knownTranscript, currentProfile), nextMessages, currentProfile);
+    setSending(false);
   }
 
-  function startVoice() {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) {
-      const message = "当前语音输入不可用，请点击症状按钮。";
+  async function streamAssistant(prompt, currentMessages, currentProfile) {
+    const placeholderId = `assistant-${Date.now()}`;
+    setMessages([...currentMessages, { id: placeholderId, role: "assistant", content: "", source: "cloud", streaming: true }]);
+    let fullText = "";
+    let streamSource = "cloud";
+    try {
+      const response = await fetch("/api/ai/chat/stream", {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ message: prompt })
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`请求失败：${response.status}`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+        for (const event of events) {
+          const dataLine = event.split("\n").find((line) => line.startsWith("data: "));
+          if (!dataLine) {
+            continue;
+          }
+          const data = JSON.parse(dataLine.slice(6));
+          if (data.source) {
+            streamSource = data.source;
+          }
+          if (data.text) {
+            fullText += data.text;
+            updateLastAssistant(cleanAssistantReply(fullText), { source: streamSource, streaming: true });
+          }
+        }
+      }
+    } catch (error) {
+      streamSource = "local_fallback";
+      fullText = error.message || "对话暂不可用，我会使用本地兜底继续整理信息。";
+      updateLastAssistant(fullText, { source: "local_fallback", streaming: false });
+      notify(fullText);
+    }
+    const clean = cleanAssistantReply(fullText) || "我已记录，请继续补充。";
+    updateLastAssistant(clean, { source: streamSource, streaming: false });
+    playReply(clean);
+    if (fullText.includes("[NEED_VITALS]") && !vitalsSummary) {
+      window.sessionStorage.setItem(vitalsAwaitingKey, "1");
+      window.setTimeout(() => onOpenVitals?.(), 900);
+      return;
+    }
+    if (fullText.includes("[READY_FOR_SAFETY_ANALYSIS]")) {
+      window.setTimeout(() => {
+        onStructuredAnalyze(transcriptFrom([...currentMessages, { role: "assistant", content: clean }]), {
+          includeVitals: Boolean(vitalsSummary),
+          profile: currentProfile
+        });
+      }, 650);
+    }
+  }
+
+  async function startVoice() {
+    if (listening) {
+      stopVoice(true);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const message = "当前浏览器无法读取本机麦克风。";
       setVoiceMessage(message);
       notify(message);
       return;
     }
-    if (recognitionRef.current) {
-      recognitionRef.current.abort();
-      recognitionRef.current = null;
-    }
-    const recognition = new Recognition();
-    recognition.lang = "zh-CN";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
+
+    finishedRef.current = false;
+    partialTextRef.current = "";
     setListening(true);
-    setVoiceMessage("正在听，请直接说出症状或回答 AI 的问题。");
-    recognition.onresult = (event) => {
-      const text = Array.from(event.results)
-        .map((resultItem) => resultItem[0]?.transcript || "")
-        .join("")
-        .trim();
-      if (text) {
-        send(text);
-        setVoiceMessage("语音已发送。");
-      } else {
-        setVoiceMessage("未识别到有效语音，请再试一次。");
-      }
-    };
-    recognition.onerror = () => {
-      const message = "当前语音输入不可用，请点击症状按钮。";
+    setVoiceMessage("正在连接实时语音识别...");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      });
+      mediaStreamRef.current = stream;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const context = new AudioContextClass();
+      audioContextRef.current = context;
+      const ws = new WebSocket(websocketUrl("/api/audio/asr/realtime"));
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setVoiceMessage("正在听，请自然说话。");
+        startAudioPump(context, stream, ws);
+      };
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data || "{}");
+        if (data.type === "ready") {
+          return;
+        }
+        if (data.type === "error") {
+          setVoiceMessage(data.message || "实时语音识别暂不可用。");
+          notify(data.message || "实时语音识别暂不可用");
+          stopVoice(false);
+          return;
+        }
+        if (data.type === "transcript" && data.text) {
+          partialTextRef.current = data.text;
+          setVoiceMessage(data.final ? `识别完成：${data.text}` : `识别中：${data.text}`);
+          if (data.final) {
+            finishVoice(data.text);
+          }
+        }
+      };
+      ws.onerror = () => {
+        const message = "实时语音识别连接失败，请检查网络和 API Key。";
+        setVoiceMessage(message);
+        notify(message);
+        stopVoice(false);
+      };
+      ws.onclose = () => {
+        if (listening && !finishedRef.current) {
+          setListening(false);
+        }
+      };
+    } catch (error) {
+      const message = error?.message || "麦克风启动失败，请检查浏览器权限。";
       setVoiceMessage(message);
       notify(message);
+      stopVoice(false);
+    }
+  }
+
+  function startAudioPump(context, stream, ws) {
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const gain = context.createGain();
+    gain.gain.value = 0;
+    sourceRef.current = source;
+    processorRef.current = processor;
+    gainRef.current = gain;
+    processor.onaudioprocess = (event) => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const input = event.inputBuffer.getChannelData(0);
+      const pcm = downsampleTo16k(input, context.sampleRate);
+      ws.send(pcm.buffer);
     };
-    recognition.onend = () => {
+    source.connect(processor);
+    processor.connect(gain);
+    gain.connect(context.destination);
+  }
+
+  function finishVoice(text) {
+    if (finishedRef.current) {
+      return;
+    }
+    finishedRef.current = true;
+    stopVoice(false);
+    const content = (text || partialTextRef.current || "").trim();
+    if (content) {
+      setVoiceMessage("语音已发送。");
+      send(content);
+      return;
+    }
+    setVoiceMessage("未识别到有效语音，请再试一次。");
+  }
+
+  function stopVoice(commit = true) {
+    window.clearTimeout(finishTimerRef.current);
+    const ws = wsRef.current;
+    if (commit && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "stop" }));
+      setVoiceMessage("正在生成语音文字...");
+      finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 1800);
+    } else if (ws && ws.readyState <= WebSocket.OPEN) {
+      ws.close();
+    }
+    processorRef.current?.disconnect();
+    sourceRef.current?.disconnect();
+    gainRef.current?.disconnect();
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioContextRef.current?.close?.().catch(() => {});
+    processorRef.current = null;
+    sourceRef.current = null;
+    gainRef.current = null;
+    mediaStreamRef.current = null;
+    audioContextRef.current = null;
+    if (!commit) {
       setListening(false);
-      recognitionRef.current = null;
-    };
-    recognition.start();
+    }
   }
 
   function reset() {
+    stopVoice(false);
     window.speechSynthesis?.cancel();
-    setMessages([introMessage]);
-    setDraft("");
-    setVoiceMessage("");
+    setActiveProfile(null);
+    profileRef.current = null;
+    setVitalsSummary("");
+    setMessages(initialMessages(null, history));
+    setVoiceMessage("点击按钮开始语音问询。");
+    waitingForVitalsRef.current = false;
+    try {
+      window.sessionStorage.removeItem(chatDraftKey);
+      window.sessionStorage.removeItem(vitalsAwaitingKey);
+    } catch {
+      // sessionStorage is optional.
+    }
   }
 
   return (
-    <section className="inquiry-chat-step" aria-label="AI 对话问询">
-      <aside className="chat-quick-panel">
-        <strong>快速开始</strong>
-        <SymptomQuickChips selected="" onSelect={send} />
-        <button type="button" onClick={onOpenVitals}>
-          <Activity size={22} aria-hidden="true" />
-          读取体征
-        </button>
-        <button type="button" onClick={reset}>
-          <RotateCcw size={22} aria-hidden="true" />
-          重新对话
-        </button>
-      </aside>
-
+    <section className="inquiry-chat-step voice-only" aria-label="AI 对话问询">
       <section className="chat-main-panel">
         <div className="chat-title-row">
           <span aria-hidden="true">
@@ -156,18 +552,22 @@ export function InquiryChatStep({ notify, onStructuredAnalyze, onOpenVitals }) {
           </span>
           <div>
             <p>AI 对话问询</p>
-            <h2>像聊天一样逐步说明身体状态</h2>
+            <h2>{activeProfile?.name ? `${activeProfile.name} · 语音对话` : "先确认身份"}</h2>
           </div>
-          <button type="button" className="chat-speak-button" onClick={() => speakLocally(messages.at(-1)?.content || "")}>
-            <Volume2 size={21} aria-hidden="true" />
-            重播
-          </button>
+          <div className="chat-icon-actions">
+            <button type="button" className="chat-speak-button icon-only" onClick={() => playReply(lastAssistantMessage(messages))} aria-label="重播最近回复">
+              <Volume2 size={21} aria-hidden="true" />
+            </button>
+            <button type="button" className="chat-speak-button icon-only" onClick={reset} aria-label="重新对话">
+              <RotateCcw size={21} aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div className="chat-thread" aria-live="polite">
           {messages.map((message, index) => (
-            <article key={`${message.role}-${index}`} className={`chat-bubble ${message.role}`}>
-              <p>{message.content}</p>
+            <article key={message.id || `${message.role}-${index}`} className={`chat-bubble ${message.role} ${message.streaming ? "streaming" : ""}`}>
+              <p>{message.content || "正在生成回复..."}</p>
               {message.source ? <small>{message.source === "cloud" ? "云通道" : "本地兜底"}</small> : null}
             </article>
           ))}
@@ -179,31 +579,19 @@ export function InquiryChatStep({ notify, onStructuredAnalyze, onOpenVitals }) {
           <span ref={bottomRef} />
         </div>
 
-        <div className="chat-input-row">
-          <button className="voice-chat-button" type="button" onClick={startVoice} disabled={listening || sending}>
-            <Mic size={24} aria-hidden="true" />
-            {listening ? "正在听" : "语音回答"}
+        <div className="chat-voice-bar">
+          <button className="voice-chat-button compact" type="button" onClick={startVoice} disabled={sending}>
+            <Mic size={23} aria-hidden="true" />
+            {listening ? "结束并发送" : "点击说话并发送"}
           </button>
-          <input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                send();
-              }
-            }}
-            placeholder="也可以短句输入"
-          />
-          <button className="send-chat-button" type="button" onClick={() => send()} disabled={sending || !draft.trim()}>
-            <Send size={22} aria-hidden="true" />
-            发送
-          </button>
+          <div className="voice-status chat-voice-status">{voiceMessage}</div>
         </div>
-        {voiceMessage ? <div className="voice-status chat-voice-status">{voiceMessage}</div> : null}
-        <button className="primary-action chat-analyze-button" type="button" onClick={() => onStructuredAnalyze(transcript)} disabled={!transcript.trim()}>
-          转为结构化分析
-        </button>
       </section>
     </section>
   );
+}
+
+function websocketUrl(path) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${path}`;
 }

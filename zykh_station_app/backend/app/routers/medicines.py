@@ -10,6 +10,8 @@ from ..schemas.medicine import (
     MedicineScanRegisterResponse,
     MedicineScanRequest,
     MedicineScanResult,
+    MedicineUpdateRequest,
+    MedicineUpdateResponse,
     MedicineVisualRecognizeRequest,
     MedicineVisualRecognizeResponse,
 )
@@ -30,6 +32,14 @@ def get_medicine(medicine_id: str) -> MedicineDetailResponse:
     if medicine is None:
         raise HTTPException(status_code=404, detail="未找到该药品。")
     return MedicineDetailResponse(medicine=medicine)
+
+
+@router.patch("/medicines/{medicine_id}", response_model=MedicineUpdateResponse)
+def update_medicine(medicine_id: str, request: MedicineUpdateRequest) -> MedicineUpdateResponse:
+    response = MedicineService().update_medicine(medicine_id, request)
+    if response is None:
+        raise HTTPException(status_code=404, detail="未找到该药品。")
+    return response
 
 
 @router.post("/medicine/scan", response_model=MedicineScanResult)

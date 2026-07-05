@@ -17,7 +17,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
   }
 
   function changeQuantity(nextQuantity) {
-    setQuantity(Math.max(1, Math.min(medicine.stock, nextQuantity)));
+    setQuantity(Math.max(1, Math.min(30, nextQuantity)));
   }
 
   function handleSubmit() {
@@ -76,7 +76,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
               id="dispense-quantity"
               type="number"
               min="1"
-              max={medicine.stock}
+              max="30"
               value={quantity}
               onChange={(event) => changeQuantity(Number(event.target.value) || 1)}
             />

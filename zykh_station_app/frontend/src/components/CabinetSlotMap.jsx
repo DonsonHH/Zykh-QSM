@@ -47,7 +47,6 @@ export function CabinetSlotMap({ medicines, selectedMedicine, onSelect, notify }
   function renderZone(title, slots, size) {
     return (
       <section className={`cabinet-zone ${size}`} aria-label={title}>
-        <header>{title}</header>
         <div>
           {slots.flatMap((row) => row.map((slot) => renderSlot(slot, size)))}
         </div>
@@ -58,10 +57,10 @@ export function CabinetSlotMap({ medicines, selectedMedicine, onSelect, notify }
   return (
     <div className="cabinet-map" aria-label="药柜 1 到 23 号仓位">
       <div className="cabinet-map-top">
-        {renderZone("9-14 中仓", mediumSlots, "medium")}
-        {renderZone("15-23 小仓", smallSlots, "small")}
+        {renderZone("9-14 号中仓", mediumSlots, "medium")}
+        {renderZone("15-23 号小仓", smallSlots, "small")}
       </div>
-      {renderZone("1-8 大仓", largeSlots, "large")}
+      {renderZone("1-8 号大仓", largeSlots, "large")}
     </div>
   );
 }

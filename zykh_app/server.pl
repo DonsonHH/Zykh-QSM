@@ -439,6 +439,12 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/audio/play') {
         return send_json($client, 200, play_uploaded_audio($req->{params}));
     }
+    if ($method eq 'POST' && $path eq '/api/audio/stream/start') {
+        return send_json($client, 200, start_audio_pcm_stream($req->{params}));
+    }
+    if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
+        return send_json($client, 200, stop_audio_pcm_stream());
+    }
 
     return send_json($client, 404, { ok => JSON::PP::false, error => 'API not found' });
 }
@@ -568,20 +574,30 @@ sub read_ec200a_at_status {
     } unless $port && -e $port;
 
     my $out = '/tmp/zykh_ec200a_at_status.txt';
+    my $delay = $ENV{EC200A_AT_DELAY} || '0.18';
+    $delay = '0.18' unless $delay =~ /^\d+(?:\.\d+)?$/;
+    my $timeout = int($ENV{EC200A_AT_TIMEOUT} || 4);
+    $timeout = 2 if $timeout < 2;
+    $timeout = 8 if $timeout > 8;
     my @commands = (
-        'AT', 'AT+CMEE=2',
-        'AT+CPIN?', 'AT+CSQ', 'AT+CREG?', 'AT+CGREG?', 'AT+CEREG?', 'AT+COPS?', 'AT+QNWINFO', 'AT+QCCID', 'AT+CIMI',
-        'AT+CPIN?', 'AT+CSQ', 'AT+CREG?', 'AT+CGREG?', 'AT+CEREG?', 'AT+COPS?', 'AT+QNWINFO',
+        'AT',
+        'AT+CPIN?',
+        'AT+CSQ',
+        'AT+CREG?',
+        'AT+CGREG?',
+        'AT+CEREG?',
+        'AT+COPS?',
+        'AT+QNWINFO',
     );
     my $send = '';
     for my $command (@commands) {
-        $send .= 'printf ' . shell_quote("$command\r\n") . ' > "$PORT"; sleep 0.45; ';
+        $send .= 'printf ' . shell_quote("$command\r\n") . ' > "$PORT"; sleep ' . $delay . '; ';
     }
     my $shell = 'PORT=' . shell_quote($port) . '; OUT=' . shell_quote($out) . '; ' .
         'stty -F "$PORT" 115200 raw -echo 2>/dev/null; rm -f "$OUT"; ' .
-        'timeout 12 cat "$PORT" > "$OUT" 2>/dev/null & reader=$!; sleep 0.45; ' .
+        'timeout ' . int($timeout) . ' cat "$PORT" > "$OUT" 2>/dev/null & reader=$!; sleep 0.20; ' .
         $send .
-        'sleep 0.45; kill "$reader" 2>/dev/null; wait "$reader" 2>/dev/null; cat "$OUT" 2>/dev/null';
+        'sleep 0.20; kill "$reader" 2>/dev/null; wait "$reader" 2>/dev/null; cat "$OUT" 2>/dev/null';
     my $raw = `$shell`;
     $raw ||= '';
     my $clean = normalize_at_text($raw);
@@ -1401,11 +1417,17 @@ sub speak_text {
     my ($p) = @_;
     my $text = trim($p->{text} || '');
     return { ok => JSON::PP::false, error => '播报文本为空' } if $text eq '';
+    release_audio_playback_device();
     $text = substr($text, 0, int($ENV{TTS_MAX_CHARS} || 240));
     my $vol = speaker_volume($p->{volume});
+    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.18;
+    $tts_speed = 1.18 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
+    $tts_speed = 0.75 if $tts_speed < 0.75;
+    $tts_speed = 1.45 if $tts_speed > 1.45;
     my $play = sub {
         my ($file) = @_;
-        return speaker_setup_cmd($vol) . ' && ' . aplay_cmd($file);
+        my $play_file = speed_adjusted_audio_file($file, $tts_speed);
+        return speaker_setup_cmd($vol) . ' && ' . aplay_cmd($play_file);
     };
 
     my $dir = "$DATA_DIR/audio";
@@ -1430,7 +1452,8 @@ sub speak_text {
         $cmd =~ s/\{text\}/shell_quote($text)/eg;
         $mode = 'custom-tts';
     } elsif (trim(`which espeak 2>/dev/null`) ne '') {
-        $cmd = 'espeak -v zh -s 145 ' . shell_quote($text);
+        my $speed = int($ENV{ESPEAK_SPEED} || 175);
+        $cmd = 'espeak -v zh -s ' . int($speed) . ' ' . shell_quote($text);
         $mode = 'espeak';
     } elsif (trim(`which flite 2>/dev/null`) ne '') {
         my $out = "$dir/tts.wav";
@@ -1459,15 +1482,32 @@ sub speak_text {
         ok => $ok,
         mode => $mode,
         volume => $vol,
+        speed => $tts_speed + 0,
         detail => $ok ? $detail : '语音播报失败：' . substr(read_text_file($log) || '', 0, 300),
         exit_code => $exit,
     };
+}
+
+sub speed_adjusted_audio_file {
+    my ($file, $speed) = @_;
+    return $file unless $file && -s $file;
+    return $file if !$speed || abs($speed - 1.0) < 0.02;
+    return $file if trim(`which ffmpeg 2>/dev/null`) eq '';
+    my $out = $file;
+    $out =~ s/(\.[A-Za-z0-9]+)$/\.fast$1/;
+    $out = "$file.fast.wav" if $out eq $file;
+    my $filter = 'atempo=' . sprintf('%.2f', $speed);
+    my $cmd = 'ffmpeg -hide_banner -loglevel error -y -i ' . shell_quote($file) .
+              ' -filter:a ' . shell_quote($filter) . ' ' . shell_quote($out);
+    my $rc = system('timeout', '8', 'sh', '-c', $cmd);
+    return -s $out && $rc == 0 ? $out : $file;
 }
 
 sub play_beep {
     my ($p) = @_;
     my $script = $ENV{BEEP_SCRIPT} || '/userdata/medical_assistant/scripts/play_beep.sh';
     return { ok => JSON::PP::false, error => '喇叭脚本不存在', script => $script } unless -f $script;
+    release_audio_playback_device();
     my $vol = int($p->{volume} || $ENV{SPK_VOL} || 230);
     $vol = 0 if $vol < 0;
     $vol = 255 if $vol > 255;
@@ -1491,6 +1531,7 @@ sub play_uploaded_audio {
     my ($p) = @_;
     my $audio = trim($p->{audio_base64} || $p->{data} || '');
     return { ok => JSON::PP::false, error => '音频数据为空' } if $audio eq '';
+    release_audio_playback_device();
     $audio =~ s#^data:audio/[^;]+;base64,##;
     my $raw = eval { decode_base64($audio) };
     return { ok => JSON::PP::false, error => '音频 base64 解析失败' } if $@ || !defined $raw || length($raw) < 44;
@@ -1501,7 +1542,7 @@ sub play_uploaded_audio {
     make_path($dir) unless -d $dir;
     my $format = lc trim($p->{format} || 'wav');
     $format = 'wav' unless $format =~ /^(wav|pcm)$/;
-    my $file = "$dir/relay-" . time . ".$format";
+    my $file = "$dir/relay-" . time . "-$$-" . int(rand(100000)) . ".$format";
     write_raw_file($file, $raw) or return { ok => JSON::PP::false, error => "音频写入失败：$file" };
 
     my $log = "$DATA_DIR/audio-play.log";
@@ -1531,6 +1572,111 @@ sub play_uploaded_audio {
         detail => $exit == 0 ? '已播放主机发送的音频' : substr(read_text_file($log) || '', 0, 500),
         exit_code => $exit,
     };
+}
+
+sub start_audio_pcm_stream {
+    my ($p) = @_;
+    my $port = int($p->{port} || $ENV{AUDIO_STREAM_PORT} || 19001);
+    return { ok => JSON::PP::false, error => '音频流端口不合法' } if $port < 1024 || $port > 65535;
+    my $rate = int($p->{rate} || 16000);
+    my $channels = int($p->{channels} || 1);
+    $rate = 16000 if $rate <= 0;
+    $channels = 1 if $channels <= 0 || $channels > 2;
+    my $vol = speaker_volume($p->{volume});
+
+    stop_audio_pcm_stream();
+    my $pidfile = "$DATA_DIR/audio-stream.pid";
+    my $logfile = "$DATA_DIR/audio-stream.log";
+    my $pid = fork();
+    return { ok => JSON::PP::false, error => "fork 音频流服务失败：$!" } unless defined $pid;
+    if ($pid) {
+        write_text_file($pidfile, "$pid\n");
+        select(undef, undef, undef, 0.25);
+        return {
+            ok => JSON::PP::true,
+            mode => 'pcm-stream',
+            port => $port,
+            rate => $rate,
+            channels => $channels,
+            volume => $vol,
+            detail => "PCM 实时音频流已启动，端口 $port",
+            pid => $pid,
+        };
+    }
+
+    open STDOUT, '>>', $logfile;
+    open STDERR, '>>', $logfile;
+    $SIG{TERM} = sub { exit 0 };
+    $SIG{INT} = sub { exit 0 };
+    system('sh', '-c', speaker_setup_cmd($vol));
+    my $server = IO::Socket::INET->new(
+        LocalHost => '0.0.0.0',
+        LocalPort => $port,
+        Proto     => 'tcp',
+        Listen    => 1,
+        Reuse     => 1,
+    );
+    if (!$server) {
+        print now_text() . " audio stream listen failed: $!\n";
+        exit 2;
+    }
+    print now_text() . " audio stream listening on $port rate=$rate channels=$channels volume=$vol\n";
+    while (my $sock = $server->accept()) {
+        $sock->autoflush(1);
+        binmode($sock);
+        my $device = $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0';
+        my $buffer_us = int($ENV{AUDIO_STREAM_BUFFER_US} || 80000);
+        my $period_us = int($ENV{AUDIO_STREAM_PERIOD_US} || 20000);
+        $buffer_us = 80000 if $buffer_us <= 0;
+        $period_us = 20000 if $period_us <= 0;
+        my $cmd = 'aplay -q -D ' . shell_quote($device) .
+                  ' --buffer-time=' . int($buffer_us) .
+                  ' --period-time=' . int($period_us) .
+                  ' -f S16_LE -r ' . int($rate) .
+                  ' -c ' . int($channels);
+        my $aplay;
+        {
+            local $SIG{CHLD} = 'DEFAULT';
+            open $aplay, '|-', 'sh', '-c', $cmd;
+        }
+        if (!$aplay) {
+            print now_text() . " open aplay failed: $!\n";
+            close $sock;
+            next;
+        }
+        binmode($aplay);
+        my $buf = '';
+        while (read($sock, $buf, 3200)) {
+            last unless print {$aplay} $buf;
+        }
+        close $aplay;
+        close $sock;
+        print now_text() . " audio stream client closed\n";
+    }
+    exit 0;
+}
+
+sub stop_audio_pcm_stream {
+    my $pidfile = "$DATA_DIR/audio-stream.pid";
+    my $pid = -f $pidfile ? read_file_trim($pidfile) : '';
+    if ($pid =~ /^\d+$/) {
+        kill 'TERM', int($pid);
+        for (1..10) {
+            last unless kill(0, int($pid));
+            select(undef, undef, undef, 0.1);
+        }
+        kill 'KILL', int($pid) if kill(0, int($pid));
+        unlink $pidfile;
+        return { ok => JSON::PP::true, detail => 'PCM 实时音频流已停止', pid => int($pid) };
+    }
+    return { ok => JSON::PP::true, detail => '当前没有运行中的 PCM 实时音频流' };
+}
+
+sub release_audio_playback_device {
+    stop_audio_pcm_stream();
+    system('sh', '-c', 'killall aplay 2>/dev/null');
+    select(undef, undef, undef, 0.18);
+    return { ok => JSON::PP::true };
 }
 
 sub aplay_cmd {
@@ -1726,7 +1872,7 @@ sub dispense {
     return { ok => JSON::PP::false, error => '仓位超出范围：1-23' } if $slot > 23;
     my $control_code = exists $p->{control_code} && "$p->{control_code}" =~ /^\d+$/
         ? int($p->{control_code})
-        : $slot - 1;
+        : cabinet_control_code($slot);
     return { ok => JSON::PP::false, error => '控制码超出范围：0-22' } if $control_code < 0 || $control_code > 22;
 
     my @med = sqlite_row('SELECT id,name,stock FROM medicines WHERE slot=' . int($slot) . ' ORDER BY id LIMIT 1;');
@@ -1757,9 +1903,7 @@ sub dispense {
         $detail = '未配置 UART5/GPIO，已按模拟出药记录';
     }
 
-    if ($result eq 'success' && $stock > 0 && defined $med[0]) {
-        sqlite_exec('UPDATE medicines SET stock=stock-1 WHERE id=' . int($med[0]) . ';');
-    }
+    # 家庭药柜按“开柜取用”记录，不按每次开柜递减整盒库存。
     add_record($name, $slot, 'dispense', $result, $detail);
     return {
         ok => ($result eq 'success' ? JSON::PP::true : JSON::PP::false),
@@ -1876,7 +2020,7 @@ sub dispense_uart {
     my ($dev, $slot, $control_code) = @_;
     return { ok => JSON::PP::false, error => 'UART 设备不存在：' . ($dev || '') } unless $dev && -e $dev;
     return { ok => JSON::PP::false, error => '仓位超出单字节范围' } if $slot < 1 || $slot > 255;
-    $control_code = $slot - 1 unless defined $control_code;
+    $control_code = cabinet_control_code($slot) unless defined $control_code;
     return { ok => JSON::PP::false, error => '控制码超出单字节范围' } if $control_code < 0 || $control_code > 255;
 
     my $baud = int($ENV{DISPENSE_UART_BAUD} || 9600);
@@ -1895,6 +2039,21 @@ sub dispense_uart {
     my $hex = uc(sprintf('%02X', $command));
     write_text_file("$DATA_DIR/dispense-uart.log", now_text() . " dev=$dev baud=$baud slot=$slot control_code=$command hex=$hex\n");
     return { ok => JSON::PP::true, detail => "UART5 已发送 $slot 号仓控制字节 0x$hex（控制码 $command）" };
+}
+
+sub cabinet_control_code {
+    my ($slot) = @_;
+    my %map = (
+        1 => 3,  2 => 2,  3 => 1,  4 => 0,
+        5 => 7,  6 => 6,  7 => 5,  8 => 4,
+        9 => 9,  10 => 8,
+        11 => 11, 12 => 10,
+        13 => 13, 14 => 12,
+        15 => 16, 16 => 15, 17 => 14,
+        18 => 19, 19 => 18, 20 => 17,
+        21 => 22, 22 => 21, 23 => 20,
+    );
+    return exists $map{$slot} ? $map{$slot} : $slot - 1;
 }
 
 sub read_temperature {
@@ -2420,7 +2579,7 @@ sub dashscope_api_key {
 sub build_ai_payload {
     my ($message, $stream) = @_;
     my $model = $ENV{AI_MODEL} || 'deepseek-v4-flash';
-    return {
+    my $payload = {
         model => $model,
         messages => [
             {
@@ -2432,11 +2591,18 @@ sub build_ai_payload {
                 content => "用户本次问题：$message\n\n请结合上面的老人档案、最近体征和本机药柜库存回答。若信息不足，先说明需要补充哪些信息。回答控制在 140 到 220 个中文字符，最多 4 条要点，适合语音播报和小屏显示。"
             },
         ],
-        thinking => { type => 'disabled' },
         temperature => 0.25,
         max_tokens => 320,
         stream => $stream ? JSON::PP::true : JSON::PP::false,
     };
+    my $thinking_enabled = ($ENV{AI_ENABLE_THINKING} || '0') ne '0';
+    if (($ENV{AI_API_BASE} || 'https://api.deepseek.com/chat/completions') =~ /deepseek\.com/) {
+        $payload->{thinking} = { type => $thinking_enabled ? 'enabled' : 'disabled' };
+        $payload->{reasoning_effort} = 'high' if $thinking_enabled;
+    } elsif ($thinking_enabled) {
+        $payload->{enable_thinking} = JSON::PP::true;
+    }
+    return $payload;
 }
 
 sub ai_system_prompt {

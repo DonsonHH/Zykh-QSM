@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
+import json
 import math
 import re
+import socket
 import subprocess
 import wave
+from urllib.parse import urlparse
 from uuid import uuid4
 
-from fastapi import APIRouter
+import websockets
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from ..config import settings
@@ -22,6 +27,7 @@ router = APIRouter(prefix="/api/audio", tags=["audio"])
 class SpeakRequest(BaseModel):
     text: str
     volume: int | None = None
+    speed: float | None = None
 
 
 class AsrRequest(BaseModel):
@@ -37,25 +43,57 @@ class BeepRequest(BaseModel):
     volume: int | None = None
 
 
+class HostMicVolumeRequest(BaseModel):
+    volume: int = 70
+
+
 class PlayAudioRequest(BaseModel):
     audio_base64: str
     format: str = "wav"
     volume: int = 230
 
 
+class AudioStreamRequest(BaseModel):
+    port: int | None = None
+    volume: int = 230
+    rate: int = 16000
+    channels: int = 1
+
+
 @router.get("/host/status")
 def host_audio_status() -> dict[str, object]:
     microphones = _host_microphones()
+    speaker_available = _tcp_available(settings.qsm_api_base, timeout=0.45)
     return {
         "ok": bool(microphones),
         "microphone_available": bool(microphones),
         "preferred_device": settings.host_mic_device,
         "microphones": microphones,
         "speaker_route": "qsm",
-        "speaker_available": QsmClient().get_qsm_status().connected,
+        "speaker_available": speaker_available,
         "relay_supported": True,
-        "relay_note": "可将本机生成或采集的短音频发送到外设喇叭播放；实时连续转发需要前端持续推送音频片段。",
+        "relay_note": "主机系统声音外放只使用低延迟 PCM 实时流；语音合成播报仍走外设播报接口。",
     }
+
+
+@router.post("/host/mic-volume")
+def set_host_mic_volume(request: HostMicVolumeRequest) -> dict[str, object]:
+    volume = max(0, min(int(request.volume), 100))
+    attempts: list[str] = []
+    commands = [
+        ["pactl", "set-source-volume", "@DEFAULT_SOURCE@", f"{volume}%"],
+        ["amixer", "sset", "Capture", f"{volume}%"],
+    ]
+    for command in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            attempts.append(f"{command[0]}: {exc}")
+            continue
+        if result.returncode == 0:
+            return {"ok": True, "volume": volume, "message": "本机麦克风音量已更新。", "method": command[0]}
+        attempts.append(f"{command[0]}: {(result.stderr or result.stdout or '').strip()[:160]}")
+    return {"ok": False, "volume": volume, "message": "未能调整本机麦克风音量。", "detail": "；".join(attempts)}
 
 
 @router.post("/asr")
@@ -68,14 +106,18 @@ def audio_asr(request: AsrRequest) -> dict[str, object]:
 
 @router.post("/speak")
 def audio_speak(request: SpeakRequest) -> dict[str, object]:
-    result = QsmClient().audio_speak(request.text, request.volume)
+    client = QsmClient()
+    client.audio_stream_stop()
+    result = client.audio_speak(request.text, request.volume, request.speed)
     _record("语音播报", "语音播报", "已请求外设播报。" if result.get("ok") else str(result.get("error_message") or "播报失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
 
 
 @router.post("/beep")
 def audio_beep(request: BeepRequest | None = None) -> dict[str, object]:
-    result = QsmClient().audio_beep(request.volume if request else None)
+    client = QsmClient()
+    client.audio_stream_stop()
+    result = client.audio_beep(request.volume if request else None)
     _record("提示音", "提示音测试", "已请求外设播放提示音。" if result.get("ok") else str(result.get("error_message") or "提示音失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
 
@@ -85,13 +127,15 @@ def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
     text = request.text.strip() or "外放测试，声音链路正常。"
     audio_b64 = base64.b64encode(_notice_wav_bytes()).decode("ascii")
     volume = max(0, min(int(request.volume), 255))
-    result = QsmClient().audio_play_base64(audio_b64, "wav", volume)
+    client = QsmClient()
+    client.audio_stream_stop()
+    result = client.audio_play_base64(audio_b64, "wav", volume)
     mode = "uploaded-audio"
     if not result.get("ok"):
-        result = QsmClient().audio_speak(text, volume)
+        result = client.audio_speak(text, volume)
         mode = "tts"
     if not result.get("ok"):
-        result = QsmClient().audio_beep(volume)
+        result = client.audio_beep(volume)
         mode = "beep"
     ok = bool(result.get("ok"))
     _record("外放测试", "外设外放", "已请求外设播放声音。" if ok else str(result.get("error_message") or "外放测试失败。"), ok)
@@ -108,7 +152,9 @@ def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
 @router.post("/play")
 def audio_play(request: PlayAudioRequest) -> dict[str, object]:
     volume = max(0, min(int(request.volume), 255))
-    result = QsmClient().audio_play_base64(request.audio_base64, request.format, volume)
+    client = QsmClient()
+    client.audio_stream_stop()
+    result = client.audio_play_base64(request.audio_base64, request.format, volume)
     ok = bool(result.get("ok"))
     _record("音频转发", "外设外放", "已发送音频到外设喇叭。" if ok else str(result.get("error_message") or "音频转发失败。"), ok)
     return {
@@ -116,6 +162,135 @@ def audio_play(request: PlayAudioRequest) -> dict[str, object]:
         "message": result.get("detail") or result.get("error_message") or "",
         "raw": result,
     }
+
+
+@router.post("/stream/start")
+def audio_stream_start(request: AudioStreamRequest) -> dict[str, object]:
+    result = QsmClient().audio_stream_start(
+        port=request.port or settings.qsm_audio_stream_port,
+        volume=request.volume,
+        rate=request.rate,
+        channels=request.channels,
+    )
+    ok = bool(result.get("ok"))
+    _record("音频实时流", "外设实时外放", "已启动音频实时流。" if ok else str(result.get("error_message") or "实时流启动失败。"), ok)
+    return {"ok": ok, "message": result.get("detail") or result.get("error_message") or "", "raw": result}
+
+
+@router.post("/stream/stop")
+def audio_stream_stop() -> dict[str, object]:
+    result = QsmClient().audio_stream_stop()
+    ok = bool(result.get("ok"))
+    return {"ok": ok, "message": result.get("detail") or result.get("error_message") or "", "raw": result}
+
+
+@router.websocket("/asr/realtime")
+async def audio_asr_realtime(websocket: WebSocket) -> None:
+    await websocket.accept()
+    api_key = _read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)
+    if not api_key:
+        await websocket.send_json({"type": "error", "message": "未配置实时语音识别 API Key。"})
+        await websocket.close(code=1011)
+        return
+
+    model = "qwen3-asr-flash-realtime"
+    url = f"wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model={model}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "OpenAI-Beta": "realtime=v1",
+    }
+    try:
+        async with websockets.connect(url, additional_headers=headers, ping_interval=20, ping_timeout=20) as upstream:
+            await upstream.send(
+                json.dumps(
+                    {
+                        "event_id": f"event-{uuid4().hex[:10]}",
+                        "type": "session.update",
+                        "session": {
+                            "modalities": ["text"],
+                            "input_audio_format": "pcm",
+                            "sample_rate": 16000,
+                            "input_audio_transcription": {"language": "zh"},
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "threshold": 0.2,
+                                "silence_duration_ms": 800,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            await websocket.send_json({"type": "ready", "model": model})
+
+            async def client_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("bytes") is not None:
+                        audio = base64.b64encode(message["bytes"]).decode("ascii")
+                        await upstream.send(
+                            json.dumps(
+                                {
+                                    "event_id": f"event-{uuid4().hex[:10]}",
+                                    "type": "input_audio_buffer.append",
+                                    "audio": audio,
+                                }
+                            )
+                        )
+                        continue
+                    text = message.get("text")
+                    if text:
+                        try:
+                            payload = json.loads(text)
+                        except json.JSONDecodeError:
+                            payload = {}
+                        if payload.get("type") == "stop":
+                            await upstream.send(
+                                json.dumps(
+                                    {
+                                        "event_id": f"event-{uuid4().hex[:10]}",
+                                        "type": "input_audio_buffer.commit",
+                                    }
+                                )
+                            )
+                            continue
+                    if message.get("type") == "websocket.disconnect":
+                        return
+
+            async def upstream_to_client() -> None:
+                async for raw in upstream:
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    text, final = _extract_transcript(event)
+                    if text:
+                        await websocket.send_json(
+                            {
+                                "type": "transcript",
+                                "text": text,
+                                "final": final,
+                                "event_type": event.get("type", ""),
+                            }
+                        )
+                        if final:
+                            return
+                    elif event.get("type") in {"error", "session.error"} or event.get("error"):
+                        await websocket.send_json({"type": "error", "message": _event_error_message(event)})
+
+            tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in done:
+                task.result()
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": f"实时语音识别连接失败：{exc}"})
+        except Exception:
+            pass
 
 
 def _record(record_type: str, title: str, description: str, ok: bool) -> None:
@@ -181,6 +356,70 @@ def _sanitize_audio_label(value: str) -> str:
     if "NVIDIA" in text or board_name in text:
         return "板载麦克风"
     return text or "本机麦克风"
+
+
+def _tcp_available(url: str, timeout: float = 0.5) -> bool:
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _read_api_key(value: str, path) -> str:
+    if value.strip():
+        return value.strip()
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def _extract_transcript(event: dict[str, object]) -> tuple[str, bool]:
+    event_type = str(event.get("type") or "")
+    final = any(token in event_type for token in ("completed", "final", "done"))
+    for key in ("transcript", "text", "delta"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), final
+    for key in ("response", "item", "conversation", "input_audio_transcription"):
+        value = event.get(key)
+        text = _find_text(value)
+        if text:
+            return text, final
+    return "", final
+
+
+def _find_text(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("transcript", "text", "delta"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+        for nested in value.values():
+            text = _find_text(nested)
+            if text:
+                return text
+    if isinstance(value, list):
+        for nested in value:
+            text = _find_text(nested)
+            if text:
+                return text
+    return ""
+
+
+def _event_error_message(event: dict[str, object]) -> str:
+    error = event.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("code") or "实时语音识别返回错误")
+    if isinstance(error, str):
+        return error
+    return "实时语音识别返回错误"
 
 
 def _notice_wav_bytes() -> bytes:

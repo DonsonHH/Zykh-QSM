@@ -14,11 +14,15 @@ class NetworkService:
         interface = settings.network_sim_interface
         sim_ip = self._interface_ipv4(interface)
         default_iface = self._default_interface()
+        wifi = self._wifi_status(default_iface)
         sim_route = default_iface == interface
         reachable = self._ping_target("223.5.5.5") if sim_ip else False
         qsm_network = QsmClient().get_network_status()
         qsm_sim_present = bool(qsm_network.get("sim_present") or qsm_network.get("connected"))
         qsm_connected = bool(qsm_network.get("connected"))
+        qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
+        sim_connected = bool(qsm_connected or (sim_ip and (sim_route or reachable)))
+        sim_present = bool(qsm_sim_present or sim_ip)
 
         if preferred in {"local", "offline"}:
             return {
@@ -32,12 +36,36 @@ class NetworkService:
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
                 "default_interface": default_iface,
+                **wifi,
+                "sim_present": sim_present,
+                "sim_connected": sim_connected,
+                "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
                 "simulated": False,
                 "warnings": ["当前手动切换到本地兜底。"],
             }
 
+        if wifi["wifi_connected"]:
+            return {
+                "ok": True,
+                "mode": "wifi",
+                "transport": "wifi",
+                "status": "good",
+                "signal": "good",
+                "label": "联网正常",
+                "ai_mode": "cloud",
+                "sim_interface": str(qsm_network.get("interface") or interface),
+                "sim_ip": qsm_ip or sim_ip,
+                "default_interface": default_iface,
+                **wifi,
+                "sim_present": sim_present,
+                "sim_connected": sim_connected,
+                "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
+                "simulated": False,
+                "source": "host",
+                "warnings": [] if sim_connected else ["SIM 备用链路未连通。"],
+            }
+
         if qsm_connected:
-            qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
             return {
                 "ok": True,
                 "mode": "sim",
@@ -49,6 +77,10 @@ class NetworkService:
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
+                **wifi,
+                "sim_present": sim_present,
+                "sim_connected": True,
+                "sim_signal": str(qsm_network.get("signal") or "good"),
                 "simulated": False,
                 "source": "qsm",
                 "warnings": [],
@@ -67,6 +99,10 @@ class NetworkService:
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
+                **wifi,
+                "sim_present": True,
+                "sim_connected": False,
+                "sim_signal": str(qsm_network.get("signal") or "weak"),
                 "simulated": False,
                 "source": "qsm",
                 "warnings": ["外设已检测到 SIM 模块，但数据网络未连通。"],
@@ -84,6 +120,10 @@ class NetworkService:
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
                 "default_interface": default_iface,
+                **wifi,
+                "sim_present": True,
+                "sim_connected": True,
+                "sim_signal": "good",
                 "simulated": False,
                 "warnings": [] if sim_route else ["SIM接口已获取地址，但默认出口未走 SIM。"],
             }
@@ -99,6 +139,10 @@ class NetworkService:
             "sim_interface": interface,
             "sim_ip": sim_ip,
             "default_interface": default_iface,
+            **wifi,
+            "sim_present": sim_present,
+            "sim_connected": False,
+            "sim_signal": "none",
             "simulated": False,
             "warnings": ["未检测到可用 SIM 出口。"],
         }
@@ -152,6 +196,39 @@ class NetworkService:
             return ""
         match = re.search(r"\bdev\s+(\S+)", result.stdout or "")
         return match.group(1) if match else ""
+
+    @staticmethod
+    def _wifi_status(default_iface: str) -> dict[str, object]:
+        ssid = ""
+        signal = "none"
+        iface = default_iface if default_iface.startswith(("wl", "wlan")) else "wlan0"
+        try:
+            result = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=1, check=False)
+            ssid = (result.stdout or "").strip()
+        except (OSError, subprocess.TimeoutExpired):
+            ssid = ""
+        try:
+            result = subprocess.run(["iw", "dev", iface, "link"], capture_output=True, text=True, timeout=1, check=False)
+            output = result.stdout or ""
+            if "Connected to" in output:
+                if not ssid:
+                    match_ssid = re.search(r"SSID:\s*(.+)", output)
+                    ssid = match_ssid.group(1).strip() if match_ssid else ""
+                match_signal = re.search(r"signal:\s*(-?\d+)", output)
+                if match_signal:
+                    dbm = int(match_signal.group(1))
+                    signal = "good" if dbm >= -67 else "weak" if dbm >= -80 else "none"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        connected = bool(ssid or default_iface.startswith(("wl", "wlan")))
+        if connected and signal == "none":
+            signal = "good" if default_iface.startswith(("wl", "wlan")) else "weak"
+        return {
+            "wifi_connected": connected,
+            "wifi_signal": signal,
+            "wifi_ssid": ssid,
+            "wifi_interface": iface if connected else "",
+        }
 
     @staticmethod
     def _ping_target(target: str) -> bool:

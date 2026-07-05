@@ -32,9 +32,14 @@ def ai_chat(request: AiChatRequest) -> dict[str, object]:
 @router.post("/chat/stream")
 def ai_chat_stream(request: AiChatRequest):
     def events():
-        yield "event: meta\ndata: {\"ok\":true}\n\n"
-        for chunk in AiService().stream_chunks(request.text()):
-            yield f"event: delta\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
+        result = AiService().chat(request.text())
+        source = str(result.get("source") or "local_fallback")
+        model = str(result.get("model") or "")
+        reply = str(result.get("reply") or "")
+        yield f"event: meta\ndata: {json.dumps({'ok': True, 'source': source, 'model': model}, ensure_ascii=False)}\n\n"
+        chunks = [reply[index : index + 18] for index in range(0, len(reply), 18)] or [""]
+        for chunk in chunks:
+            yield f"event: delta\ndata: {json.dumps({'text': chunk, 'source': source}, ensure_ascii=False)}\n\n"
         yield "event: done\ndata: {\"ok\":true}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

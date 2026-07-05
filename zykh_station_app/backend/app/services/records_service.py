@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from .. import db
 from ..repositories.device_action_repository import DeviceActionRepository
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.vitals_repository import VitalsRepository
-from ..schemas.records import RecentRecord, RecordsSummary, ServiceUser, TodayPlan
+from ..schemas.records import RecentRecord, RecordsSummary, ServiceUser, ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlan
 from .sync_service import SyncService
 
 
@@ -41,9 +43,77 @@ class RecordsService:
         db.init_db()
         with db.connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, age, profile, note, status FROM service_users ORDER BY id"
+                "SELECT id, name, age, profile, allergies, note, status FROM service_users ORDER BY id"
             ).fetchall()
         return [ServiceUser(**dict(row)) for row in rows]
+
+    def create_service_user(self, request: ServiceUserCreateRequest) -> ServiceUser:
+        db.init_db()
+        name = request.name.strip()[:12] or "新使用人"
+        age = max(0, min(int(request.age or 0), 120))
+        profile = request.profile.strip()[:80] or "待补充"
+        allergies = request.allergies.strip()[:80]
+        note = request.note.strip()[:120] or "AI问询新建"
+        status = request.status.strip()[:20] or "待完善"
+        slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", name) or "user"
+        user_id = f"user-{slug}-{db.now_text().replace(' ', '-').replace(':', '')}"
+        with db.connect() as conn:
+            existing = conn.execute("SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE name=?", (name,)).fetchone()
+            if existing:
+                return ServiceUser(**dict(existing))
+            conn.execute(
+                """
+                INSERT INTO service_users(id, name, age, profile, allergies, note, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, name, age, profile, allergies, note, status),
+            )
+        return ServiceUser(id=user_id, name=name, age=age, profile=profile, allergies=allergies, note=note, status=status)
+
+    def update_service_user(self, user_id: str, request: ServiceUserUpdateRequest) -> ServiceUser:
+        db.init_db()
+        with db.connect() as conn:
+            existing = conn.execute(
+                "SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if not existing:
+                raise ValueError("服务对象不存在")
+
+            current = dict(existing)
+            name = (request.name if request.name is not None else current["name"]).strip()[:12] or "新使用人"
+            age_value = request.age if request.age is not None else current["age"]
+            age = max(0, min(int(age_value or 0), 120))
+            profile = (request.profile if request.profile is not None else current["profile"]).strip()[:80] or "待补充"
+            allergies = (request.allergies if request.allergies is not None else current["allergies"]).strip()[:80]
+            note = (request.note if request.note is not None else current["note"]).strip()[:120]
+            status = (request.status if request.status is not None else current["status"]).strip()[:20] or "待完善"
+
+            duplicate = conn.execute(
+                "SELECT id FROM service_users WHERE name=? AND id<>?",
+                (name, user_id),
+            ).fetchone()
+            if duplicate:
+                raise ValueError("服务对象名称已存在")
+
+            conn.execute(
+                """
+                UPDATE service_users
+                SET name=?, age=?, profile=?, allergies=?, note=?, status=?
+                WHERE id=?
+                """,
+                (name, age, profile, allergies, note, status, user_id),
+            )
+
+        return ServiceUser(id=user_id, name=name, age=age, profile=profile, allergies=allergies, note=note, status=status)
+
+    def delete_service_user(self, user_id: str) -> None:
+        db.init_db()
+        with db.connect() as conn:
+            existing = conn.execute("SELECT id FROM service_users WHERE id=?", (user_id,)).fetchone()
+            if not existing:
+                raise ValueError("服务对象不存在")
+            conn.execute("DELETE FROM service_users WHERE id=?", (user_id,))
 
     def list_today_plans(self) -> list[TodayPlan]:
         db.init_db()

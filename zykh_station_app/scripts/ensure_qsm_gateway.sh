@@ -16,7 +16,7 @@ warn() {
 }
 
 gateway_ready() {
-  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 16 "$QSM_BASE_URL/api/status" >/dev/null 2>&1
+  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 -X POST "$QSM_BASE_URL/api/audio/stream/stop" >/dev/null 2>&1
 }
 
 if gateway_ready; then

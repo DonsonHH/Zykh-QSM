@@ -35,6 +35,27 @@ class MedicineDetailResponse(BaseModel):
     medicine: Medicine
 
 
+class MedicineUpdateRequest(BaseModel):
+    name: str | None = None
+    manufacturer: str | None = None
+    barcode: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
+    contraindications: list[str] | None = None
+    stock: int | None = None
+    unit: str | None = None
+    expire_date: str | None = None
+    safety_note: str | None = None
+    is_otc: bool | None = None
+    is_emergency: bool | None = None
+
+
+class MedicineUpdateResponse(BaseModel):
+    ok: bool = True
+    message: str
+    medicine: Medicine
+
+
 class MedicineScanRequest(BaseModel):
     mode: str = "药品识别"
     manual_code: str | None = None

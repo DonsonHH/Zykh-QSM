@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
-import { SystemCheckModal } from "./components/SystemCheckModal.jsx";
 import { loadDashboard } from "./api/dashboard.js";
 import { loadNetworkStatus } from "./api/network.js";
 import { mockDashboard } from "./api/mockData.js";
@@ -12,6 +11,7 @@ import { Inquiry } from "./pages/Inquiry.jsx";
 import { Records } from "./pages/Records.jsx";
 import { Scan } from "./pages/Scan.jsx";
 import { Vitals } from "./pages/Vitals.jsx";
+import { Settings } from "./pages/Settings.jsx";
 
 export function App() {
   const initialParams = new URLSearchParams(window.location.search);
@@ -22,7 +22,6 @@ export function App() {
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
-  const [systemCheckOpen, setSystemCheckOpen] = useState(initialParams.get("systemCheck") === "1");
   const [networkStatus, setNetworkStatus] = useState(null);
   const toastTimerRef = useRef(null);
 
@@ -55,12 +54,16 @@ export function App() {
       nextPage !== "inquiry" &&
       nextPage !== "records" &&
       nextPage !== "scan" &&
-      nextPage !== "vitals"
+      nextPage !== "vitals" &&
+      nextPage !== "settings"
     ) {
       notify("下一阶段开发中");
     }
     if (nextPage === "vitals") {
       setVitalsReturnPage(options.returnTo || page || "home");
+    }
+    if (nextPage === "medicines" && (options.medicineId || options.category)) {
+      setMedicineFocus({ medicineId: options.medicineId || null, category: options.category || null });
     }
     setPage(nextPage);
   }
@@ -82,7 +85,7 @@ export function App() {
           networkStatus={networkStatus}
           now={now}
           page={page}
-          onOpenSystemCheck={() => setSystemCheckOpen(true)}
+          onOpenSystemCheck={() => setPage("settings")}
         />
         {page === "home" ? (
           <Home dashboard={dashboard} onNavigate={handleNav} notify={notify} />
@@ -96,18 +99,17 @@ export function App() {
           <Scan notify={notify} onNavigate={handleNav} />
         ) : page === "vitals" ? (
           <Vitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
+        ) : page === "settings" ? (
+          <Settings
+            notify={notify}
+            onNavigate={handleNav}
+            networkStatus={networkStatus}
+            onNetworkStatusChange={setNetworkStatus}
+          />
         ) : (
           <ComingSoon page={page} />
         )}
         <BottomNav page={page} onChange={handleNav} />
-        <SystemCheckModal
-          open={systemCheckOpen}
-          syncLabel={dashboard?.chips?.find((chip) => chip.id === "sync")?.value || "本地记录"}
-          networkStatus={networkStatus}
-          onNetworkStatusChange={setNetworkStatus}
-          notify={notify}
-          onClose={() => setSystemCheckOpen(false)}
-        />
         <div className={`toast ${toast ? "show" : ""}`} aria-live="polite">
           {toast}
         </div>

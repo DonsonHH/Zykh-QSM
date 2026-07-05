@@ -42,8 +42,6 @@ class DispenseService:
             raise DispenseError("药品仓位与当前库存记录不一致。")
         if request.confirmed_safety_notice is not True:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
-        if request.quantity > medicine.stock:
-            raise DispenseError("库存不足，无法完成取药确认。")
         dry_run = self._should_dry_run(request, medicine, force_dry_run)
         qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
         qsm_ok = bool(qsm_result.get("ok"))
@@ -57,8 +55,6 @@ class DispenseService:
         message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
         record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
         self.dispense_repository.append(record)
-        if not dry_run:
-            self.medicine_repository.decrement_stock(medicine.id, request.quantity)
         return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
     def open_cabinet(self, request: DispenseOpenRequest) -> DispenseOpenResponse:

@@ -12,6 +12,33 @@ from ..schemas.qsm import QsmStatus
 from .local_camera import LocalCameraService
 
 
+CABINET_CONTROL_CODE_BY_SLOT: dict[int, int] = {
+    1: 3,
+    2: 2,
+    3: 1,
+    4: 0,
+    5: 7,
+    6: 6,
+    7: 5,
+    8: 4,
+    9: 9,
+    10: 8,
+    11: 11,
+    12: 10,
+    13: 13,
+    14: 12,
+    15: 16,
+    16: 15,
+    17: 14,
+    18: 19,
+    19: 18,
+    20: 17,
+    21: 22,
+    22: 21,
+    23: 20,
+}
+
+
 class QsmClient:
     def __init__(self, mode: str | None = None, base_url: str | None = None) -> None:
         self.mode = (mode or settings.qsm_mode or "mock").lower()
@@ -32,7 +59,7 @@ class QsmClient:
         if self.mode != "real":
             return self._mock_status()
 
-        payload, error = self._request_json(settings.qsm_status_path, timeout=settings.qsm_network_timeout_seconds)
+        payload, error = self._request_json(settings.qsm_status_path, timeout=settings.qsm_timeout_seconds)
         if error:
             return self._real_unavailable(error)
 
@@ -191,7 +218,8 @@ class QsmClient:
         try:
             numeric_slot = int(slot)
             if 1 <= numeric_slot <= 23:
-                payload["control_code"] = numeric_slot - 1
+                # UI/backend use 1-23; the physical cabinet wiring has mirrored rows.
+                payload["control_code"] = CABINET_CONTROL_CODE_BY_SLOT[numeric_slot]
         except ValueError:
             pass
         if dry_run:
@@ -225,17 +253,19 @@ class QsmClient:
     def audio_asr(self, duration: int = 4) -> dict[str, Any]:
         return self._qsm_action(settings.qsm_audio_asr_path, {"duration": duration}, "语音识别")
 
-    def audio_speak(self, text: str, volume: int | None = None) -> dict[str, Any]:
+    def audio_speak(self, text: str, volume: int | None = None, speed: float | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"text": text}
         if volume is not None:
             payload["volume"] = max(0, min(int(volume), 255))
-        return self._qsm_action(settings.qsm_audio_speak_path, payload, "语音播报")
+        if speed is not None:
+            payload["speed"] = max(0.75, min(float(speed), 1.45))
+        return self._qsm_action(settings.qsm_audio_speak_path, payload, "语音播报", timeout=settings.qsm_audio_timeout_seconds)
 
     def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         if volume is not None:
             payload["volume"] = max(0, min(int(volume), 255))
-        return self._qsm_action(settings.qsm_audio_beep_path, payload, "提示音")
+        return self._qsm_action(settings.qsm_audio_beep_path, payload, "提示音", timeout=12)
 
     def audio_play_base64(self, audio_base64: str, fmt: str = "wav", volume: int | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"audio_base64": audio_base64, "format": fmt}
@@ -245,7 +275,28 @@ class QsmClient:
             settings.qsm_audio_play_path,
             payload,
             "音频播放",
+            timeout=settings.qsm_audio_timeout_seconds,
         )
+
+    def audio_stream_start(
+        self,
+        *,
+        port: int | None = None,
+        volume: int | None = None,
+        rate: int = 16000,
+        channels: int = 1,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "port": int(port or settings.qsm_audio_stream_port),
+            "rate": int(rate),
+            "channels": int(channels),
+        }
+        if volume is not None:
+            payload["volume"] = max(0, min(int(volume), 255))
+        return self._qsm_action(settings.qsm_audio_stream_start_path, payload, "音频实时流启动")
+
+    def audio_stream_stop(self) -> dict[str, Any]:
+        return self._qsm_action(settings.qsm_audio_stream_stop_path, {}, "音频实时流停止")
 
     def get_network_status(self) -> dict[str, Any]:
         if self.mode != "real":

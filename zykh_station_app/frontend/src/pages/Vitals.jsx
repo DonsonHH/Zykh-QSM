@@ -83,6 +83,11 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           notify("未检测到稳定手指信号，请按引导重新放置后重测");
           return;
         }
+        try {
+          window.sessionStorage.setItem("zykh-latest-vitals", JSON.stringify(data));
+        } catch {
+          // sessionStorage is optional.
+        }
         notify("体征测量已完成");
       })
       .catch((error) => {

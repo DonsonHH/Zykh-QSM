@@ -135,11 +135,13 @@ def init_db() -> None:
               name TEXT NOT NULL,
               age INTEGER NOT NULL,
               profile TEXT NOT NULL,
+              allergies TEXT NOT NULL DEFAULT '',
               note TEXT NOT NULL,
               status TEXT NOT NULL
             )
             """
         )
+        _ensure_column(conn, "service_users", "allergies", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS today_plans (
@@ -196,14 +198,23 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
     if conn.execute("SELECT COUNT(*) AS count FROM service_users").fetchone()["count"] == 0:
         conn.executemany(
             """
-            INSERT INTO service_users(id, name, age, profile, note, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO service_users(id, name, age, profile, allergies, note, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                ("zhangsan", "张三", 65, "高血压", "今日有计划", "重点关注"),
-                ("lisi", "李四", 72, "糖尿病", "随访对象", "随访"),
-                ("wangwu", "王五", 58, "长期胃病", "近期有问询", "观察"),
+                ("zhangsan", "张三", 65, "高血压", "头孢过敏；避免头孢类抗生素", "今日演示对象", "重点关注"),
+                ("lisi", "李四", 72, "糖尿病", "", "随访对象", "随访"),
+                ("wangwu", "王五", 58, "长期胃病", "", "近期有问询", "观察"),
             ],
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE service_users
+            SET allergies='头孢过敏；避免头孢类抗生素',
+                note=CASE WHEN note='' OR note='今日有计划' THEN '今日演示对象' ELSE note END
+            WHERE name='张三'
+            """
         )
     if conn.execute("SELECT COUNT(*) AS count FROM today_plans").fetchone()["count"] == 0:
         conn.executemany(

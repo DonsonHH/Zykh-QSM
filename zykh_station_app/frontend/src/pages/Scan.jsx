@@ -106,7 +106,7 @@ export function Scan({ notify, onNavigate }) {
             }
           } catch {
             setLiveStatus("preview");
-            setLiveMessage("实时扫码暂不可用，请使用拍照识别。");
+            setLiveMessage("实时扫码暂不可用，请调整摄像头或光线后重试。");
             detectorRef.current = null;
             serverScanRef.current = true;
           }
@@ -114,7 +114,7 @@ export function Scan({ notify, onNavigate }) {
         if (!detector && serverScanRef.current && video?.readyState >= 2 && !matchingRef.current) {
           scanCurrentFrame();
         }
-        scanTimerRef.current = window.setTimeout(tick, 1000);
+        scanTimerRef.current = window.setTimeout(tick, 650);
       };
       tick();
     }
@@ -218,7 +218,7 @@ export function Scan({ notify, onNavigate }) {
       })
       .catch(() => {
         setLiveStatus("preview");
-        setLiveMessage("实时扫码暂不可用，请使用拍照识别。");
+        setLiveMessage("实时扫码暂不可用，请调整条码位置后重试。");
         serverScanRef.current = false;
       })
       .finally(() => {
@@ -262,6 +262,9 @@ export function Scan({ notify, onNavigate }) {
           match_percent: result.match_percent ?? (data.created ? 88 : 99)
         });
         notify(data.message || "已录入药柜");
+        if (data.medicine?.id && onNavigate) {
+          window.setTimeout(() => onNavigate("medicines", { medicineId: data.medicine.id }), 480);
+        }
       })
       .catch((error) => notify(error.message || "录入失败"))
       .finally(() => setRegistering(false));
@@ -301,7 +304,7 @@ export function Scan({ notify, onNavigate }) {
               </div>
               <div className={`live-scan-badge ${liveStatus}`}>
                 <Camera size={18} aria-hidden="true" />
-                <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "每秒识别" : "摄像头预览"}</strong>
+                <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "自动识别" : "摄像头预览"}</strong>
                 <span>{liveMessage}</span>
               </div>
             </>
@@ -354,7 +357,7 @@ export function Scan({ notify, onNavigate }) {
           <div className="scan-empty-state">
             <ScanLine size={44} aria-hidden="true" />
             <strong>暂无识别结果</strong>
-            <p>请将药盒条码对准取景框，系统会每秒自动核验。</p>
+            <p>请将药盒条码对准取景框，系统会连续自动核验。</p>
           </div>
         )}
 
@@ -367,9 +370,6 @@ export function Scan({ notify, onNavigate }) {
           >
             {registering ? <CheckCircle2 size={24} aria-hidden="true" /> : <PackagePlus size={24} aria-hidden="true" />}
             <span>{registering ? "录入中..." : "完成核验并录入"}</span>
-          </button>
-          <button className="secondary-action compact" type="button" onClick={() => onNavigate("medicines")}>
-            查看药品
           </button>
         </div>
       </section>

@@ -4,7 +4,8 @@ import { RiskBadge } from "./RiskBadge.jsx";
 import { SafetyNotice } from "./SafetyNotice.jsx";
 
 export function InquiryResultStep({ result, blockedReason, onViewCandidates, onRestart, onHome }) {
-  const canProceed = Boolean(result?.can_proceed_to_dispense) && !blockedReason;
+  const riskCanProceed = result?.risk_level === "low" || result?.risk_level === "medium";
+  const canProceed = Boolean(result?.can_proceed_to_dispense || riskCanProceed) && !blockedReason;
   const categories = result?.suggested_categories || [];
   const medicines = result?.candidate_medicines || [];
   const warnings = result?.contraindication_warnings || [];

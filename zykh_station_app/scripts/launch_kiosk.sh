@@ -12,6 +12,7 @@ KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
+KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
 AUDIO_RELAY_PID=""
@@ -82,6 +83,11 @@ start_audio_relay_if_needed() {
   BACKEND_URL="$BACKEND_URL" sh "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" >"$RUN_DIR/audio-relay.log" 2>&1 &
   AUDIO_RELAY_PID="$!"
   echo "$AUDIO_RELAY_PID" >"$RUN_DIR/audio-relay.pid"
+  sleep 1
+  if ! kill -0 "$AUDIO_RELAY_PID" >/dev/null 2>&1; then
+    warn "本机音频实时转发未启动成功，日志：$RUN_DIR/audio-relay.log"
+    AUDIO_RELAY_PID=""
+  fi
 }
 
 stop_audio_relay() {
@@ -116,6 +122,68 @@ backend_ready() {
   curl -fsS --max-time 1 "$BACKEND_URL/api/health" >/dev/null 2>&1
 }
 
+backend_port() {
+  port="$(printf '%s' "$BACKEND_URL" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"
+  printf '%s\n' "${port:-8000}"
+}
+
+stop_backend_if_managed() {
+  pidfile="$RUN_DIR/backend.pid"
+  if [ ! -f "$pidfile" ]; then
+    return 0
+  fi
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  case "$pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    log "重启后端服务以加载最新配置..."
+    kill "$pid" >/dev/null 2>&1 || true
+    count=0
+    while kill -0 "$pid" >/dev/null 2>&1 && [ "$count" -lt 20 ]; do
+      count=$((count + 1))
+      sleep 0.2
+    done
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+  rm -f "$pidfile"
+}
+
+stop_project_backend_processes() {
+  port="$(backend_port)"
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+
+  stopped=0
+  for pid in $(pgrep -f "uvicorn app.main.*--port $port" 2>/dev/null || true); do
+    case "$pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    case "$cwd" in
+      "$ROOT_DIR/backend"|"$ROOT_DIR/backend/"*)
+        log "停止旧后端进程 PID $pid，以加载最新配置..."
+        kill "$pid" >/dev/null 2>&1 || true
+        stopped=1
+        ;;
+    esac
+  done
+
+  if [ "$stopped" = "1" ]; then
+    count=0
+    while [ "$count" -lt 30 ]; do
+      if ! backend_ready; then
+        break
+      fi
+      count=$((count + 1))
+      sleep 0.2
+    done
+  fi
+}
+
 frontend_ready() {
   curl -fsS --max-time 1 "$APP_URL" >/dev/null 2>&1
 }
@@ -145,8 +213,16 @@ wait_for_frontend() {
 }
 
 start_backend_if_needed() {
+  if [ "$KIOSK_RESTART_BACKEND" = "1" ]; then
+    stop_backend_if_managed
+    stop_project_backend_processes
+  fi
+
   if backend_ready; then
     log "后端已运行：$BACKEND_URL"
+    if [ "$KIOSK_RESTART_BACKEND" = "1" ]; then
+      warn "检测到 8000 端口仍有外部后端进程；如需加载最新配置，请先停止该进程后重新运行脚本。"
+    fi
     return 0
   fi
 

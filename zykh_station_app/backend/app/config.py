@@ -47,6 +47,7 @@ class Settings:
     qsm_api_base: str = _env("QSM_BASE_URL", _env("QSM_API_BASE", "http://127.0.0.1:18080")).rstrip("/")
     qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "2"))
     qsm_vitals_timeout_seconds: float = float(_env("QSM_VITALS_TIMEOUT_SECONDS", "25"))
+    qsm_audio_timeout_seconds: float = float(_env("QSM_AUDIO_TIMEOUT_SECONDS", "45"))
     qsm_vitals_prefer_full: bool = _env("QSM_VITALS_PREFER_FULL", "false").strip().lower() in {
         "1",
         "true",
@@ -64,9 +65,12 @@ class Settings:
     qsm_audio_speak_path: str = _env("QSM_AUDIO_SPEAK_PATH", "/api/audio/speak")
     qsm_audio_beep_path: str = _env("QSM_AUDIO_BEEP_PATH", "/api/audio/beep")
     qsm_audio_play_path: str = _env("QSM_AUDIO_PLAY_PATH", "/api/audio/play")
+    qsm_audio_stream_start_path: str = _env("QSM_AUDIO_STREAM_START_PATH", "/api/audio/stream/start")
+    qsm_audio_stream_stop_path: str = _env("QSM_AUDIO_STREAM_STOP_PATH", "/api/audio/stream/stop")
+    qsm_audio_stream_port: int = int(_env("QSM_AUDIO_STREAM_PORT", "19001"))
     qsm_network_status_path: str = _env("QSM_NETWORK_STATUS_PATH", "/api/network/status")
     qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")
-    qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "14"))
+    qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "3"))
     qsm_ai_chat_path: str = _env("QSM_AI_CHAT_PATH", "/api/ai/chat")
     host_mic_device: str = _env("HOST_MIC_DEVICE", "default")
     network_preferred_mode: str = _env("NETWORK_PREFERRED_MODE", "sim").strip().lower()
@@ -82,10 +86,27 @@ class Settings:
     local_camera_capture_cmd: str = _env("LOCAL_CAMERA_CAPTURE_CMD", "")
     medicine_scan_cmd: str = _env("MEDICINE_SCAN_CMD", "")
     ai_mode: str = _env("AI_MODE", "auto").strip().lower()
-    ai_api_base: str = _env("AI_API_BASE", "https://api.deepseek.com/chat/completions")
+    ai_api_base: str = _env(
+        "AI_API_BASE",
+        "https://api.deepseek.com/chat/completions",
+    )
     ai_api_key: str = _env("AI_API_KEY", "")
     ai_api_key_file: Path = Path(_env("AI_API_KEY_FILE", "/userdata/zykh_app/data/ai-api-key.txt"))
     ai_model: str = _env("AI_MODEL", "deepseek-v4-flash")
+    ai_enable_thinking: bool = _env("AI_ENABLE_THINKING", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ai_chat_timeout_seconds: float = float(_env("AI_CHAT_TIMEOUT_SECONDS", "35"))
+    ai_inquiry_timeout_seconds: float = float(_env("AI_INQUIRY_TIMEOUT_SECONDS", "45"))
     dashscope_api_base: str = _env(
         "DASHSCOPE_API_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",

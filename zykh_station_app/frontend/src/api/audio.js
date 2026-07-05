@@ -8,8 +8,8 @@ export function readSpeech(duration = 4) {
   return apiPost("/api/audio/asr", { duration });
 }
 
-export function speakText(text, volume) {
-  return apiPost("/api/audio/speak", { text, volume });
+export function speakText(text, volume, speed = 1.18) {
+  return apiPost("/api/audio/speak", { text, volume, speed });
 }
 
 export function playBeep(volume) {
@@ -18,4 +18,8 @@ export function playBeep(volume) {
 
 export function testAudioRelay(payload = {}) {
   return apiPost("/api/audio/relay-test", payload);
+}
+
+export function setHostMicVolume(volume) {
+  return apiPost("/api/audio/host/mic-volume", { volume });
 }

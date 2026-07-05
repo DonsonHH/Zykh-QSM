@@ -8,7 +8,7 @@ from .. import db
 from ..schemas.medicine import Medicine
 
 
-MEDICINE_SEED_VERSION = "home-real-cabinet-v3"
+MEDICINE_SEED_VERSION = "home-real-cabinet-v4-no-decrement"
 
 DEFAULT_MEDICINES = [
     {
@@ -472,6 +472,77 @@ class MedicineRepository:
                 (barcode,),
             ).fetchone()
         return self._row_to_medicine(row) if row else None
+
+    def update(self, medicine_id: str, updates: dict[str, object]) -> Medicine | None:
+        self._ensure_seeded()
+        medicine = self.get_by_id(medicine_id)
+        if medicine is None:
+            return None
+
+        next_values = {
+            "barcode": medicine.barcode,
+            "manufacturer": medicine.manufacturer,
+            "name": medicine.name,
+            "category": medicine.category,
+            "tags": medicine.tags,
+            "contraindications": medicine.contraindications,
+            "stock": medicine.stock,
+            "unit": medicine.unit,
+            "expire_date": medicine.expire_date,
+            "is_otc": medicine.is_otc,
+            "is_emergency": medicine.is_emergency,
+            "safety_note": medicine.safety_note,
+            "image_hint": medicine.image_hint,
+        }
+        for key, value in updates.items():
+            if value is None or key not in next_values:
+                continue
+            if key in {"name", "category", "unit"}:
+                text = str(value).strip()
+                if text:
+                    next_values[key] = text
+                continue
+            if key in {"barcode", "manufacturer", "expire_date", "safety_note"}:
+                next_values[key] = str(value).strip()
+                continue
+            if key in {"tags", "contraindications"} and isinstance(value, list):
+                next_values[key] = [str(item).strip() for item in value if str(item).strip()]
+                continue
+            if key == "stock":
+                next_values[key] = max(int(value), 0)
+                continue
+            if key in {"is_otc", "is_emergency"}:
+                next_values[key] = bool(value)
+
+        next_values["image_hint"] = f"{next_values['manufacturer']} {next_values['name']}".strip() or medicine.image_hint
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET barcode=?, manufacturer=?, name=?, category=?, tags_json=?,
+                    contraindications_json=?, stock=?, unit=?, expire_date=?,
+                    image_hint=?, is_otc=?, is_emergency=?, safety_note=?, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    next_values["barcode"],
+                    next_values["manufacturer"],
+                    next_values["name"],
+                    next_values["category"],
+                    json.dumps(next_values["tags"], ensure_ascii=False),
+                    json.dumps(next_values["contraindications"], ensure_ascii=False),
+                    int(next_values["stock"]),
+                    next_values["unit"],
+                    next_values["expire_date"],
+                    next_values["image_hint"],
+                    1 if next_values["is_otc"] else 0,
+                    1 if next_values["is_emergency"] else 0,
+                    next_values["safety_note"],
+                    db.now_text(),
+                    medicine_id,
+                ),
+            )
+        return self.get_by_id(medicine_id)
 
     def create_from_scan(
         self,

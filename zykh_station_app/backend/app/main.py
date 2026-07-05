@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
@@ -33,6 +36,9 @@ def create_app() -> FastAPI:
     app.include_router(inquiry.router)
     app.include_router(records.router)
     app.include_router(sync.router)
+    dist_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if dist_dir.exists():
+        app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend")
     return app
 
 

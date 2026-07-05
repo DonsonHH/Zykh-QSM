@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from ..repositories.medicine_repository import MedicineRepository
-from ..schemas.medicine import Medicine, MedicineListResponse, MedicineScanRegisterRequest, MedicineScanRegisterResponse
+from ..schemas.medicine import (
+    Medicine,
+    MedicineListResponse,
+    MedicineScanRegisterRequest,
+    MedicineScanRegisterResponse,
+    MedicineUpdateRequest,
+    MedicineUpdateResponse,
+)
 
 
 class MedicineService:
@@ -18,6 +25,16 @@ class MedicineService:
 
     def get_medicine(self, medicine_id: str) -> Medicine | None:
         return self.repository.get_by_id(medicine_id)
+
+    def update_medicine(self, medicine_id: str, request: MedicineUpdateRequest) -> MedicineUpdateResponse | None:
+        if hasattr(request, "model_dump"):
+            updates = request.model_dump(exclude_unset=True)
+        else:
+            updates = request.dict(exclude_unset=True)
+        medicine = self.repository.update(medicine_id, updates)
+        if medicine is None:
+            return None
+        return MedicineUpdateResponse(ok=True, message=f"{medicine.hardware_slot}号柜药品信息已保存。", medicine=medicine)
 
     def register_scan_result(self, request: MedicineScanRegisterRequest) -> MedicineScanRegisterResponse:
         barcode = (request.barcode or "").strip()

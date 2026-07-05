@@ -27,6 +27,7 @@ class AiService:
             "max_tokens": 360,
             "stream": False,
         }
+        self._apply_provider_options(payload, enable_thinking=settings.ai_enable_thinking)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             settings.ai_api_base,
@@ -39,19 +40,14 @@ class AiService:
             },
         )
         try:
-            with urlopen(request, timeout=18) as response:
+            with urlopen(request, timeout=settings.ai_chat_timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             return self._local_reply(message, f"云端通道 HTTP {exc.code}，已使用本地兜底。")
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             return self._local_reply(message, f"云端通道暂不可用：{exc}。已使用本地兜底。")
 
-        reply = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        reply = self._extract_message_text(data)
         if not reply:
             return self._local_reply(message, "云端通道未返回有效内容，已使用本地兜底。")
         return {"ok": True, "source": "cloud", "model": settings.ai_model, "reply": reply}
@@ -72,6 +68,7 @@ class AiService:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        self._apply_provider_options(payload, enable_thinking=settings.ai_inquiry_enable_thinking)
         http_request = Request(
             settings.ai_api_base,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -83,22 +80,16 @@ class AiService:
             },
         )
         try:
-            with urlopen(http_request, timeout=18) as response:
+            with urlopen(http_request, timeout=settings.ai_inquiry_timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             return self._evaluate_inquiry_via_qsm(request, f"主机云通道 HTTP {exc.code}")
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             return self._evaluate_inquiry_via_qsm(request, f"主机云通道暂不可用：{exc}")
 
-        content = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
+        content = self._extract_message_text(data)
+        parsed = self._parse_json_content(content)
+        if parsed is None:
             return self._evaluate_inquiry_via_qsm(request, "主机云通道结构化内容无法解析")
         if not isinstance(parsed, dict):
             return self._evaluate_inquiry_via_qsm(request, "主机云通道结构化内容为空")
@@ -160,7 +151,7 @@ class AiService:
 
     def _inquiry_user_prompt(self, request: InquiryEvaluateRequest) -> str:
         medicines = MedicineRepository().list_all()
-        latest_vitals = VitalsRepository().latest()
+        latest_vitals = VitalsRepository().latest() if request.include_vitals else None
         medicine_text = [
             {
                 "id": medicine.id,
@@ -253,3 +244,57 @@ class AiService:
         except OSError:
             return ""
         return ""
+
+    @staticmethod
+    def _apply_provider_options(payload: dict[str, Any], enable_thinking: bool) -> None:
+        api_base = settings.ai_api_base.lower()
+        if "deepseek.com" in api_base:
+            payload["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
+            if enable_thinking:
+                payload["reasoning_effort"] = "high"
+            return
+        if enable_thinking:
+            payload["enable_thinking"] = True
+
+    @staticmethod
+    def _extract_message_text(data: dict[str, Any]) -> str:
+        choice = (data.get("choices") or [{}])[0] if isinstance(data.get("choices"), list) else {}
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    parts.append(str(item.get("text") or item.get("content") or ""))
+                else:
+                    parts.append(str(item))
+            content = "".join(parts)
+        text = str(content or "").strip()
+        if text:
+            return text
+        reasoning = message.get("reasoning_content") or choice.get("delta", {}).get("reasoning_content")
+        return str(reasoning or "").strip()
+
+    @staticmethod
+    def _parse_json_content(content: str) -> dict[str, Any] | None:
+        text = (content or "").strip()
+        if not text:
+            return None
+        if text.startswith("```"):
+            text = text.removeprefix("```json").removeprefix("```").strip()
+            if text.endswith("```"):
+                text = text[:-3].strip()
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start : end + 1])
+                return parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                return None
+        return None

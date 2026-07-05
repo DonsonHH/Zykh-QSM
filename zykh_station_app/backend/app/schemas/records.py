@@ -36,6 +36,7 @@ class ServiceUser(BaseModel):
     name: str
     age: int
     profile: str
+    allergies: str = ""
     note: str
     status: str
 
@@ -43,6 +44,24 @@ class ServiceUser(BaseModel):
 class ServiceUsersResponse(BaseModel):
     ok: bool = True
     users: list[ServiceUser]
+
+
+class ServiceUserCreateRequest(BaseModel):
+    name: str
+    age: int = 0
+    profile: str = "待补充"
+    allergies: str = ""
+    note: str = "AI问询新建"
+    status: str = "待完善"
+
+
+class ServiceUserUpdateRequest(BaseModel):
+    name: str | None = None
+    age: int | None = None
+    profile: str | None = None
+    allergies: str | None = None
+    note: str | None = None
+    status: str | None = None
 
 
 class TodayPlan(BaseModel):

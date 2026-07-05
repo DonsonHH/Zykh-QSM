@@ -17,14 +17,23 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
   const [viewMode, setViewMode] = useState(initialMedicineView);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
+    setLoading(true);
+    setLoadError("");
     loadMedicines()
       .then((data) => {
         setMedicines(data.medicines || []);
         setSelectedMedicine((data.medicines || [])[0] || null);
       })
-      .catch((error) => notify(error.message || "药品列表加载失败"));
+      .catch((error) => {
+        const message = error.message || "药品列表加载失败";
+        setLoadError(message);
+        notify(message);
+      })
+      .finally(() => setLoading(false));
   }, [notify]);
 
   useEffect(() => {
@@ -48,7 +57,7 @@ export function Medicines({ notify, focus, onNavigate }) {
     }
   }, [selectedMedicine]);
 
-  const visibleMedicines = useMemo(() => medicines.filter((medicine) => medicine.stock > 0), [medicines]);
+  const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
 
   function openConfirm() {
     if (!selectedMedicine) {
@@ -67,6 +76,12 @@ export function Medicines({ notify, focus, onNavigate }) {
       .then((data) => {
         setModalResult(data.message);
         notify(data.message);
+        if (data.ok) {
+          window.setTimeout(() => {
+            setModalOpen(false);
+            setModalResult("");
+          }, 650);
+        }
       })
       .catch((error) => setModalError(error.message || "取药确认失败"))
       .finally(() => setSubmitting(false));
@@ -78,7 +93,7 @@ export function Medicines({ notify, focus, onNavigate }) {
         <div className="medicines-heading">
           <div>
             <h2>家庭药柜</h2>
-            <p>{medicines.length}/23 仓有库存</p>
+            <p>{loading ? "正在读取药柜" : `${stockedCount}/23 仓有库存`}</p>
           </div>
           <div className="medicines-heading-actions">
             <div className="medicine-view-toggle" aria-label="药品显示方式">
@@ -108,9 +123,20 @@ export function Medicines({ notify, focus, onNavigate }) {
           </div>
         </div>
 
-        {viewMode === "list" ? (
+        {loading ? (
+          <div className="medicine-loading-state" role="status">
+            <span className="loading-pulse" aria-hidden="true" />
+            <strong>正在读取家庭药柜</strong>
+            <small>请稍候</small>
+          </div>
+        ) : loadError ? (
+          <div className="medicine-loading-state error" role="alert">
+            <strong>药柜数据读取失败</strong>
+            <small>{loadError}</small>
+          </div>
+        ) : viewMode === "list" ? (
           <div className="medicine-grid" aria-label="药品列表">
-            {visibleMedicines.map((medicine) => (
+            {medicines.map((medicine) => (
               <MedicineCard
                 key={medicine.id}
                 medicine={medicine}
@@ -128,11 +154,7 @@ export function Medicines({ notify, focus, onNavigate }) {
           />
         )}
 
-        <p className="medicine-list-note">
-          {viewMode === "list"
-            ? `当前显示 ${visibleMedicines.length} 种有库存药品。`
-            : "点击编号仓门查看对应药品；取药确认仍需完成安全核验。"}
-        </p>
+        {viewMode === "list" ? <p className="medicine-list-note">当前展示 {medicines.length} 个药柜条目。</p> : null}
       </section>
 
       <MedicineDetailPanel medicine={selectedMedicine} onConfirm={openConfirm} />
