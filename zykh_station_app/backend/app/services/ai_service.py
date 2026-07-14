@@ -117,7 +117,7 @@ class AiService:
 
     def _system_prompt(self) -> str:
         medicines = MedicineRepository().list_all()
-        latest_vitals = VitalsRepository().latest()
+        latest_vitals = VitalsRepository().latest_for_context()
         medicine_text = "；".join(
             f"{medicine.name}({medicine.category}, 库存{medicine.stock}{medicine.unit})"
             for medicine in medicines[:12]
@@ -128,6 +128,8 @@ class AiService:
                 f"体温{latest_vitals.temperature or '--'}℃，"
                 f"心率{latest_vitals.heart_rate or '--'}次/分，"
                 f"血氧{latest_vitals.spo2 or '--'}%，"
+                f"血压参考{latest_vitals.systolic_pressure or '--'}/{latest_vitals.diastolic_pressure or '--'}mmHg，"
+                f"呼吸频率{latest_vitals.respiratory_rate or '--'}次/分，"
                 f"时间{latest_vitals.measured_at}"
             )
         return "\n".join(
@@ -156,7 +158,7 @@ class AiService:
 
     def _inquiry_user_prompt(self, request: InquiryEvaluateRequest) -> str:
         medicines = MedicineRepository().list_all()
-        latest_vitals = VitalsRepository().latest() if request.include_vitals else None
+        latest_vitals = VitalsRepository().latest_for_context() if request.include_vitals else None
         medicine_text = [
             {
                 "id": medicine.id,
@@ -177,6 +179,11 @@ class AiService:
                 "temperature": latest_vitals.temperature,
                 "heart_rate": latest_vitals.heart_rate,
                 "spo2": latest_vitals.spo2,
+                "systolic_pressure": latest_vitals.systolic_pressure,
+                "diastolic_pressure": latest_vitals.diastolic_pressure,
+                "respiratory_rate": latest_vitals.respiratory_rate,
+                "hrv_sdnn": latest_vitals.hrv_sdnn,
+                "hrv_rmssd": latest_vitals.hrv_rmssd,
                 "measured_at": latest_vitals.measured_at,
             }
         return json.dumps(

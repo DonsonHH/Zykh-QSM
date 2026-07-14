@@ -34,7 +34,7 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
     client = QsmClient()
     vitals = client.read_full_vitals() if full else client.read_vitals()
     source = str(vitals.get("source", "fallback"))
-    status = _vitals_status(client.mode, source)
+    status = _vitals_status(client.mode, source, vitals)
     response = QsmVitalsResponse(
         ok=status != "unavailable",
         mode=client.mode,
@@ -42,12 +42,23 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
         temperature=_float_or_none(vitals.get("temperature_c")),
         heart_rate=_int_or_none(vitals.get("heart_rate")),
         spo2=_int_or_none(vitals.get("spo2")),
+        systolic_pressure=_int_or_none(vitals.get("systolic_pressure")),
+        diastolic_pressure=_int_or_none(vitals.get("diastolic_pressure")),
+        respiratory_rate=_int_or_none(vitals.get("respiratory_rate")),
+        microcirculation=_int_or_none(vitals.get("microcirculation")),
+        fatigue=_int_or_none(vitals.get("fatigue")),
+        rr_interval=_int_or_none(vitals.get("rr_interval")),
+        hrv_sdnn=_int_or_none(vitals.get("hrv_sdnn")),
+        hrv_rmssd=_int_or_none(vitals.get("hrv_rmssd")),
+        body_temperature=_float_or_none(vitals.get("sensor_body_temperature")),
+        ambient_temperature=_float_or_none(vitals.get("ambient_temperature")),
         finger_detected=_bool_or_none(vitals.get("finger_detected")),
         quality=str(vitals.get("quality")) if vitals.get("quality") is not None else None,
         message=str(vitals.get("message")) if vitals.get("message") is not None else None,
         sample_count=_int_or_none(vitals.get("sample_count")),
         partial=_bool_or_none(vitals.get("partial")),
         source=str(vitals.get("source", client.mode)),
+        sensor_model=_sensor_model(vitals),
         measured_at=now_text(),
         error_message=vitals.get("error_message") if isinstance(vitals.get("error_message"), str) else None,
     )
@@ -57,8 +68,19 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
             temperature=response.temperature,
             heart_rate=response.heart_rate,
             spo2=response.spo2,
+            systolic_pressure=response.systolic_pressure,
+            diastolic_pressure=response.diastolic_pressure,
+            respiratory_rate=response.respiratory_rate,
+            microcirculation=response.microcirculation,
+            fatigue=response.fatigue,
+            rr_interval=response.rr_interval,
+            hrv_sdnn=response.hrv_sdnn,
+            hrv_rmssd=response.hrv_rmssd,
+            body_temperature=response.body_temperature,
+            ambient_temperature=response.ambient_temperature,
             status=response.status,
             source=str(vitals.get("source", client.mode)),
+            sensor_model=response.sensor_model or "",
             error_message=response.error_message or "",
             measured_at=response.measured_at,
         )
@@ -142,10 +164,20 @@ def qsm_capabilities() -> QsmCapabilitiesResponse:
     )
 
 
-def _vitals_status(mode: str, source: str) -> str:
+def _vitals_status(mode: str, source: str, vitals: dict[str, object]) -> str:
     if mode != "real":
         return "partial"
-    return "available" if source == "real" else "unavailable"
+    if source != "real":
+        return "unavailable"
+    if vitals.get("partial") is True:
+        return "partial"
+    if (
+        vitals.get("finger_detected") is False
+        and vitals.get("heart_rate") is None
+        and vitals.get("spo2") is None
+    ):
+        return "awaiting_finger"
+    return "available"
 
 
 def _float_or_none(value: object) -> float | None:
@@ -174,6 +206,23 @@ def _bool_or_none(value: object) -> bool | None:
     return None
 
 
+def _sensor_model(vitals: dict[str, object]) -> str | None:
+    raw = vitals.get("raw")
+    if not isinstance(raw, dict):
+        return None
+    sensors = raw.get("sensors")
+    if not isinstance(sensors, dict):
+        return None
+    for sensor_name in ("uart_vitals", "integrated_vitals", "max30102"):
+        sensor = sensors.get(sensor_name)
+        if not isinstance(sensor, dict):
+            continue
+        data = sensor.get("data")
+        if isinstance(data, dict) and data.get("source"):
+            return str(data["source"])
+    return None
+
+
 def _vitals_record_title(response: QsmVitalsResponse) -> str:
     if response.heart_rate is not None or response.spo2 is not None:
         parts = []
@@ -194,7 +243,10 @@ def _vitals_record_description(response: QsmVitalsResponse) -> str:
         return "未检测到手指或信号偏弱，请按引导重新放置手指后再测量。"
     heart_rate = f"{response.heart_rate}次/分" if response.heart_rate is not None else "暂不可用"
     spo2 = f"{response.spo2}%" if response.spo2 is not None else "暂不可用"
-    return f"心率 {heart_rate}，血氧 {spo2}。"
+    pressure = ""
+    if response.systolic_pressure is not None and response.diastolic_pressure is not None:
+        pressure = f"，血压参考 {response.systolic_pressure}/{response.diastolic_pressure}mmHg"
+    return f"心率 {heart_rate}，血氧 {spo2}{pressure}。"
 
 
 def _camera_record_description(response: QsmCameraCaptureResponse) -> str:

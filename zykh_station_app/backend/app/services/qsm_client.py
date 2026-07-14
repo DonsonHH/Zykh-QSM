@@ -142,9 +142,31 @@ class QsmClient:
     def _parse_vitals(self, payload: dict[str, Any], partial: bool = False) -> dict[str, Any]:
         vitals = payload.get("vitals") or payload
         sensors = payload.get("sensors") if isinstance(payload.get("sensors"), dict) else {}
-        max30102 = sensors.get("max30102", {}).get("data") if isinstance(sensors.get("max30102"), dict) else {}
-        gy614 = sensors.get("gy614", {}).get("data") if isinstance(sensors.get("gy614"), dict) else {}
-        max30102 = max30102 if isinstance(max30102, dict) else {}
+        integrated = {}
+        integrated_ok = True
+        integrated_error = ""
+        for sensor_name in ("uart_vitals", "integrated_vitals", "max30102"):
+            sensor_entry = sensors.get(sensor_name)
+            if not isinstance(sensor_entry, dict):
+                continue
+            integrated_ok = bool(sensor_entry.get("ok", True))
+            if isinstance(sensor_entry.get("data"), dict):
+                integrated = sensor_entry["data"]
+            if not integrated_ok:
+                integrated_error = str(
+                    integrated.get("error")
+                    or sensor_entry.get("error")
+                    or sensor_entry.get("detail")
+                    or "综合体征模块读取失败。"
+                )
+            break
+        gy614_entry = sensors.get("gy614") if isinstance(sensors.get("gy614"), dict) else {}
+        gy614_ok = bool(gy614_entry.get("ok", True))
+        gy614 = gy614_entry.get("data") if isinstance(gy614_entry.get("data"), dict) else {}
+        gy614_error = ""
+        if not gy614_ok:
+            gy614_error = str(gy614_entry.get("error") or gy614_entry.get("detail") or "额温模块读取失败。")
+        integrated = integrated if isinstance(integrated, dict) else {}
         gy614 = gy614 if isinstance(gy614, dict) else {}
         temperature_payload = payload.get("temperature") if isinstance(payload.get("temperature"), dict) else {}
         if isinstance(vitals, dict):
@@ -155,32 +177,103 @@ class QsmClient:
                 temperature = self._first_present(vitals, ("temperature_c", "temp", "body_temp_c", "temperature"))
             if isinstance(temperature, dict):
                 temperature = self._first_present(temperature, ("body_temp_c", "target_temp_c"))
-            finger_detected = self._first_present(max30102, ("finger_detected",))
+            if self._is_zeroish(temperature):
+                temperature = None
+            finger_detected = self._first_present(integrated, ("finger_detected",))
             if finger_detected is None:
                 finger_detected = self._first_present(vitals, ("finger_detected",))
-            quality = self._first_present(max30102, ("quality",), fallback=self._first_present(vitals, ("quality",)))
-            message = self._first_present(max30102, ("message",), fallback=self._first_present(vitals, ("message",)))
-            heart_rate = self._first_present(max30102, ("heart_rate_bpm",))
+            quality = self._first_present(integrated, ("quality",), fallback=self._first_present(vitals, ("quality",)))
+            message = self._first_present(integrated, ("message",), fallback=self._first_present(vitals, ("message",)))
+            heart_rate = self._first_present(integrated, ("heart_rate_bpm", "heart_rate", "hr"))
             if heart_rate is None:
                 heart_rate = self._first_present(vitals, ("heart_rate", "hr"))
-            spo2 = self._first_present(max30102, ("spo2_percent",))
+            spo2 = self._first_present(integrated, ("spo2_percent", "spo2", "blood_oxygen"))
             if spo2 is None:
                 spo2 = self._first_present(vitals, ("spo2", "blood_oxygen"))
+            systolic_pressure = self._first_present(
+                integrated,
+                ("systolic_pressure", "systolic", "systolic_bp"),
+                fallback=self._first_present(vitals, ("systolic_pressure", "systolic", "systolic_bp")),
+            )
+            diastolic_pressure = self._first_present(
+                integrated,
+                ("diastolic_pressure", "diastolic", "diastolic_bp"),
+                fallback=self._first_present(vitals, ("diastolic_pressure", "diastolic", "diastolic_bp")),
+            )
+            respiratory_rate = self._first_present(
+                integrated,
+                ("respiratory_rate", "respiration_rate"),
+                fallback=self._first_present(vitals, ("respiratory_rate", "respiration_rate")),
+            )
+            microcirculation = self._first_present(integrated, ("microcirculation",))
+            fatigue = self._first_present(integrated, ("fatigue",))
+            rr_interval = self._first_present(integrated, ("rr_interval",))
+            hrv_sdnn = self._first_present(integrated, ("hrv_sdnn", "sdnn"))
+            hrv_rmssd = self._first_present(integrated, ("hrv_rmssd", "rmssd"))
+            sensor_body_temperature = self._first_present(
+                integrated,
+                ("body_temperature_c", "sensor_body_temperature"),
+            )
+            ambient_temperature = self._first_present(
+                integrated,
+                ("ambient_temperature_c", "ambient_temperature"),
+            )
+            if self._is_zeroish(heart_rate):
+                heart_rate = None
+            if self._is_zeroish(spo2):
+                spo2 = None
+            if self._is_zeroish(systolic_pressure):
+                systolic_pressure = None
+            if self._is_zeroish(diastolic_pressure):
+                diastolic_pressure = None
+            if self._is_zeroish(respiratory_rate):
+                respiratory_rate = None
+            if self._is_zeroish(microcirculation):
+                microcirculation = None
+            if self._is_zeroish(fatigue):
+                fatigue = None
+            if self._is_zeroish(rr_interval):
+                rr_interval = None
+            if self._is_zeroish(hrv_sdnn):
+                hrv_sdnn = None
+            if self._is_zeroish(hrv_rmssd):
+                hrv_rmssd = None
+            if not integrated_ok:
+                quality = "error"
+                message = integrated_error
+                partial = True
+            if not gy614_ok:
+                partial = True
             if finger_detected is False:
-                if self._is_zeroish(heart_rate):
-                    heart_rate = None
-                if self._is_zeroish(spo2):
-                    spo2 = None
+                quality = quality or "no_finger"
+            errors = [item for item in (integrated_error, gy614_error, str(payload.get("error") or "")) if item]
+            has_usable_value = any(
+                value is not None
+                for value in (temperature, heart_rate, spo2, systolic_pressure, diastolic_pressure, respiratory_rate)
+            )
+            if payload.get("ok") is False and not has_usable_value:
+                return self._unavailable_vitals("；".join(dict.fromkeys(errors)) or "体征模块读取失败。")
             return {
                 "temperature_c": temperature,
                 "heart_rate": heart_rate,
                 "spo2": spo2,
+                "systolic_pressure": systolic_pressure,
+                "diastolic_pressure": diastolic_pressure,
+                "respiratory_rate": respiratory_rate,
+                "microcirculation": microcirculation,
+                "fatigue": fatigue,
+                "rr_interval": rr_interval,
+                "hrv_sdnn": hrv_sdnn,
+                "hrv_rmssd": hrv_rmssd,
+                "sensor_body_temperature": sensor_body_temperature,
+                "ambient_temperature": ambient_temperature,
                 "source": "real",
                 "finger_detected": finger_detected,
                 "quality": quality,
                 "message": message,
-                "sample_count": self._first_present(max30102, ("sample_count",), fallback=self._first_present(vitals, ("sample_count",))),
+                "sample_count": self._first_present(integrated, ("sample_count",), fallback=self._first_present(vitals, ("sample_count",))),
                 "partial": partial,
+                "error_message": "；".join(dict.fromkeys(errors)) or None,
                 "raw": payload,
             }
         return self._unavailable_vitals("体征数据格式不可识别。")

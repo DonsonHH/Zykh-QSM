@@ -16,6 +16,7 @@
 - QSM real/mock 接入验证接口。
 - 体征读取、扫码识别、真实取药确认联调和外设能力展示入口。
 - 真实设备联调检查脚本和终端内系统检查入口。
+- QSM UART8 综合体征模块，支持心率、血氧、血压参考、呼吸频率和 HRV 数据。
 
 ## 安全边界
 
@@ -112,7 +113,16 @@ real 模式用于本机访问外设网关。如果 real 模式不可用，后端
 
 当前硬件分工：摄像头由本机主应用直接检测和抓拍；体征、音频和药仓控制通过外设网关。`/api/qsm/camera/capture` 是现有业务流程的兼容入口，内部走本机摄像头服务，不依赖外设网关摄像头接口。
 
-体征读取默认优先走外设网关的额温接口，避免心率血氧或一键全测接口长时间阻塞终端页面。如需专项联调 MAX30102/一键全测，可设置 `QSM_VITALS_PREFER_FULL=true`。
+身体状态测量页通过 `/api/vitals/read-all` 同时读取 GY-614 额温和 QSM UART8 综合体征模块。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。血压、呼吸频率和 HRV 统一作为健康状态辅助参考，不作为诊断依据。
+
+首次部署或更新板端体征读取器时执行：
+
+```bash
+cd zykh_station_app
+sh scripts/deploy_qsm_gateway.sh
+```
+
+该脚本会部署 `qsm_gateway/read_vitals_uart8.pl` 和板端启动包装，并让现有 Perl 网关通过 UART8 读取新模块。模块温度的小数字节缩放在完成实物显示对照前保持未配置；额温仍以 GY-614 结果为准。
 
 `LOCAL_CAMERA_MODE=real` 会检查 `LOCAL_CAMERA_DEVICE`，`auto` 会优先探测常见 FF Camera 设备和 `/dev/video*`。如需本地闭环检查，可手动设置 `LOCAL_CAMERA_MODE=mock`。
 

@@ -26,12 +26,23 @@ class QsmVitalsResponse(BaseModel):
     temperature: float | None = None
     heart_rate: int | None = None
     spo2: int | None = None
+    systolic_pressure: int | None = None
+    diastolic_pressure: int | None = None
+    respiratory_rate: int | None = None
+    microcirculation: int | None = None
+    fatigue: int | None = None
+    rr_interval: int | None = None
+    hrv_sdnn: int | None = None
+    hrv_rmssd: int | None = None
+    body_temperature: float | None = None
+    ambient_temperature: float | None = None
     finger_detected: bool | None = None
     quality: str | None = None
     message: str | None = None
     sample_count: int | None = None
     partial: bool | None = None
     source: str | None = None
+    sensor_model: str | None = None
     measured_at: str
     error_message: str | None = None
 

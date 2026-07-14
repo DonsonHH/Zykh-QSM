@@ -142,6 +142,24 @@ Returns current peripheral capability states:
 
 Reads all available vitals through QSM. It prefers `QSM_VITALS_ALL_PATH`, then falls back to `QSM_VITALS_PATH` and `QSM_TEMP_PATH`.
 
+The response keeps the original fields and adds optional UART8 integrated-sensor reference values:
+
+```json
+{
+  "temperature": 36.3,
+  "heart_rate": 78,
+  "spo2": 98,
+  "systolic_pressure": 118,
+  "diastolic_pressure": 76,
+  "respiratory_rate": 16,
+  "hrv_sdnn": 42,
+  "hrv_rmssd": 31,
+  "sensor_model": "UART8-vitals-24B"
+}
+```
+
+Unavailable or zero placeholder values are returned as `null`. Blood pressure and HRV are auxiliary health-reference values and are not diagnostic results.
+
 ### POST /api/camera/capture
 
 Captures one image from the host-side camera using `LOCAL_CAMERA_DEVICE`. The response includes image availability, image path when available and a structured error on failure.

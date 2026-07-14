@@ -8,13 +8,13 @@ The local master application talks to QSM368ZP-WF through one gateway adapter fo
 React/Vite UI -> FastAPI -> services/qsm_client.py -> http://127.0.0.1:18080
 ```
 
-QSM owns temperature, heart rate/blood oxygen, audio and cabinet-control peripherals. The local app owns UI, workflow, local records, risk prompts, candidate medicine matching,取药确认 and host-side camera capture.
+QSM owns temperature, integrated UART vitals, audio and cabinet-control peripherals. The local app owns UI, workflow, local records, risk prompts, candidate medicine matching,取药确认 and host-side camera capture.
 
 Latest hardware split:
 
 ```text
 Host app: React/Vite, FastAPI, SQLite, inquiry workflow, camera recognition, touch UI.
-Peripheral gateway: temperature, heart rate/blood oxygen, audio, cabinet control.
+Peripheral gateway: GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
 ```
 
 Camera capture no longer depends on the peripheral gateway. The business endpoint `/api/qsm/camera/capture` is kept as a stable app-facing action, but internally it calls the host-side camera seam.
@@ -73,11 +73,43 @@ adb forward tcp:18080 tcp:8080
 
 If any step fails, it prints a clear warning and exits without killing the app. Fix the gateway connection before real-device verification.
 
+## UART8 integrated vitals sensor
+
+The current heart-rate/blood-oxygen module is connected to QSM UART8 and uses a 24-byte binary protocol:
+
+```text
+device: /dev/ttyS8
+serial: 9600, 8N1, no flow control
+start:  0x24
+stop:   0x2A
+frame:  FF 01 ... F1 (24 bytes)
+```
+
+The medicine cabinet remains on `/dev/ttyS5`. Deploy the reader and restart wrapper with:
+
+```bash
+cd zykh_station_app
+sh scripts/deploy_qsm_gateway.sh
+```
+
+The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, validates the `FF 01` header and `0xF1` trailer, and waits for stable measurement frames. A non-blocking process lock prevents concurrent HTTP requests from interleaving UART start/stop bytes. Non-zero readings are preserved even when they fall outside common reference ranges; risk interpretation belongs to the safety layer, not the transport parser. It writes the legacy `heart_rate_bpm` and `spo2_percent` keys expected by the existing Perl gateway plus these optional fields:
+
+- `systolic_pressure` and `diastolic_pressure`;
+- `respiratory_rate`;
+- `microcirculation`, `fatigue`, `rr_interval`;
+- `hrv_sdnn` and `hrv_rmssd`;
+- raw body/ambient temperature integer and decimal bytes.
+
+`VITALS_UART_TEMP_DECIMAL_SCALE` is intentionally unset until the module display is compared with several raw frames. Until calibrated, the station uses the separate GY-614 value as forehead temperature. Blood pressure and HRV are displayed as health-reference data, not clinical measurements.
+
+The UART collection window defaults to 10 seconds. The host allows up to 25 seconds for the combined UART8 and GY-614 gateway response, while the terminal presents a 24-second guided measurement window. A busy UART returns a structured error instead of starting a second overlapping measurement.
+
 ## Supported adapter methods
 
 - `health_check()`
 - `get_qsm_status()`
 - `read_vitals()`
+- `read_full_vitals()`
 - `read_temperature()`
 - `get_device_status()`
 - `dispense(slot, dry_run=False)`
@@ -121,6 +153,8 @@ curl -X POST http://127.0.0.1:8000/api/audio/beep
 ```
 
 Gateway unavailable expected behavior: HTTP 200, `connected=false` or `ok=false`, and `error_message` set.
+
+Successful integrated-vitals responses preserve `heart_rate`, `spo2`, `systolic_pressure`, `diastolic_pressure`, `respiratory_rate`, `hrv_sdnn`, `hrv_rmssd`, and `sensor_model`. Zero placeholders from the sensor are normalized to `null` rather than shown as real readings.
 
 Real dispense smoke is intentionally omitted from the generic checklist. Only run it after configuring a safe slot and confirming the device is ready.
 

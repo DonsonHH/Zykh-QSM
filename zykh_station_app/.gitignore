@@ -3,6 +3,8 @@ backend/.env.local
 backend/data/
 backend/app/**/__pycache__/
 backend/app/**/*.pyc
+backend/tests/__pycache__/
+backend/tests/**/*.pyc
 data/
 *.db
 frontend/node_modules/

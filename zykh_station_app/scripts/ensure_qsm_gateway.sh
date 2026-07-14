@@ -5,7 +5,8 @@ HOST_PORT="${QSM_FORWARD_HOST_PORT:-18080}"
 DEVICE_PORT="${QSM_FORWARD_DEVICE_PORT:-8080}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
-QSM_START_SCRIPT="${QSM_START_SCRIPT:-/userdata/zykh_app/scripts/start_zykh_server.sh}"
+QSM_START_SCRIPT="${QSM_START_SCRIPT:-/userdata/zykh_app/scripts/start_station_gateway.sh}"
+QSM_FALLBACK_START_SCRIPT="${QSM_FALLBACK_START_SCRIPT:-/userdata/zykh_app/scripts/start_zykh_server.sh}"
 
 log() {
   printf '[qsm] %s\n' "$*"
@@ -53,7 +54,7 @@ if gateway_ready; then
 fi
 
 log "尝试启动外设网关服务。"
-$ADB_PREFIX shell "mkdir -p '$QSM_HOME/data' '$QSM_HOME/scripts'; if [ -x '$QSM_START_SCRIPT' ]; then sh '$QSM_START_SCRIPT'; elif [ -f '$QSM_HOME/server.pl' ]; then ZYKH_HOME='$QSM_HOME' PORT='$DEVICE_PORT' perl '$QSM_HOME/server.pl' --daemon; else echo 'server.pl not found'; exit 1; fi" >/dev/null 2>&1 \
+$ADB_PREFIX shell "mkdir -p '$QSM_HOME/data' '$QSM_HOME/scripts'; if [ -x '$QSM_START_SCRIPT' ]; then QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_START_SCRIPT'; elif [ -x '$QSM_FALLBACK_START_SCRIPT' ]; then sh '$QSM_FALLBACK_START_SCRIPT'; elif [ -f '$QSM_HOME/server.pl' ]; then ZYKH_HOME='$QSM_HOME' PORT='$DEVICE_PORT' perl '$QSM_HOME/server.pl' --daemon; else echo 'server.pl not found'; exit 1; fi" >/dev/null 2>&1 \
   || warn "外设网关启动命令执行失败，请检查板端 server.pl 是否已部署。"
 
 sleep 1

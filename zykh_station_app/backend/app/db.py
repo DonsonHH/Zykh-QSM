@@ -14,8 +14,8 @@ def now_text() -> str:
 
 
 @contextmanager
-def connect(path: Path | str = settings.db_path) -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(path)
+def connect(path: Path | str | None = None) -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(path or settings.db_path)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -117,6 +117,17 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(conn, "vitals_records", "systolic_pressure", "INTEGER")
+        _ensure_column(conn, "vitals_records", "diastolic_pressure", "INTEGER")
+        _ensure_column(conn, "vitals_records", "respiratory_rate", "INTEGER")
+        _ensure_column(conn, "vitals_records", "microcirculation", "INTEGER")
+        _ensure_column(conn, "vitals_records", "fatigue", "INTEGER")
+        _ensure_column(conn, "vitals_records", "rr_interval", "INTEGER")
+        _ensure_column(conn, "vitals_records", "hrv_sdnn", "INTEGER")
+        _ensure_column(conn, "vitals_records", "hrv_rmssd", "INTEGER")
+        _ensure_column(conn, "vitals_records", "body_temperature", "REAL")
+        _ensure_column(conn, "vitals_records", "ambient_temperature", "REAL")
+        _ensure_column(conn, "vitals_records", "sensor_model", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sync_state (

@@ -48,15 +48,15 @@ GET  /api/health -> 200 dry_run=true enable_real_dispense=false real_dispense_en
 GET  /api/qsm/status -> 200 connected=true
 GET  /api/device/check -> 200 qsm_connected=true dispense_dry_run=true
 GET  /api/qsm/capabilities -> 200 qsm_connected=true
-GET  /api/qsm/vitals -> 200 status=available
+GET  /api/qsm/vitals -> 200 status=available or awaiting_finger
 POST /api/qsm/dispense/dry-run -> 200 dry_run=true
 ```
 
 Direct QSM route checks:
 
 ```text
-POST /api/vitals/read -> 200 ok=true, source=MAX30102, quality=no_finger
-POST /api/vitals/read_all -> 200 ok=true, source=MAX30102+GY-614, temperature around 35.7
+POST /api/vitals/read -> 200 ok=true, source=UART8-vitals-24B, quality=no_finger or stable
+POST /api/vitals/read_all -> 200 ok=true, UART8-vitals-24B + GY-614
 POST /api/vitals/temp/read -> 200 ok=true, source=GY-614
 POST /api/camera/capture -> 200 ok=false, camera hardware pipeline unavailable
 GET  /api/camera/frame -> 200 cached JPEG bytes returned
@@ -72,9 +72,9 @@ POST /api/ai/chat -> 200 ok=false, DNS temporary failure
 |---|---|---:|---|---|---|
 | status | `/api/status` | GET | none | yes | Returns Buildroot, devices, time |
 | vitals history | `/api/vitals` | GET/POST | sensor fields | not smoke-tested | Present in `server.pl` |
-| vitals MAX30102 | `/api/vitals/read` | POST | none | yes | Finger not detected in current test |
+| UART8 integrated vitals | `/api/vitals/read` | POST | none | yes | 24-byte frames received; no-finger and measured states verified |
 | temperature GY-614 | `/api/vitals/temp/read` | POST | none | yes | Returned body temperature |
-| vitals all | `/api/vitals/read_all` | POST | none | yes | Combined MAX30102 + GY-614 |
+| vitals all | `/api/vitals/read_all` | POST | none | yes | Combined UART8 integrated sensor + GY-614 |
 | camera capture | `/api/camera/capture` | POST | none | partial | Route works; hardware pipeline returned unavailable |
 | camera frame | `/api/camera/frame` | GET | none | partial | Returned cached JPEG |
 | camera stream | `/api/camera/stream` | GET | width/fps query | not smoke-tested | Present in `server.pl` |

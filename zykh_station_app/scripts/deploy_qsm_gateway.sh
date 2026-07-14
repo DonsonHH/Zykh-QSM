@@ -6,8 +6,8 @@ DEVICE_PORT="${QSM_FORWARD_DEVICE_PORT:-8080}"
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
-LOCAL_SERVER="$REPO_ROOT/zykh_app/server.pl"
-LOCAL_START="$REPO_ROOT/zykh_app/scripts/start_zykh_server.sh"
+LOCAL_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
+LOCAL_VITALS_UART="$REPO_ROOT/zykh_station_app/qsm_gateway/read_vitals_uart8.pl"
 
 log() {
   printf '[qsm-deploy] %s\n' "$*"
@@ -18,7 +18,8 @@ fail() {
   exit 1
 }
 
-[ -f "$LOCAL_SERVER" ] || fail "找不到本地网关文件：$LOCAL_SERVER"
+[ -f "$LOCAL_START" ] || fail "找不到外设网关启动脚本：$LOCAL_START"
+[ -f "$LOCAL_VITALS_UART" ] || fail "找不到 UART8 体征读取器：$LOCAL_VITALS_UART"
 command -v adb >/dev/null 2>&1 || fail "未找到 adb"
 
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
@@ -33,28 +34,37 @@ else
   ADB_PREFIX="adb"
 fi
 
-log "部署 server.pl 到 $QSM_HOME"
+log "部署 UART8 体征适配到现有外设网关"
 $ADB_PREFIX shell "mkdir -p '$QSM_HOME/scripts' '$QSM_HOME/data'" >/dev/null || fail "创建板端目录失败"
-$ADB_PREFIX push "$LOCAL_SERVER" "$QSM_HOME/server.pl" >/dev/null || fail "推送 server.pl 失败"
-if [ -f "$LOCAL_START" ]; then
-  $ADB_PREFIX push "$LOCAL_START" "$QSM_HOME/scripts/start_zykh_server.sh" >/dev/null || fail "推送启动脚本失败"
-fi
-$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_zykh_server.sh' 2>/dev/null; for pid in \$(pgrep -f '$QSM_HOME/server.pl' 2>/dev/null); do [ \"\$pid\" = \"\$\$\" ] || kill \"\$pid\" 2>/dev/null || true; done; sleep 0.3; cd '$QSM_HOME' && ZYKH_HOME='$QSM_HOME' PORT='$DEVICE_PORT' perl '$QSM_HOME/server.pl' --daemon" >/dev/null \
+$ADB_PREFIX shell "test -f '$QSM_HOME/server.pl'" >/dev/null 2>&1 \
+  || fail "板端缺少 $QSM_HOME/server.pl；请先部署外设网关，再安装 UART8 适配。"
+$ADB_PREFIX push "$LOCAL_START" "$QSM_HOME/scripts/start_station_gateway.sh" >/dev/null || fail "推送外设网关启动脚本失败"
+$ADB_PREFIX push "$LOCAL_VITALS_UART" "$QSM_HOME/scripts/read_vitals_uart8.pl" >/dev/null || fail "推送 UART8 体征读取器失败"
+$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_station_gateway.sh' '$QSM_HOME/scripts/read_vitals_uart8.pl'; QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_HOME/scripts/start_station_gateway.sh'" >/dev/null \
   || fail "重启板端网关失败"
 
 log "建立端口转发：127.0.0.1:$HOST_PORT -> tcp:$DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1 || fail "端口转发失败"
 
-if command -v curl >/dev/null 2>&1; then
-  count=0
-  while [ "$count" -lt 12 ]; do
-    if curl -fsS --max-time 3 -X POST "http://127.0.0.1:${HOST_PORT}/api/audio/stream/stop" >/dev/null 2>&1; then
-      log "部署完成，外设网关已可访问。"
-      exit 0
-    fi
-    count=$((count + 1))
-    sleep 0.5
-  done
-fi
+command -v curl >/dev/null 2>&1 || fail "未找到 curl，无法完成真实体征验收。"
+count=0
+while [ "$count" -lt 12 ]; do
+  if curl -fsS --max-time 3 -X POST "http://127.0.0.1:${HOST_PORT}/api/audio/stream/stop" >/dev/null 2>&1; then
+    break
+  fi
+  count=$((count + 1))
+  sleep 0.5
+done
+[ "$count" -lt 12 ] || fail "已部署并尝试启动，但本机暂时无法访问外设网关。"
 
-fail "已部署并尝试启动，但本机暂时无法访问新版外设音频流接口。"
+log "读取一次 UART8 综合体征，未放手指时出现 awaiting_finger 也表示硬件链路已响应。"
+VITALS_RESPONSE="$(curl -fsS --max-time 25 -X POST "http://127.0.0.1:${HOST_PORT}/api/vitals/read_all" 2>/dev/null)" \
+  || fail "外设网关可访问，但综合体征接口读取失败。"
+case "$VITALS_RESPONSE" in
+  *UART8-vitals-24B*)
+    log "部署完成：外设网关与 UART8 体征模块均已响应。"
+    ;;
+  *)
+    fail "综合体征接口未返回 UART8-vitals-24B 标识，请检查板端启动环境。"
+    ;;
+esac

@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowLeft, HeartPulse, ScanFace, Thermometer } from "lucide-react";
+import { Activity, ArrowLeft, Gauge, HeartPulse, ScanFace, Thermometer, Waves, Wind } from "lucide-react";
 import { loadQsmVitals } from "../api/qsm.js";
 
-const measurementSeconds = 15;
+const measurementSeconds = 24;
 const initialSteps = [
-  { id: "head", label: "额头对准屏幕上方", state: "idle" },
-  { id: "finger", label: "手指保持稳定", state: "idle" },
-  { id: "read", label: "读取体温、心率和血氧", state: "idle" }
+  { id: "prepare", label: "完成姿势准备", state: "idle" },
+  { id: "signal", label: "采集稳定信号", state: "idle" },
+  { id: "reference", label: "形成体征参考", state: "idle" }
 ];
 
 export function Vitals({ notify, onNavigate, returnPage = "home" }) {
@@ -114,7 +114,7 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           </button>
           <div>
             <p>体征测量</p>
-            <h2>请按提示完成额温、心率和血氧测量</h2>
+            <h2>请按提示完成身体状态测量</h2>
           </div>
         </div>
 
@@ -135,9 +135,9 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
               <HeartPulse size={48} />
             </span>
             <div>
-              <h3>心率血氧</h3>
+              <h3>综合体征参考</h3>
               <strong>手指放在屏幕右前方示意处</strong>
-              <p>指腹覆盖传感器并保持稳定，测量约 10-15 秒。</p>
+              <p>指腹完整覆盖并保持不动，持续约 15-20 秒。</p>
             </div>
           </article>
         </div>
@@ -158,7 +158,7 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
                   : "正在等待外设返回稳定读数，请继续保持姿势。"
                 : result
                   ? "如手指信号不稳定，请按提示重新放置后再测。"
-                  : "测量开始后会自动倒计时，并同步读取额温、心率和血氧。"}
+                  : "测量开始后会自动倒计时，并同步读取额温与综合体征参考数据。"}
             </p>
           </div>
         </section>
@@ -190,14 +190,20 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           </span>
           <div>
             <p>测量结果</p>
-            <h2>{status.title}</h2>
+            <h2 aria-live="polite">{status.title}</h2>
           </div>
         </div>
 
         <div className="vitals-metric-grid">
-          <Metric icon={Thermometer} label="额温" value={formatMetric(result?.temperature, "℃", 1)} />
-          <Metric icon={HeartPulse} label="心率" value={formatMetric(result?.heart_rate, "次/分")} />
-          <Metric icon={Activity} label="血氧" value={formatMetric(result?.spo2, "%")} />
+          <Metric icon={Thermometer} label="额温" value={formatMetric(result?.temperature, "℃", 1, true)} />
+          <Metric icon={HeartPulse} label="心率" value={formatMetric(result?.heart_rate, "次/分", 0, true)} />
+          <Metric icon={Activity} label="血氧" value={formatMetric(result?.spo2, "%", 0, true)} />
+        </div>
+
+        <div className="vitals-reference-grid" aria-label="辅助体征参考">
+          <ReferenceMetric icon={Gauge} label="血压参考" value={formatPressure(result)} />
+          <ReferenceMetric icon={Wind} label="呼吸频率" value={formatMetric(result?.respiratory_rate, "次/分", 0, true)} />
+          <ReferenceMetric icon={Waves} label="HRV" value={formatHrv(result)} />
         </div>
 
         <div className="vitals-status-card">
@@ -219,12 +225,44 @@ function Metric({ icon: Icon, label, value }) {
   );
 }
 
-function formatMetric(value, unit, fractionDigits = 0) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+function ReferenceMetric({ icon: Icon, label, value }) {
+  return (
+    <article className="vitals-reference-metric">
+      <Icon size={20} aria-hidden="true" />
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function formatMetric(value, unit, fractionDigits = 0, zeroIsEmpty = false) {
+  if (
+    value === null ||
+    value === undefined ||
+    Number.isNaN(Number(value)) ||
+    (zeroIsEmpty && Number(value) <= 0)
+  ) {
     return "待测";
   }
   const numeric = Number(value);
   return `${numeric.toFixed(fractionDigits)}${unit}`;
+}
+
+function formatPressure(result) {
+  const systolic = Number(result?.systolic_pressure);
+  const diastolic = Number(result?.diastolic_pressure);
+  if (!Number.isFinite(systolic) || !Number.isFinite(diastolic) || systolic <= 0 || diastolic <= 0) {
+    return "待测";
+  }
+  return `${Math.round(systolic)}/${Math.round(diastolic)}`;
+}
+
+function formatHrv(result) {
+  const sdnn = Number(result?.hrv_sdnn);
+  if (!Number.isFinite(sdnn) || sdnn <= 0) {
+    return "待测";
+  }
+  return `${Math.round(sdnn)}ms`;
 }
 
 function describeVitals(result, errorMessage, phase, countdown) {
@@ -297,8 +335,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
   return {
     tone: "good",
     title: "测量完成",
-    summary: "体温、心率和血氧已记录",
-    detail: "可返回首页或问询流程继续后续操作。"
+    summary: "身体状态参考数据已记录",
+    detail: "血压、呼吸频率和 HRV 为传感器参考数据，仅用于健康状态辅助。"
   };
 }
 
