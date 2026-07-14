@@ -67,7 +67,7 @@ sh scripts/launch_kiosk.sh
 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
-脚本会记录启动前的分辨率，浏览器退出或按 `Ctrl+C` 时自动恢复。若需要保留 kiosk 分辨率：
+脚本会记录启动前的分辨率。浏览器退出、按 `Ctrl+C`、关闭终端或任务管理器发送退出信号时，会停止本机音频转发并自动恢复分辨率。若需要保留 kiosk 分辨率：
 
 ```bash
 KIOSK_RESTORE_RESOLUTION=0 sh scripts/launch_kiosk.sh

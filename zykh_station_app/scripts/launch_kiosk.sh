@@ -16,6 +16,9 @@ KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
 AUDIO_RELAY_PID=""
+AUDIO_RELAY_PROCESS_GROUP="0"
+AUDIO_RELAY_STARTED="0"
+CLEANUP_STARTED="0"
 RESTORE_OUTPUT=""
 RESTORE_MODE=""
 
@@ -64,11 +67,37 @@ restore_resolution() {
   fi
 }
 
-stop_browser() {
-  if [ -n "$BROWSER_PID" ] && kill -0 "$BROWSER_PID" >/dev/null 2>&1; then
-    kill "$BROWSER_PID" >/dev/null 2>&1 || true
-    wait "$BROWSER_PID" 2>/dev/null || true
+terminate_managed_process() {
+  pid="$1"
+  process_group="$2"
+  if [ -z "$pid" ] || ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
   fi
+
+  if [ "$process_group" = "1" ]; then
+    kill -TERM -- "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
+  else
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+  fi
+
+  count=0
+  while kill -0 "$pid" >/dev/null 2>&1 && [ "$count" -lt 20 ]; do
+    count=$((count + 1))
+    sleep 0.1
+  done
+
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    if [ "$process_group" = "1" ]; then
+      kill -KILL -- "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
+    else
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+stop_browser() {
+  terminate_managed_process "$BROWSER_PID" "0"
 }
 
 start_audio_relay_if_needed() {
@@ -80,43 +109,67 @@ start_audio_relay_if_needed() {
     return 0
   fi
   log "启动本机音频转发到外设喇叭..."
-  BACKEND_URL="$BACKEND_URL" sh "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" >"$RUN_DIR/audio-relay.log" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    BACKEND_URL="$BACKEND_URL" setsid sh "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" >"$RUN_DIR/audio-relay.log" 2>&1 &
+    AUDIO_RELAY_PROCESS_GROUP="1"
+  else
+    BACKEND_URL="$BACKEND_URL" sh "$ROOT_DIR/scripts/relay_host_audio_to_qsm.sh" >"$RUN_DIR/audio-relay.log" 2>&1 &
+    AUDIO_RELAY_PROCESS_GROUP="0"
+  fi
   AUDIO_RELAY_PID="$!"
+  AUDIO_RELAY_STARTED="1"
   echo "$AUDIO_RELAY_PID" >"$RUN_DIR/audio-relay.pid"
   sleep 1
   if ! kill -0 "$AUDIO_RELAY_PID" >/dev/null 2>&1; then
     warn "本机音频实时转发未启动成功，日志：$RUN_DIR/audio-relay.log"
     AUDIO_RELAY_PID=""
+    AUDIO_RELAY_PROCESS_GROUP="0"
+    AUDIO_RELAY_STARTED="0"
+    rm -f "$RUN_DIR/audio-relay.pid"
   fi
 }
 
 stop_audio_relay() {
-  if [ -n "$AUDIO_RELAY_PID" ] && kill -0 "$AUDIO_RELAY_PID" >/dev/null 2>&1; then
-    kill "$AUDIO_RELAY_PID" >/dev/null 2>&1 || true
-    wait "$AUDIO_RELAY_PID" 2>/dev/null || true
+  terminate_managed_process "$AUDIO_RELAY_PID" "$AUDIO_RELAY_PROCESS_GROUP"
+  if [ "$AUDIO_RELAY_STARTED" = "1" ]; then
+    curl -sS --max-time 2 -X POST "$BACKEND_URL/api/audio/stream/stop" >/dev/null 2>&1 || true
+    rm -f "$RUN_DIR/audio-relay.pid"
     log "本机音频转发已停止。"
   fi
+  AUDIO_RELAY_PID=""
+  AUDIO_RELAY_PROCESS_GROUP="0"
+  AUDIO_RELAY_STARTED="0"
+}
+
+cleanup_once() {
+  if [ "$CLEANUP_STARTED" = "1" ]; then
+    return 0
+  fi
+  CLEANUP_STARTED="1"
+  trap - EXIT
+  trap '' HUP INT QUIT TERM
+  stop_browser
+  stop_audio_relay
+  restore_resolution
 }
 
 on_exit() {
   status="$?"
-  trap - EXIT INT TERM
-  stop_browser
-  stop_audio_relay
-  restore_resolution
+  cleanup_once
   exit "$status"
 }
 
 on_signal() {
-  trap - EXIT INT TERM
-  stop_browser
-  stop_audio_relay
-  restore_resolution
-  exit 130
+  status="$1"
+  cleanup_once
+  exit "$status"
 }
 
 trap on_exit EXIT
-trap on_signal INT TERM
+trap 'on_signal 129' HUP
+trap 'on_signal 130' INT
+trap 'on_signal 131' QUIT
+trap 'on_signal 143' TERM
 
 backend_ready() {
   curl -fsS --max-time 1 "$BACKEND_URL/api/health" >/dev/null 2>&1

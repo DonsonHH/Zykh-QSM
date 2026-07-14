@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowLeft,
-  Check,
   Fingerprint,
   Gauge,
   HeartPulse,
@@ -16,11 +15,6 @@ import {
 import { loadQsmVitals } from "../api/qsm.js";
 
 const measurementSeconds = 18;
-const initialSteps = [
-  { id: "prepare", label: "对准", icon: ScanFace, state: "idle" },
-  { id: "signal", label: "覆盖", icon: Fingerprint, state: "idle" },
-  { id: "reference", label: "保持", icon: ShieldCheck, state: "idle" }
-];
 
 export function Vitals({ notify, onNavigate, returnPage = "home" }) {
   const [phase, setPhase] = useState("idle");
@@ -30,33 +24,10 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
   const requestIdRef = useRef(0);
 
   const returnLabel = returnPage === "inquiry" ? "返回问询" : "返回首页";
-  const status = useMemo(() => describeVitals(result, errorMessage, phase, countdown), [countdown, errorMessage, phase, result]);
+  const status = useMemo(() => describeVitals(result, errorMessage, phase), [errorMessage, phase, result]);
   const elapsedSeconds = measurementSeconds - countdown;
   const progressPercent =
     phase === "done" ? 100 : phase === "measuring" ? Math.min(100, Math.round((elapsedSeconds / measurementSeconds) * 100)) : 0;
-  const steps = useMemo(
-    () =>
-      initialSteps.map((step, index) => ({
-        ...step,
-        state:
-          phase === "done"
-            ? "done"
-            : phase !== "measuring"
-              ? "idle"
-              : index === 0
-                ? elapsedSeconds < 3
-                  ? "running"
-                  : "done"
-                : index === 1
-                  ? elapsedSeconds < 12
-                    ? "active"
-                    : "done"
-                  : elapsedSeconds < 12
-                    ? "idle"
-                    : "running"
-      })),
-    [elapsedSeconds, phase]
-  );
 
   useEffect(() => {
     if (phase !== "measuring") {
@@ -151,7 +122,6 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
             <div className="vitals-pose-graphic" aria-hidden="true">
               <span className="vitals-finger-target" />
               <Fingerprint size={78} />
-              <span className="vitals-hold-mark">保持</span>
             </div>
             <div className="vitals-pose-label">
               <span>手指</span>
@@ -179,20 +149,6 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           </span>
         </section>
 
-        <div className="vitals-progress" aria-label="测量进度">
-          {steps.map((step) => {
-            const StepIcon = step.state === "done" ? Check : step.icon;
-            return (
-              <article key={step.id} className={step.state}>
-                <span>
-                  <StepIcon size={20} aria-hidden="true" />
-                </span>
-              <strong>{step.label}</strong>
-              </article>
-            );
-          })}
-        </div>
-
         <div className="vitals-action-row">
           <button className="primary-action" type="button" onClick={handleMeasure} disabled={phase === "measuring"}>
             <Activity size={24} aria-hidden="true" />
@@ -215,56 +171,98 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           </div>
         </div>
 
-        <div className="vitals-metric-grid">
-          <Metric
-            icon={HeartPulse}
-            label="心率"
-            value={formatMetric(result?.heart_rate, "次/分", phase, result, 0)}
-            tone="heart"
-            primary
-          />
-          <Metric
-            icon={Activity}
-            label="血氧"
-            value={formatMetric(result?.spo2, "%", phase, result, 0)}
-            tone="oxygen"
-            primary
-          />
-          <Metric
-            icon={Thermometer}
-            label="额温"
-            value={formatMetric(result?.temperature, "℃", phase, result, 1)}
-            tone="forehead"
-          />
-          <Metric
-            icon={Fingerprint}
-            label="指温参考"
-            value={formatMetric(result?.body_temperature, "℃", phase, result, 2)}
-            tone="finger"
-          />
-        </div>
+        {result ? (
+          <>
+            <div className="vitals-metric-grid">
+              <Metric
+                icon={HeartPulse}
+                label="心率"
+                value={formatMetric(result?.heart_rate, "次/分", phase, result, 0)}
+                tone="heart"
+                primary
+              />
+              <Metric
+                icon={Activity}
+                label="血氧"
+                value={formatMetric(result?.spo2, "%", phase, result, 0)}
+                tone="oxygen"
+                primary
+              />
+              <Metric
+                icon={Thermometer}
+                label="额温"
+                value={formatMetric(result?.temperature, "℃", phase, result, 1)}
+                tone="forehead"
+              />
+              <Metric
+                icon={Fingerprint}
+                label="指温参考"
+                value={formatMetric(result?.body_temperature, "℃", phase, result, 2)}
+                tone="finger"
+              />
+            </div>
 
-        <div className="vitals-reference-grid" aria-label="辅助体征参考">
-          <ReferenceMetric icon={Gauge} label="血压" value={formatPressure(result, phase)} />
-          <ReferenceMetric
-            icon={Wind}
-            label="呼吸"
-            value={formatReference(result?.respiratory_rate, "次/分", phase, result)}
-          />
-          <ReferenceMetric icon={Waves} label="HRV" value={formatReference(result?.hrv_sdnn, "ms", phase, result)} />
-        </div>
+            <div className="vitals-reference-grid" aria-label="辅助体征参考">
+              <ReferenceMetric icon={Gauge} label="血压" value={formatPressure(result, phase)} />
+              <ReferenceMetric
+                icon={Wind}
+                label="呼吸"
+                value={formatReference(result?.respiratory_rate, "次/分", phase, result)}
+              />
+              <ReferenceMetric icon={Waves} label="HRV" value={formatReference(result?.hrv_sdnn, "ms", phase, result)} />
+            </div>
 
-        <div className="vitals-status-card">
-          <span aria-hidden="true">
-            <ShieldCheck size={24} />
-          </span>
-          <div>
-            <strong>{status.summary}</strong>
-            <p>{status.detail}</p>
-          </div>
-        </div>
+            <div className="vitals-status-card">
+              <span aria-hidden="true">
+                <ShieldCheck size={24} />
+              </span>
+              <div>
+                <strong>{status.summary}</strong>
+                <p>{status.detail}</p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <ResultPlaceholder phase={phase} countdown={countdown} progressPercent={progressPercent} />
+        )}
       </section>
     </main>
+  );
+}
+
+function ResultPlaceholder({ phase, countdown, progressPercent }) {
+  const measuring = phase === "measuring";
+  const previewItems = [
+    { label: "心率", icon: HeartPulse },
+    { label: "血氧", icon: Activity },
+    { label: "体温", icon: Thermometer },
+    { label: "身体参考", icon: Waves }
+  ];
+
+  return (
+    <div className={`vitals-result-placeholder ${measuring ? "measuring" : "idle"}`}>
+      <div className="vitals-result-visual" aria-hidden="true">
+        <span className="vitals-result-halo" />
+        <HeartPulse size={62} strokeWidth={1.8} />
+        <span className="vitals-result-scan" />
+      </div>
+      <div className="vitals-placeholder-copy">
+        <p>{measuring ? "传感器正在读取" : "一次完成多项测量"}</p>
+        <h3>{measuring ? "正在采集身体信号" : "结果会自动显示在这里"}</h3>
+        <span>{measuring ? `请保持姿势，约 ${countdown} 秒` : "准备好后点击开始测量"}</span>
+      </div>
+      <div className="vitals-preview-items" aria-label="可测量项目">
+        {previewItems.map(({ label, icon: Icon }) => (
+          <span key={label}>
+            <Icon size={20} aria-hidden="true" />
+            {label}
+          </span>
+        ))}
+      </div>
+      <div className="vitals-placeholder-progress" aria-hidden="true">
+        <i style={{ width: `${measuring ? progressPercent : 0}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -292,10 +290,10 @@ function ReferenceMetric({ icon: Icon, label, value }) {
 
 function formatMetric(value, unit, phase, result, fractionDigits = 0) {
   if (phase === "measuring") {
-    return "···";
+    return "采集中";
   }
   if (!result) {
-    return "--";
+    return "尚未测量";
   }
   if (value === null || value === undefined || Number.isNaN(Number(value)) || Number(value) <= 0) {
     return "未读取";
@@ -306,32 +304,32 @@ function formatMetric(value, unit, phase, result, fractionDigits = 0) {
 
 function formatPressure(result, phase) {
   if (phase === "measuring") {
-    return "···";
+    return "采集中";
   }
   const systolic = Number(result?.systolic_pressure);
   const diastolic = Number(result?.diastolic_pressure);
   if (!Number.isFinite(systolic) || !Number.isFinite(diastolic) || systolic <= 0 || diastolic <= 0) {
-    return result ? "未生成" : "--";
+    return result ? "未生成" : "尚未测量";
   }
   return `${Math.round(systolic)}/${Math.round(diastolic)}`;
 }
 
 function formatReference(value, unit, phase, result) {
   if (phase === "measuring") {
-    return "···";
+    return "采集中";
   }
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) {
-    return result ? "未生成" : "--";
+    return result ? "未生成" : "尚未测量";
   }
   return `${Math.round(numeric)}${unit}`;
 }
 
-function describeVitals(result, errorMessage, phase, countdown) {
+function describeVitals(result, errorMessage, phase) {
   if (phase === "measuring") {
     return {
       tone: "active",
-      title: "测量中",
+      title: "正在采集",
       summary: "保持不动",
       detail: "正在形成稳定读数"
     };
@@ -340,8 +338,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
   if (!result && !errorMessage) {
     return {
       tone: "idle",
-      title: "等待测量",
-      summary: "对准 · 覆盖 · 保持",
+      title: "结果预览",
+      summary: "准备测量",
       detail: "准备好后开始"
     };
   }

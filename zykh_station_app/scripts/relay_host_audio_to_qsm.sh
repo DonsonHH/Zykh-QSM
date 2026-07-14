@@ -40,12 +40,12 @@ cleanup() {
     return 0
   fi
   CLEANED_UP="1"
-  trap - INT TERM EXIT
+  trap - HUP INT QUIT TERM EXIT
   if [ -n "$PRODUCER_PID" ]; then
     kill "$PRODUCER_PID" >/dev/null 2>&1 || true
   fi
   if [ "$STREAM_ACTIVE" = "1" ]; then
-    curl -sS -X POST "$BACKEND_URL/api/audio/stream/stop" >/dev/null 2>&1 || true
+    curl -sS --max-time 2 -X POST "$BACKEND_URL/api/audio/stream/stop" >/dev/null 2>&1 || true
   fi
   if [ "$RESTORE_ON_EXIT" = "1" ] && [ -n "$ORIGINAL_SINK" ] && command -v pactl >/dev/null 2>&1; then
     pactl set-default-sink "$ORIGINAL_SINK" >/dev/null 2>&1 || true
@@ -57,7 +57,7 @@ cleanup() {
   fi
 }
 
-trap cleanup INT TERM EXIT
+trap cleanup HUP INT QUIT TERM EXIT
 
 if ! command -v curl >/dev/null 2>&1; then
   fail_soft "curl 不存在，无法发送音频到后端。"
