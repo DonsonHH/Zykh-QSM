@@ -10,15 +10,19 @@ use Time::HiRes qw(time);
 my %options = (
     device            => $ENV{VITALS_UART_DEVICE} || '/dev/ttyS8',
     output            => $ENV{VITALS_UART_JSON} || '/userdata/zykh_app/data/vital_signs_uart8.json',
-    timeout           => number_or($ENV{VITALS_UART_TIMEOUT_SECONDS}, 10),
+    timeout           => number_or($ENV{VITALS_UART_TIMEOUT_SECONDS}, 16),
     stable_frames     => int(number_or($ENV{VITALS_UART_STABLE_FRAMES}, 3)),
+    reference_frames  => int(number_or($ENV{VITALS_UART_REFERENCE_FRAMES}, 2)),
+    aggregate_samples => int(number_or($ENV{VITALS_UART_AGGREGATE_SAMPLES}, 5)),
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
-    temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 0),
+    temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 100),
     input_file        => '',
 );
 
 parse_arguments(\%options, @ARGV);
 $options{stable_frames} = 1 if $options{stable_frames} < 1;
+$options{reference_frames} = 1 if $options{reference_frames} < 1;
+$options{aggregate_samples} = 1 if $options{aggregate_samples} < 1;
 $options{chunk_size} = 1 if $options{chunk_size} < 1;
 $options{timeout} = 1 if $options{timeout} < 1;
 
@@ -70,6 +74,10 @@ sub parse_arguments {
             $options->{timeout} = number_or(require_value($name, \@args), $options->{timeout});
         } elsif ($name eq '--stable-frames') {
             $options->{stable_frames} = int(number_or(require_value($name, \@args), $options->{stable_frames}));
+        } elsif ($name eq '--reference-frames') {
+            $options->{reference_frames} = int(number_or(require_value($name, \@args), $options->{reference_frames}));
+        } elsif ($name eq '--aggregate-samples') {
+            $options->{aggregate_samples} = int(number_or(require_value($name, \@args), $options->{aggregate_samples}));
         } elsif ($name eq '--chunk-size') {
             $options->{chunk_size} = int(number_or(require_value($name, \@args), $options->{chunk_size}));
         } elsif ($name eq '--temperature-scale') {
@@ -150,8 +158,7 @@ sub read_uart_frames {
         if ($count > 0) {
             $buffer .= $chunk;
             extract_frames(\$buffer, \@frames);
-            my @complete = grep { frame_has_complete_measurement($_) } @frames;
-            last if @complete >= $options->{stable_frames};
+            last if measurement_window_ready(\@frames, $options);
         }
     }
 
@@ -187,12 +194,14 @@ sub frame_has_measurement {
     return $frame->[2] > 0 && $frame->[3] > 0;
 }
 
-sub frame_has_complete_measurement {
-    my ($frame) = @_;
-    return frame_has_measurement($frame)
-        && $frame->[5] > 0
-        && $frame->[6] > 0
-        && $frame->[7] > 0;
+sub measurement_window_ready {
+    my ($frames, $options) = @_;
+    my @measured = grep { frame_has_measurement($_) } @{$frames};
+    return 0 if @measured < $options->{stable_frames};
+    my @pressure = grep { $_->[5] > 0 && $_->[6] > 0 } @measured;
+    my @hrv = grep { $_->[10] > 0 || $_->[11] > 0 } @measured;
+    return @pressure >= $options->{reference_frames}
+        && @hrv >= $options->{reference_frames};
 }
 
 sub build_payload {
@@ -209,41 +218,55 @@ sub build_payload {
     }
 
     my @measured = grep { frame_has_measurement($_) } @{$frames};
-    my @complete = grep { frame_has_complete_measurement($_) } @{$frames};
-    my @selected = @complete ? @complete : @measured ? @measured : @{$frames};
-    if (@selected > $options->{stable_frames}) {
-        @selected = @selected[-$options->{stable_frames} .. -1];
-    }
-    my $latest = $selected[-1];
+    my @signal_frames = @measured ? @measured : @{$frames};
+    my $latest = $signal_frames[-1];
     my $finger_detected = @measured ? JSON::PP::true : JSON::PP::false;
     my $quality = @measured >= $options->{stable_frames}
         ? 'stable'
         : @measured
-            ? 'measured'
+            ? 'poor_signal'
             : 'no_finger';
-    my $body_raw = { integer => median(\@selected, 12), decimal => median(\@selected, 13) };
-    my $ambient_raw = { integer => median(\@selected, 14), decimal => median(\@selected, 15) };
+    my $body_temperature = median_recent_temperature(
+        \@signal_frames,
+        12,
+        13,
+        $options->{temperature_scale},
+        $options->{aggregate_samples},
+    );
+    my $ambient_temperature = median_recent_temperature(
+        $frames,
+        14,
+        15,
+        $options->{temperature_scale},
+        $options->{aggregate_samples},
+    );
+    my $systolic = median_recent_nonzero(\@signal_frames, 5, $options->{aggregate_samples});
+    my $diastolic = median_recent_nonzero(\@signal_frames, 6, $options->{aggregate_samples});
+    my $hrv_sdnn = median_recent_nonzero(\@signal_frames, 10, $options->{aggregate_samples});
+    my $hrv_rmssd = median_recent_nonzero(\@signal_frames, 11, $options->{aggregate_samples});
+    my $reference_ready = $systolic > 0 && $diastolic > 0 && ($hrv_sdnn > 0 || $hrv_rmssd > 0);
 
     return {
         ok                      => JSON::PP::true,
         status                  => @measured ? 'measured' : 'awaiting_finger',
         source                  => 'UART8-vitals-24B',
         device                  => $options->{device},
-        heart_rate_bpm          => median_nonzero(\@selected, 2),
-        spo2_percent            => median_nonzero(\@selected, 3),
-        microcirculation        => median_nonzero(\@selected, 4),
-        systolic_pressure       => median_nonzero(\@selected, 5),
-        diastolic_pressure      => median_nonzero(\@selected, 6),
-        respiratory_rate        => median_nonzero(\@selected, 7),
-        fatigue                 => median(\@selected, 8),
-        rr_interval             => median(\@selected, 9),
-        hrv_sdnn                => median(\@selected, 10),
-        hrv_rmssd               => median(\@selected, 11),
-        body_temperature_raw    => $body_raw,
-        ambient_temperature_raw => $ambient_raw,
-        body_temperature_c      => scaled_temperature($body_raw, $options->{temperature_scale}),
-        ambient_temperature_c   => scaled_temperature($ambient_raw, $options->{temperature_scale}),
+        heart_rate_bpm          => median_recent_nonzero(\@signal_frames, 2, $options->{aggregate_samples}),
+        spo2_percent            => median_recent_nonzero(\@signal_frames, 3, $options->{aggregate_samples}),
+        microcirculation        => median_recent_nonzero(\@signal_frames, 4, $options->{aggregate_samples}),
+        systolic_pressure       => $systolic,
+        diastolic_pressure      => $diastolic,
+        respiratory_rate        => median_recent_nonzero(\@signal_frames, 7, $options->{aggregate_samples}),
+        fatigue                 => median_recent_nonzero(\@signal_frames, 8, $options->{aggregate_samples}),
+        rr_interval             => median_recent_nonzero(\@signal_frames, 9, $options->{aggregate_samples}),
+        hrv_sdnn                => $hrv_sdnn,
+        hrv_rmssd               => $hrv_rmssd,
+        body_temperature_raw    => $body_temperature->{raw},
+        ambient_temperature_raw => $ambient_temperature->{raw},
+        body_temperature_c      => $body_temperature->{value},
+        ambient_temperature_c   => $ambient_temperature->{value},
         temperature_scale       => $options->{temperature_scale} || undef,
+        reference_ready         => $reference_ready ? JSON::PP::true : JSON::PP::false,
         finger_detected         => $finger_detected,
         quality                 => $quality,
         message                 => @measured
@@ -265,19 +288,40 @@ sub median {
     return $values[int(@values / 2)];
 }
 
-sub median_nonzero {
-    my ($frames, $index) = @_;
-    my @values = sort { $a <=> $b }
-        grep { $_ > 0 }
-        map { $_->[$index] + 0 } @{$frames};
+sub median_recent_nonzero {
+    my ($frames, $index, $limit) = @_;
+    my @values;
+    for my $frame (reverse @{$frames}) {
+        my $value = $frame->[$index] + 0;
+        next unless $value > 0;
+        push @values, $value;
+        last if @values >= $limit;
+    }
+    @values = sort { $a <=> $b } @values;
     return 0 unless @values;
     return $values[int(@values / 2)];
 }
 
-sub scaled_temperature {
-    my ($raw, $scale) = @_;
-    return undef unless $scale && $scale > 0;
-    return sprintf('%.2f', $raw->{integer} + ($raw->{decimal} / $scale)) + 0;
+sub median_recent_temperature {
+    my ($frames, $integer_index, $decimal_index, $scale, $limit) = @_;
+    my @samples;
+    for my $frame (reverse @{$frames}) {
+        my $integer = $frame->[$integer_index] + 0;
+        next unless $integer > 0;
+        my $decimal = $frame->[$decimal_index] + 0;
+        my $value = $scale > 0 ? $integer + ($decimal / $scale) : undef;
+        push @samples, { integer => $integer, decimal => $decimal, value => $value };
+        last if @samples >= $limit;
+    }
+    return { raw => { integer => 0, decimal => 0 }, value => undef } unless @samples;
+    @samples = sort {
+        (($a->{value} // $a->{integer}) <=> ($b->{value} // $b->{integer}))
+    } @samples;
+    my $median = $samples[int(@samples / 2)];
+    return {
+        raw => { integer => $median->{integer}, decimal => $median->{decimal} },
+        value => defined $median->{value} ? sprintf('%.2f', $median->{value}) + 0 : undef,
+    };
 }
 
 sub write_json {

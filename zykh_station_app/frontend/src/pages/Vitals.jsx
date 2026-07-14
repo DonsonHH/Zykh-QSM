@@ -1,12 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowLeft, Gauge, HeartPulse, ScanFace, Thermometer, Waves, Wind } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  Check,
+  Fingerprint,
+  Gauge,
+  HeartPulse,
+  MoveVertical,
+  ScanFace,
+  ShieldCheck,
+  Thermometer,
+  Waves,
+  Wind
+} from "lucide-react";
 import { loadQsmVitals } from "../api/qsm.js";
 
-const measurementSeconds = 24;
+const measurementSeconds = 18;
 const initialSteps = [
-  { id: "prepare", label: "完成姿势准备", state: "idle" },
-  { id: "signal", label: "采集稳定信号", state: "idle" },
-  { id: "reference", label: "形成体征参考", state: "idle" }
+  { id: "prepare", label: "对准", icon: ScanFace, state: "idle" },
+  { id: "signal", label: "覆盖", icon: Fingerprint, state: "idle" },
+  { id: "reference", label: "保持", icon: ShieldCheck, state: "idle" }
 ];
 
 export function Vitals({ notify, onNavigate, returnPage = "home" }) {
@@ -113,31 +126,36 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
             <ArrowLeft size={24} aria-hidden="true" />
           </button>
           <div>
-            <p>体征测量</p>
-            <h2>请按提示完成身体状态测量</h2>
+            <p>身体状态</p>
+            <h2>准备测量</h2>
           </div>
         </div>
 
-        <div className="vitals-guide-grid">
-          <article className="vitals-guide-card face">
-            <span aria-hidden="true">
-              <ScanFace size={48} />
-            </span>
-            <div>
-              <h3>额温测量</h3>
-              <strong>头部距离屏幕约 20cm</strong>
-              <p>请让额头对准屏幕上方的额温模块，保持 2-3 秒。</p>
+        <div className={`vitals-visual-guide ${phase}`}>
+          <article className="vitals-pose-card forehead">
+            <div className="vitals-pose-graphic" aria-hidden="true">
+              <span className="vitals-sensor-cap" />
+              <ScanFace size={76} />
+              <span className="vitals-distance-mark">
+                <MoveVertical size={22} />
+                20cm
+              </span>
+            </div>
+            <div className="vitals-pose-label">
+              <span>额头</span>
+              <strong>对准屏幕上方</strong>
             </div>
           </article>
 
-          <article className="vitals-guide-card finger">
-            <span aria-hidden="true">
-              <HeartPulse size={48} />
-            </span>
-            <div>
-              <h3>综合体征参考</h3>
-              <strong>手指放在屏幕右前方示意处</strong>
-              <p>指腹完整覆盖并保持不动，持续约 15-20 秒。</p>
+          <article className="vitals-pose-card fingertip">
+            <div className="vitals-pose-graphic" aria-hidden="true">
+              <span className="vitals-finger-target" />
+              <Fingerprint size={78} />
+              <span className="vitals-hold-mark">保持</span>
+            </div>
+            <div className="vitals-pose-label">
+              <span>手指</span>
+              <strong>指腹完整覆盖</strong>
             </div>
           </article>
         </div>
@@ -150,26 +168,29 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
             </div>
           </div>
           <div className="vitals-console-copy">
-            <strong>{phase === "measuring" ? "请保持当前姿势" : result ? "可重新测量" : "准备好后开始"}</strong>
-            <p>
-              {phase === "measuring"
-                ? countdown > 0
-                  ? "额头和手指都不要移动，系统正在读取传感器信号。"
-                  : "正在等待外设返回稳定读数，请继续保持姿势。"
-                : result
-                  ? "如手指信号不稳定，请按提示重新放置后再测。"
-                  : "测量开始后会自动倒计时，并同步读取额温与综合体征参考数据。"}
-            </p>
+            <strong>{measurementTitle(phase, result)}</strong>
+            <p>{measurementCue(phase, countdown, result)}</p>
           </div>
+          <span className="vitals-signal-wave" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
         </section>
 
         <div className="vitals-progress" aria-label="测量进度">
-          {steps.map((step) => (
-            <article key={step.id} className={step.state}>
-              <span />
+          {steps.map((step) => {
+            const StepIcon = step.state === "done" ? Check : step.icon;
+            return (
+              <article key={step.id} className={step.state}>
+                <span>
+                  <StepIcon size={20} aria-hidden="true" />
+                </span>
               <strong>{step.label}</strong>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
 
         <div className="vitals-action-row">
@@ -189,37 +210,71 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
             <Thermometer size={34} />
           </span>
           <div>
-            <p>测量结果</p>
+            <p>实时结果</p>
             <h2 aria-live="polite">{status.title}</h2>
           </div>
         </div>
 
         <div className="vitals-metric-grid">
-          <Metric icon={Thermometer} label="额温" value={formatMetric(result?.temperature, "℃", 1, true)} />
-          <Metric icon={HeartPulse} label="心率" value={formatMetric(result?.heart_rate, "次/分", 0, true)} />
-          <Metric icon={Activity} label="血氧" value={formatMetric(result?.spo2, "%", 0, true)} />
+          <Metric
+            icon={HeartPulse}
+            label="心率"
+            value={formatMetric(result?.heart_rate, "次/分", phase, result, 0)}
+            tone="heart"
+            primary
+          />
+          <Metric
+            icon={Activity}
+            label="血氧"
+            value={formatMetric(result?.spo2, "%", phase, result, 0)}
+            tone="oxygen"
+            primary
+          />
+          <Metric
+            icon={Thermometer}
+            label="额温"
+            value={formatMetric(result?.temperature, "℃", phase, result, 1)}
+            tone="forehead"
+          />
+          <Metric
+            icon={Fingerprint}
+            label="指温参考"
+            value={formatMetric(result?.body_temperature, "℃", phase, result, 2)}
+            tone="finger"
+          />
         </div>
 
         <div className="vitals-reference-grid" aria-label="辅助体征参考">
-          <ReferenceMetric icon={Gauge} label="血压参考" value={formatPressure(result)} />
-          <ReferenceMetric icon={Wind} label="呼吸频率" value={formatMetric(result?.respiratory_rate, "次/分", 0, true)} />
-          <ReferenceMetric icon={Waves} label="HRV" value={formatHrv(result)} />
+          <ReferenceMetric icon={Gauge} label="血压" value={formatPressure(result, phase)} />
+          <ReferenceMetric
+            icon={Wind}
+            label="呼吸"
+            value={formatReference(result?.respiratory_rate, "次/分", phase, result)}
+          />
+          <ReferenceMetric icon={Waves} label="HRV" value={formatReference(result?.hrv_sdnn, "ms", phase, result)} />
         </div>
 
         <div className="vitals-status-card">
-          <strong>{status.summary}</strong>
-          <p>{status.detail}</p>
+          <span aria-hidden="true">
+            <ShieldCheck size={24} />
+          </span>
+          <div>
+            <strong>{status.summary}</strong>
+            <p>{status.detail}</p>
+          </div>
         </div>
       </section>
     </main>
   );
 }
 
-function Metric({ icon: Icon, label, value }) {
+function Metric({ icon: Icon, label, value, tone, primary = false }) {
   return (
-    <article className="vitals-metric">
-      <Icon size={26} aria-hidden="true" />
-      <span>{label}</span>
+    <article className={`vitals-metric ${tone} ${primary ? "primary" : ""}`}>
+      <span className="vitals-metric-icon" aria-hidden="true">
+        <Icon size={25} />
+      </span>
+      <span className="vitals-metric-label">{label}</span>
       <strong>{value}</strong>
     </article>
   );
@@ -235,34 +290,41 @@ function ReferenceMetric({ icon: Icon, label, value }) {
   );
 }
 
-function formatMetric(value, unit, fractionDigits = 0, zeroIsEmpty = false) {
-  if (
-    value === null ||
-    value === undefined ||
-    Number.isNaN(Number(value)) ||
-    (zeroIsEmpty && Number(value) <= 0)
-  ) {
-    return "待测";
+function formatMetric(value, unit, phase, result, fractionDigits = 0) {
+  if (phase === "measuring") {
+    return "···";
+  }
+  if (!result) {
+    return "--";
+  }
+  if (value === null || value === undefined || Number.isNaN(Number(value)) || Number(value) <= 0) {
+    return "未读取";
   }
   const numeric = Number(value);
   return `${numeric.toFixed(fractionDigits)}${unit}`;
 }
 
-function formatPressure(result) {
+function formatPressure(result, phase) {
+  if (phase === "measuring") {
+    return "···";
+  }
   const systolic = Number(result?.systolic_pressure);
   const diastolic = Number(result?.diastolic_pressure);
   if (!Number.isFinite(systolic) || !Number.isFinite(diastolic) || systolic <= 0 || diastolic <= 0) {
-    return "待测";
+    return result ? "未生成" : "--";
   }
   return `${Math.round(systolic)}/${Math.round(diastolic)}`;
 }
 
-function formatHrv(result) {
-  const sdnn = Number(result?.hrv_sdnn);
-  if (!Number.isFinite(sdnn) || sdnn <= 0) {
-    return "待测";
+function formatReference(value, unit, phase, result) {
+  if (phase === "measuring") {
+    return "···";
   }
-  return `${Math.round(sdnn)}ms`;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return result ? "未生成" : "--";
+  }
+  return `${Math.round(numeric)}${unit}`;
 }
 
 function describeVitals(result, errorMessage, phase, countdown) {
@@ -270,11 +332,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "active",
       title: "测量中",
-      summary: "正在读取体征信号",
-      detail:
-        countdown > 0
-          ? `请保持额头对准和手指稳定，剩余约 ${countdown} 秒。`
-          : "正在等待外设返回稳定读数，请继续保持姿势。"
+      summary: "保持不动",
+      detail: "正在形成稳定读数"
     };
   }
 
@@ -282,8 +341,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "idle",
       title: "等待测量",
-      summary: "请先完成姿势准备",
-      detail: "额头对准屏幕上方，手指放在右前方传感器区域，再点击开始测量。"
+      summary: "对准 · 覆盖 · 保持",
+      detail: "准备好后开始"
     };
   }
 
@@ -291,8 +350,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "warn",
       title: "设备暂不可用",
-      summary: "本次测量未完成",
-      detail: errorMessage || result?.error_message || "外设返回不可用状态，请检查连接后重试。"
+      summary: "本次未完成",
+      detail: errorMessage || result?.error_message || "请检查设备后重试"
     };
   }
 
@@ -300,8 +359,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "warn",
       title: "心率血氧模块异常",
-      summary: "本次未形成心率和血氧读数",
-      detail: humanVitalsMessage(result, "模块返回异常状态，请确认手指传感器连接后重新测量。")
+      summary: "请重新放置手指",
+      detail: humanVitalsMessage(result, "确认指腹覆盖后重试")
     };
   }
 
@@ -309,8 +368,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "warn",
       title: "未检测到手指",
-      summary: "心率和血氧没有形成稳定读数",
-      detail: humanVitalsMessage(result, "请将指腹完整覆盖屏幕右前方传感器，保持稳定后重新测量。")
+      summary: "没有检测到手指",
+      detail: humanVitalsMessage(result, "请让指腹完整覆盖传感器")
     };
   }
 
@@ -318,8 +377,8 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "warn",
       title: "只读到部分体征",
-      summary: "本次只完成额温读取",
-      detail: humanVitalsMessage(result, "心率血氧模块未返回完整数据，请按引导放置手指后重新测量。")
+      summary: "只完成部分测量",
+      detail: humanVitalsMessage(result, "重新覆盖手指后测量")
     };
   }
 
@@ -327,16 +386,16 @@ function describeVitals(result, errorMessage, phase, countdown) {
     return {
       tone: "warn",
       title: "信号偏弱",
-      summary: "心率或血氧本次未形成稳定读数",
-      detail: humanVitalsMessage(result, "请放松手指并保持不动，重新测量 10-15 秒。")
+      summary: "信号尚未稳定",
+      detail: humanVitalsMessage(result, "放松手指并保持不动")
     };
   }
 
   return {
     tone: "good",
     title: "测量完成",
-    summary: "身体状态参考数据已记录",
-    detail: "血压、呼吸频率和 HRV 为传感器参考数据，仅用于健康状态辅助。"
+    summary: result?.reference_ready ? "全部数据已记录" : "心率、血氧已记录",
+    detail: result?.reference_ready ? "辅助参考已生成" : "血压与 HRV 可再次测量"
   };
 }
 
@@ -344,13 +403,27 @@ function humanVitalsMessage(result, fallback) {
   const quality = String(result?.quality || "").toLowerCase();
   const message = String(result?.message || "").toLowerCase();
   if (quality === "no_finger" || message.includes("no finger")) {
-    return "未检测到稳定手指信号，请将指腹完整覆盖传感器后重新测量。";
+    return "指腹完整覆盖后重试";
   }
   if (quality === "poor_signal" || message.includes("weak")) {
-    return "手指信号偏弱，请保持手指稳定后重新测量 10-15 秒。";
+    return "保持手指稳定后重试";
   }
   if (quality === "error") {
-    return "心率血氧模块返回异常状态，请确认传感器连接和手指位置后重新测量。";
+    return "确认传感器与手指位置";
   }
   return fallback;
+}
+
+function measurementTitle(phase, result) {
+  if (phase === "measuring") {
+    return "保持不动";
+  }
+  return result ? "测量结束" : "准备就绪";
+}
+
+function measurementCue(phase, countdown, result) {
+  if (phase === "measuring") {
+    return countdown > 0 ? "额头对准 · 指腹覆盖" : "正在生成结果";
+  }
+  return result ? "可重新测量" : "点击下方按钮开始";
 }

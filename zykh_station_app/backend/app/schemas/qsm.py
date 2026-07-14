@@ -36,6 +36,7 @@ class QsmVitalsResponse(BaseModel):
     hrv_rmssd: int | None = None
     body_temperature: float | None = None
     ambient_temperature: float | None = None
+    reference_ready: bool | None = None
     finger_detected: bool | None = None
     quality: str | None = None
     message: str | None = None

@@ -154,11 +154,13 @@ The response keeps the original fields and adds optional UART8 integrated-sensor
   "respiratory_rate": 16,
   "hrv_sdnn": 42,
   "hrv_rmssd": 31,
+  "body_temperature": 36.11,
+  "reference_ready": true,
   "sensor_model": "UART8-vitals-24B"
 }
 ```
 
-Unavailable or zero placeholder values are returned as `null`. Blood pressure and HRV are auxiliary health-reference values and are not diagnostic results.
+Unavailable or zero placeholder values are returned as `null`. `body_temperature` is the UART module fingertip-temperature reference; `temperature` remains the GY-614 forehead temperature. `reference_ready` only becomes true after the module has produced blood-pressure and HRV reference samples. Fewer than three valid heart-rate/SpO2 frames return `quality: "poor_signal"`. These auxiliary values are not diagnostic results and are never synthesized by the adapter.
 
 ### POST /api/camera/capture
 

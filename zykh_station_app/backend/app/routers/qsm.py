@@ -52,6 +52,7 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
         hrv_rmssd=_int_or_none(vitals.get("hrv_rmssd")),
         body_temperature=_float_or_none(vitals.get("sensor_body_temperature")),
         ambient_temperature=_float_or_none(vitals.get("ambient_temperature")),
+        reference_ready=_bool_or_none(vitals.get("reference_ready")),
         finger_detected=_bool_or_none(vitals.get("finger_detected")),
         quality=str(vitals.get("quality")) if vitals.get("quality") is not None else None,
         message=str(vitals.get("message")) if vitals.get("message") is not None else None,

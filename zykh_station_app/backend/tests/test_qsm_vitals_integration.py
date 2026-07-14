@@ -42,6 +42,7 @@ QSM_RESPONSE = {
                 "hrv_rmssd": 31,
                 "body_temperature_c": 36.55,
                 "ambient_temperature_c": 26.37,
+                "reference_ready": True,
                 "finger_detected": True,
                 "quality": "stable",
                 "sample_count": 4,
@@ -139,6 +140,7 @@ class QsmVitalsIntegrationTest(unittest.TestCase):
         self.assertEqual(result["microcirculation"], 5)
         self.assertEqual(result["sensor_body_temperature"], 36.55)
         self.assertEqual(result["ambient_temperature"], 26.37)
+        self.assertTrue(result["reference_ready"])
 
     def test_temperature_remains_available_when_uart_sensor_fails(self) -> None:
         result = self.read_vitals(QSM_PARTIAL_RESPONSE)

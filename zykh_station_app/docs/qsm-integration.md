@@ -100,9 +100,9 @@ The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, val
 - `hrv_sdnn` and `hrv_rmssd`;
 - raw body/ambient temperature integer and decimal bytes.
 
-`VITALS_UART_TEMP_DECIMAL_SCALE` is intentionally unset until the module display is compared with several raw frames. Until calibrated, the station uses the separate GY-614 value as forehead temperature. Blood pressure and HRV are displayed as health-reference data, not clinical measurements.
+`VITALS_UART_TEMP_DECIMAL_SCALE` defaults to `100`, so bytes `36,11` are exposed as a `36.11°C` fingertip-temperature reference. The separate GY-614 remains the authoritative forehead-temperature source. Heart rate and SpO2 are treated as core measurements; blood pressure and HRV are displayed only as auxiliary reference data when the module actually emits non-zero values.
 
-The UART collection window defaults to 10 seconds. The host allows up to 25 seconds for the combined UART8 and GY-614 gateway response, while the terminal presents a 24-second guided measurement window. A busy UART returns a structured error instead of starting a second overlapping measurement.
+The UART collection window defaults to 16 seconds. This stays below the existing QSM gateway's 18-second sensor-process limit while providing 60% more collection time than the previous 10-second window. The reader waits for at least three heart-rate/SpO2 frames and, when available, two blood-pressure and HRV frames. Each field independently uses the median of its five most recent non-zero samples, so sparse reference values are not discarded merely because they occur in different frames. Fewer than three core frames are reported as `poor_signal`; blood-pressure and HRV values are never synthesized when the module does not emit them. The host allows up to 30 seconds for the combined UART8 and GY-614 response, while the terminal presents an 18-second guided measurement window. A busy UART returns a structured error instead of starting a second overlapping measurement.
 
 ## Supported adapter methods
 

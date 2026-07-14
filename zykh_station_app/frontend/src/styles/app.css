@@ -4235,7 +4235,7 @@ a:focus-visible {
   align-self: stretch;
   overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(0, 1.26fr) minmax(360px, 0.74fr);
+  grid-template-columns: minmax(0, 1.18fr) minmax(390px, 0.82fr);
   gap: 16px;
 }
 
@@ -4244,22 +4244,22 @@ a:focus-visible {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 22px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  padding: 20px;
+  padding: 18px;
   overflow: hidden;
 }
 
 .vitals-guide-panel {
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr) 84px 58px 64px;
+  grid-template-rows: 52px minmax(0, 1fr) 82px 62px;
   gap: 10px;
 }
 
 .vitals-result-panel {
   display: grid;
-  grid-template-rows: 56px minmax(0, 1fr) 64px 84px;
+  grid-template-rows: 52px minmax(0, 1fr) 62px 72px;
   gap: 10px;
 }
 
@@ -4285,7 +4285,7 @@ a:focus-visible {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1.08;
   font-weight: 900;
   letter-spacing: 0;
@@ -4293,83 +4293,126 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.vitals-guide-grid {
+.vitals-visual-guide {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
-.vitals-guide-card {
+.vitals-pose-card {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   border: 1px solid #dbe7f3;
-  border-radius: 24px;
-  background: #f8fbff;
-  padding: 18px;
+  border-radius: 22px;
+  padding: 12px 14px 14px;
+  overflow: hidden;
 }
 
-.vitals-guide-card.face {
-  background: #eff6ff;
+.vitals-pose-card.forehead {
+  background: #edf5ff;
 }
 
-.vitals-guide-card.finger {
-  background: #effcf7;
+.vitals-pose-card.fingertip {
+  background: #ecfbf6;
 }
 
-.vitals-guide-card > span {
-  width: 64px;
-  height: 64px;
+.vitals-pose-graphic {
+  position: relative;
+  min-height: 112px;
   display: grid;
   place-items: center;
-  border-radius: 24px;
-  background: var(--surface);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
   color: var(--primary);
-  box-shadow: 0 8px 20px rgba(15, 35, 70, 0.06);
 }
 
-.vitals-guide-card.finger > span {
+.vitals-pose-card.fingertip .vitals-pose-graphic {
   color: #087c68;
 }
 
-.vitals-guide-card h3 {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 16px;
+.vitals-sensor-cap {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 72px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2563eb;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.09);
+}
+
+.vitals-distance-mark,
+.vitals-hold-mark {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  padding: 4px 8px;
+  font-size: 15px;
   line-height: 1;
   font-weight: 900;
 }
 
-.vitals-guide-card strong {
-  display: block;
-  color: var(--text);
-  font-size: 24px;
-  line-height: 1.16;
-  font-weight: 900;
+.vitals-hold-mark {
+  background: #d8f7ec;
+  color: #087c68;
 }
 
-.vitals-guide-card p {
-  margin: 9px 0 0;
+.vitals-finger-target {
+  position: absolute;
+  width: 98px;
+  height: 98px;
+  border: 2px solid rgba(8, 124, 104, 0.32);
+  border-radius: 50%;
+  box-shadow: 0 0 0 12px rgba(8, 124, 104, 0.08);
+}
+
+.vitals-visual-guide.measuring .vitals-finger-target {
+  animation: vitals-target-pulse 1.5s ease-out infinite;
+}
+
+.vitals-pose-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.vitals-pose-label span {
   color: var(--muted);
-  font-size: 17px;
-  line-height: 1.28;
-  font-weight: 750;
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.vitals-pose-label strong {
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 900;
 }
 
 .vitals-measure-console {
   min-height: 0;
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr);
+  grid-template-columns: 74px minmax(0, 1fr) 62px;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   border: 1px solid #dbe7f3;
-  border-radius: 22px;
+  border-radius: 20px;
   background: #fbfdff;
-  padding: 10px 14px;
+  padding: 8px 12px;
 }
 
 .vitals-measure-console.measuring {
@@ -4385,8 +4428,8 @@ a:focus-visible {
 .vitals-ring {
   --progress: 0%;
   position: relative;
-  width: 74px;
-  height: 74px;
+  width: 66px;
+  height: 66px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -4415,7 +4458,7 @@ a:focus-visible {
 
 .vitals-ring strong {
   color: var(--text);
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1;
   font-weight: 950;
   font-variant-numeric: tabular-nums;
@@ -4436,17 +4479,46 @@ a:focus-visible {
 .vitals-console-copy strong {
   display: block;
   color: var(--text);
-  font-size: 21px;
+  font-size: 20px;
   line-height: 1;
   font-weight: 900;
 }
 
 .vitals-console-copy p {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.25;
   font-weight: 780;
+}
+
+.vitals-signal-wave {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.vitals-signal-wave i {
+  width: 5px;
+  height: 13px;
+  border-radius: 999px;
+  background: #b8cae0;
+}
+
+.vitals-measure-console.measuring .vitals-signal-wave i {
+  background: var(--primary);
+  animation: vitals-wave 900ms ease-in-out infinite;
+}
+
+.vitals-measure-console.measuring .vitals-signal-wave i:nth-child(2),
+.vitals-measure-console.measuring .vitals-signal-wave i:nth-child(4) {
+  animation-delay: 140ms;
+}
+
+.vitals-measure-console.measuring .vitals-signal-wave i:nth-child(3) {
+  animation-delay: 280ms;
 }
 
 .vitals-progress {
@@ -4459,26 +4531,30 @@ a:focus-visible {
 .vitals-progress article {
   min-width: 0;
   display: grid;
-  grid-template-columns: 18px 1fr;
+  grid-template-columns: 34px 1fr;
   align-items: center;
   gap: 10px;
   border: 1px solid #e3edf8;
-  border-radius: 18px;
+  border-radius: 16px;
   background: var(--surface-soft);
-  padding: 10px 12px;
+  padding: 8px 10px;
   transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
 .vitals-progress article span {
-  width: 18px;
-  height: 18px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
   border-radius: 999px;
-  background: #c9d8e8;
+  background: #dce7f3;
+  color: #62758d;
 }
 
 .vitals-progress article.active span,
 .vitals-progress article.running span {
   background: var(--primary);
+  color: #ffffff;
 }
 
 .vitals-progress article.running {
@@ -4493,12 +4569,13 @@ a:focus-visible {
 
 .vitals-progress article.done span {
   background: #0f9f8f;
+  color: #ffffff;
 }
 
 .vitals-progress strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1.12;
   font-weight: 900;
   text-overflow: ellipsis;
@@ -4507,7 +4584,7 @@ a:focus-visible {
 
 .vitals-action-row {
   display: grid;
-  grid-template-columns: 1fr 170px;
+  grid-template-columns: 1fr 156px;
   gap: 12px;
 }
 
@@ -4527,7 +4604,8 @@ a:focus-visible {
 .vitals-metric-grid {
   min-height: 0;
   display: grid;
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -4535,31 +4613,62 @@ a:focus-visible {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 38px 1fr auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 9px;
   border: 1px solid #e3edf8;
-  border-radius: 18px;
+  border-radius: 16px;
   background: var(--surface-soft);
-  padding: 9px 12px;
+  padding: 10px 12px;
 }
 
-.vitals-metric svg {
+.vitals-metric.primary {
+  border-color: #c9ddfa;
+  background: #f1f6ff;
+}
+
+.vitals-metric.oxygen {
+  border-color: #bce9df;
+  background: #effbf7;
+}
+
+.vitals-metric-icon {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #ffffff;
   color: var(--primary);
+  box-shadow: 0 4px 12px rgba(15, 35, 70, 0.06);
 }
 
-.vitals-metric span {
+.vitals-metric.oxygen .vitals-metric-icon,
+.vitals-metric.finger .vitals-metric-icon {
+  color: #087c68;
+}
+
+.vitals-metric.forehead .vitals-metric-icon {
+  color: #d97706;
+}
+
+.vitals-metric-label {
   color: var(--muted);
-  font-size: 18px;
-  font-weight: 900;
+  font-size: 15px;
+  line-height: 1.1;
+  font-weight: 850;
 }
 
 .vitals-metric strong {
   color: var(--text);
-  font-size: 25px;
-  line-height: 1;
+  font-size: 22px;
+  line-height: 1.15;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .vitals-reference-grid {
@@ -4577,9 +4686,9 @@ a:focus-visible {
   align-content: center;
   column-gap: 7px;
   border: 1px solid #dbe7f3;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #f7fbff;
-  padding: 7px 9px;
+  padding: 6px 8px;
 }
 
 .vitals-reference-metric svg {
@@ -4591,7 +4700,7 @@ a:focus-visible {
 .vitals-reference-metric span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.1;
   font-weight: 850;
   text-overflow: ellipsis;
@@ -4601,7 +4710,7 @@ a:focus-visible {
 .vitals-reference-metric strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
@@ -4611,13 +4720,24 @@ a:focus-visible {
 
 .vitals-status-card {
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
   border: 1px solid #e3edf8;
-  border-radius: 20px;
+  border-radius: 18px;
   background: #fbfdff;
-  padding: 11px 14px;
+  padding: 9px 12px;
+}
+
+.vitals-status-card > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #eaf2ff;
+  color: var(--primary);
 }
 
 .vitals-result-panel.good .vitals-status-card {
@@ -4637,15 +4757,15 @@ a:focus-visible {
 
 .vitals-status-card strong {
   color: var(--text);
-  font-size: 19px;
+  font-size: 18px;
   line-height: 1.15;
   font-weight: 900;
 }
 
 .vitals-status-card p {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1.22;
   font-weight: 780;
 }
@@ -5427,6 +5547,28 @@ a:focus-visible {
   }
   50% {
     transform: scale(1.35);
+  }
+}
+
+@keyframes vitals-target-pulse {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.85;
+  }
+  70%,
+  100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+}
+
+@keyframes vitals-wave {
+  0%,
+  100% {
+    transform: scaleY(0.65);
+  }
+  50% {
+    transform: scaleY(2.1);
   }
 }
 

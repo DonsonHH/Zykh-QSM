@@ -20,6 +20,11 @@ def frame(
     systolic: int,
     diastolic: int,
     respiratory_rate: int,
+    microcirculation: int = 5,
+    fatigue: int = 22,
+    rr_interval: int = 81,
+    hrv_sdnn: int = 43,
+    hrv_rmssd: int = 31,
     body_temperature: tuple[int, int] = (0, 0),
     ambient_temperature: tuple[int, int] = (26, 37),
 ) -> bytes:
@@ -29,14 +34,14 @@ def frame(
             0x01,
             heart_rate,
             spo2,
-            5,
+            microcirculation,
             systolic,
             diastolic,
             respiratory_rate,
-            22,
-            81,
-            43,
-            31,
+            fatigue,
+            rr_interval,
+            hrv_sdnn,
+            hrv_rmssd,
             body_temperature[0],
             body_temperature[1],
             ambient_temperature[0],
@@ -103,6 +108,7 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertEqual(payload["diastolic_pressure"], 78)
         self.assertEqual(payload["respiratory_rate"], 16)
         self.assertTrue(payload["finger_detected"])
+        self.assertEqual(payload["quality"], "poor_signal")
         self.assertEqual(payload["body_temperature_raw"], {"integer": 36, "decimal": 55})
         self.assertEqual(payload["valid_frame_count"], 2)
 
@@ -177,6 +183,75 @@ class VitalsUart8ParserTest(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("already in progress", payload["error"])
+
+    def test_aggregates_sparse_reference_metrics_across_recent_frames(self) -> None:
+        core = frame(
+            heart_rate=70,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+            hrv_sdnn=0,
+            hrv_rmssd=0,
+            body_temperature=(36, 11),
+            ambient_temperature=(26, 8),
+        )
+        pressure = frame(
+            heart_rate=72,
+            spo2=98,
+            systolic=118,
+            diastolic=76,
+            respiratory_rate=16,
+            hrv_sdnn=0,
+            hrv_rmssd=0,
+            body_temperature=(36, 12),
+            ambient_temperature=(26, 9),
+        )
+        hrv = frame(
+            heart_rate=71,
+            spo2=99,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            hrv_sdnn=42,
+            hrv_rmssd=30,
+            body_temperature=(36, 13),
+            ambient_temperature=(26, 10),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            fixture = temp / "uart.bin"
+            output = temp / "vitals.json"
+            fixture.write_bytes(core + pressure + hrv)
+            completed = subprocess.run(
+                [
+                    "perl",
+                    str(PARSER),
+                    "--input-file",
+                    str(fixture),
+                    "--stable-frames",
+                    "3",
+                    "--output",
+                    str(output),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(payload["heart_rate_bpm"], 71)
+        self.assertEqual(payload["spo2_percent"], 98)
+        self.assertEqual(payload["systolic_pressure"], 118)
+        self.assertEqual(payload["diastolic_pressure"], 76)
+        self.assertEqual(payload["respiratory_rate"], 16)
+        self.assertEqual(payload["hrv_sdnn"], 42)
+        self.assertEqual(payload["hrv_rmssd"], 30)
+        self.assertEqual(payload["body_temperature_c"], 36.12)
+        self.assertEqual(payload["ambient_temperature_c"], 26.09)
+        self.assertTrue(payload["reference_ready"])
 
 
 if __name__ == "__main__":

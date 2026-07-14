@@ -122,7 +122,7 @@ cd zykh_station_app
 sh scripts/deploy_qsm_gateway.sh
 ```
 
-该脚本会部署 `qsm_gateway/read_vitals_uart8.pl` 和板端启动包装，并让现有 Perl 网关通过 UART8 读取新模块。模块温度的小数字节缩放在完成实物显示对照前保持未配置；额温仍以 GY-614 结果为准。
+该脚本会部署 `qsm_gateway/read_vitals_uart8.pl` 和板端启动包装，并让现有 Perl 网关通过 UART8 读取新模块。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率和血氧作为核心测量值；血压、HRV 等字段仅在模块实际生成后展示为辅助参考。核心有效帧少于 3 帧时页面会提示信号不足，辅助字段不会通过估算补值。
 
 `LOCAL_CAMERA_MODE=real` 会检查 `LOCAL_CAMERA_DEVICE`，`auto` 会优先探测常见 FF Camera 设备和 `/dev/video*`。如需本地闭环检查，可手动设置 `LOCAL_CAMERA_MODE=mock`。
 

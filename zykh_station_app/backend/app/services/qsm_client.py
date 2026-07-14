@@ -218,6 +218,7 @@ class QsmClient:
                 integrated,
                 ("ambient_temperature_c", "ambient_temperature"),
             )
+            reference_ready = self._first_present(integrated, ("reference_ready",), fallback=False)
             if self._is_zeroish(heart_rate):
                 heart_rate = None
             if self._is_zeroish(spo2):
@@ -267,6 +268,7 @@ class QsmClient:
                 "hrv_rmssd": hrv_rmssd,
                 "sensor_body_temperature": sensor_body_temperature,
                 "ambient_temperature": ambient_temperature,
+                "reference_ready": bool(reference_ready),
                 "source": "real",
                 "finger_detected": finger_detected,
                 "quality": quality,

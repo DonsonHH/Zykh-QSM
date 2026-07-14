@@ -58,7 +58,7 @@ done
 [ "$count" -lt 12 ] || fail "已部署并尝试启动，但本机暂时无法访问外设网关。"
 
 log "读取一次 UART8 综合体征，未放手指时出现 awaiting_finger 也表示硬件链路已响应。"
-VITALS_RESPONSE="$(curl -fsS --max-time 25 -X POST "http://127.0.0.1:${HOST_PORT}/api/vitals/read_all" 2>/dev/null)" \
+VITALS_RESPONSE="$(curl -fsS --max-time 32 -X POST "http://127.0.0.1:${HOST_PORT}/api/vitals/read_all" 2>/dev/null)" \
   || fail "外设网关可访问，但综合体征接口读取失败。"
 case "$VITALS_RESPONSE" in
   *UART8-vitals-24B*)
