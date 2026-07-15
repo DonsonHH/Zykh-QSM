@@ -257,6 +257,12 @@ def audio_stream_stop() -> dict[str, object]:
 @router.websocket("/asr/realtime")
 async def audio_asr_realtime(websocket: WebSocket) -> None:
     await websocket.accept()
+    await websocket.send_json(
+        {
+            "type": "preparing",
+            "message": "正在准备语音识别，请看到“正在听”后再说话。",
+        }
+    )
     if _asr_mode_for_network() == "local":
         await _audio_asr_local(websocket)
         return
@@ -293,6 +299,7 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                     ensure_ascii=False,
                 )
             )
+            await _wait_for_cloud_asr_ready(upstream)
             try:
                 mic_reader, mic_writer = await _open_qsm_mic_stream()
             except Exception as exc:
@@ -444,70 +451,98 @@ async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> N
         return
 
     try:
-        mic_reader, mic_writer = await _open_qsm_mic_stream()
-    except Exception as exc:
-        await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
-        await websocket.close(code=1011)
-        return
+        async with client.connection() as upstream:
+            try:
+                mic_reader, mic_writer = await _open_qsm_mic_stream()
+            except Exception as exc:
+                await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
+                await websocket.close(code=1011)
+                return
 
-    stopped = asyncio.Event()
-    await websocket.send_json(
-        {
-            "type": "ready",
-            "model": status.get("model"),
-            "source": "qsm-local-asr",
-            "offline": True,
-            "fallback_reason": fallback_reason,
-        }
-    )
-
-    async def local_to_client() -> None:
-        async for text, final in client.recognize(mic_reader, stopped):
+            stopped = asyncio.Event()
             await websocket.send_json(
                 {
-                    "type": "transcript",
-                    "text": text,
-                    "final": final,
+                    "type": "ready",
+                    "model": status.get("model"),
                     "source": "qsm-local-asr",
+                    "offline": True,
+                    "fallback_reason": fallback_reason,
                 }
             )
-            if final:
-                return
 
-    async def client_control() -> None:
-        while True:
-            message = await websocket.receive()
-            if message.get("type") == "websocket.disconnect":
-                stopped.set()
-                return
-            text = message.get("text")
-            if not text:
-                continue
+            async def local_to_client() -> None:
+                async for text, final in client.recognize_connected(upstream, mic_reader, stopped):
+                    await websocket.send_json(
+                        {
+                            "type": "transcript",
+                            "text": text,
+                            "final": final,
+                            "source": "qsm-local-asr",
+                        }
+                    )
+                    if final:
+                        return
+
+            async def client_control() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        stopped.set()
+                        return
+                    text = message.get("text")
+                    if not text:
+                        continue
+                    try:
+                        payload = json.loads(text)
+                    except json.JSONDecodeError:
+                        payload = {}
+                    if payload.get("type") == "stop":
+                        stopped.set()
+                        mic_writer.close()
+                        await mic_writer.wait_closed()
+
+            consumer = asyncio.create_task(local_to_client())
+            control = asyncio.create_task(client_control())
             try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = {}
-            if payload.get("type") == "stop":
+                done, pending = await asyncio.wait({consumer, control}, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+            finally:
                 stopped.set()
-                mic_writer.close()
-                await mic_writer.wait_closed()
-
-    consumer = asyncio.create_task(local_to_client())
-    control = asyncio.create_task(client_control())
-    try:
-        done, pending = await asyncio.wait({consumer, control}, return_when=asyncio.FIRST_COMPLETED)
-        for task in done:
-            task.result()
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
+                if not mic_writer.is_closing():
+                    mic_writer.close()
+                    await mic_writer.wait_closed()
     except WebSocketDisconnect:
         return
-    finally:
-        stopped.set()
-        if not mic_writer.is_closing():
-            mic_writer.close()
-            await mic_writer.wait_closed()
+    except Exception as exc:
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "本地实时语音识别连接失败。",
+                    "detail": str(exc),
+                }
+            )
+            await websocket.close(code=1011)
+        except Exception:
+            return
+
+
+async def _wait_for_cloud_asr_ready(upstream: object) -> None:
+    while True:
+        raw = await asyncio.wait_for(upstream.recv(), timeout=6)
+        try:
+            event = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        event_type = str(event.get("type") or "")
+        if event_type == "session.updated":
+            return
+        if event_type in {"error", "session.error"} or event.get("error"):
+            raise RuntimeError(_event_error_message(event))
 
 
 def _record(record_type: str, title: str, description: str, ok: bool) -> None:

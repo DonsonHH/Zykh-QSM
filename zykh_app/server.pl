@@ -1561,8 +1561,8 @@ sub speak_text {
 
     release_audio_playback_device();
     my $vol = speaker_volume($p->{volume});
-    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.55;
-    $tts_speed = 1.55 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
+    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.32;
+    $tts_speed = 1.32 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
     $tts_speed = 0.75 if $tts_speed < 0.75;
     $tts_speed = 1.80 if $tts_speed > 1.80;
     my $requested_mode = normalize_tts_mode($p->{tts_mode} || $p->{mode} || $ENV{TTS_MODE} || 'auto');

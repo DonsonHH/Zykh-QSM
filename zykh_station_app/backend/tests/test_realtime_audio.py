@@ -18,6 +18,7 @@ from app.services.qwen_realtime_tts import (  # noqa: E402
     audio_delta,
     session_update_event,
 )
+from app.routers.audio import _wait_for_cloud_asr_ready  # noqa: E402
 
 
 class RealtimeAudioTest(unittest.TestCase):
@@ -39,7 +40,7 @@ class RealtimeAudioTest(unittest.TestCase):
         self.assertEqual(final, ("我有点头晕", True))
         self.assertIsNone(sherpa_transcript("Done!"))
 
-    def test_qwen_session_uses_fast_realtime_voice(self) -> None:
+    def test_qwen_session_accepts_an_explicit_voice_speed(self) -> None:
         event = session_update_event(speed=1.75)
         session = event["session"]
 
@@ -50,11 +51,40 @@ class RealtimeAudioTest(unittest.TestCase):
         self.assertEqual(session["speech_rate"], 1.75)
         self.assertIn("语速", session["instructions"])
 
+    def test_qwen_default_voice_uses_moderate_speed(self) -> None:
+        session = session_update_event()["session"]
+
+        self.assertEqual(session["speech_rate"], 1.32)
+        self.assertNotIn("偏快", session["instructions"])
+
     def test_qwen_audio_delta_is_decoded_incrementally(self) -> None:
         event = {"type": "response.audio.delta", "delta": "AQIDBA=="}
 
         self.assertEqual(audio_delta(event), b"\x01\x02\x03\x04")
         self.assertEqual(audio_delta({"type": "response.done"}), b"")
+
+
+class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
+    async def test_recording_waits_for_session_updated(self) -> None:
+        class Upstream:
+            def __init__(self) -> None:
+                self.events = iter(
+                    [
+                        json.dumps({"type": "session.created"}),
+                        json.dumps({"type": "session.updated"}),
+                    ]
+                )
+                self.read_count = 0
+
+            async def recv(self) -> str:
+                self.read_count += 1
+                return next(self.events)
+
+        upstream = Upstream()
+
+        await _wait_for_cloud_asr_ready(upstream)
+
+        self.assertEqual(upstream.read_count, 2)
 
 
 if __name__ == "__main__":

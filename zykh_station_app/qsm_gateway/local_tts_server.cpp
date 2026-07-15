@@ -89,7 +89,7 @@ bool HandleClient(int fd, const SherpaOnnxOfflineTts *tts, int sample_rate) {
   std::string header;
   if (!ReadLine(fd, &header)) return false;
 
-  float speed = 1.55f;
+  float speed = 1.32f;
   int volume = 230;
   size_t text_size = 0;
   if (std::sscanf(header.c_str(), "%f\t%d\t%zu", &speed, &volume, &text_size) != 3 ||

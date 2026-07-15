@@ -169,7 +169,7 @@ sh scripts/deploy_local_tts_server.sh
 sh scripts/deploy_local_asr.sh
 ```
 
-本地模式会强制使用板端 `sherpa-onnx`；联网模式使用 `qwen3-tts-instruct-flash-realtime-2026-01-22`，收到音频增量后立即写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+本地模式会使用板端中文流式 Zipformer Transducer、领域热词和 `modified_beam_search`；前端只有在识别会话与麦克风均就绪后才显示“正在听”。联网模式使用 `qwen3-asr-flash-realtime`。语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 

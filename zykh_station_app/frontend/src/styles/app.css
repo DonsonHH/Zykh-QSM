@@ -3771,6 +3771,22 @@ a:focus-visible {
   box-shadow: 0 0 0 6px rgba(15, 159, 143, 0.13), 0 12px 24px rgba(15, 159, 143, 0.2);
 }
 
+.voice-chat-button.compact.preparing {
+  border-color: #8bb6f7;
+  background: #3478df;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.14);
+}
+
+.voice-preparing-spinner {
+  animation: voicePreparingSpin 1.4s linear infinite;
+}
+
+@keyframes voicePreparingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .voice-chat-button.compact:active {
   transform: scale(0.97);
 }
@@ -3796,6 +3812,12 @@ a:focus-visible {
   border-color: #a8e3d6;
   background: #effcf7;
   color: #087c68;
+}
+
+.chat-voice-bar .chat-voice-status.preparing {
+  border-color: #bfd5f6;
+  background: #f2f7ff;
+  color: #255fae;
 }
 
 .chat-voice-bar .chat-voice-status.processing {

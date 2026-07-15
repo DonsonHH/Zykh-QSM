@@ -60,7 +60,7 @@ class LocalAsrClient:
             "ok": True,
             "ready": True,
             "source": "qsm-local-asr",
-            "model": "sherpa-onnx-streaming-zipformer-small-ctc-zh-int8",
+            "model": settings.qsm_local_asr_model,
         }
 
     async def recognize(
@@ -68,26 +68,38 @@ class LocalAsrClient:
         microphone: asyncio.StreamReader,
         stopped: asyncio.Event,
     ) -> AsyncIterator[tuple[str, bool]]:
-        async with websockets.connect(
+        async with self.connection() as upstream:
+            async for result in self.recognize_connected(upstream, microphone, stopped):
+                yield result
+
+    def connection(self):
+        return websockets.connect(
             self.url,
             open_timeout=settings.qsm_local_asr_timeout_seconds,
             ping_interval=20,
             ping_timeout=20,
             max_size=2 * 1024 * 1024,
-        ) as upstream:
-            producer = asyncio.create_task(self._send_audio(upstream, microphone, stopped))
-            try:
-                async for raw in upstream:
-                    result = sherpa_transcript(raw)
-                    if result is None:
-                        continue
-                    yield result
-                    if result[1]:
-                        stopped.set()
-                        return
-            finally:
-                stopped.set()
-                await asyncio.gather(producer, return_exceptions=True)
+        )
+
+    async def recognize_connected(
+        self,
+        upstream: Any,
+        microphone: asyncio.StreamReader,
+        stopped: asyncio.Event,
+    ) -> AsyncIterator[tuple[str, bool]]:
+        producer = asyncio.create_task(self._send_audio(upstream, microphone, stopped))
+        try:
+            async for raw in upstream:
+                result = sherpa_transcript(raw)
+                if result is None:
+                    continue
+                yield result
+                if result[1]:
+                    stopped.set()
+                    return
+        finally:
+            stopped.set()
+            await asyncio.gather(producer, return_exceptions=True)
 
     @staticmethod
     async def _send_audio(upstream, microphone: asyncio.StreamReader, stopped: asyncio.Event) -> None:

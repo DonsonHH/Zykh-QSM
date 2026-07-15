@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Mic, RotateCcw, Volume2 } from "lucide-react";
+import { Bot, LoaderCircle, Mic, RotateCcw, Volume2 } from "lucide-react";
 import { speakText } from "../api/audio.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
+import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
 
 const chatDraftKey = "zykh-inquiry-chat-draft";
 const vitalsAwaitingKey = "zykh-inquiry-awaiting-vitals";
@@ -41,7 +42,7 @@ function speakLocally(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = 1.55;
+  utterance.rate = 1.28;
   utterance.pitch = 1;
   window.speechSynthesis.speak(utterance);
   return true;
@@ -97,7 +98,7 @@ export function InquiryChatStep({
   const draft = readChatDraft();
   const [messages, setMessages] = useState(() => draft?.messages || initialMessages(profile, history));
   const [activeProfile, setActiveProfile] = useState(() => profile || draft?.profile || null);
-  const [listening, setListening] = useState(false);
+  const [voicePhase, setVoicePhase] = useState(VoicePhase.IDLE);
   const [sending, setSending] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState("点击按钮开始语音问询。");
   const [vitalsSummary, setVitalsSummary] = useState(() => draft?.vitalsSummary || describeVitals(readLatestVitals()));
@@ -108,6 +109,11 @@ export function InquiryChatStep({
   const finishedRef = useRef(false);
   const waitingForVitalsRef = useRef(false);
   const profileRef = useRef(activeProfile);
+  const voicePhaseRef = useRef(VoicePhase.IDLE);
+
+  const preparingVoice = voicePhase === VoicePhase.PREPARING;
+  const listening = voicePhase === VoicePhase.LISTENING;
+  const transcribingVoice = voicePhase === VoicePhase.TRANSCRIBING;
 
   const transcript = useMemo(() => transcriptFrom(messages), [messages]);
 
@@ -176,7 +182,7 @@ export function InquiryChatStep({
     if (!clean) {
       return;
     }
-    speakText(clean, 230, 1.72)
+    speakText(clean, 230, 1.32)
       .then((data) => {
         if (!data.ok) {
           speakLocally(clean);
@@ -326,25 +332,51 @@ export function InquiryChatStep({
   }
 
   async function startVoice() {
-    if (listening) {
+    if (voicePhaseRef.current === VoicePhase.PREPARING) {
+      stopVoice(false);
+      setVoiceMessage("已取消，点击按钮可重新开始。");
+      return;
+    }
+    if (voicePhaseRef.current === VoicePhase.LISTENING) {
       stopVoice(true);
+      return;
+    }
+    if (voicePhaseRef.current !== VoicePhase.IDLE) {
       return;
     }
     finishedRef.current = false;
     partialTextRef.current = "";
-    setListening(true);
-    setVoiceMessage("正在连接实时语音识别...");
+    moveVoice(VoiceEvent.START);
+    setVoiceMessage("正在准备语音识别，请看到“正在听”后再说话。");
     try {
       const ws = new WebSocket(websocketUrl("/api/audio/asr/realtime"));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setVoiceMessage("正在连接外设麦克风...");
+        setVoiceMessage("正在准备识别服务与麦克风...");
       };
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data || "{}");
+        let data;
+        try {
+          data = JSON.parse(event.data || "{}");
+        } catch {
+          return;
+        }
+        if (data.type === "preparing") {
+          setVoiceMessage(data.message || "正在准备识别服务与麦克风...");
+          return;
+        }
         if (data.type === "ready") {
+          if (voicePhaseRef.current !== VoicePhase.PREPARING) {
+            return;
+          }
+          moveVoice(VoiceEvent.READY);
+          try {
+            navigator.vibrate?.([28, 35, 28]);
+          } catch {
+            // Vibration feedback is optional.
+          }
           setVoiceMessage(data.offline ? "本地识别正在听，请自然说话。" : "正在听，请自然说话。");
           return;
         }
@@ -355,6 +387,9 @@ export function InquiryChatStep({
           return;
         }
         if (data.type === "transcript" && data.text) {
+          if (![VoicePhase.LISTENING, VoicePhase.TRANSCRIBING].includes(voicePhaseRef.current)) {
+            return;
+          }
           partialTextRef.current = data.text;
           setVoiceMessage(data.final ? `识别完成：${data.text}` : `识别中：${data.text}`);
           if (data.final) {
@@ -369,8 +404,8 @@ export function InquiryChatStep({
         stopVoice(false);
       };
       ws.onclose = () => {
-        if (listening && !finishedRef.current) {
-          setListening(false);
+        if (voicePhaseRef.current !== VoicePhase.IDLE && !finishedRef.current) {
+          moveVoice(VoiceEvent.FAIL);
         }
       };
     } catch (error) {
@@ -399,16 +434,24 @@ export function InquiryChatStep({
   function stopVoice(commit = true) {
     window.clearTimeout(finishTimerRef.current);
     const ws = wsRef.current;
-    if (commit && ws?.readyState === WebSocket.OPEN) {
+    if (commit && voicePhaseRef.current === VoicePhase.LISTENING && ws?.readyState === WebSocket.OPEN) {
+      moveVoice(VoiceEvent.STOP);
       ws.send(JSON.stringify({ type: "stop" }));
       setVoiceMessage("正在生成语音文字...");
       finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 1800);
     } else if (ws && ws.readyState <= WebSocket.OPEN) {
       ws.close();
     }
-    if (!commit) {
-      setListening(false);
+    if (!commit || voicePhaseRef.current === VoicePhase.PREPARING) {
+      moveVoice(VoiceEvent.CANCEL);
     }
+    wsRef.current = null;
+  }
+
+  function moveVoice(event) {
+    const next = nextVoicePhase(voicePhaseRef.current, event);
+    voicePhaseRef.current = next;
+    setVoicePhase(next);
   }
 
   function reset() {
@@ -475,20 +518,30 @@ export function InquiryChatStep({
 
         <div className="chat-voice-bar">
           <button
-            className={`voice-chat-button compact ${listening ? "listening" : sending ? "processing" : ""}`}
+            className={`voice-chat-button compact ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`}
             type="button"
             onClick={handleVoicePress}
-            disabled={sending}
+            disabled={sending || transcribingVoice}
             aria-pressed={listening}
           >
             {listening ? (
               <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />
+            ) : preparingVoice ? (
+              <LoaderCircle className="voice-preparing-spinner" size={23} aria-hidden="true" />
             ) : (
               <Mic size={23} aria-hidden="true" />
             )}
-            {sending ? "AI 正在整理" : listening ? "正在听 · 点击发送" : "点击开始说话"}
+            {sending
+              ? "AI 正在整理"
+              : transcribingVoice
+                ? "正在识别"
+                : preparingVoice
+                  ? "正在准备 · 点击取消"
+                  : listening
+                    ? "正在听 · 点击发送"
+                    : "点击开始说话"}
           </button>
-          <div className={`voice-status chat-voice-status ${listening ? "listening" : sending ? "processing" : ""}`} aria-live="polite">
+          <div className={`voice-status chat-voice-status ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`} aria-live="polite">
             {voiceMessage}
           </div>
         </div>

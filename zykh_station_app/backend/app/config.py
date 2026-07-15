@@ -84,6 +84,10 @@ class Settings:
     qsm_audio_stream_port: int = int(_env("QSM_AUDIO_STREAM_PORT", "19001"))
     qsm_local_asr_url: str = _env("QSM_LOCAL_ASR_URL", "ws://127.0.0.1:18084")
     qsm_local_asr_timeout_seconds: float = float(_env("QSM_LOCAL_ASR_TIMEOUT_SECONDS", "4"))
+    qsm_local_asr_model: str = _env(
+        "QSM_LOCAL_ASR_MODEL",
+        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30",
+    )
     qsm_network_status_path: str = _env("QSM_NETWORK_STATUS_PATH", "/api/network/status")
     qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")
     qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "3"))
@@ -142,10 +146,10 @@ class Settings:
         "qwen3-tts-instruct-flash-realtime-2026-01-22",
     )
     qwen_realtime_tts_voice: str = _env("QWEN_REALTIME_TTS_VOICE", "Cherry")
-    qwen_realtime_tts_speed: float = float(_env("QWEN_REALTIME_TTS_SPEED", "1.72"))
+    qwen_realtime_tts_speed: float = float(_env("QWEN_REALTIME_TTS_SPEED", "1.32"))
     qwen_realtime_tts_instructions: str = _env(
         "QWEN_REALTIME_TTS_INSTRUCTIONS",
-        "语速明显偏快，停顿短，吐字清晰，语气温和自然，适合家庭康护终端播报。",
+        "语速适中，停顿自然，吐字清晰，语气温和，适合家庭康护终端播报。",
     )
     qwen_realtime_tts_timeout_seconds: float = float(_env("QWEN_REALTIME_TTS_TIMEOUT_SECONDS", "30"))
     qwen_vision_model: str = _env("QWEN_VISION_MODEL", "qwen3.6-flash")
