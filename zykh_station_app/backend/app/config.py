@@ -45,9 +45,15 @@ class Settings:
     db_path: Path = Path(_env("ZYKH_STATION_DB", str(DATA_DIR / "station.db")))
     qsm_mode: str = _env("QSM_MODE", "real").strip().lower()
     qsm_api_base: str = _env("QSM_BASE_URL", _env("QSM_API_BASE", "http://127.0.0.1:18080")).rstrip("/")
-    qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "2"))
+    qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "5"))
     qsm_vitals_timeout_seconds: float = float(_env("QSM_VITALS_TIMEOUT_SECONDS", "30"))
     qsm_audio_timeout_seconds: float = float(_env("QSM_AUDIO_TIMEOUT_SECONDS", "45"))
+    qsm_mic_api_base: str = _env("QSM_MIC_BASE_URL", "http://127.0.0.1:18082").rstrip("/")
+    qsm_mic_timeout_seconds: float = float(_env("QSM_MIC_TIMEOUT_SECONDS", "5"))
+    qsm_mic_status_path: str = _env("QSM_MIC_STATUS_PATH", "/api/audio/capture/status")
+    qsm_mic_stream_path: str = _env("QSM_MIC_STREAM_PATH", "/api/audio/capture/stream")
+    qsm_mic_record_path: str = _env("QSM_MIC_RECORD_PATH", "/api/audio/capture/record")
+    qsm_mic_volume_path: str = _env("QSM_MIC_VOLUME_PATH", "/api/audio/capture/volume")
     qsm_vitals_prefer_full: bool = _env("QSM_VITALS_PREFER_FULL", "false").strip().lower() in {
         "1",
         "true",
@@ -60,6 +66,12 @@ class Settings:
     qsm_temp_path: str = _env("QSM_TEMP_PATH", "/api/vitals/temp/read")
     qsm_camera_capture_path: str = _env("QSM_CAMERA_CAPTURE_PATH", "/api/camera/capture")
     qsm_camera_stream_path: str = _env("QSM_CAMERA_STREAM_PATH", "/api/camera/stream")
+    qsm_face_api_base: str = _env("QSM_FACE_BASE_URL", "http://127.0.0.1:18081").rstrip("/")
+    qsm_face_timeout_seconds: float = float(_env("QSM_FACE_TIMEOUT_SECONDS", "25"))
+    qsm_face_status_path: str = _env("QSM_FACE_STATUS_PATH", "/api/face/status")
+    qsm_face_identify_path: str = _env("QSM_FACE_IDENTIFY_PATH", "/api/face/identify")
+    qsm_face_enroll_path: str = _env("QSM_FACE_ENROLL_PATH", "/api/face/enroll")
+    qsm_face_list_path: str = _env("QSM_FACE_LIST_PATH", "/api/face/list")
     qsm_dispense_path: str = _env("QSM_DISPENSE_PATH", "/api/dispense")
     qsm_audio_asr_path: str = _env("QSM_AUDIO_ASR_PATH", "/api/audio/asr")
     qsm_audio_speak_path: str = _env("QSM_AUDIO_SPEAK_PATH", "/api/audio/speak")
@@ -72,7 +84,7 @@ class Settings:
     qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")
     qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "3"))
     qsm_ai_chat_path: str = _env("QSM_AI_CHAT_PATH", "/api/ai/chat")
-    host_mic_device: str = _env("HOST_MIC_DEVICE", "default")
+    host_mic_device: str = _env("HOST_MIC_DEVICE", "qsm:FF Camera")
     network_preferred_mode: str = _env("NETWORK_PREFERRED_MODE", "sim").strip().lower()
     network_sim_interface: str = _env("NETWORK_SIM_INTERFACE", "usb0")
     network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "false").strip().lower() in {
@@ -107,6 +119,13 @@ class Settings:
     }
     ai_chat_timeout_seconds: float = float(_env("AI_CHAT_TIMEOUT_SECONDS", "35"))
     ai_inquiry_timeout_seconds: float = float(_env("AI_INQUIRY_TIMEOUT_SECONDS", "45"))
+    ai_connectivity_timeout_seconds: float = float(_env("AI_CONNECTIVITY_TIMEOUT_SECONDS", "2"))
+    local_ai_base_url: str = _env("LOCAL_AI_BASE_URL", "http://127.0.0.1:18083").rstrip("/")
+    local_ai_chat_path: str = _env("LOCAL_AI_CHAT_PATH", "/v1/chat/completions")
+    local_ai_health_path: str = _env("LOCAL_AI_HEALTH_PATH", "/health")
+    local_ai_model: str = _env("LOCAL_AI_MODEL", "Qwen3.5-0.8B-Q4_K_M")
+    local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "120"))
+    local_ai_health_timeout_seconds: float = float(_env("LOCAL_AI_HEALTH_TIMEOUT_SECONDS", "2"))
     dashscope_api_base: str = _env(
         "DASHSCOPE_API_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",

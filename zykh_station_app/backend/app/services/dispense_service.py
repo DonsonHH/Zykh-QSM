@@ -85,6 +85,27 @@ class DispenseService:
                 message=f"外设开柜失败：{qsm_detail or '未返回成功状态'}",
                 qsm_detail=qsm_detail,
             )
+        if request.target_user_name and request.medicine_id:
+            medicine = self.medicine_repository.get_by_id(request.medicine_id)
+            if medicine is not None:
+                record = DispenseRecord(
+                    id=f"dispense-{uuid4().hex[:12]}",
+                    medicine_id=medicine.id,
+                    medicine_name=medicine.name,
+                    slot=medicine.slot,
+                    hardware_slot=medicine.hardware_slot,
+                    quantity=request.quantity,
+                    unit=medicine.unit,
+                    reason=request.reason,
+                    dry_run=False,
+                    message=f"{request.target_user_name}已打开{medicine.hardware_slot}号柜。",
+                    qsm_ok=True,
+                    qsm_detail=qsm_detail,
+                    target_user_id=request.target_user_id,
+                    target_user_name=request.target_user_name,
+                    created_at=now_text(),
+                )
+                self.dispense_repository.append(record)
         return DispenseOpenResponse(
             ok=True,
             dry_run=False,
@@ -141,5 +162,7 @@ class DispenseService:
             message=message,
             qsm_ok=qsm_ok,
             qsm_detail=qsm_detail,
+            target_user_id=request.target_user_id,
+            target_user_name=request.target_user_name.strip() or "家庭成员",
             created_at=now_text(),
         )

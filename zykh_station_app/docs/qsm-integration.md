@@ -6,18 +6,21 @@ The local master application talks to QSM368ZP-WF through one gateway adapter fo
 
 ```text
 React/Vite UI -> FastAPI -> services/qsm_client.py -> http://127.0.0.1:18080
+                                   qsm_face_client.py -> http://127.0.0.1:18081
+                                   routers/audio.py -> http://127.0.0.1:18082
+                                   local_ai_client.py -> http://127.0.0.1:18083
 ```
 
-QSM owns temperature, integrated UART vitals, audio and cabinet-control peripherals. The local app owns UI, workflow, local records, risk prompts, candidate medicine matching,取药确认 and host-side camera capture.
+QSM owns camera capture/streaming, face feature matching, temperature, integrated UART vitals, audio, cabinet-control peripherals and the llama.cpp offline language-model process. The local app owns UI, workflow, local records, safety rules, candidate medicine matching and 取药确认.
 
 Latest hardware split:
 
 ```text
-Host app: React/Vite, FastAPI, SQLite, inquiry workflow, camera recognition, touch UI.
-Peripheral gateway: GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
+Host app: React/Vite, FastAPI, SQLite, inquiry workflow, barcode/medicine recognition, identity mapping, touch UI.
+Peripheral gateway: FF Camera, face runtime, GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
 ```
 
-Camera capture no longer depends on the peripheral gateway. The business endpoint `/api/qsm/camera/capture` is kept as a stable app-facing action, but internally it calls the host-side camera seam.
+QSM exposes MJPEG and still-capture endpoints on its main gateway. FastAPI proxies `/api/camera/stream`, saves recent real frames for barcode recognition and retries the brief 5xx window caused by switching between live preview and face matching.
 
 ## Modes
 
@@ -26,7 +29,14 @@ The default mode is:
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
-QSM_TIMEOUT_SECONDS=2
+QSM_TIMEOUT_SECONDS=5
+QSM_FACE_BASE_URL=http://127.0.0.1:18081
+QSM_FACE_TIMEOUT_SECONDS=25
+QSM_MIC_BASE_URL=http://127.0.0.1:18082
+QSM_MIC_STATUS_PATH=/api/audio/capture/status
+QSM_MIC_STREAM_PATH=/api/audio/capture/stream
+QSM_MIC_RECORD_PATH=/api/audio/capture/record
+QSM_MIC_VOLUME_PATH=/api/audio/capture/volume
 QSM_VITALS_PREFER_FULL=false
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
@@ -40,6 +50,8 @@ LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
 DISPENSE_DRY_RUN=false
 ENABLE_REAL_DISPENSE=1
+LOCAL_AI_BASE_URL=http://127.0.0.1:18083
+LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 ```
 
 `QSM_MODE=real` calls the gateway base URL. If the gateway is not reachable, the backend returns `connected=false` and a readable `error_message`; the dashboard continues to render and shows the device as temporarily unavailable. It does not silently replace failed real calls with fake vitals, fake scan results or fake dispense success.
@@ -53,8 +65,10 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
+- `QSM_CAMERA_CAPTURE_PATH` and `QSM_CAMERA_STREAM_PATH` for QSM camera frames.
+- `QSM_FACE_*_PATH` for QSM-side identity status, matching, enrollment and listing.
 
-`LOCAL_CAMERA_MODE=real` checks the configured host camera device. `LOCAL_CAMERA_DEVICE=auto` probes common FF Camera nodes and `/dev/video*`; a direct path such as `/dev/video2` is also supported. `LOCAL_CAMERA_MODE=mock` only exists for isolated local checks.
+`LOCAL_CAMERA_*` remains as a legacy configuration seam, but the active terminal workflow uses the QSM camera and does not silently fall back to host-camera mock data.
 
 ## Port forwarding
 
@@ -69,6 +83,9 @@ The script checks the local command, checks for a connected device, and attempts
 
 ```bash
 adb forward tcp:18080 tcp:8080
+adb forward tcp:18081 tcp:8081
+adb forward tcp:18082 tcp:8082
+adb forward tcp:18083 tcp:8083
 ```
 
 If any step fails, it prints a clear warning and exits without killing the app. Fix the gateway connection before real-device verification.
@@ -117,7 +134,9 @@ The UART collection window defaults to 16 seconds. This stays below the existing
 - `audio_speak()`
 - `audio_beep()`
 
-Host camera methods live in `services/local_camera.py`. In real mode, the service captures one image from the configured local camera and returns a structured unavailable response if the device or capture command fails.
+QSM camera proxy methods live in `services/qsm_camera_service.py`. Identity calls use `services/qsm_face_client.py`; `services/identity_service.py` only resolves identities already bound to service users. Unknown or historical unbound face subjects are reported for administrator handling and never create a profile automatically.
+
+The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host realtime-ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Capture gain changes are forwarded to the QSM `Mic` mixer control.
 
 By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. 取药确认 still requires the safety checkbox and request body `confirm_real_dispense=true`, writes a local record, then calls the gateway dispense path. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 
@@ -126,18 +145,22 @@ By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` 
 ```text
 POST /api/vitals/read-all
 POST /api/camera/capture
+GET  /api/camera/stream
 POST /api/medicine/scan
 POST /api/audio/asr
 POST /api/audio/speak
 POST /api/audio/beep
 POST /api/qsm/dispense/dry-run
 GET  /api/qsm/capabilities
+GET  /api/identity/status
+POST /api/identity/resolve
+POST /api/identity/enroll/{service_user_id}
 ```
 
 Real mode without gateway:
 
 - status and vitals return HTTP 200 with unavailable state.
-- camera capture still follows host-side camera availability.
+- camera and identity endpoints return structured unavailable states when their QSM gateway is unreachable.
 - audio and dispense actions return structured gateway errors.
 - capabilities returns `qsm_connected=false` when the gateway is unreachable.
 
@@ -162,7 +185,7 @@ Real dispense smoke is intentionally omitted from the generic checklist. Only ru
 
 Medicine scan follows this order:
 
-- capture a real host-camera image;
+- reuse the latest real QSM stream frame, or request one QSM still frame;
 - decode a local barcode if a decoder is installed or configured;
 - call Qwen visual recognition if `DASHSCOPE_API_KEY` or `DASHSCOPE_API_KEY_FILE` is configured;
 - return `manual_required` if recognition still fails.
@@ -170,8 +193,18 @@ Medicine scan follows this order:
 Inquiry AI follows this order:
 
 - call the configured DeepSeek-compatible cloud endpoint from the host when `AI_API_KEY` or `AI_API_KEY_FILE` is available;
-- if the host route fails in real mode, try the QSM 4G cloud route through `QSM_AI_CHAT_PATH`;
-- return a marked `local_fallback` rules response when offline or unconfigured.
+- when the key is missing, connectivity fails or the cloud request errors, call Qwen3.5 through QSM llama.cpp on port `8083`;
+- if the offline model is also unavailable or returns invalid output, continue with deterministic safety rules and mark `source=rules_fallback`.
+
+The offline model is a real board-side process, not mock data. See [`offline-ai.md`](offline-ai.md) for model hashes, download/deploy commands, measured resource use and disconnected validation.
+
+## QSM face identity
+
+`scripts/deploy_qsm_gateway.sh` starts the main gateway on board port `8080`, the face gateway on `8081`, and the FF Camera microphone gateway on `8082`. The face runtime reads `/dev/video23`, performs feature extraction/matching on QSM and stores its template database under `/userdata/qsm-face/data`. The host stores only the opaque face subject to service-user mapping.
+
+Matched users are attached to inquiry and dispense records. Identity resolution uses multiple-frame voting instead of accepting one highest-scoring frame. Unknown faces do not create a second person automatically. Administrators create or select a service user in Settings and use multi-angle enrollment while the person slowly turns left and right. After terminal inactivity, the wake screen clears the previous identity; tapping the screen starts a fresh recognition before personal tasks are loaded.
+
+The bundled InspireFace community model is licensed for academic use only. A commercial deployment must replace it with a model and runtime carrying the required commercial rights.
 
 ## Stage seven check workflow
 

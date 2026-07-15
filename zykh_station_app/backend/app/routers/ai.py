@@ -24,6 +24,11 @@ class AiChatRequest(BaseModel):
         return ""
 
 
+@router.get("/status")
+def ai_status() -> dict[str, object]:
+    return AiService().status()
+
+
 @router.post("/chat")
 def ai_chat(request: AiChatRequest) -> dict[str, object]:
     return AiService().chat(request.text())
@@ -33,7 +38,7 @@ def ai_chat(request: AiChatRequest) -> dict[str, object]:
 def ai_chat_stream(request: AiChatRequest):
     def events():
         result = AiService().chat(request.text())
-        source = str(result.get("source") or "local_fallback")
+        source = str(result.get("source") or "rules_fallback")
         model = str(result.get("model") or "")
         reply = str(result.get("reply") or "")
         yield f"event: meta\ndata: {json.dumps({'ok': True, 'source': source, 'model': model}, ensure_ascii=False)}\n\n"

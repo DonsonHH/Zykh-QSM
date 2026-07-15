@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Minus, Plus, ShieldCheck, X } from "lucide-react";
 
-export function DispenseConfirmModal({ medicine, open, submitting, result, error, onCancel, onSubmit }) {
+export function DispenseConfirmModal({ medicine, identity, open, submitting, result, error, onCancel, onSubmit }) {
   const [quantity, setQuantity] = useState(1);
   const [checked, setChecked] = useState(false);
 
@@ -27,7 +27,9 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       quantity,
       reason: "家庭药柜取药确认",
       confirmed_safety_notice: checked,
-      confirm_real_dispense: checked
+      confirm_real_dispense: checked,
+      target_user_id: identity?.id || "",
+      target_user_name: identity?.name || "家庭成员"
     });
   }
 
@@ -49,6 +51,10 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
         </div>
 
         <div className="modal-medicine-meta">
+          <article>
+            <span>取药人</span>
+            <strong>{identity?.name || "待确认"}</strong>
+          </article>
           <article>
             <span>柜门</span>
             <strong>{medicine.hardware_slot || medicine.slot}</strong>
@@ -114,8 +120,8 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
           <button className="secondary-action" type="button" onClick={onCancel}>
             取消
           </button>
-          <button className="primary-action" type="button" disabled={!checked || submitting} onClick={handleSubmit}>
-            {submitting ? "开柜中..." : "确认并开柜"}
+          <button className="primary-action" type="button" disabled={!checked || !identity || submitting} onClick={handleSubmit}>
+            <span>{submitting ? "开柜中..." : "确认并开柜"}</span>
           </button>
         </div>
       </section>

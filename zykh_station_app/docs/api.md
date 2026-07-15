@@ -54,7 +54,7 @@ Returns the demonstration readiness check:
 - QSM mode and connection state;
 - QSM base URL;
 - QSM status and vitals readiness;
-- host camera readiness;
+- QSM camera and face-service readiness;
 - dispense safety flag;
 - errors, warnings and recommendations.
 
@@ -110,7 +110,7 @@ Reads vitals through the QSM adapter and stores successful/failed readings local
 
 ### POST /api/qsm/camera/capture
 
-Compatibility endpoint for the Scan page. With the latest hardware split, the backend uses the host-side camera seam rather than the peripheral gateway camera path. Real capture failures return the actual command/device error and do not create fake medicine results.
+Compatibility endpoint for the Scan page. It calls the QSM camera path and returns a structured real-device error on failure; it does not create fake medicine results.
 
 ### POST /api/qsm/dispense/dry-run
 
@@ -164,11 +164,27 @@ Unavailable or zero placeholder values are returned as `null`. `body_temperature
 
 ### POST /api/camera/capture
 
-Captures one image from the host-side camera using `LOCAL_CAMERA_DEVICE`. The response includes image availability, image path when available and a structured error on failure.
+Captures one image from the QSM camera. The response includes image availability, the host proxy image URL when available and a structured error on failure.
+
+### GET /api/camera/stream
+
+Proxies the QSM MJPEG stream to the browser and stores a recent real frame for automatic barcode checks. A brief gateway restart during face matching is retried before returning an error.
 
 ### POST /api/medicine/scan
 
 Captures an image, tries local barcode decoding, then Qwen visual recognition when configured. If both fail, it returns `manual_required` instead of a fake match.
+
+### GET /api/identity/status
+
+Returns QSM face-runtime availability, enrolled sample count and host-side identity mapping count.
+
+### POST /api/identity/resolve
+
+Matches the current QSM camera face to a service user. Unknown faces create and enroll a new local service-user profile; no original face image or biometric feature is stored in the host database.
+
+### POST /api/identity/enroll/{service_user_id}
+
+Captures multiple QSM face samples and binds them to an existing service user. This is used by the Settings page administrator action.
 
 ### POST /api/medicine/visual-recognize
 
@@ -188,8 +204,12 @@ Calls the QSM beep path.
 
 ### POST /api/ai/chat
 
-Calls the configured DeepSeek-compatible cloud endpoint when a key is available. Without a key or network, it returns a local rules fallback response with `source=local_fallback`.
+Uses the configured cloud endpoint first in `AI_MODE=auto`. A missing key, failed connectivity probe or cloud request error automatically routes the request to the QSM llama.cpp endpoint. Response sources are `cloud`, `local_llm`, `safety_rules` or `rules_fallback`; only the last source means that both model routes were unavailable.
+
+### GET /api/ai/status
+
+Returns the selected AI mode, cloud configuration state and QSM offline-model health without exposing API keys.
 
 ### POST /api/ai/chat/stream
 
-Streams the same AI response as server-sent events.
+Streams the same guarded AI response as server-sent events. Local-model and safety-rule responses use the same public event contract.

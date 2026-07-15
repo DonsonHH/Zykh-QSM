@@ -12,6 +12,7 @@ KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
+KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"
 KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
@@ -19,6 +20,9 @@ AUDIO_RELAY_PID=""
 AUDIO_RELAY_PROCESS_GROUP="0"
 AUDIO_RELAY_STARTED="0"
 CLEANUP_STARTED="0"
+KIOSK_GUARD_STARTED="0"
+KIOSK_GUARD_DONE="$RUN_DIR/kiosk-cleanup.$$.done"
+KIOSK_GUARD_LOG="$RUN_DIR/kiosk-cleanup.log"
 RESTORE_OUTPUT=""
 RESTORE_MODE=""
 
@@ -75,7 +79,7 @@ terminate_managed_process() {
   fi
 
   if [ "$process_group" = "1" ]; then
-    kill -TERM -- "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
+    kill -TERM "-$pid" >/dev/null 2>&1 || kill -TERM "$pid" >/dev/null 2>&1 || true
   else
     kill -TERM "$pid" >/dev/null 2>&1 || true
   fi
@@ -88,7 +92,7 @@ terminate_managed_process() {
 
   if kill -0 "$pid" >/dev/null 2>&1; then
     if [ "$process_group" = "1" ]; then
-      kill -KILL -- "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
+      kill -KILL "-$pid" >/dev/null 2>&1 || kill -KILL "$pid" >/dev/null 2>&1 || true
     else
       kill -KILL "$pid" >/dev/null 2>&1 || true
     fi
@@ -151,6 +155,51 @@ cleanup_once() {
   stop_browser
   stop_audio_relay
   restore_resolution
+  if [ "$KIOSK_GUARD_STARTED" = "1" ]; then
+    : >"$KIOSK_GUARD_DONE"
+  else
+    rm -f "$KIOSK_GUARD_DONE"
+  fi
+}
+
+start_cleanup_guard() {
+  guard="$ROOT_DIR/scripts/kiosk_cleanup_guard.sh"
+  if [ ! -f "$guard" ]; then
+    warn "未找到退出清理守护脚本；仍使用当前进程的退出清理。"
+    return 0
+  fi
+
+  parent_start="$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null || true)"
+  rm -f "$KIOSK_GUARD_DONE"
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid sh "$guard" \
+      "$$" \
+      "$parent_start" \
+      "$BROWSER_PID" \
+      "$AUDIO_RELAY_PID" \
+      "$AUDIO_RELAY_PROCESS_GROUP" \
+      "$BACKEND_URL" \
+      "$RESTORE_OUTPUT" \
+      "$RESTORE_MODE" \
+      "$KIOSK_RESTORE_RESOLUTION" \
+      "$KIOSK_GUARD_DONE" \
+      >>"$KIOSK_GUARD_LOG" 2>&1 &
+  else
+    nohup sh "$guard" \
+      "$$" \
+      "$parent_start" \
+      "$BROWSER_PID" \
+      "$AUDIO_RELAY_PID" \
+      "$AUDIO_RELAY_PROCESS_GROUP" \
+      "$BACKEND_URL" \
+      "$RESTORE_OUTPUT" \
+      "$RESTORE_MODE" \
+      "$KIOSK_RESTORE_RESOLUTION" \
+      "$KIOSK_GUARD_DONE" \
+      >>"$KIOSK_GUARD_LOG" 2>&1 &
+  fi
+  KIOSK_GUARD_STARTED="1"
+  log "退出清理守护已启动。"
 }
 
 on_exit() {
@@ -238,7 +287,57 @@ stop_project_backend_processes() {
 }
 
 frontend_ready() {
-  curl -fsS --max-time 1 "$APP_URL" >/dev/null 2>&1
+  if ! curl -fsS --max-time 1 "$APP_URL" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  style_probe="$(curl -fsS --max-time 2 "$APP_URL/src/styles/app.css" 2>/dev/null || true)"
+  if [ -z "$style_probe" ]; then
+    return 1
+  fi
+  if printf '%s' "$style_probe" | grep -q 'const __vite__css = ""'; then
+    return 1
+  fi
+  return 0
+}
+
+frontend_port() {
+  port="$(printf '%s' "$APP_URL" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"
+  printf '%s\n' "${port:-5173}"
+}
+
+stop_project_frontend_processes() {
+  port="$(frontend_port)"
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+
+  stopped=0
+  for pid in $(pgrep -f "vite.*--port $port" 2>/dev/null || true); do
+    case "$pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    case "$cwd" in
+      "$ROOT_DIR/frontend"|"$ROOT_DIR/frontend/"*)
+        log "停止残留前端进程 PID $pid，以加载最新界面..."
+        kill "$pid" >/dev/null 2>&1 || true
+        stopped=1
+        ;;
+    esac
+  done
+
+  if [ "$stopped" = "1" ]; then
+    count=0
+    while [ "$count" -lt 20 ]; do
+      if ! curl -fsS --max-time 1 "$APP_URL" >/dev/null 2>&1; then
+        break
+      fi
+      count=$((count + 1))
+      sleep 0.2
+    done
+  fi
+  rm -f "$RUN_DIR/frontend.pid"
 }
 
 wait_for_backend() {
@@ -296,6 +395,7 @@ start_frontend_if_needed() {
     return 0
   fi
 
+  stop_project_frontend_processes
   log "启动前端服务..."
   nohup sh "$ROOT_DIR/scripts/start_frontend.sh" >"$RUN_DIR/frontend.log" 2>&1 &
   echo "$!" >"$RUN_DIR/frontend.pid"
@@ -359,6 +459,13 @@ find_browser() {
 
 start_backend_if_needed
 sh "$ROOT_DIR/scripts/ensure_qsm_gateway.sh" || true
+if [ "$KIOSK_OFFLINE_AI" = "1" ]; then
+  if [ -x "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" ]; then
+    sh "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" || warn "QSM 离线模型暂未就绪；云端和安全规则仍可继续使用。"
+  else
+    warn "未找到离线模型检查脚本。"
+  fi
+fi
 start_frontend_if_needed
 set_kiosk_resolution
 start_audio_relay_if_needed
@@ -392,7 +499,6 @@ if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
   set -- "$@" \
     --ozone-platform=x11 \
     --disable-gpu \
-    --disable-gpu-compositing \
     --disable-accelerated-2d-canvas \
     --disable-background-networking \
     --disable-component-update \
@@ -405,5 +511,6 @@ if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
 fi
 
 start_browser "$@"
+start_cleanup_guard
 wait "$BROWSER_PID"
 BROWSER_PID=""

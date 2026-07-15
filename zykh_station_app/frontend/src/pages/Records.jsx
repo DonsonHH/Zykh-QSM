@@ -20,7 +20,7 @@ const defaultSummary = {
   today_plan_count: 0
 };
 
-export function Records({ notify }) {
+export function Records({ notify, networkStatus }) {
   const [summary, setSummary] = useState(defaultSummary);
   const [records, setRecords] = useState([]);
   const [syncStatus, setSyncStatus] = useState(null);
@@ -63,7 +63,7 @@ export function Records({ notify }) {
         <RecentRecordList records={records} />
         <div className="records-side-stack">
           <TodayPlanList plans={todayPlans} />
-          <SyncStatusCard syncStatus={syncStatus} syncing={syncing} onSync={handleSync} />
+          <SyncStatusCard syncStatus={syncStatus} syncing={syncing} networkStatus={networkStatus} onSync={handleSync} />
         </div>
       </div>
     </main>

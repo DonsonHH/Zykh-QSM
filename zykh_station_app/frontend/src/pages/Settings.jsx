@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, DoorOpen, Mic, PackageCheck, Save, Signal, Trash2, UserRound, Volume2, WifiOff } from "lucide-react";
+import { ArrowLeft, DoorOpen, Mic, PackageCheck, Save, ScanFace, Signal, Trash2, UserRound, Volume2, WifiOff } from "lucide-react";
 import { openCabinet } from "../api/dispense.js";
 import { loadMedicines, updateMedicine } from "../api/medicines.js";
 import { loadNetworkStatus, setNetworkMode } from "../api/network.js";
 import { setHostMicVolume, testAudioRelay } from "../api/audio.js";
 import { deleteServiceUser, loadServiceUsers, updateServiceUser } from "../api/records.js";
+import { isLocalNetworkMode } from "../utils/network.js";
+import { enrollIdentity } from "../api/identity.js";
 
 function toEditForm(medicine) {
   return {
@@ -40,11 +42,12 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
   const [saving, setSaving] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
+  const [enrollingFace, setEnrollingFace] = useState(false);
   const [opening, setOpening] = useState(false);
   const [speakerVolume, setSpeakerVolume] = useState(230);
   const [micVolume, setMicVolume] = useState(70);
   const [networkMode, setNetworkModeState] = useState(networkStatus?.mode || "sim");
-  const localNetworkMode = networkMode === "local";
+  const localNetworkMode = networkMode === "local" || isLocalNetworkMode(networkStatus);
   const selectedMedicine = useMemo(
     () => medicines.find((medicine) => medicine.id === selectedId) || medicines[0] || null,
     [medicines, selectedId]
@@ -156,6 +159,18 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
       .finally(() => setDeletingUser(false));
   }
 
+  function enrollSelectedUserFace() {
+    if (!selectedUser || enrollingFace) {
+      return;
+    }
+    setEnrollingFace(true);
+    notify(`请让${selectedUser.name}看向摄像头，并缓慢左右转动头部`);
+    enrollIdentity(selectedUser.id, 18)
+      .then((data) => notify(data.message || (data.ok ? "人脸录入完成" : "人脸录入未完成")))
+      .catch((error) => notify(error.message || "人脸录入失败"))
+      .finally(() => setEnrollingFace(false));
+  }
+
   function openSelectedCabinet() {
     if (!selectedMedicine || opening) {
       return;
@@ -190,7 +205,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
     setNetworkMode(mode)
       .then((data) => {
         onNetworkStatusChange?.(data);
-        notify(mode === "sim" ? "已切换为外设 SIM 状态读取" : "已切换为本地离线显示");
+        notify(mode === "sim" ? "已切换为外设 SIM 状态读取" : "已切换为离线模型模式");
       })
       .catch((error) => notify(error.message || "网络模式切换失败"));
   }
@@ -330,13 +345,22 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
               <span>过敏 / 禁忌</span>
               <input value={userForm.allergies} onChange={(event) => updateUserForm("allergies", event.target.value)} />
             </label>
-            <label className="wide-field">
+            <label>
               <span>病例备注</span>
               <textarea value={userForm.note} onChange={(event) => updateUserForm("note", event.target.value)} />
             </label>
           </div>
 
           <div className="settings-action-row service-user-actions">
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={enrollSelectedUserFace}
+              disabled={!selectedUser || enrollingFace || deletingUser}
+            >
+              <ScanFace size={22} aria-hidden="true" />
+              {enrollingFace ? "多角度录入中..." : "多角度录入人脸"}
+            </button>
             <button
               className="secondary-action danger-action"
               type="button"
@@ -391,7 +415,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           </label>
           <button className="settings-wide-button subtle" type="button" onClick={applyMicVolume}>
             <Mic size={22} aria-hidden="true" />
-            应用麦克风音量
+            应用外设麦克风音量
           </button>
         </article>
 
@@ -415,10 +439,12 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
 
           <div className="settings-network-state">
             <span>当前显示</span>
-            <strong>{localNetworkMode ? "本地兜底" : networkStatus?.label || "SIM网络"}</strong>
+            <strong>{localNetworkMode ? networkStatus?.label || "离线模型" : networkStatus?.label || "SIM网络"}</strong>
             <p>
               {localNetworkMode
-                ? "本地化显示已启用，问询说明切换为本地兜底；不修改系统网络和外设链路。"
+                ? networkStatus?.local_ai?.ready
+                  ? "联网功能未使用，AI 问询由 QSM 内的离线模型完成。"
+                  : "离线模型暂未就绪，当前只保留安全规则；不修改外设链路。"
                 : "读取外设 SIM 卡状态；本机仍可保持当前 Wi-Fi 或有线网络。"}
             </p>
           </div>
@@ -427,7 +453,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
             {localNetworkMode ? (
               <>
                 <span>状态：本地化运行</span>
-                <span>AI：本地规则兜底</span>
+                <span>AI：{networkStatus?.local_ai?.ready ? "QSM 离线模型" : "安全规则"}</span>
                 <span>外部网络：未使用</span>
               </>
             ) : (

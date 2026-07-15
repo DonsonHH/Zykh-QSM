@@ -9,7 +9,6 @@ from urllib.request import Request, urlopen
 
 from ..config import real_dispense_enabled, settings
 from ..schemas.qsm import QsmStatus
-from .local_camera import LocalCameraService
 
 
 CABINET_CONTROL_CODE_BY_SLOT: dict[int, int] = {
@@ -306,7 +305,9 @@ class QsmClient:
         }
 
     def capture_camera(self) -> dict[str, Any]:
-        return LocalCameraService().capture()
+        from .qsm_camera_service import QsmCameraService
+
+        return QsmCameraService(self.base_url).capture()
 
     def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {"slot": slot, "quantity": quantity}

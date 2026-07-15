@@ -18,7 +18,7 @@ from ..schemas.qsm import (
     QsmVitalsResponse,
 )
 from ..services.dispense_service import DispenseError, DispenseService
-from ..services.local_camera import LocalCameraService
+from ..services.qsm_camera_service import QsmCameraService
 from ..services.qsm_client import QsmClient
 
 router = APIRouter(prefix="/api/qsm", tags=["qsm"])
@@ -102,7 +102,7 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
 @router.post("/camera/capture", response_model=QsmCameraCaptureResponse)
 def qsm_camera_capture() -> QsmCameraCaptureResponse:
     client = QsmClient()
-    payload = LocalCameraService().capture()
+    payload = client.capture_camera()
     response = QsmCameraCaptureResponse(
         ok=bool(payload.get("ok")),
         mode=str(payload.get("mode", client.mode)),
@@ -156,7 +156,7 @@ def qsm_capabilities() -> QsmCapabilitiesResponse:
     client = QsmClient()
     qsm = client.get_qsm_status()
     return QsmCapabilitiesResponse(
-        camera=LocalCameraService().capabilities(),
+        camera=QsmCameraService().capabilities(),
         vitals="mock" if client.mode != "real" else ("available" if qsm.connected else "unavailable"),
         dispense="available" if real_dispense_enabled() and qsm.connected else "dry_run",
         voice=qsm.devices.get("voice", "unavailable"),

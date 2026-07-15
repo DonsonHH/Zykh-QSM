@@ -26,6 +26,7 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$TEST_ROOT/scripts" "$TEST_ROOT/data/run" "$FAKE_BIN"
 cp "$PROJECT_ROOT/scripts/launch_kiosk.sh" "$TEST_ROOT/scripts/launch_kiosk.sh"
+cp "$PROJECT_ROOT/scripts/kiosk_cleanup_guard.sh" "$TEST_ROOT/scripts/kiosk_cleanup_guard.sh"
 cp "$FIXTURE" "$TEST_ROOT/scripts/relay_host_audio_to_qsm.sh"
 cp "$FIXTURE" "$TEST_ROOT/scripts/ensure_qsm_gateway.sh"
 chmod +x "$TEST_ROOT/scripts/"*.sh
@@ -77,3 +78,79 @@ assert_contains '\[kiosk\] 本机音频转发已停止。' "$LOG_FILE" "audio cl
 assert_contains '\[kiosk\] 显示输出 DP-1 已恢复到 1920x1080。' "$LOG_FILE" "display cleanup was not reported"
 
 printf 'launch_kiosk cleanup: OK\n'
+
+rm -f "$FAKE_XRANDR_EVENTS" "$FAKE_BROWSER_EVENTS" "$FAKE_RELAY_EVENTS" "$LOG_FILE"
+
+PATH="$FAKE_BIN:$PATH" \
+  KIOSK_BROWSER_LOG=terminal \
+  KIOSK_RESTART_BACKEND=0 \
+  sh "$TEST_ROOT/scripts/launch_kiosk.sh" >"$LOG_FILE" 2>&1 &
+LAUNCH_PID="$!"
+
+attempt=0
+while [ "$attempt" -lt 50 ]; do
+  if [ -s "$FAKE_BROWSER_EVENTS" ] && [ -s "$FAKE_RELAY_EVENTS" ]; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+
+kill -KILL "$LAUNCH_PID"
+wait "$LAUNCH_PID" 2>/dev/null || true
+LAUNCH_PID=""
+
+attempt=0
+while [ "$attempt" -lt 60 ]; do
+  if grep -q -- '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" 2>/dev/null && \
+     grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+
+assert_contains '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" "guard did not restore resolution after SIGKILL"
+assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "guard did not stop audio relay after SIGKILL"
+assert_contains '\[kiosk-guard\] 本机音频转发已停止。' "$TEST_ROOT/data/run/kiosk-cleanup.log" "guard cleanup was not logged"
+assert_contains '\[kiosk-guard\] 显示输出 DP-1 已恢复到 1920x1080。' "$TEST_ROOT/data/run/kiosk-cleanup.log" "guard display restore was not logged"
+
+printf 'launch_kiosk forced-exit cleanup: OK\n'
+
+if command -v setsid >/dev/null 2>&1; then
+  rm -f "$FAKE_XRANDR_EVENTS" "$FAKE_BROWSER_EVENTS" "$FAKE_RELAY_EVENTS" "$LOG_FILE"
+
+  PATH="$FAKE_BIN:$PATH" \
+    KIOSK_BROWSER_LOG=terminal \
+    KIOSK_RESTART_BACKEND=0 \
+    setsid sh "$TEST_ROOT/scripts/launch_kiosk.sh" >"$LOG_FILE" 2>&1 &
+  LAUNCH_PID="$!"
+
+  attempt=0
+  while [ "$attempt" -lt 50 ]; do
+    if [ -s "$FAKE_BROWSER_EVENTS" ] && [ -s "$FAKE_RELAY_EVENTS" ]; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+
+  kill -KILL "-$LAUNCH_PID" >/dev/null 2>&1 || true
+  wait "$LAUNCH_PID" 2>/dev/null || true
+  LAUNCH_PID=""
+
+  attempt=0
+  while [ "$attempt" -lt 60 ]; do
+    if grep -q -- '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" 2>/dev/null && \
+       grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+
+  assert_contains '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" "guard did not restore resolution after process-group SIGKILL"
+  assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "guard did not stop audio relay after process-group SIGKILL"
+
+  printf 'launch_kiosk task-stop cleanup: OK\n'
+fi

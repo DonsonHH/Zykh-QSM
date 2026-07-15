@@ -5,6 +5,9 @@ name="$(basename "$0")"
 
 case "$name" in
   curl)
+    case "$*" in
+      *'/src/styles/app.css'*) printf '%s\n' 'const __vite__css = "body{}";' ;;
+    esac
     exit 0
     ;;
   xrandr)

@@ -6,7 +6,7 @@ export const mockDashboard = {
   },
   chips: [
     { id: "network", label: "网络", value: "未连接", tone: "warn" },
-    { id: "ai", label: "AI模式", value: "本地兜底", tone: "warn" },
+    { id: "ai", label: "AI模式", value: "安全规则", tone: "warn" },
     { id: "device", label: "设备", value: "未检查", tone: "soft" },
     { id: "sync", label: "同步", value: "未配置", tone: "warn" }
   ],

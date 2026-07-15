@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 from ..config import DATA_DIR, settings
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.medicine import MedicineScanResult, MedicineVisualRecognizeResponse
-from .local_camera import LocalCameraService
+from .qsm_camera_service import QsmCameraService
 
 
 class MedicineScanService:
@@ -24,15 +24,18 @@ class MedicineScanService:
         if manual_code:
             return self._result_from_barcode(manual_code, None, "manual")
 
-        capture = LocalCameraService().capture()
-        if not capture.get("ok"):
-            return MedicineScanResult(
-                ok=False,
-                status="camera_unavailable",
-                image_path=capture.get("image_path"),
-                error_message=capture.get("error_message") or "摄像头不可用。",
-            )
-        image_path = capture.get("image_path")
+        camera = QsmCameraService()
+        image_path = camera.latest_frame(max_age_seconds=3)
+        if image_path is None:
+            capture = camera.capture()
+            if not capture.get("ok"):
+                return MedicineScanResult(
+                    ok=False,
+                    status="camera_unavailable",
+                    image_path=capture.get("image_path"),
+                    error_message=capture.get("error_message") or "摄像头不可用。",
+                )
+            image_path = Path(str(capture.get("image_path"))) if capture.get("image_path") else None
         barcode = self._decode_barcode(str(image_path)) if image_path else None
         if barcode:
             return self._result_from_barcode(barcode, str(image_path), "barcode")

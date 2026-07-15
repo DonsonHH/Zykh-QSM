@@ -1,5 +1,7 @@
 # QSM Real Connection Audit
 
+> This file records the earlier main-gateway audit. The current offline inquiry model is a separate llama.cpp service on QSM port `8083`, forwarded to host port `18083`; see `offline-ai.md`.
+
 > Historical audit snapshot. It records the previous dry-run safety baseline at the time of that check. Current runtime defaults are real-device first: `QSM_MODE=real`, `LOCAL_CAMERA_MODE=real`, `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`.
 
 ## Overall Verdict
@@ -101,6 +103,7 @@ POST /api/ai/chat -> 200 ok=false, DNS temporary failure
 | `QSM_AUDIO_ASR_PATH` | `/api/audio/asr` |
 | `QSM_AUDIO_BEEP_PATH` | `/api/audio/beep` |
 | `QSM_AI_CHAT_PATH` | `/api/ai/chat` |
+| `LOCAL_AI_BASE_URL` | `http://127.0.0.1:18083` |
 | `QSM_DISPENSE_PATH` | `/api/dispense` |
 
 ## Problems Found

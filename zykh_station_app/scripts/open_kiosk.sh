@@ -122,7 +122,6 @@ if [ "$KIOSK_SAFE_GRAPHICS" = "1" ]; then
   set -- "$@" \
     --ozone-platform=x11 \
     --disable-gpu \
-    --disable-gpu-compositing \
     --disable-accelerated-2d-canvas \
     --disable-background-networking \
     --disable-component-update \

@@ -5,6 +5,7 @@ import subprocess
 
 from .. import db
 from ..config import settings
+from .local_ai_client import LocalAiClient
 from .qsm_client import QsmClient
 
 
@@ -23,6 +24,11 @@ class NetworkService:
         qsm_ip = str(qsm_network.get("ip") or qsm_network.get("sim_ip") or "")
         sim_connected = bool(qsm_connected or (sim_ip and (sim_route or reachable)))
         sim_present = bool(qsm_sim_present or sim_ip)
+        local_ai = LocalAiClient().status()
+        local_ai_ready = bool(local_ai.get("ready"))
+        local_label = "离线模型" if local_ai_ready else "离线问询"
+        local_ai_mode = "local_llm" if local_ai_ready else "rules_fallback"
+        local_warnings = [] if local_ai_ready else ["离线模型未就绪，当前仅保留安全规则。"]
 
         if preferred in {"local", "offline"}:
             return {
@@ -31,8 +37,9 @@ class NetworkService:
                 "transport": "local",
                 "status": "offline",
                 "signal": "none",
-                "label": "本地兜底",
-                "ai_mode": "local_fallback",
+                "label": local_label,
+                "ai_mode": local_ai_mode,
+                "local_ai": local_ai,
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
                 "default_interface": default_iface,
@@ -41,7 +48,7 @@ class NetworkService:
                 "sim_connected": sim_connected,
                 "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
                 "simulated": False,
-                "warnings": ["当前手动切换到本地兜底。"],
+                "warnings": ["当前手动切换到离线模式。", *local_warnings],
             }
 
         if wifi["wifi_connected"]:
@@ -53,6 +60,7 @@ class NetworkService:
                 "signal": "good",
                 "label": "联网正常",
                 "ai_mode": "cloud",
+                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip or sim_ip,
                 "default_interface": default_iface,
@@ -74,6 +82,7 @@ class NetworkService:
                 "signal": "good",
                 "label": "SIM网络",
                 "ai_mode": "cloud",
+                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
@@ -94,8 +103,9 @@ class NetworkService:
                 "transport": "local",
                 "status": "offline",
                 "signal": "none",
-                "label": "本地兜底",
-                "ai_mode": "local_fallback",
+                "label": local_label,
+                "ai_mode": local_ai_mode,
+                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
@@ -105,7 +115,7 @@ class NetworkService:
                 "sim_signal": str(qsm_network.get("signal") or "weak"),
                 "simulated": False,
                 "source": "qsm",
-                "warnings": ["外设已检测到 SIM 模块，但数据网络未连通。"],
+                "warnings": ["外设已检测到 SIM 模块，但数据网络未连通。", *local_warnings],
             }
 
         if sim_ip and (sim_route or reachable):
@@ -117,6 +127,7 @@ class NetworkService:
                 "signal": "good",
                 "label": "SIM网络",
                 "ai_mode": "cloud",
+                "local_ai": local_ai,
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
                 "default_interface": default_iface,
@@ -134,8 +145,9 @@ class NetworkService:
             "transport": "local",
             "status": "offline",
             "signal": "none",
-            "label": "本地兜底",
-            "ai_mode": "local_fallback",
+            "label": local_label,
+            "ai_mode": local_ai_mode,
+            "local_ai": local_ai,
             "sim_interface": interface,
             "sim_ip": sim_ip,
             "default_interface": default_iface,
@@ -144,7 +156,7 @@ class NetworkService:
             "sim_connected": False,
             "sim_signal": "none",
             "simulated": False,
-            "warnings": ["未检测到可用 SIM 出口。"],
+            "warnings": ["未检测到可用 SIM 出口。", *local_warnings],
         }
 
     def set_mode(self, mode: str) -> dict[str, object]:

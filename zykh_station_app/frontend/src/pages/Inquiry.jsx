@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { HeartPulse, History, UserRound } from "lucide-react";
 import { openCabinet } from "../api/dispense.js";
 import { evaluateInquiry, loadInquiryRecords } from "../api/inquiry.js";
-import { createServiceUser, loadServiceUsers } from "../api/records.js";
+import { loadServiceUsers } from "../api/records.js";
 import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
+import { useFaceIdentity } from "../hooks/useFaceIdentity.js";
 
 const initialForm = {
   symptoms_text: "",
@@ -107,6 +108,13 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   const [chatSessionId, setChatSessionId] = useState(0);
   const [pendingCabinetAction, setPendingCabinetAction] = useState(null);
   const [cabinetCountdown, setCabinetCountdown] = useState(0);
+  const {
+    identity: faceIdentity,
+    status: faceIdentityStatus,
+    message: faceIdentityMessage,
+    identify: identifyFace,
+    clear: clearFaceIdentity
+  } = useFaceIdentity();
 
   const selectedUser = useMemo(
     () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)),
@@ -123,6 +131,14 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
       .then((data) => setHistoryItems((data.records || []).map(summarizeRecord).slice(0, 6)))
       .catch(() => setHistoryItems([]));
   }, []);
+
+  useEffect(() => {
+    if (!faceIdentity?.id) {
+      return;
+    }
+    setSelectedUserId(faceIdentity.id);
+    refreshUsers();
+  }, [faceIdentity?.id]);
 
   useEffect(() => {
     try {
@@ -148,23 +164,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
       .catch(() => setServiceUsers([]));
   }
 
-  function handleProfileResolved(user) {
-    setSelectedUserId(user.id);
-    refreshUsers();
-  }
-
-  function handleCreateProfile(payload) {
-    return createServiceUser(payload).then((data) => {
-      const users = data.users || [];
-      setServiceUsers(users);
-      const created = users.find((user) => user.name === payload.name) || users[users.length - 1];
-      if (created) {
-        setSelectedUserId(created.id);
-      }
-      return normalizeUser(created);
-    });
-  }
-
   function analyzeChatTranscript(transcript, meta = {}) {
     const symptoms = transcript.trim();
     if (!symptoms) {
@@ -173,7 +172,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     }
     const profile = meta.profile || selectedUser;
     const nextForm = {
-      symptoms_text: symptoms,
+      symptoms_text: profile?.name ? `${profile.name}：${symptoms}` : symptoms,
       duration: "由 AI 对话问询整理",
       used_medicines: "见对话记录",
       allergy_or_contraindication: profile?.allergies && profile.allergies !== "待补充" ? profile.allergies : "",
@@ -258,7 +257,10 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
       slot: pendingCabinetAction.slot,
       quantity: 1,
       reason: `${pendingCabinetAction.userName}中暑头晕演示推荐${pendingCabinetAction.medicineName}`,
-      confirmed_open: true
+      confirmed_open: true,
+      medicine_id: pendingCabinetAction.medicineId,
+      target_user_id: selectedUser?.id || faceIdentity?.id || "",
+      target_user_name: pendingCabinetAction.userName
     })
       .then((data) => {
         if (!data.ok) {
@@ -296,6 +298,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     setSelectedUserId("");
     setSelectedHistoryId("");
     setChatSessionId((value) => value + 1);
+    clearFaceIdentity();
     try {
       window.sessionStorage.removeItem(draftKey);
       window.sessionStorage.removeItem("zykh-inquiry-chat-draft");
@@ -303,6 +306,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     } catch {
       // sessionStorage is optional.
     }
+    window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 250);
   }
 
   return (
@@ -313,13 +317,13 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
             <UserRound size={26} aria-hidden="true" />
             <div>
               <p>当前使用人</p>
-              <h2>{selectedUser?.name || "等待语音确认"}</h2>
+              <h2>{selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
             </div>
           </div>
 
           <div className="user-identity-status">
-            <strong>{selectedUser ? "已匹配本地身份" : "请先说出姓名或家庭身份"}</strong>
-            <span>{selectedUser ? "AI 将结合基础信息继续问询" : "未记录人员会自动建立本地身份"}</span>
+            <strong>{selectedUser ? "已通过人脸确认" : faceIdentityMessage}</strong>
+            <span>{selectedUser ? "AI 将结合基础信息继续问询" : "请正对摄像头；新服务对象请先由管理员建档"}</span>
           </div>
 
           <div className="user-profile-grid">
@@ -357,7 +361,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
                   className={item.id === selectedHistoryId ? "active" : ""}
                   onClick={() => {
                     setSelectedHistoryId(item.id);
-                    setSelectedUserId("");
                     setStep("start");
                     setResult(null);
                     setChatSessionId((value) => value + 1);
@@ -391,9 +394,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
             onOpenVitals={() => onNavigate("vitals", { returnTo: "inquiry" })}
             onDemoRecommendation={handleDemoRecommendation}
             profile={selectedUser}
-            knownUsers={serviceUsers.map(normalizeUser).filter(Boolean)}
-            onProfileResolved={handleProfileResolved}
-            onCreateProfile={handleCreateProfile}
             history={selectedHistory}
           />
         ) : step === "analyzing" ? (

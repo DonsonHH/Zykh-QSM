@@ -9,7 +9,9 @@ import re
 import socket
 import subprocess
 import wave
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import websockets
@@ -62,13 +64,21 @@ class AudioStreamRequest(BaseModel):
 
 @router.get("/host/status")
 def host_audio_status() -> dict[str, object]:
-    microphones = _host_microphones()
+    microphone = _qsm_mic_request(settings.qsm_mic_status_path)
+    microphone_available = bool(microphone.get("ok"))
+    microphones = (
+        [{"id": "qsm:FF Camera", "label": "外设摄像头麦克风"}]
+        if microphone_available
+        else []
+    )
     speaker_available = _tcp_available(settings.qsm_api_base, timeout=0.45)
     return {
-        "ok": bool(microphones),
-        "microphone_available": bool(microphones),
+        "ok": microphone_available,
+        "microphone_available": microphone_available,
         "preferred_device": settings.host_mic_device,
         "microphones": microphones,
+        "microphone_source": "qsm",
+        "microphone_status": microphone,
         "speaker_route": "qsm",
         "speaker_available": speaker_available,
         "relay_supported": True,
@@ -79,21 +89,14 @@ def host_audio_status() -> dict[str, object]:
 @router.post("/host/mic-volume")
 def set_host_mic_volume(request: HostMicVolumeRequest) -> dict[str, object]:
     volume = max(0, min(int(request.volume), 100))
-    attempts: list[str] = []
-    commands = [
-        ["pactl", "set-source-volume", "@DEFAULT_SOURCE@", f"{volume}%"],
-        ["amixer", "sset", "Capture", f"{volume}%"],
-    ]
-    for command in commands:
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            attempts.append(f"{command[0]}: {exc}")
-            continue
-        if result.returncode == 0:
-            return {"ok": True, "volume": volume, "message": "本机麦克风音量已更新。", "method": command[0]}
-        attempts.append(f"{command[0]}: {(result.stderr or result.stdout or '').strip()[:160]}")
-    return {"ok": False, "volume": volume, "message": "未能调整本机麦克风音量。", "detail": "；".join(attempts)}
+    result = _qsm_mic_request(settings.qsm_mic_volume_path, method="POST", payload={"volume": volume})
+    return {
+        "ok": bool(result.get("ok")),
+        "volume": volume,
+        "message": "外设麦克风音量已更新。" if result.get("ok") else str(result.get("error_message") or "未能调整外设麦克风音量。"),
+        "method": "qsm-ff-camera",
+        "raw": result,
+    }
 
 
 @router.post("/asr")
@@ -221,23 +224,56 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                     ensure_ascii=False,
                 )
             )
-            await websocket.send_json({"type": "ready", "model": model})
+            try:
+                mic_reader, mic_writer = await _open_qsm_mic_stream()
+            except Exception as exc:
+                await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
+                await websocket.close(code=1011)
+                return
 
-            async def client_to_upstream() -> None:
+            await websocket.send_json({"type": "ready", "model": model, "source": "qsm-ff-camera"})
+            send_lock = asyncio.Lock()
+            stopped = asyncio.Event()
+            committed = False
+
+            async def commit_audio() -> None:
+                nonlocal committed
+                if committed:
+                    return
+                committed = True
+                async with send_lock:
+                    await upstream.send(
+                        json.dumps(
+                            {
+                                "event_id": f"event-{uuid4().hex[:10]}",
+                                "type": "input_audio_buffer.commit",
+                            }
+                        )
+                    )
+
+            async def qsm_to_upstream() -> None:
+                try:
+                    while not stopped.is_set():
+                        audio = await mic_reader.read(3200)
+                        if not audio:
+                            break
+                        encoded = base64.b64encode(audio).decode("ascii")
+                        async with send_lock:
+                            await upstream.send(
+                                json.dumps(
+                                    {
+                                        "event_id": f"event-{uuid4().hex[:10]}",
+                                        "type": "input_audio_buffer.append",
+                                        "audio": encoded,
+                                    }
+                                )
+                            )
+                finally:
+                    await commit_audio()
+
+            async def client_control() -> str:
                 while True:
                     message = await websocket.receive()
-                    if message.get("bytes") is not None:
-                        audio = base64.b64encode(message["bytes"]).decode("ascii")
-                        await upstream.send(
-                            json.dumps(
-                                {
-                                    "event_id": f"event-{uuid4().hex[:10]}",
-                                    "type": "input_audio_buffer.append",
-                                    "audio": audio,
-                                }
-                            )
-                        )
-                        continue
                     text = message.get("text")
                     if text:
                         try:
@@ -245,19 +281,15 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                         except json.JSONDecodeError:
                             payload = {}
                         if payload.get("type") == "stop":
-                            await upstream.send(
-                                json.dumps(
-                                    {
-                                        "event_id": f"event-{uuid4().hex[:10]}",
-                                        "type": "input_audio_buffer.commit",
-                                    }
-                                )
-                            )
+                            stopped.set()
+                            mic_writer.close()
+                            await mic_writer.wait_closed()
+                            await commit_audio()
                             continue
                     if message.get("type") == "websocket.disconnect":
-                        return
+                        return "disconnect"
 
-            async def upstream_to_client() -> None:
+            async def upstream_to_client() -> str:
                 async for raw in upstream:
                     try:
                         event = json.loads(raw)
@@ -274,16 +306,30 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                             }
                         )
                         if final:
-                            return
+                            return "final"
                     elif event.get("type") in {"error", "session.error"} or event.get("error"):
                         await websocket.send_json({"type": "error", "message": _event_error_message(event)})
+                        return "error"
+                return "closed"
 
-            tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            for task in done:
-                task.result()
+            producer = asyncio.create_task(qsm_to_upstream())
+            control = asyncio.create_task(client_control())
+            consumer = asyncio.create_task(upstream_to_client())
+            active = {producer, control, consumer}
+            try:
+                while active:
+                    done, _ = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        active.remove(task)
+                        task.result()
+                        if task is control or task is consumer:
+                            return
+            finally:
+                stopped.set()
+                mic_writer.close()
+                for task in active:
+                    task.cancel()
+                await asyncio.gather(*active, return_exceptions=True)
     except WebSocketDisconnect:
         return
     except Exception as exc:
@@ -304,6 +350,66 @@ def _record(record_type: str, title: str, description: str, ok: bool) -> None:
             status="已记录" if ok else "暂不可用",
         )
     )
+
+
+def _qsm_mic_request(
+    path: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    url = f"{settings.qsm_mic_api_base}{path}"
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = Request(
+        url,
+        data=body,
+        method=method,
+        headers={"Content-Type": "application/json"} if body is not None else {},
+    )
+    try:
+        with urlopen(request, timeout=settings.qsm_mic_timeout_seconds) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            return result if isinstance(result, dict) else {"ok": False, "error_message": "麦克风接口返回格式错误。"}
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "status": "unavailable", "error_message": str(exc)}
+
+
+async def _open_qsm_mic_stream() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    parsed = urlparse(settings.qsm_mic_api_base)
+    if parsed.scheme != "http":
+        raise RuntimeError("麦克风采集地址仅支持 http")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+    base_path = parsed.path.rstrip("/")
+    path = f"{base_path}{settings.qsm_mic_stream_path}?rate=16000&duration=45"
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(host, port),
+        timeout=settings.qsm_mic_timeout_seconds,
+    )
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Accept: application/octet-stream\r\n"
+        "Connection: close\r\n\r\n"
+    )
+    writer.write(request.encode("ascii"))
+    await writer.drain()
+    try:
+        headers = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"),
+            timeout=settings.qsm_mic_timeout_seconds,
+        )
+    except Exception:
+        writer.close()
+        await writer.wait_closed()
+        raise
+    status_line = headers.split(b"\r\n", 1)[0].decode("ascii", errors="replace")
+    if " 200 " not in status_line:
+        detail = (await reader.read(512)).decode("utf-8", errors="replace")
+        writer.close()
+        await writer.wait_closed()
+        raise RuntimeError(f"{status_line}: {detail[:160]}")
+    return reader, writer
 
 
 def _host_microphones() -> list[dict[str, str]]:

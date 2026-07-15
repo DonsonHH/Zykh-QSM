@@ -113,6 +113,7 @@ class RecordsService:
             existing = conn.execute("SELECT id FROM service_users WHERE id=?", (user_id,)).fetchone()
             if not existing:
                 raise ValueError("服务对象不存在")
+            conn.execute("DELETE FROM face_identities WHERE service_user_id=?", (user_id,))
             conn.execute("DELETE FROM service_users WHERE id=?", (user_id,))
 
     def list_today_plans(self) -> list[TodayPlan]:
@@ -144,9 +145,9 @@ class RecordsService:
                 id=record.id,
                 time=self._time_part(record.created_at),
                 type="取药记录",
-                title=f"张三取走{record.medicine_name}",
+                title=f"{record.target_user_name}取走{record.medicine_name}",
                 description=f"{record.quantity}{record.unit}",
-                target_user="张三",
+                target_user=record.target_user_name,
                 status="已记录" if record.qsm_ok or record.dry_run else "失败",
                 sync_status=sync_status,
             )

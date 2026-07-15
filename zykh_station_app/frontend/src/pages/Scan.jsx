@@ -1,20 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BadgeCheck, Camera, CheckCircle2, PackagePlus, Pill, ScanLine } from "lucide-react";
-import { loadQsmCapabilities, registerScannedMedicine, scanMedicine, scanMedicineFrame } from "../api/qsm.js";
+import { ArrowLeft, BadgeCheck, Camera, PackagePlus, Pill, ScanLine } from "lucide-react";
+import { loadQsmCapabilities, registerScannedMedicine, scanMedicine } from "../api/qsm.js";
+import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const scanMode = "药品识别";
 
 export function Scan({ notify, onNavigate }) {
   const [cameraStatus, setCameraStatus] = useState("checking");
-  const [liveMessage, setLiveMessage] = useState("正在打开本机摄像头...");
+  const [liveMessage, setLiveMessage] = useState("正在连接外设摄像头...");
   const [liveStatus, setLiveStatus] = useState("checking");
   const [result, setResult] = useState(null);
   const [registering, setRegistering] = useState(false);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const detectorRef = useRef(null);
-  const serverScanRef = useRef(false);
+  const [previewKey, setPreviewKey] = useState(0);
   const scanTimerRef = useRef(null);
   const lastCodeRef = useRef("");
   const matchingRef = useRef(false);
@@ -23,71 +20,28 @@ export function Scan({ notify, onNavigate }) {
     let stopped = false;
 
     loadQsmCapabilities()
-      .then((data) => setCameraStatus(data.camera || "unavailable"))
-      .catch(() => setCameraStatus("unavailable"));
-
-    startPreview();
+      .then((data) => {
+        if (stopped) {
+          return;
+        }
+        const available = data.camera === "available";
+        setCameraStatus(available ? "available" : "unavailable");
+        setLiveStatus(available ? "scanning" : "unavailable");
+        setLiveMessage(available ? "请将条码放入取景框，系统每秒自动核验。" : "外设摄像头暂不可用。");
+        if (available) {
+          startScanLoop();
+        }
+      })
+      .catch((error) => {
+        setCameraStatus("unavailable");
+        setLiveStatus("unavailable");
+        setLiveMessage(error.message || "外设摄像头暂不可用。");
+      });
 
     return () => {
       stopped = true;
-      stopPreview();
+      window.clearTimeout(scanTimerRef.current);
     };
-
-    async function startPreview() {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraStatus("unavailable");
-        setLiveStatus("unavailable");
-        setLiveMessage("当前浏览器无法打开摄像头，请检查本机摄像头开关或连接。");
-        return;
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: "environment"
-          },
-          audio: false
-        });
-        if (stopped) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        setCameraStatus("available");
-        setupDetector();
-        startScanLoop();
-      } catch (error) {
-        setCameraStatus("unavailable");
-        setLiveStatus("unavailable");
-        setLiveMessage(error?.message || "摄像头暂不可用，请检查本机摄像头后重试。");
-      }
-    }
-
-    function setupDetector() {
-      if (!("BarcodeDetector" in window)) {
-        detectorRef.current = null;
-        serverScanRef.current = true;
-        setLiveStatus("scanning");
-        setLiveMessage("实时扫码中：本机后端正在识别摄像头画面。");
-        return;
-      }
-      try {
-        detectorRef.current = new window.BarcodeDetector({
-          formats: ["qr_code", "ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "data_matrix"]
-        });
-      } catch {
-        detectorRef.current = new window.BarcodeDetector();
-      }
-      serverScanRef.current = false;
-      setLiveStatus("scanning");
-      setLiveMessage("请将条码或二维码放入取景框，系统会自动识别。");
-    }
 
     function startScanLoop() {
       window.clearTimeout(scanTimerRef.current);
@@ -95,63 +49,38 @@ export function Scan({ notify, onNavigate }) {
         if (stopped) {
           return;
         }
-        const detector = detectorRef.current;
-        const video = videoRef.current;
-        if (detector && video?.readyState >= 2 && !matchingRef.current) {
-          try {
-            const codes = await detector.detect(video);
-            const firstCode = codes?.[0]?.rawValue?.trim();
-            if (firstCode) {
-              handleLiveCode(firstCode);
-            }
-          } catch {
-            setLiveStatus("preview");
-            setLiveMessage("实时扫码暂不可用，请调整摄像头或光线后重试。");
-            detectorRef.current = null;
-            serverScanRef.current = true;
-          }
+        if (!matchingRef.current) {
+          matchingRef.current = true;
+          scanMedicine({ mode: scanMode })
+            .then((data) => {
+              if (!data.ok || !data.barcode) {
+                setLiveStatus("scanning");
+                setLiveMessage("正在识别：请让条码清晰、完整地出现在取景框中。");
+                return;
+              }
+              if (data.barcode === lastCodeRef.current) {
+                setLiveStatus("matched");
+                setLiveMessage("已识别当前条码，请核对右侧药品信息。");
+                return;
+              }
+              lastCodeRef.current = data.barcode;
+              applyScanResult(data, data.barcode);
+              setLiveStatus("matched");
+              setLiveMessage("已匹配家庭药柜药品，请人工核验。");
+            })
+            .catch((error) => {
+              setLiveStatus("preview");
+              setLiveMessage(error.message || "实时扫码暂不可用，请稍后重试。");
+            })
+            .finally(() => {
+              matchingRef.current = false;
+            });
         }
-        if (!detector && serverScanRef.current && video?.readyState >= 2 && !matchingRef.current) {
-          scanCurrentFrame();
-        }
-        scanTimerRef.current = window.setTimeout(tick, 650);
+        scanTimerRef.current = window.setTimeout(tick, 1000);
       };
       tick();
     }
-
-    function stopPreview() {
-      window.clearTimeout(scanTimerRef.current);
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      detectorRef.current = null;
-      serverScanRef.current = false;
-    }
   }, []);
-
-  function handleLiveCode(rawCode) {
-    const code = rawCode.trim();
-    if (!code || code === lastCodeRef.current) {
-      return;
-    }
-    lastCodeRef.current = code;
-    matchingRef.current = true;
-    setLiveStatus("matched");
-    setLiveMessage(`识别到 ${code}，正在匹配家庭药柜药品。`);
-    scanMedicine({ manual_code: code, mode: scanMode })
-      .then((data) => {
-        applyScanResult(data, code);
-        setLiveMessage(data.ok ? "已匹配家庭药柜药品，请人工核验。" : "条码未匹配，请人工核验或重扫。");
-      })
-      .catch((error) => {
-        setResult({ barcode: code, name: "待人工核验", match_percent: 0, spec: "--", quantity: "--", expire_date: "--", slot: "--" });
-        setLiveMessage(error.message || "条码匹配失败，请人工核验。");
-      })
-      .finally(() => {
-        window.setTimeout(() => {
-          matchingRef.current = false;
-        }, 1400);
-      });
-  }
 
   function applyScanResult(data, fallbackCode = "") {
     setCameraStatus(data.ok ? "available" : data.status || "available");
@@ -174,59 +103,6 @@ export function Scan({ notify, onNavigate }) {
     return true;
   }
 
-  function capturePreviewFrame(targetWidth = 720, quality = 0.78) {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
-      return null;
-    }
-    const targetHeight = Math.round((video.videoHeight / video.videoWidth) * targetWidth) || 480;
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      return null;
-    }
-    context.drawImage(video, 0, 0, targetWidth, targetHeight);
-    return canvas.toDataURL("image/jpeg", quality);
-  }
-
-  function scanCurrentFrame() {
-    const imageData = capturePreviewFrame(640, 0.74);
-    if (!imageData) {
-      return;
-    }
-    matchingRef.current = true;
-    scanMedicineFrame({ image_data: imageData, mode: scanMode })
-      .then((data) => {
-        if (data.ok) {
-          if (data.barcode && data.barcode === lastCodeRef.current) {
-            setLiveStatus("matched");
-            setLiveMessage("已识别当前条码，请人工核验。");
-            return;
-          }
-          if (data.barcode) {
-            lastCodeRef.current = data.barcode;
-          }
-          applyScanResult(data);
-          setLiveStatus("matched");
-          setLiveMessage("已匹配家庭药柜药品，请人工核验。");
-          return;
-        }
-        setLiveStatus("scanning");
-        setLiveMessage("实时扫码中：请将条码或二维码对准取景框。");
-      })
-      .catch(() => {
-        setLiveStatus("preview");
-        setLiveMessage("实时扫码暂不可用，请调整条码位置后重试。");
-        serverScanRef.current = false;
-      })
-      .finally(() => {
-        window.setTimeout(() => {
-          matchingRef.current = false;
-        }, 450);
-      });
-  }
 
   function handleRegisterMedicine() {
     if (!result) {
@@ -286,16 +162,28 @@ export function Scan({ notify, onNavigate }) {
         <div className={`camera-stage live ${cameraStatus === "unavailable" ? "unavailable" : ""}`}>
           {cameraStatus === "unavailable" ? (
             <>
-              <span aria-hidden="true">
-                <ScanLine size={54} />
-              </span>
+              <ScanLine size={54} aria-hidden="true" />
               <strong>摄像头暂不可用</strong>
-              <p>{liveMessage || "请检查本机摄像头连接后重试。"}</p>
+              <p>{liveMessage || "请检查外设摄像头连接后重试。"}</p>
             </>
           ) : (
             <>
-              <video ref={videoRef} className="camera-preview" muted playsInline autoPlay aria-label="本机摄像头实时预览" />
-              <canvas ref={canvasRef} className="scan-frame-buffer" aria-hidden="true" />
+              <img
+                key={previewKey}
+                className="camera-preview"
+                src={`/api/camera/stream?session=${previewKey}`}
+                alt="外设摄像头实时预览"
+                onLoad={() => {
+                  setCameraStatus("available");
+                  setLiveStatus("scanning");
+                  setLiveMessage("请将条码放入取景框，系统每秒自动核验。");
+                }}
+                onError={() => {
+                  setLiveStatus("preview");
+                  setLiveMessage("视频流正在恢复，请稍候。");
+                  window.setTimeout(() => setPreviewKey((value) => value + 1), 1400);
+                }}
+              />
               <div className="scan-frame" aria-hidden="true">
                 <span />
                 <span />
@@ -303,7 +191,7 @@ export function Scan({ notify, onNavigate }) {
                 <span />
               </div>
               <div className={`live-scan-badge ${liveStatus}`}>
-                <Camera size={18} aria-hidden="true" />
+                {liveStatus === "matched" ? <BadgeCheck size={20} aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
                 <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "自动识别" : "摄像头预览"}</strong>
                 <span>{liveMessage}</span>
               </div>
@@ -355,7 +243,13 @@ export function Scan({ notify, onNavigate }) {
           </>
         ) : (
           <div className="scan-empty-state">
-            <ScanLine size={44} aria-hidden="true" />
+            <StrokeDrawIcon
+              icon={ScanLine}
+              size={54}
+              strokeWidth={1.8}
+              mode="yoyo"
+              active={cameraStatus !== "unavailable" && liveStatus !== "matched"}
+            />
             <strong>暂无识别结果</strong>
             <p>请将药盒条码对准取景框，系统会连续自动核验。</p>
           </div>
@@ -368,7 +262,7 @@ export function Scan({ notify, onNavigate }) {
             disabled={!result || registering}
             onClick={handleRegisterMedicine}
           >
-            {registering ? <CheckCircle2 size={24} aria-hidden="true" /> : <PackagePlus size={24} aria-hidden="true" />}
+            <PackagePlus size={24} aria-hidden="true" />
             <span>{registering ? "录入中..." : "完成核验并录入"}</span>
           </button>
         </div>

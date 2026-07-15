@@ -1,21 +1,19 @@
 import React from "react";
 import { ClipboardCheck, MessageCircleHeart } from "lucide-react";
 import { SafetyNotice } from "./SafetyNotice.jsx";
+import { aiSourceLabel } from "../utils/ai.js";
 
 export function InquiryAssistantCard({ result, assistantState }) {
-  const channelLabel =
-    assistantState?.source === "cloud"
-      ? "云通道"
-      : assistantState?.source === "local_fallback"
-        ? "本地兜底"
-        : assistantState?.loading
-          ? "检查中"
-          : "待提交";
+  const channelLabel = assistantState?.loading
+    ? "检查中"
+    : assistantState?.source
+      ? aiSourceLabel(assistantState.source)
+      : "待提交";
 
   return (
     <section className="inquiry-assistant-panel" aria-label="问询说明">
       <div className="inquiry-panel-heading">
-        <p>规则兜底</p>
+        <p>双通道问询</p>
         <h2>AI应急问询</h2>
       </div>
 

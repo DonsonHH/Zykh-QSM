@@ -11,7 +11,8 @@ class DispenseRepository:
             rows = conn.execute(
                 """
                 SELECT id, medicine_id, medicine_name, slot, hardware_slot, quantity,
-                       unit, reason, dry_run, message, qsm_ok, qsm_detail, created_at
+                       unit, reason, dry_run, message, qsm_ok, qsm_detail,
+                       target_user_id, target_user_name, created_at
                 FROM dispense_records
                 ORDER BY created_at DESC
                 """
@@ -30,6 +31,8 @@ class DispenseRepository:
                 message=row["message"],
                 qsm_ok=bool(row["qsm_ok"]),
                 qsm_detail=row["qsm_detail"] or "",
+                target_user_id=row["target_user_id"] or "",
+                target_user_name=row["target_user_name"] or "家庭成员",
                 created_at=row["created_at"],
             )
             for row in rows
@@ -42,9 +45,10 @@ class DispenseRepository:
                 """
                 INSERT INTO dispense_records(
                   id, medicine_id, medicine_name, slot, hardware_slot, quantity,
-                  unit, reason, dry_run, message, qsm_ok, qsm_detail, created_at
+                  unit, reason, dry_run, message, qsm_ok, qsm_detail,
+                  target_user_id, target_user_name, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -59,6 +63,8 @@ class DispenseRepository:
                     record.message,
                     1 if record.qsm_ok else 0,
                     record.qsm_detail,
+                    record.target_user_id,
+                    record.target_user_name,
                     record.created_at,
                 ),
             )

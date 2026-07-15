@@ -2,7 +2,7 @@ import React from "react";
 import { HomeHero } from "../components/HomeHero.jsx";
 import { QuickActions } from "../components/QuickActions.jsx";
 
-export function Home({ dashboard, onNavigate, notify }) {
+export function Home({ dashboard, identity, identityStatus, identityMessage, onNavigate, notify }) {
   function handleQuickAction(action) {
     if (action.id === "scan") {
       onNavigate("scan");
@@ -25,7 +25,13 @@ export function Home({ dashboard, onNavigate, notify }) {
 
   return (
     <main className="home-page" id="main-content">
-      <HomeHero dashboard={dashboard} onNavigate={onNavigate} />
+      <HomeHero
+        dashboard={dashboard}
+        identity={identity}
+        identityStatus={identityStatus}
+        identityMessage={identityMessage}
+        onNavigate={onNavigate}
+      />
       <QuickActions actions={dashboard?.quick_actions || []} onSelect={handleQuickAction} />
     </main>
   );

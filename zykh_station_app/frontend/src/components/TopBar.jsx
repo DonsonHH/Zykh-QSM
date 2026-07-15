@@ -1,6 +1,8 @@
 import React from "react";
 import { HeartHandshake, Signal, SignalLow, SlidersHorizontal, Wifi, WifiOff } from "lucide-react";
 import { formatClock, formatDay } from "../utils/time.js";
+import { isLocalNetworkMode } from "../utils/network.js";
+import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
   const wifiConnected = Boolean(networkStatus?.wifi_connected);
@@ -8,8 +10,9 @@ export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
   const simConnected = Boolean(networkStatus?.sim_connected);
   const simPresent = Boolean(networkStatus?.sim_present);
   const simSignal = networkStatus?.sim_signal || (simConnected ? "good" : simPresent ? "weak" : "none");
-  const explicitLocalMode = networkStatus?.mode === "local";
+  const explicitLocalMode = isLocalNetworkMode(networkStatus);
   const localMode = explicitLocalMode || (!wifiConnected && !simConnected);
+  const localModelReady = Boolean(networkStatus?.local_ai?.ready) || networkStatus?.ai_mode === "local_llm";
   const displayWifiConnected = explicitLocalMode ? false : wifiConnected;
   const displayWifiSignal = explicitLocalMode ? "none" : wifiSignal;
   const displaySimConnected = explicitLocalMode ? false : simConnected;
@@ -23,7 +26,7 @@ export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
     <header className={`top-bar ${showHeaderClock ? "with-clock" : "home-top"}`}>
       <div className="brand-block">
         <div className="brand-mark" aria-hidden="true">
-          <HeartHandshake size={34} strokeWidth={2.2} />
+          <StrokeDrawIcon icon={HeartHandshake} size={34} strokeWidth={2.2} replayOnPointer />
         </div>
         <div>
           <h1>智药康护终端</h1>
@@ -41,18 +44,38 @@ export function TopBar({ site, networkStatus, now, page, onOpenSystemCheck }) {
             <span className="weekday-line">{weekText}</span>
           </div>
         ) : null}
-        <div className={`network-cluster ${localMode ? "offline" : ""}`} aria-label="网络状态">
-          <div className={`mini-network ${displayWifiSignal === "good" ? "good" : displayWifiConnected ? "weak" : "offline"}`}>
-            {displayWifiConnected ? <Wifi size={22} aria-hidden="true" /> : <WifiOff size={22} aria-hidden="true" />}
-            <span>WiFi</span>
-            <strong>{explicitLocalMode ? "未使用" : displayWifiConnected ? "已连接" : "未连接"}</strong>
-          </div>
-          <div className={`mini-network ${displaySimSignal === "good" ? "good" : displaySimPresent ? "weak" : "offline"}`}>
-            {displaySimSignal === "good" ? <Signal size={22} aria-hidden="true" /> : <SignalLow size={22} aria-hidden="true" />}
-            <span>SIM</span>
-            <strong>{explicitLocalMode ? "未使用" : displaySimConnected ? "可用" : displaySimPresent ? "待连接" : "未检测"}</strong>
-          </div>
-          {localMode ? <em>本地模式</em> : null}
+        <div className={`network-cluster ${localMode ? "offline local-only" : ""}`} aria-label="网络状态">
+          {explicitLocalMode ? (
+            <div className="mini-network offline local-summary">
+              <WifiOff size={23} aria-hidden="true" />
+              <span>离线模式</span>
+              <strong>{localModelReady ? "离线模型" : "安全规则"}</strong>
+            </div>
+          ) : (
+            <>
+              <div className={`mini-network ${displayWifiSignal === "good" ? "good" : displayWifiConnected ? "weak" : "offline"}`}>
+                {displayWifiSignal === "good" ? (
+                  <Wifi size={22} aria-hidden="true" />
+                ) : displayWifiConnected ? (
+                  <Wifi size={22} aria-hidden="true" />
+                ) : (
+                  <WifiOff size={22} aria-hidden="true" />
+                )}
+                <span>WiFi</span>
+                <strong>{displayWifiConnected ? "已连接" : "未连接"}</strong>
+              </div>
+              <div className={`mini-network ${displaySimSignal === "good" ? "good" : displaySimPresent ? "weak" : "offline"}`}>
+                {displaySimSignal === "good" ? (
+                  <Signal size={22} aria-hidden="true" />
+                ) : (
+                  <SignalLow size={22} aria-hidden="true" />
+                )}
+                <span>SIM</span>
+                <strong>{displaySimConnected ? "可用" : displaySimPresent ? "待连接" : "未检测"}</strong>
+              </div>
+            </>
+          )}
+          {localMode ? <em>{explicitLocalMode ? "联网未使用" : "离线模式"}</em> : null}
         </div>
         <button className="system-check-button" type="button" onClick={onOpenSystemCheck} aria-label="打开设置">
           <SlidersHorizontal size={24} aria-hidden="true" />

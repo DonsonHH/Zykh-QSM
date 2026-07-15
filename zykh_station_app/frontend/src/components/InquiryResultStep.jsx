@@ -1,7 +1,8 @@
 import React from "react";
-import { AlertTriangle, Home, PackageSearch, RotateCcw } from "lucide-react";
+import { AlertTriangle, Home, PackageSearch, RotateCcw, ShieldCheck } from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
 import { SafetyNotice } from "./SafetyNotice.jsx";
+import { aiSourceLabel } from "../utils/ai.js";
 
 export function InquiryResultStep({ result, blockedReason, onViewCandidates, onRestart, onHome }) {
   const riskCanProceed = result?.risk_level === "low" || result?.risk_level === "medium";
@@ -10,16 +11,18 @@ export function InquiryResultStep({ result, blockedReason, onViewCandidates, onR
   const medicines = result?.candidate_medicines || [];
   const warnings = result?.contraindication_warnings || [];
   const nextSteps = blockedReason ? [blockedReason] : result?.next_steps || [];
-  const channelLabel =
-    result?.ai_source === "cloud"
-      ? "云通道"
-      : result?.ai_source === "qsm_cloud"
-        ? "QSM 4G 云通道"
-        : "本地兜底";
+  const channelLabel = aiSourceLabel(result?.ai_source);
 
   return (
     <section className="inquiry-result-step">
       <div className="result-flow-head">
+        <span
+          className={`result-risk-motion ${result?.risk_level === "low" ? "low" : "warn"}`}
+          role="img"
+          aria-label={result?.risk_level === "low" ? "低风险提示" : "需要关注的风险提示"}
+        >
+          {result?.risk_level === "low" ? <ShieldCheck size={42} /> : <AlertTriangle size={42} />}
+        </span>
         <div className="inquiry-flow-heading compact">
           <p>问询结果</p>
           <h2>结构化风险提示</h2>

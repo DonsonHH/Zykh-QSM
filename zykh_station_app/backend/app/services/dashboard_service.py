@@ -55,13 +55,15 @@ class DashboardService:
             chips=chips,
         )
 
-    def get_dashboard(self) -> DashboardPayload:
+    def get_dashboard(self, target_user: str | None = None) -> DashboardPayload:
         site = self.station_service.get_site()
         status = self.get_status()
         qsm = self.qsm_client.get_qsm_status()
         medicines = self.medicine_service.list_medicines().medicines
         plans = self.records_service.list_today_plans()
-        users = self.records_service.list_service_users()
+        identity_pending = target_user == "__unconfirmed__"
+        if target_user:
+            plans = [plan for plan in plans if plan.target_user == target_user]
         pending_plans = [plan for plan in plans if plan.status != "已执行"]
         next_plan = pending_plans[0] if pending_plans else (plans[0] if plans else None)
         temperature = qsm.vitals.get("temperature_c")
@@ -69,11 +71,15 @@ class DashboardService:
             site=site,
             chips=status.chips,
             medication=MedicationSummary(
-                pending_people=len(users),
+                pending_people=len({plan.target_user for plan in pending_plans}),
                 pending_plans=len(pending_plans),
                 next_time=next_plan.time if next_plan else "--:--",
-                featured_subject=next_plan.target_user if next_plan else "家庭药柜",
-                featured_medicine=next_plan.medicine if next_plan else "暂无待执行计划",
+                featured_subject=next_plan.target_user if next_plan else ("等待确认" if identity_pending else (target_user or "家庭药柜")),
+                featured_medicine=(
+                    next_plan.medicine
+                    if next_plan
+                    else ("确认使用人后加载个人计划" if identity_pending else "当前使用人暂无待执行计划")
+                ),
             ),
             inquiry=InquirySummary(
                 title="AI应急问询",
@@ -106,7 +112,13 @@ class DashboardService:
 
     @staticmethod
     def _ai_label(value: str) -> str:
-        return {"cloud": "云端", "local": "本地", "rules": "规则兜底"}.get(value, "规则兜底")
+        return {
+            "cloud": "云端",
+            "local": "离线模型",
+            "local_llm": "离线模型",
+            "rules": "安全规则",
+            "rules_fallback": "安全规则",
+        }.get(value, "安全规则")
 
     @staticmethod
     def _sync_label(value: str) -> str:

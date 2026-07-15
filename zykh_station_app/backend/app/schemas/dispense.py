@@ -10,6 +10,8 @@ class DispenseConfirmRequest(BaseModel):
     reason: str
     confirmed_safety_notice: bool
     confirm_real_dispense: bool = False
+    target_user_id: str = ""
+    target_user_name: str = "家庭成员"
 
 
 class DispenseOpenRequest(BaseModel):
@@ -17,6 +19,9 @@ class DispenseOpenRequest(BaseModel):
     quantity: int = Field(default=1, ge=1)
     reason: str = "现场开柜确认"
     confirmed_open: bool = False
+    medicine_id: str | None = None
+    target_user_id: str = ""
+    target_user_name: str = ""
 
 
 class DispenseConfirmResponse(BaseModel):
@@ -48,6 +53,8 @@ class DispenseRecord(BaseModel):
     message: str
     qsm_ok: bool = False
     qsm_detail: str = ""
+    target_user_id: str = ""
+    target_user_name: str = "家庭成员"
     created_at: str
 
 

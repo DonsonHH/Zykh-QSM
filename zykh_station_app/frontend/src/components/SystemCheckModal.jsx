@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import {
   Activity,
+  BrainCircuit,
   Camera,
   CheckCircle2,
   HeartPulse,
-  Loader2,
   Mic,
   RefreshCcw,
   Router,
@@ -17,6 +17,7 @@ import {
 import { loadHostAudioStatus, testAudioRelay } from "../api/audio.js";
 import { loadDeviceCheck } from "../api/device.js";
 import { loadNetworkStatus, setNetworkMode, startQsm4g } from "../api/network.js";
+import { isLocalNetworkMode } from "../utils/network.js";
 
 const fallbackCheck = {
   qsm_mode: "mock",
@@ -27,6 +28,9 @@ const fallbackCheck = {
   local_camera_mode: "mock",
   local_camera_status: "mock",
   dispense_dry_run: true,
+  local_ai_ok: false,
+  local_ai_model: "",
+  local_ai_status: "unavailable",
   errors: [],
   warnings: ["系统检查暂不可用。"],
   recommendations: ["请稍后重新检查。"]
@@ -76,7 +80,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       .then((nextNetwork) => {
         setNetwork(nextNetwork);
         onNetworkStatusChange?.(nextNetwork);
-        notify(mode === "sim" ? "已切换到 SIM 网络优先" : "已切换到本地兜底");
+        notify(mode === "sim" ? "已切换到 SIM 网络优先" : "已切换到离线模型");
       })
       .catch((error) => notify(error.message || "网络模式切换失败"))
       .finally(() => setSwitchingNetwork(false));
@@ -111,7 +115,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const alertItems = [...(check.errors || []), ...(check.warnings || [])];
   const modeLabel = check.qsm_mode === "real" ? "真实模式" : "本地模式";
   const currentNetwork = network || networkStatus || {};
-  const networkLocal = currentNetwork.mode === "local";
+  const networkLocal = isLocalNetworkMode(currentNetwork);
   const networkGood = !networkLocal && currentNetwork.signal === "good";
   const NetworkIcon = networkLocal ? WifiOff : Signal;
   const rows = [
@@ -119,7 +123,13 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       icon: NetworkIcon,
       label: "网络状态",
       value: networkLocal ? "本地化运行" : currentNetwork.label || "SIM网络",
-      ok: !networkLocal && (networkGood || currentNetwork.simulated)
+      ok: networkLocal ? Boolean(currentNetwork.local_ai?.ready) : networkGood || currentNetwork.simulated
+    },
+    {
+      icon: BrainCircuit,
+      label: "离线问询模型",
+      value: check.local_ai_ok ? "可用" : "未就绪",
+      ok: check.local_ai_ok
     },
     {
       icon: Activity,
@@ -135,7 +145,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
     },
     {
       icon: Camera,
-      label: "本机摄像头",
+      label: "外设摄像头",
       value: check.local_camera_ok ? "可用" : "不可用",
       ok: check.local_camera_ok
     },
@@ -153,7 +163,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
     },
     {
       icon: Mic,
-      label: "本机麦克风",
+      label: "摄像头麦克风",
       value: audio?.microphone_available ? "可用" : "待检测",
       ok: Boolean(audio?.microphone_available)
     },
@@ -174,7 +184,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
 
         <div className="system-check-heading">
           <span aria-hidden="true">
-            {loading ? <Loader2 size={32} className="spin-icon" /> : <Activity size={32} />}
+            <Activity size={32} />
           </span>
           <div>
             <p>外设检查</p>
@@ -203,12 +213,12 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
                 SIM网络
               </button>
               <button type="button" className={networkLocal ? "active" : ""} disabled={switchingNetwork} onClick={() => switchNetwork("local")}>
-                本地兜底
+                离线模型
               </button>
             </div>
             <button className="secondary-action settings-test-button" type="button" onClick={run4gStart} disabled={starting4g || networkLocal}>
               <Signal size={22} aria-hidden="true" />
-              <span>{networkLocal ? "本地模式无需联网" : starting4g ? "联网中..." : "启动4G联网"}</span>
+              <span>{networkLocal ? "离线模型无需联网" : starting4g ? "联网中..." : "启动4G联网"}</span>
             </button>
             <label className="settings-range">
               <span>外放音量 SPK_VOL {volume}</span>
@@ -224,7 +234,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
             <p>
               麦克风：{audio?.microphone_available ? audio.microphones?.[0]?.label || "可用" : "未检测到"}
             </p>
-            <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查连接"}</p>
+            <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查外设连接"}</p>
             <p>
               声音：
               {networkLocal ? "本地模式下仍可使用外设喇叭播放提示音。" : "外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。"}

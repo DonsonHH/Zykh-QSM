@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-from ..config import real_dispense_enabled, settings
+from ..config import real_dispense_enabled
 from ..schemas.device import DeviceCheckResponse
-from .local_camera import LocalCameraService
+from .qsm_camera_service import QsmCameraService
 from .qsm_client import QsmClient
+from .local_ai_client import LocalAiClient
 
 
 class DeviceCheckService:
     def __init__(
         self,
         qsm_client: QsmClient | None = None,
-        local_camera: LocalCameraService | None = None,
+        qsm_camera: QsmCameraService | None = None,
+        local_ai: LocalAiClient | None = None,
     ) -> None:
         self.qsm_client = qsm_client or QsmClient()
-        self.local_camera = local_camera or LocalCameraService()
+        self.qsm_camera = qsm_camera or QsmCameraService()
+        self.local_ai = local_ai or LocalAiClient()
 
     def check(self) -> DeviceCheckResponse:
         errors: list[str] = []
@@ -22,11 +25,13 @@ class DeviceCheckService:
 
         qsm_status = self.qsm_client.get_qsm_status()
         vitals = self.qsm_client.read_vitals()
-        camera = self.local_camera.check()
+        camera_status = self.qsm_camera.capabilities()
+        local_ai_status = self.local_ai.status()
 
         qsm_status_ok = qsm_status.connected if qsm_status.mode == "real" else True
         vitals_ok = True if qsm_status.mode != "real" else vitals.get("source") == "real"
-        local_camera_ok = bool(camera.get("ok"))
+        camera_ok = camera_status == "available"
+        local_ai_ok = bool(local_ai_status.get("ready"))
 
         if qsm_status.mode == "real" and not qsm_status.connected:
             warnings.append("外设网关未连接。")
@@ -37,9 +42,12 @@ class DeviceCheckService:
         if not vitals_ok:
             warnings.append("体征模块暂不可用。")
             recommendations.append("请检查体征外设和外设网关体征接口。")
-        if not local_camera_ok:
-            warnings.append("本机摄像头暂不可用。")
-            recommendations.append("请检查本机摄像头模式、设备编号和摄像头连接。")
+        if not camera_ok:
+            warnings.append("外设摄像头暂不可用。")
+            recommendations.append("请检查外设摄像头连接和摄像头网关服务。")
+        if not local_ai_ok:
+            warnings.append("离线问询模型暂未就绪。")
+            recommendations.append("请运行 scripts/deploy_offline_ai.sh 或检查 QSM 模型进程。")
         if not real_dispense_enabled():
             warnings.append("开柜当前未启用真实联动。")
             recommendations.append("真实开柜需要 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1，并完成取药安全确认。")
@@ -53,9 +61,13 @@ class DeviceCheckService:
             qsm_base_url=qsm_status.base_url,
             qsm_status_ok=qsm_status_ok,
             vitals_ok=vitals_ok,
-            local_camera_ok=local_camera_ok,
-            local_camera_mode=str(camera.get("mode", settings.local_camera_mode)),
-            local_camera_status=str(camera.get("status", "unavailable")),
+            # Kept for API compatibility; these fields now describe the QSM camera.
+            local_camera_ok=camera_ok,
+            local_camera_mode="qsm",
+            local_camera_status=camera_status,
+            local_ai_ok=local_ai_ok,
+            local_ai_model=str(local_ai_status.get("model") or ""),
+            local_ai_status=str(local_ai_status.get("status") or "unavailable"),
             dispense_dry_run=not real_dispense_enabled(),
             errors=errors,
             warnings=warnings,

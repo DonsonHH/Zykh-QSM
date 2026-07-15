@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Mic, RotateCcw, Volume2 } from "lucide-react";
 import { speakText } from "../api/audio.js";
+import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
+import { aiSourceLabel } from "../utils/ai.js";
 
 const chatDraftKey = "zykh-inquiry-chat-draft";
 const vitalsAwaitingKey = "zykh-inquiry-awaiting-vitals";
@@ -11,7 +13,7 @@ function initialMessages(profile, history) {
     role: "assistant",
     content: profile
       ? `已匹配到${profile.name}。请直接说出现在最不舒服的地方。`
-      : "请先说出你的姓名或家庭身份，我会先确认使用人，再继续问询。"
+      : "正在通过人脸确认使用人，请正对摄像头。确认后即可直接说出不舒服的地方。"
   };
   if (!history?.seed?.length) {
     return [intro];
@@ -56,49 +58,6 @@ function transcriptFrom(messages) {
     .join("；");
 }
 
-function extractName(text) {
-  const value = text.trim();
-  const explicit = value.match(/(?:我是|我叫|名字叫|叫)([\u4e00-\u9fff]{2,4})/);
-  if (explicit?.[1]) {
-    return explicit[1];
-  }
-  const loose = value.match(/^([\u4e00-\u9fff]{2,4})(?:，|。|我|今年|身体|不舒服|有|是)/);
-  return loose?.[1] || "";
-}
-
-function downsampleTo16k(input, inputRate) {
-  const outputRate = 16000;
-  if (inputRate === outputRate) {
-    return floatToInt16(input);
-  }
-  const ratio = inputRate / outputRate;
-  const length = Math.floor(input.length / ratio);
-  const result = new Int16Array(length);
-  let offset = 0;
-  for (let index = 0; index < length; index += 1) {
-    const nextOffset = Math.round((index + 1) * ratio);
-    let sum = 0;
-    let count = 0;
-    for (let inputIndex = offset; inputIndex < nextOffset && inputIndex < input.length; inputIndex += 1) {
-      sum += input[inputIndex];
-      count += 1;
-    }
-    const sample = Math.max(-1, Math.min(1, sum / Math.max(count, 1)));
-    result[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-    offset = nextOffset;
-  }
-  return result;
-}
-
-function floatToInt16(input) {
-  const result = new Int16Array(input.length);
-  for (let index = 0; index < input.length; index += 1) {
-    const sample = Math.max(-1, Math.min(1, input[index]));
-    result[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-  return result;
-}
-
 function readLatestVitals() {
   try {
     const raw = window.sessionStorage.getItem(latestVitalsKey);
@@ -133,9 +92,6 @@ export function InquiryChatStep({
   onOpenVitals,
   onDemoRecommendation,
   profile,
-  knownUsers = [],
-  onProfileResolved,
-  onCreateProfile,
   history
 }) {
   const draft = readChatDraft();
@@ -147,11 +103,6 @@ export function InquiryChatStep({
   const [vitalsSummary, setVitalsSummary] = useState(() => draft?.vitalsSummary || describeVitals(readLatestVitals()));
   const bottomRef = useRef(null);
   const wsRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const processorRef = useRef(null);
-  const sourceRef = useRef(null);
-  const gainRef = useRef(null);
   const partialTextRef = useRef("");
   const finishTimerRef = useRef(null);
   const finishedRef = useRef(false);
@@ -167,6 +118,13 @@ export function InquiryChatStep({
   useEffect(() => {
     if (profile?.id && !profileRef.current?.id) {
       setActiveProfile(profile);
+      setMessages((current) => {
+        const confirmation = { role: "assistant", content: `已确认使用人：${profile.name}。请直接说出现在最不舒服的地方。` };
+        if (current[0]?.role === "assistant" && current[0]?.content?.startsWith("正在通过人脸确认")) {
+          return [confirmation, ...current.slice(1)];
+        }
+        return [...current, confirmation];
+      });
     }
   }, [profile]);
 
@@ -247,38 +205,8 @@ export function InquiryChatStep({
     if (profileRef.current?.id) {
       return profileRef.current;
     }
-    const matched = knownUsers.find((user) => content.includes(user.name));
-    if (matched) {
-      setActiveProfile(matched);
-      onProfileResolved?.(matched);
-      appendMessage({ role: "assistant", content: `已匹配到${matched.name}。请继续说现在最不舒服的地方。` });
-      playReply(`已匹配到${matched.name}。请继续说现在最不舒服的地方。`);
-      return matched;
-    }
-    const name = extractName(content);
-    if (!name) {
-      appendMessage({ role: "assistant", content: "我还没有确认使用人。请先说：我是某某，或我是家里哪位成员。" });
-      playReply("我还没有确认使用人。请先说我是某某。");
-      return null;
-    }
-    try {
-      const created = await onCreateProfile?.({
-        name,
-        age: 0,
-        profile: "待补充",
-        note: "AI问询新建，请继续补充基础病、过敏禁忌和近期用药。",
-        status: "待完善"
-      });
-      if (created) {
-        setActiveProfile(created);
-        onProfileResolved?.(created);
-        appendMessage({ role: "assistant", content: `已为${created.name}建立本地身份。请继续说年龄、基础病和过敏禁忌。` });
-        playReply(`已为${created.name}建立本地身份。请继续说年龄、基础病和过敏禁忌。`);
-        return created;
-      }
-    } catch (error) {
-      notify(error.message || "身份创建失败");
-    }
+    appendMessage({ role: "assistant", content: "人脸身份尚未确认，请正对摄像头并稍候。" });
+    playReply("人脸身份尚未确认，请正对摄像头并稍候。");
     return null;
   }
 
@@ -371,9 +299,9 @@ export function InquiryChatStep({
         }
       }
     } catch (error) {
-      streamSource = "local_fallback";
-      fullText = error.message || "对话暂不可用，我会使用本地兜底继续整理信息。";
-      updateLastAssistant(fullText, { source: "local_fallback", streaming: false });
+      streamSource = "rules_fallback";
+      fullText = error.message || "对话暂不可用，我会使用安全规则继续整理信息。";
+      updateLastAssistant(fullText, { source: "rules_fallback", streaming: false });
       notify(fullText);
     }
     const clean = cleanAssistantReply(fullText) || "我已记录，请继续补充。";
@@ -399,37 +327,22 @@ export function InquiryChatStep({
       stopVoice(true);
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      const message = "当前浏览器无法读取本机麦克风。";
-      setVoiceMessage(message);
-      notify(message);
-      return;
-    }
-
     finishedRef.current = false;
     partialTextRef.current = "";
     setListening(true);
     setVoiceMessage("正在连接实时语音识别...");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false
-      });
-      mediaStreamRef.current = stream;
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const context = new AudioContextClass();
-      audioContextRef.current = context;
       const ws = new WebSocket(websocketUrl("/api/audio/asr/realtime"));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setVoiceMessage("正在听，请自然说话。");
-        startAudioPump(context, stream, ws);
+        setVoiceMessage("正在连接外设麦克风...");
       };
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data || "{}");
         if (data.type === "ready") {
+          setVoiceMessage("正在听，请自然说话。");
           return;
         }
         if (data.type === "error") {
@@ -458,32 +371,11 @@ export function InquiryChatStep({
         }
       };
     } catch (error) {
-      const message = error?.message || "麦克风启动失败，请检查浏览器权限。";
+      const message = error?.message || "外设麦克风启动失败，请检查设备连接。";
       setVoiceMessage(message);
       notify(message);
       stopVoice(false);
     }
-  }
-
-  function startAudioPump(context, stream, ws) {
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const gain = context.createGain();
-    gain.gain.value = 0;
-    sourceRef.current = source;
-    processorRef.current = processor;
-    gainRef.current = gain;
-    processor.onaudioprocess = (event) => {
-      if (ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      const input = event.inputBuffer.getChannelData(0);
-      const pcm = downsampleTo16k(input, context.sampleRate);
-      ws.send(pcm.buffer);
-    };
-    source.connect(processor);
-    processor.connect(gain);
-    gain.connect(context.destination);
   }
 
   function finishVoice(text) {
@@ -511,16 +403,6 @@ export function InquiryChatStep({
     } else if (ws && ws.readyState <= WebSocket.OPEN) {
       ws.close();
     }
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    gainRef.current?.disconnect();
-    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-    audioContextRef.current?.close?.().catch(() => {});
-    processorRef.current = null;
-    sourceRef.current = null;
-    gainRef.current = null;
-    mediaStreamRef.current = null;
-    audioContextRef.current = null;
     if (!commit) {
       setListening(false);
     }
@@ -547,7 +429,7 @@ export function InquiryChatStep({
     <section className="inquiry-chat-step voice-only" aria-label="AI 对话问询">
       <section className="chat-main-panel">
         <div className="chat-title-row">
-          <span aria-hidden="true">
+          <span className="chat-assistant-motion" aria-hidden="true">
             <Bot size={26} />
           </span>
           <div>
@@ -568,11 +450,12 @@ export function InquiryChatStep({
           {messages.map((message, index) => (
             <article key={message.id || `${message.role}-${index}`} className={`chat-bubble ${message.role} ${message.streaming ? "streaming" : ""}`}>
               <p>{message.content || "正在生成回复..."}</p>
-              {message.source ? <small>{message.source === "cloud" ? "云通道" : "本地兜底"}</small> : null}
+              {message.source ? <small>{aiSourceLabel(message.source)}</small> : null}
             </article>
           ))}
           {sending ? (
             <article className="chat-bubble assistant thinking">
+              <StrokeDrawIcon icon={Bot} size={20} strokeWidth={2} mode="yoyo" />
               <p>正在整理你的信息...</p>
             </article>
           ) : null}
@@ -581,7 +464,11 @@ export function InquiryChatStep({
 
         <div className="chat-voice-bar">
           <button className="voice-chat-button compact" type="button" onClick={startVoice} disabled={sending}>
-            <Mic size={23} aria-hidden="true" />
+            {listening ? (
+              <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />
+            ) : (
+              <Mic size={23} aria-hidden="true" />
+            )}
             {listening ? "结束并发送" : "点击说话并发送"}
           </button>
           <div className="voice-status chat-voice-status">{voiceMessage}</div>

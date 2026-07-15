@@ -49,7 +49,9 @@ class InquiryService:
             ai_warnings = [str(item) for item in ai.get("contraindication_warnings", []) if str(item).strip()]
             if ai_warnings:
                 contraindication_warnings = list(dict.fromkeys([*contraindication_warnings, *ai_warnings]))
-            safety_notice = str(ai.get("safety_notice") or safety_notice)
+            ai_notice = self._safe_ai_notice(ai.get("safety_notice"))
+            if ai_notice:
+                safety_notice = ai_notice
             ai_steps = [str(item) for item in ai.get("next_steps", []) if str(item).strip()]
             if ai_steps:
                 next_steps = ai_steps[:4]
@@ -79,8 +81,8 @@ class InquiryService:
             next_steps=next_steps,
             can_proceed_to_dispense=can_proceed,
             created_at=now_text(),
-            ai_source=str(ai.get("source") or "local_fallback"),
-            ai_message=str(ai.get("message") or "本地规则兜底"),
+            ai_source=str(ai.get("source") or "rules_fallback"),
+            ai_message=str(ai.get("message") or "安全规则核验"),
         )
         return self.repository.append(result)
 
@@ -89,3 +91,20 @@ class InquiryService:
 
     def list_records(self) -> list[InquiryResult]:
         return self.repository.list_records()
+
+    @staticmethod
+    def _safe_ai_notice(value: object) -> str:
+        notice = str(value or "").strip()
+        if not notice:
+            return ""
+        definitive_claims = (
+            "无禁忌",
+            "没有禁忌",
+            "可以服用",
+            "可安全服用",
+            "安全服用",
+            "建议服用",
+            "应该服用",
+            "无需就医",
+        )
+        return "" if any(claim in notice for claim in definitive_claims) else notice

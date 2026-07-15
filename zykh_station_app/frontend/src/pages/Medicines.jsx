@@ -6,6 +6,7 @@ import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
+import { useFaceIdentity } from "../hooks/useFaceIdentity.js";
 
 export function Medicines({ notify, focus, onNavigate }) {
   const initialMedicineView =
@@ -19,6 +20,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [viewMode, setViewMode] = useState(initialMedicineView);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const { identity, identify } = useFaceIdentity();
 
   useEffect(() => {
     setLoading(true);
@@ -59,10 +61,23 @@ export function Medicines({ notify, focus, onNavigate }) {
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
 
-  function openConfirm() {
+  async function openConfirm() {
     if (!selectedMedicine) {
       notify("请先选择药品");
       return;
+    }
+    if (!identity) {
+      notify("请正对摄像头，正在确认取药人");
+      try {
+        const resolved = await identify({ force: true });
+        if (!resolved.ok || !resolved.user) {
+          notify(resolved.error_message || resolved.message || "未能确认取药人");
+          return;
+        }
+      } catch (error) {
+        notify(error.message || "人脸识别暂不可用");
+        return;
+      }
     }
     setModalResult("");
     setModalError("");
@@ -125,7 +140,7 @@ export function Medicines({ notify, focus, onNavigate }) {
 
         {loading ? (
           <div className="medicine-loading-state" role="status">
-            <span className="loading-pulse" aria-hidden="true" />
+            <ScanLine size={36} aria-hidden="true" />
             <strong>正在读取家庭药柜</strong>
             <small>请稍候</small>
           </div>
@@ -165,6 +180,7 @@ export function Medicines({ notify, focus, onNavigate }) {
         submitting={submitting}
         result={modalResult}
         error={modalError}
+        identity={identity}
         onCancel={() => setModalOpen(false)}
         onSubmit={handleConfirm}
       />
