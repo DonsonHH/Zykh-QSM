@@ -13,6 +13,7 @@
 - 药品页取药确认，默认调用真实外设网关并保留本地记录；
 - AI应急问询、风险提示、药品信息匹配、禁忌核验；
 - QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，支持云端失败自动切换；
+- QSM 上运行的 sherpa-onnx 中文离线 TTS，本地模式不访问云端语音服务；
 - 本地记录聚合和待同步队列；
 - QSM real/mock 接入验证接口。
 - 体征读取、扫码识别、真实取药确认联调和外设能力展示入口。
@@ -150,6 +151,15 @@ sh scripts/deploy_offline_ai.sh
 ```
 
 完整模型来源、哈希、资源占用、安全边界和断网验收见 [`docs/offline-ai.md`](docs/offline-ai.md)。
+
+首次部署板端离线中文语音模型：
+
+```bash
+cd zykh_station_app
+INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
+```
+
+本地模式会强制使用板端 `sherpa-onnx`；联网模式优先使用云端 TTS，云端失败时自动回退板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 

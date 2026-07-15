@@ -268,8 +268,9 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
         <section className="inquiry-user-card dynamic">
           <div className="context-heading user-context-heading">
             <UserRound size={26} aria-hidden="true" />
-            <div>
-              <h2>使用人 · {selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
+            <div className="user-context-copy">
+              <span>使用人</span>
+              <h2>{selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
             </div>
             <span
               className={`identity-confirmation-icon ${identityPresentation.tone}`}

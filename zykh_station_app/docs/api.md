@@ -196,7 +196,11 @@ Calls the QSM audio ASR path and returns recognized text or a structured gateway
 
 ### POST /api/audio/speak
 
-Calls the QSM speech path with text.
+Calls the QSM speech path with text. The host selects `offline` when the terminal is in local mode and `auto` while online. `auto` prefers cloud speech and falls back to the QSM sherpa-onnx model. The response exposes `requested_mode`, `engine` and `offline`.
+
+### GET /api/audio/status
+
+Returns the QSM cloud/offline TTS readiness without exposing API keys or model file paths to the terminal UI.
 
 ### POST /api/audio/beep
 

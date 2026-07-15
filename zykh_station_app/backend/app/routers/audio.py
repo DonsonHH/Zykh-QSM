@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from ..config import settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
+from ..services.network_service import NetworkService
 from ..services.qsm_client import QsmClient
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
@@ -30,6 +31,7 @@ class SpeakRequest(BaseModel):
     text: str
     volume: int | None = None
     speed: float | None = None
+    mode: str | None = None
 
 
 class AsrRequest(BaseModel):
@@ -107,13 +109,43 @@ def audio_asr(request: AsrRequest) -> dict[str, object]:
     return {"ok": bool(result.get("ok")), "text": text, "duration": request.duration, "raw": result}
 
 
+@router.get("/status")
+def audio_status() -> dict[str, object]:
+    requested_mode = _tts_mode_for_network()
+    result = QsmClient().audio_status()
+    return {
+        "ok": bool(result.get("ok")),
+        "requested_mode": requested_mode,
+        "offline_available": bool(result.get("offline_available") or result.get("offline", {}).get("available")),
+        "cloud_available": bool(result.get("cloud_available") or result.get("cloud", {}).get("available")),
+        "raw": result,
+    }
+
+
 @router.post("/speak")
 def audio_speak(request: SpeakRequest) -> dict[str, object]:
     client = QsmClient()
     client.audio_stream_stop()
-    result = client.audio_speak(request.text, request.volume, request.speed)
-    _record("语音播报", "语音播报", "已请求外设播报。" if result.get("ok") else str(result.get("error_message") or "播报失败。"), bool(result.get("ok")))
-    return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
+    network_mode = _tts_mode_for_network()
+    requested_mode = "offline" if network_mode == "offline" else _normalize_tts_mode(request.mode) or network_mode
+    result = client.audio_speak(request.text, request.volume, request.speed, requested_mode)
+    actual_mode = str(result.get("mode") or "")
+    description = (
+        "已使用板端离线语音播报。"
+        if actual_mode == "offline-sherpa-onnx"
+        else "已请求外设播报。"
+        if result.get("ok")
+        else str(result.get("error_message") or result.get("detail") or "播报失败。")
+    )
+    _record("语音播报", "语音播报", description, bool(result.get("ok")))
+    return {
+        "ok": bool(result.get("ok")),
+        "message": result.get("detail") or result.get("error_message") or "",
+        "requested_mode": requested_mode,
+        "engine": actual_mode,
+        "offline": bool(result.get("offline")),
+        "raw": result,
+    }
 
 
 @router.post("/beep")
@@ -135,7 +167,7 @@ def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
     result = client.audio_play_base64(audio_b64, "wav", volume)
     mode = "uploaded-audio"
     if not result.get("ok"):
-        result = client.audio_speak(text, volume)
+        result = client.audio_speak(text, volume, tts_mode=_tts_mode_for_network())
         mode = "tts"
     if not result.get("ok"):
         result = client.audio_beep(volume)
@@ -337,6 +369,19 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "error", "message": f"实时语音识别连接失败：{exc}"})
         except Exception:
             pass
+
+
+def _normalize_tts_mode(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in {"auto", "cloud", "offline"} else ""
+
+
+def _tts_mode_for_network() -> str:
+    try:
+        network = NetworkService().status()
+    except Exception:
+        return "auto"
+    return "offline" if str(network.get("mode") or "").lower() in {"local", "offline"} else "auto"
 
 
 def _record(record_type: str, title: str, description: str, ok: bool) -> None:

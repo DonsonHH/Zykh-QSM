@@ -349,12 +349,34 @@ class QsmClient:
     def audio_asr(self, duration: int = 4) -> dict[str, Any]:
         return self._qsm_action(settings.qsm_audio_asr_path, {"duration": duration}, "语音识别")
 
-    def audio_speak(self, text: str, volume: int | None = None, speed: float | None = None) -> dict[str, Any]:
+    def audio_status(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {"ok": False, "mode": self.mode, "error_message": "音频状态需要 QSM real 模式。"}
+        payload, error = self._request_json(
+            settings.qsm_audio_status_path,
+            method="GET",
+            timeout=settings.qsm_timeout_seconds,
+        )
+        if error:
+            return {"ok": False, "mode": "real", "qsm_mode": "real", "error_message": error}
+        payload.setdefault("ok", True)
+        payload.setdefault("qsm_mode", "real")
+        return payload
+
+    def audio_speak(
+        self,
+        text: str,
+        volume: int | None = None,
+        speed: float | None = None,
+        tts_mode: str = "auto",
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"text": text}
         if volume is not None:
             payload["volume"] = max(0, min(int(volume), 255))
         if speed is not None:
             payload["speed"] = max(0.75, min(float(speed), 1.45))
+        normalized_mode = (tts_mode or "auto").strip().lower()
+        payload["tts_mode"] = normalized_mode if normalized_mode in {"auto", "cloud", "offline"} else "auto"
         return self._qsm_action(settings.qsm_audio_speak_path, payload, "语音播报", timeout=settings.qsm_audio_timeout_seconds)
 
     def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
@@ -439,7 +461,8 @@ class QsmClient:
         if error:
             return {"ok": False, "mode": "real", "error_message": error}
         data.setdefault("ok", True)
-        data["mode"] = "real"
+        data.setdefault("mode", "real")
+        data["qsm_mode"] = "real"
         return data
 
     def _request_json(

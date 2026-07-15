@@ -44,8 +44,10 @@ QSM_VITALS_PATH=/api/vitals/read
 QSM_TEMP_PATH=/api/vitals/temp/read
 QSM_DISPENSE_PATH=/api/dispense
 QSM_AUDIO_ASR_PATH=/api/audio/asr
+QSM_AUDIO_STATUS_PATH=/api/audio/status
 QSM_AUDIO_SPEAK_PATH=/api/audio/speak
 QSM_AUDIO_BEEP_PATH=/api/audio/beep
+QSM_AUDIO_TIMEOUT_SECONDS=120
 LOCAL_CAMERA_MODE=real
 LOCAL_CAMERA_DEVICE=auto
 DISPENSE_DRY_RUN=false
@@ -64,7 +66,7 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_TEMP_PATH` for the default quick temperature read.
 - `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
-- `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
+- `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_STATUS_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
 - `QSM_CAMERA_CAPTURE_PATH` and `QSM_CAMERA_STREAM_PATH` for QSM camera frames.
 - `QSM_FACE_*_PATH` for QSM-side identity status, matching, enrollment and listing.
 
@@ -131,6 +133,7 @@ The UART collection window defaults to 16 seconds. This stays below the existing
 - `get_device_status()`
 - `dispense(slot, dry_run=False)`
 - `audio_asr()`
+- `audio_status()`
 - `audio_speak()`
 - `audio_beep()`
 
@@ -148,6 +151,7 @@ POST /api/camera/capture
 GET  /api/camera/stream
 POST /api/medicine/scan
 POST /api/audio/asr
+GET  /api/audio/status
 POST /api/audio/speak
 POST /api/audio/beep
 POST /api/qsm/dispense/dry-run

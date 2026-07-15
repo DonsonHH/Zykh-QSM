@@ -430,6 +430,9 @@ sub route_api {
     if ($method eq 'POST' && $path eq '/api/audio/asr') {
         return send_json($client, 200, audio_asr($req->{params}));
     }
+    if ($method eq 'GET' && $path eq '/api/audio/status') {
+        return send_json($client, 200, audio_status());
+    }
     if ($method eq 'POST' && $path eq '/api/audio/speak') {
         return send_json($client, 200, speak_text($req->{params}));
     }
@@ -1413,17 +1416,86 @@ sub audio_asr {
     };
 }
 
+sub normalize_tts_mode {
+    my ($value) = @_;
+    my $mode = lc trim($value || 'auto');
+    return $mode =~ /^(?:auto|cloud|offline)$/ ? $mode : 'auto';
+}
+
+sub offline_tts_status {
+    my $voice_root = $ENV{ZYKH_VOICE_ROOT} || '/userdata/zykh_voice';
+    my $script = $ENV{ZYKH_OFFLINE_TTS_CMD} || "$HOME_DIR/scripts/offline_tts.sh";
+    my @required = (
+        $script,
+        "$voice_root/runtime/bin/sherpa-onnx-offline-tts",
+        "$voice_root/runtime/lib/libonnxruntime.so",
+        "$voice_root/models/tts/zh_CN-xiao_ya-medium.onnx",
+        "$voice_root/models/tts/lexicon.txt",
+        "$voice_root/models/tts/tokens.txt",
+        "$voice_root/models/tts/phone.fst",
+        "$voice_root/models/tts/date.fst",
+        "$voice_root/models/tts/number.fst",
+    );
+    my @missing = grep { !-s $_ } @required;
+    return {
+        available => @missing ? JSON::PP::false : JSON::PP::true,
+        engine => 'sherpa-onnx',
+        model => 'vits-piper-zh_CN-xiao_ya-medium-int8',
+        script => $script,
+        missing_count => scalar @missing,
+    };
+}
+
+sub audio_status {
+    my $offline = offline_tts_status();
+    my $cloud_helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
+    my $cloud_ready = -x $cloud_helper && dashscope_api_key() ne '';
+    return {
+        ok => JSON::PP::true,
+        requested_mode => normalize_tts_mode($ENV{TTS_MODE} || 'auto'),
+        offline_available => $offline->{available},
+        cloud_available => $cloud_ready ? JSON::PP::true : JSON::PP::false,
+        offline => $offline,
+        cloud => {
+            available => $cloud_ready ? JSON::PP::true : JSON::PP::false,
+            engine => 'qwen-tts',
+        },
+        playback_device => $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0',
+    };
+}
+
+sub run_tts_command {
+    my ($cmd, $log, $timeout) = @_;
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', int($timeout || 90), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        exit_code => $exit,
+        detail => substr(read_text_file($log) || '', 0, 500),
+    };
+}
+
 sub speak_text {
     my ($p) = @_;
     my $text = trim($p->{text} || '');
     return { ok => JSON::PP::false, error => '播报文本为空' } if $text eq '';
-    release_audio_playback_device();
+    $text =~ s/```.*?```/ /gs;
+    $text =~ s/[#*`>_]+/ /g;
+    $text =~ s/^\s*[-+]\s+//mg;
+    $text =~ s/\s+/ /g;
     $text = substr($text, 0, int($ENV{TTS_MAX_CHARS} || 240));
+
+    release_audio_playback_device();
     my $vol = speaker_volume($p->{volume});
     my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.32;
     $tts_speed = 1.32 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
     $tts_speed = 0.75 if $tts_speed < 0.75;
     $tts_speed = 1.45 if $tts_speed > 1.45;
+    my $requested_mode = normalize_tts_mode($p->{tts_mode} || $p->{mode} || $ENV{TTS_MODE} || 'auto');
     my $play = sub {
         my ($file) = @_;
         my $play_file = speed_adjusted_audio_file($file, $tts_speed);
@@ -1432,60 +1504,94 @@ sub speak_text {
 
     my $dir = "$DATA_DIR/audio";
     make_path($dir) unless -d $dir;
-    my $log = "$DATA_DIR/audio-speak.log";
-    my $cmd = '';
-    my $mode = '';
-
-    my $helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
+    my @attempts;
+    my $cloud_helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
     my $api_key = dashscope_api_key();
-    if (-x $helper && $api_key ne '') {
-        my $out = "$dir/qwen-tts.wav";
-        $cmd = 'DASHSCOPE_API_KEY=' . shell_quote($api_key) . ' ' .
-               shell_quote($helper) . ' tts --text ' . shell_quote($text) .
-               ' --output ' . shell_quote($out) .
-               ' --model ' . shell_quote($ENV{TTS_MODEL} || 'qwen3-tts-instruct-flash-realtime') .
-               ' --voice ' . shell_quote($ENV{TTS_VOICE} || 'Cherry') .
-               ' --instructions ' . shell_quote($ENV{TTS_INSTRUCTIONS} || '面向老人，语速自然偏快，停顿简短，语气温和清晰。') .
-               ' && ' . $play->($out);
-        $mode = 'qwen-tts';
-    } elsif ($ENV{TTS_CMD}) {
-        $cmd = $ENV{TTS_CMD};
-        $cmd =~ s/\{text\}/shell_quote($text)/eg;
-        $mode = 'custom-tts';
-    } elsif (trim(`which espeak 2>/dev/null`) ne '') {
-        my $speed = int($ENV{ESPEAK_SPEED} || 175);
-        $cmd = 'espeak -v zh -s ' . int($speed) . ' ' . shell_quote($text);
-        $mode = 'espeak';
-    } elsif (trim(`which flite 2>/dev/null`) ne '') {
-        my $out = "$dir/tts.wav";
-        $cmd = 'flite -t ' . shell_quote($text) . ' -o ' . shell_quote($out) . ' && ' . $play->($out);
-        $mode = 'flite';
-    } elsif (trim(`which aplay 2>/dev/null`) ne '') {
-        my $tone = "$dir/tts-notice.wav";
-        write_notice_wav($tone);
-        $cmd = $play->($tone);
-        $mode = 'notice-tone';
-    } else {
-        return { ok => JSON::PP::false, error => '板端未找到 TTS 或 aplay 播放命令', mode => 'none' };
+    my $offline = offline_tts_status();
+    my $offline_helper = $offline->{script};
+
+    if ($requested_mode ne 'offline' && -x $cloud_helper && $api_key ne '') {
+        my $out = "$dir/qwen-tts-$$.wav";
+        my $cmd = 'DASHSCOPE_API_KEY=' . shell_quote($api_key) . ' ' .
+                  shell_quote($cloud_helper) . ' tts --text ' . shell_quote($text) .
+                  ' --output ' . shell_quote($out) .
+                  ' --model ' . shell_quote($ENV{TTS_MODEL} || 'qwen3-tts-instruct-flash-realtime') .
+                  ' --voice ' . shell_quote($ENV{TTS_VOICE} || 'Cherry') .
+                  ' --instructions ' . shell_quote($ENV{TTS_INSTRUCTIONS} || '面向老人，语速自然偏快，停顿简短，语气温和清晰。') .
+                  ' && ' . $play->($out);
+        push @attempts, { mode => 'qwen-tts', command => $cmd, timeout => int($ENV{TTS_CLOUD_TIMEOUT} || 90) };
     }
 
-    my $rc;
-    {
-        local $SIG{CHLD} = 'DEFAULT';
-        $rc = system('timeout', int($ENV{TTS_TIMEOUT} || 90), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    if ($offline->{available}) {
+        my $out = "$dir/offline-tts-$$.wav";
+        my $length_scale = 1 / $tts_speed;
+        $length_scale = 0.70 if $length_scale < 0.70;
+        $length_scale = 1.35 if $length_scale > 1.35;
+        my $cmd = 'TTS_LENGTH_SCALE=' . shell_quote(sprintf('%.2f', $length_scale)) . ' ' .
+                  'TTS_THREADS=' . int($ENV{TTS_THREADS} || 2) . ' ' .
+                  shell_quote($offline_helper) . ' ' . shell_quote($text) . ' ' . shell_quote($out) .
+                  ' && ' . speaker_setup_cmd($vol) . ' && ' . aplay_cmd($out);
+        push @attempts, { mode => 'offline-sherpa-onnx', command => $cmd, timeout => int($ENV{TTS_OFFLINE_TIMEOUT} || 180) };
     }
-    my $exit = $rc == -1 ? -1 : ($rc >> 8);
-    my $ok = $exit == 0 ? JSON::PP::true : JSON::PP::false;
-    my $detail = $mode eq 'notice-tone'
-        ? '当前板端缺少中文 TTS 引擎或 DashScope 配置，已用喇叭提示音验证播放链路。'
-        : '语音播报命令已执行。';
+
+    if ($requested_mode eq 'offline' && !$offline->{available}) {
+        return {
+            ok => JSON::PP::false,
+            mode => 'offline-unavailable',
+            offline => JSON::PP::true,
+            requested_mode => $requested_mode,
+            error => '板端离线 TTS 尚未部署完整',
+            detail => '请部署 /userdata/zykh_voice 和 scripts/offline_tts.sh。',
+        };
+    }
+
+    if ($requested_mode ne 'offline') {
+        if ($ENV{TTS_CMD}) {
+            my $cmd = $ENV{TTS_CMD};
+            $cmd =~ s/\{text\}/shell_quote($text)/eg;
+            push @attempts, { mode => 'custom-tts', command => $cmd, timeout => int($ENV{TTS_TIMEOUT} || 90) };
+        } elsif (trim(`which espeak 2>/dev/null`) ne '') {
+            my $speed = int($ENV{ESPEAK_SPEED} || 175);
+            my $cmd = speaker_setup_cmd($vol) . ' && espeak -v zh -s ' . int($speed) . ' ' . shell_quote($text);
+            push @attempts, { mode => 'espeak', command => $cmd, timeout => 30 };
+        } elsif (trim(`which flite 2>/dev/null`) ne '') {
+            my $out = "$dir/tts-$$.wav";
+            my $cmd = 'flite -t ' . shell_quote($text) . ' -o ' . shell_quote($out) . ' && ' . $play->($out);
+            push @attempts, { mode => 'flite', command => $cmd, timeout => 45 };
+        }
+    }
+
+    return { ok => JSON::PP::false, error => '板端未找到可用 TTS 引擎', mode => 'none' } unless @attempts;
+
+    my @failures;
+    for my $index (0 .. $#attempts) {
+        my $attempt = $attempts[$index];
+        my $log = "$DATA_DIR/audio-speak-$attempt->{mode}.log";
+        my $run = run_tts_command($attempt->{command}, $log, $attempt->{timeout});
+        if ($run->{ok}) {
+            my $is_offline = $attempt->{mode} eq 'offline-sherpa-onnx';
+            return {
+                ok => JSON::PP::true,
+                mode => $attempt->{mode},
+                requested_mode => $requested_mode,
+                offline => $is_offline ? JSON::PP::true : JSON::PP::false,
+                fallback => $index > 0 ? JSON::PP::true : JSON::PP::false,
+                volume => $vol,
+                speed => $tts_speed + 0,
+                detail => $is_offline ? '已使用板端离线语音合成并播放。' : '语音播报命令已执行。',
+                exit_code => $run->{exit_code},
+            };
+        }
+        push @failures, "$attempt->{mode}: " . ($run->{detail} || "exit=$run->{exit_code}");
+    }
+
     return {
-        ok => $ok,
-        mode => $mode,
-        volume => $vol,
-        speed => $tts_speed + 0,
-        detail => $ok ? $detail : '语音播报失败：' . substr(read_text_file($log) || '', 0, 300),
-        exit_code => $exit,
+        ok => JSON::PP::false,
+        mode => 'failed',
+        requested_mode => $requested_mode,
+        offline => $requested_mode eq 'offline' ? JSON::PP::true : JSON::PP::false,
+        error => '所有可用 TTS 引擎均执行失败',
+        detail => substr(join('；', @failures), 0, 800),
     };
 }
 

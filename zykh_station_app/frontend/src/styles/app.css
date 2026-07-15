@@ -3346,7 +3346,7 @@ a:focus-visible {
 .inquiry-page.conversation-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 356px minmax(0, 1fr);
   gap: 16px;
   justify-content: stretch;
 }
@@ -3371,25 +3371,51 @@ a:focus-visible {
 
 .inquiry-user-card {
   display: grid;
-  grid-template-rows: 56px 72px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-rows: 68px 78px minmax(0, 1fr);
+  gap: 12px;
   padding: 18px;
 }
 
 .inquiry-user-card.dynamic {
-  grid-template-rows: 56px 72px minmax(0, 1fr);
+  grid-template-rows: 68px 78px minmax(0, 1fr);
 }
 
-.user-context-heading {
-  grid-template-columns: 46px minmax(0, 1fr) 42px;
+.context-heading.user-context-heading {
+  grid-template-columns: 54px minmax(0, 1fr) 46px;
+  gap: 12px;
+}
+
+.context-heading.user-context-heading > svg {
+  width: 54px;
+  height: 54px;
+  border-radius: 17px;
+  padding: 12px;
+}
+
+.user-context-copy {
+  min-width: 0;
+}
+
+.user-context-copy > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.context-heading .user-context-copy h2 {
+  font-size: 29px;
+  line-height: 1;
 }
 
 .identity-confirmation-icon {
-  width: 42px;
-  height: 42px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: 15px;
   background: #f2f6fb;
   color: #64748b;
 }
@@ -3463,7 +3489,7 @@ a:focus-visible {
 .user-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
+  gap: 10px;
 }
 
 .user-profile-grid article,
@@ -3478,9 +3504,15 @@ a:focus-visible {
 .user-profile-grid article {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   color: var(--primary);
-  padding: 12px;
+  padding: 12px 14px;
+}
+
+.user-profile-grid article > svg {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
 }
 
 .user-profile-grid span {
@@ -3496,7 +3528,7 @@ a:focus-visible {
   overflow: hidden;
   margin-top: 0;
   color: var(--text);
-  font-size: 18px;
+  font-size: 21px;
   line-height: 1;
   font-weight: 950;
   text-overflow: ellipsis;
@@ -3514,14 +3546,20 @@ a:focus-visible {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
-  gap: 11px;
+  gap: 12px;
   border: 1px solid #e3edf8;
   border-radius: 18px;
   background: var(--surface-soft);
   color: var(--primary);
-  padding: 11px 13px;
+  padding: 12px 14px;
+}
+
+.user-health-facts article > svg {
+  width: 27px;
+  height: 27px;
+  justify-self: center;
 }
 
 .user-health-facts article:nth-child(2) {
@@ -3539,11 +3577,11 @@ a:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 16px;
-  line-height: 1.25;
+  font-size: 19px;
+  line-height: 1.28;
   font-weight: 900;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .user-profile-note {
