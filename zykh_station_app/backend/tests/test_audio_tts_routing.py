@@ -58,7 +58,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
         client = FakeQsmClient()
         with (
             patch.object(audio, "QsmClient", return_value=client),
-            patch.object(audio.NetworkService, "status", return_value={"mode": "local"}),
+            patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
             result = asyncio.run(audio.audio_speak(SpeakRequest(text="请安全用药。", speed=1.2)))
@@ -74,7 +74,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio, "QsmClient", return_value=client),
             patch.object(audio, "QwenRealtimeTts", return_value=realtime),
             patch.object(audio, "_read_api_key", return_value="private"),
-            patch.object(audio.NetworkService, "status", return_value={"mode": "wifi"}),
+            patch.object(audio.db, "get_setting", return_value="sim"),
             patch.object(audio, "_record"),
         ):
             result = asyncio.run(audio.audio_speak(SpeakRequest(text="联网播报。")))
@@ -88,7 +88,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
         client = FakeQsmClient()
         with (
             patch.object(audio, "QsmClient", return_value=client),
-            patch.object(audio.NetworkService, "status", return_value={"mode": "local"}),
+            patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
             asyncio.run(audio.audio_speak(SpeakRequest(text="指定云端。", mode="cloud")))
@@ -99,12 +99,22 @@ class AudioTtsRoutingTest(unittest.TestCase):
         client = FakeQsmClient()
         with (
             patch.object(audio, "QsmClient", return_value=client),
-            patch.object(audio.NetworkService, "status", return_value={"mode": "wifi"}),
+            patch.object(audio.db, "get_setting", return_value="sim"),
             patch.object(audio, "_record"),
         ):
             asyncio.run(audio.audio_speak(SpeakRequest(text="指定离线。", mode="offline")))
 
         self.assertEqual(client.speak_calls[0][3], "offline")
+
+    def test_asr_mode_uses_fast_persisted_preference(self) -> None:
+        with patch.object(audio.db, "get_setting", return_value="local") as get_setting:
+            self.assertEqual(audio._asr_mode_for_network(), "local")
+
+        get_setting.assert_called_once_with("network_mode", audio.settings.network_preferred_mode)
+
+    def test_asr_mode_uses_cloud_for_connected_preference(self) -> None:
+        with patch.object(audio.db, "get_setting", return_value="sim"):
+            self.assertEqual(audio._asr_mode_for_network(), "cloud")
 
     def test_qsm_client_sends_normalized_tts_mode(self) -> None:
         client = QsmClient(mode="real")

@@ -1,16 +1,17 @@
 import React from "react";
-import { HeartHandshake, ScanFace, Signal, SignalLow, Wifi, WifiOff } from "lucide-react";
+import { BrandMarkGlyph } from "../components/BrandMarkGlyph.jsx";
+import { BrandLogoImage } from "../components/BrandLogoImage.jsx";
+import { HandwrittenHello } from "../components/HandwrittenHello.jsx";
+import { NetworkStatusIcons } from "../components/NetworkStatusIcons.jsx";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 import { formatClock, formatDay } from "../utils/time.js";
-import { getNetworkIndicators } from "../utils/network.js";
 
 export function IdleScreen({ now, networkStatus, onWake }) {
-  const { localMode, wifi, sim } = getNetworkIndicators(networkStatus);
   return (
     <main className="idle-screen" id="main-content" onClick={onWake}>
       <div className="idle-brand">
         <span aria-hidden="true">
-          <HeartHandshake size={38} strokeWidth={2.1} />
+          <BrandLogoImage size={64} />
         </span>
         <div>
           <strong>智药康护终端</strong>
@@ -23,21 +24,13 @@ export function IdleScreen({ now, networkStatus, onWake }) {
           <span>{formatDay(now)}</span>
         </div>
         <button type="button" className="idle-wake-button">
-          <StrokeDrawIcon icon={ScanFace} size={88} strokeWidth={1.9} mode="yoyo" active />
+          <StrokeDrawIcon icon={BrandMarkGlyph} size={138} strokeWidth={2.2} mode="yoyo" active />
         </button>
+        <HandwrittenHello />
         <h1>轻触屏幕开始使用</h1>
       </section>
 
-      <div className={`idle-network ${localMode ? "local" : ""}`} role="group" aria-label="网络状态">
-        <span className={`idle-network-item ${wifi.tone}`} aria-label={wifi.label} title={wifi.label}>
-          {wifi.connected ? <Wifi size={24} aria-hidden="true" /> : <WifiOff size={24} aria-hidden="true" />}
-          <b>WiFi</b>
-        </span>
-        <span className={`idle-network-item ${sim.tone}`} aria-label={sim.label} title={sim.label}>
-          {sim.tone === "good" ? <Signal size={24} aria-hidden="true" /> : <SignalLow size={24} aria-hidden="true" />}
-          <b>SIM</b>
-        </span>
-      </div>
+      <NetworkStatusIcons networkStatus={networkStatus} variant="idle" />
     </main>
   );
 }

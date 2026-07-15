@@ -1,12 +1,11 @@
+import { markNetworkActivity } from "../utils/networkActivity.js";
+
 export async function apiGet(path) {
-  const response = await fetch(path, {
-    headers: { Accept: "application/json" }
-  });
-  return readJsonResponse(response);
+  return request(path, { headers: { Accept: "application/json" } });
 }
 
 export async function apiPost(path, payload) {
-  const response = await fetch(path, {
+  return request(path, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -14,11 +13,10 @@ export async function apiPost(path, payload) {
     },
     body: JSON.stringify(payload)
   });
-  return readJsonResponse(response);
 }
 
 export async function apiPatch(path, payload) {
-  const response = await fetch(path, {
+  return request(path, {
     method: "PATCH",
     headers: {
       Accept: "application/json",
@@ -26,14 +24,19 @@ export async function apiPatch(path, payload) {
     },
     body: JSON.stringify(payload)
   });
-  return readJsonResponse(response);
 }
 
 export async function apiDelete(path) {
-  const response = await fetch(path, {
+  return request(path, {
     method: "DELETE",
     headers: { Accept: "application/json" }
   });
+}
+
+async function request(path, options) {
+  markNetworkActivity("upload");
+  const response = await fetch(path, options);
+  markNetworkActivity("download");
   return readJsonResponse(response);
 }
 

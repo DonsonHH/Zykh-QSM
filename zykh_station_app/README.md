@@ -169,7 +169,7 @@ sh scripts/deploy_local_tts_server.sh
 sh scripts/deploy_local_asr.sh
 ```
 
-本地模式会使用板端中文流式 Zipformer Transducer、领域热词和 `modified_beam_search`；前端只有在识别会话与麦克风均就绪后才显示“正在听”。联网模式使用 `qwen3-asr-flash-realtime`。语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+本地模式会使用板端中文流式 Zipformer Transducer、领域热词和 `modified_beam_search`；前端只有在识别会话与麦克风均就绪后才显示“正在听”。联网模式使用 `qwen3-asr-flash-realtime`。识别模式直接读取当前终端模式，云会话和 QSM 麦克风并行准备，不在按键关键路径重复执行完整 SIM/AT 探测。语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 
@@ -215,11 +215,11 @@ curl http://127.0.0.1:8000/api/device/check
 curl http://127.0.0.1:8000/api/ai/status
 ```
 
-前端右上角有“系统检查”入口，显示当前模式、外设网关连接、外设摄像头、体征模块、出药联动和同步状态。普通终端 UI 不显示开发连接细节。
+前端右上角有“系统检查”入口，显示当前模式、外设网关连接、外设摄像头、体征模块、出药联动和同步状态。顶栏使用手机式 Wi-Fi/4G 信号图标，并在真实 API 请求发送和返回时点亮上下行箭头；本地模式只显示飞行模式。普通终端 UI 不显示开发连接细节。
 
 ## 动效系统
 
-终端默认使用静态 Lucide 图标。顶部品牌 Logo 只播放一次路径绘制；体征测量、扫码核验、语音录入和问询分析仅在对应任务进行时正反往复绘制，任务结束立即恢复同一个静态图标。息屏页中央唤醒图标持续轻量往复，背景只做低对比度呼吸变化；首页快捷入口保持静态。校验命令：
+终端默认使用静态 Lucide 图标。顶部使用“房屋、药片、心电与无线”品牌线稿，进入页面或再次触屏时播放一次路径绘制；体征测量、扫码核验、语音录入和问询分析仅在对应任务进行时正反往复绘制，任务结束立即恢复同一个静态图标。息屏页中央使用同一品牌线稿持续轻量往复，背景只做低对比度呼吸变化；首页快捷入口保持静态。校验命令：
 
 ```bash
 cd zykh_station_app/frontend

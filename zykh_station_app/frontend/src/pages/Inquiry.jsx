@@ -53,7 +53,7 @@ function normalizeUser(user) {
   };
 }
 
-export function Inquiry({ notify, onViewCandidates, onNavigate }) {
+export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus }) {
   const initialDraft = readDraft();
   const [step, setStep] = useState(initialDraft?.step || "start");
   const [form, setForm] = useState(initialDraft?.form || initialForm);
@@ -318,6 +318,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
             onOpenVitals={() => onNavigate("vitals", { returnTo: "inquiry" })}
             onDemoRecommendation={handleDemoRecommendation}
             profile={selectedUser}
+            networkStatus={networkStatus}
           />
         ) : step === "analyzing" ? (
           <InquiryAnalyzingStep />

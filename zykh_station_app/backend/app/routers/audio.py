@@ -8,6 +8,7 @@ import math
 import re
 import socket
 import subprocess
+import time
 import wave
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -18,11 +19,11 @@ import websockets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from .. import db
 from ..config import settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
 from ..services.local_asr_client import LocalAsrClient
-from ..services.network_service import NetworkService
 from ..services.qsm_client import QsmClient
 from ..services.qwen_realtime_tts import QwenRealtimeTts
 
@@ -256,19 +257,29 @@ def audio_stream_stop() -> dict[str, object]:
 
 @router.websocket("/asr/realtime")
 async def audio_asr_realtime(websocket: WebSocket) -> None:
+    started_at = time.perf_counter()
     await websocket.accept()
+    requested_mode = _normalize_asr_mode(websocket.query_params.get("mode"))
+    configured_mode = _asr_mode_for_network()
+    runtime_mode = "local" if configured_mode == "local" else requested_mode or configured_mode
     await websocket.send_json(
         {
             "type": "preparing",
-            "message": "正在准备语音识别，请看到“正在听”后再说话。",
+            "mode": runtime_mode,
+            "message": (
+                "正在启动本地识别与麦克风，请看到“正在听”后再说话。"
+                if runtime_mode == "local"
+                else "正在连接云端识别与麦克风，请看到“正在听”后再说话。"
+            ),
         }
     )
-    if _asr_mode_for_network() == "local":
-        await _audio_asr_local(websocket)
+    await asyncio.sleep(0)
+    if runtime_mode == "local":
+        await _audio_asr_local(websocket, started_at=started_at)
         return
     api_key = _read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)
     if not api_key:
-        await _audio_asr_local(websocket, fallback_reason="云端语音密钥未配置。")
+        await _audio_asr_local(websocket, fallback_reason="云端语音密钥未配置。", started_at=started_at)
         return
 
     model = "qwen3-asr-flash-realtime"
@@ -277,6 +288,8 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
         "Authorization": f"Bearer {api_key}",
         "OpenAI-Beta": "realtime=v1",
     }
+    mic_task: asyncio.Task | None = asyncio.create_task(_open_qsm_mic_stream())
+    mic_writer: asyncio.StreamWriter | None = None
     try:
         async with websockets.connect(url, additional_headers=headers, ping_interval=20, ping_timeout=20) as upstream:
             await upstream.send(
@@ -301,13 +314,21 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
             )
             await _wait_for_cloud_asr_ready(upstream)
             try:
-                mic_reader, mic_writer = await _open_qsm_mic_stream()
+                mic_reader, mic_writer = await mic_task
+                mic_task = None
             except Exception as exc:
                 await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
                 await websocket.close(code=1011)
                 return
 
-            await websocket.send_json({"type": "ready", "model": model, "source": "qsm-ff-camera"})
+            await websocket.send_json(
+                {
+                    "type": "ready",
+                    "model": model,
+                    "source": "qsm-ff-camera",
+                    "prepare_ms": round((time.perf_counter() - started_at) * 1000),
+                }
+            )
             send_lock = asyncio.Lock()
             stopped = asyncio.Event()
             committed = False
@@ -402,15 +423,24 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                             return
             finally:
                 stopped.set()
-                mic_writer.close()
+                if not mic_writer.is_closing():
+                    mic_writer.close()
+                    await mic_writer.wait_closed()
+                mic_writer = None
                 for task in active:
                     task.cancel()
                 await asyncio.gather(*active, return_exceptions=True)
     except WebSocketDisconnect:
+        await _close_mic_resources(mic_task, mic_writer)
         return
     except Exception as exc:
+        await _close_mic_resources(mic_task, mic_writer)
         try:
-            await _audio_asr_local(websocket, fallback_reason=f"云端语音识别不可用：{exc}")
+            await _audio_asr_local(
+                websocket,
+                fallback_reason=f"云端语音识别不可用：{exc}",
+                started_at=started_at,
+            )
         except Exception:
             pass
 
@@ -420,40 +450,41 @@ def _normalize_tts_mode(value: str | None) -> str:
     return normalized if normalized in {"auto", "cloud", "offline"} else ""
 
 
+def _normalize_asr_mode(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in {"cloud", "local"} else ""
+
+
 def _tts_mode_for_network() -> str:
     try:
-        network = NetworkService().status()
+        preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
     except Exception:
         return "auto"
-    return "offline" if str(network.get("mode") or "").lower() in {"local", "offline"} else "auto"
+    return "offline" if preferred in {"local", "offline"} else "auto"
 
 
 def _asr_mode_for_network() -> str:
     try:
-        network = NetworkService().status()
+        preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
     except Exception:
         return "cloud"
-    return "local" if str(network.get("mode") or "").lower() in {"local", "offline"} else "cloud"
+    return "local" if preferred in {"local", "offline"} else "cloud"
 
 
-async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> None:
+async def _audio_asr_local(
+    websocket: WebSocket,
+    fallback_reason: str = "",
+    started_at: float | None = None,
+) -> None:
+    local_started_at = started_at or time.perf_counter()
     client = LocalAsrClient()
-    status = client.status()
-    if not status.get("ready"):
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": "本地实时语音识别尚未启动，请检查外设语音服务。",
-                "detail": status.get("error_message") or fallback_reason,
-            }
-        )
-        await websocket.close(code=1011)
-        return
-
+    mic_task: asyncio.Task | None = asyncio.create_task(_open_qsm_mic_stream())
+    mic_writer: asyncio.StreamWriter | None = None
     try:
         async with client.connection() as upstream:
             try:
-                mic_reader, mic_writer = await _open_qsm_mic_stream()
+                mic_reader, mic_writer = await mic_task
+                mic_task = None
             except Exception as exc:
                 await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
                 await websocket.close(code=1011)
@@ -463,10 +494,11 @@ async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> N
             await websocket.send_json(
                 {
                     "type": "ready",
-                    "model": status.get("model"),
+                    "model": settings.qsm_local_asr_model,
                     "source": "qsm-local-asr",
                     "offline": True,
                     "fallback_reason": fallback_reason,
+                    "prepare_ms": round((time.perf_counter() - local_started_at) * 1000),
                 }
             )
 
@@ -512,12 +544,15 @@ async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> N
                 await asyncio.gather(*pending, return_exceptions=True)
             finally:
                 stopped.set()
-                if not mic_writer.is_closing():
+                if mic_writer and not mic_writer.is_closing():
                     mic_writer.close()
                     await mic_writer.wait_closed()
+                mic_writer = None
     except WebSocketDisconnect:
+        await _close_mic_resources(mic_task, mic_writer)
         return
     except Exception as exc:
+        await _close_mic_resources(mic_task, mic_writer)
         try:
             await websocket.send_json(
                 {
@@ -529,6 +564,30 @@ async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> N
             await websocket.close(code=1011)
         except Exception:
             return
+
+
+async def _close_mic_resources(
+    task: asyncio.Task | None,
+    writer: asyncio.StreamWriter | None,
+) -> None:
+    if writer and not writer.is_closing():
+        writer.close()
+        await writer.wait_closed()
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    try:
+        _reader, pending_writer = task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        return
+    if not pending_writer.is_closing():
+        pending_writer.close()
+        await pending_writer.wait_closed()
 
 
 async def _wait_for_cloud_asr_ready(upstream: object) -> None:

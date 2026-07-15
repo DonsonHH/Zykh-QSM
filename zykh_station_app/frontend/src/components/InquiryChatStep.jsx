@@ -3,6 +3,8 @@ import { Bot, LoaderCircle, Mic, RotateCcw, Volume2 } from "lucide-react";
 import { speakText } from "../api/audio.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
+import { isLocalNetworkMode } from "../utils/network.js";
+import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
 
 const chatDraftKey = "zykh-inquiry-chat-draft";
@@ -93,7 +95,8 @@ export function InquiryChatStep({
   onOpenVitals,
   onDemoRecommendation,
   profile,
-  history
+  history,
+  networkStatus
 }) {
   const draft = readChatDraft();
   const [messages, setMessages] = useState(() => draft?.messages || initialMessages(profile, history));
@@ -182,7 +185,7 @@ export function InquiryChatStep({
     if (!clean) {
       return;
     }
-    speakText(clean, 230, 1.32)
+    speakText(clean, 230, 1.32, isLocalNetworkMode(networkStatus) ? "offline" : "auto")
       .then((data) => {
         if (!data.ok) {
           speakLocally(clean);
@@ -250,6 +253,7 @@ export function InquiryChatStep({
     let fullText = "";
     let streamSource = "cloud";
     try {
+      markNetworkActivity("upload");
       const response = await fetch("/api/ai/chat/stream", {
         method: "POST",
         headers: {
@@ -268,6 +272,7 @@ export function InquiryChatStep({
       if (!response.ok || !response.body) {
         throw new Error(`请求失败：${response.status}`);
       }
+      markNetworkActivity("download");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -276,6 +281,7 @@ export function InquiryChatStep({
         if (done) {
           break;
         }
+        markNetworkActivity("download");
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
         buffer = events.pop() || "";
@@ -349,7 +355,9 @@ export function InquiryChatStep({
     moveVoice(VoiceEvent.START);
     setVoiceMessage("正在准备语音识别，请看到“正在听”后再说话。");
     try {
-      const ws = new WebSocket(websocketUrl("/api/audio/asr/realtime"));
+      const runtimeMode = isLocalNetworkMode(networkStatus) ? "local" : "cloud";
+      markNetworkActivity("upload");
+      const ws = new WebSocket(websocketUrl(`/api/audio/asr/realtime?mode=${runtimeMode}`));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
@@ -357,6 +365,7 @@ export function InquiryChatStep({
         setVoiceMessage("正在准备识别服务与麦克风...");
       };
       ws.onmessage = (event) => {
+        markNetworkActivity("download");
         let data;
         try {
           data = JSON.parse(event.data || "{}");
@@ -436,6 +445,7 @@ export function InquiryChatStep({
     const ws = wsRef.current;
     if (commit && voicePhaseRef.current === VoicePhase.LISTENING && ws?.readyState === WebSocket.OPEN) {
       moveVoice(VoiceEvent.STOP);
+      markNetworkActivity("upload");
       ws.send(JSON.stringify({ type: "stop" }));
       setVoiceMessage("正在生成语音文字...");
       finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 1800);

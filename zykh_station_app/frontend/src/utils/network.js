@@ -29,8 +29,12 @@ export function getNetworkIndicators(networkStatus) {
   const simSignal = explicitLocalMode
     ? "none"
     : networkStatus?.sim_signal || networkStatus?.sim?.signal || (simConnected ? "good" : simPresent ? "weak" : "none");
-  const wifiBars = explicitLocalMode ? 0 : normalizeBars(networkStatus?.wifi_signal_bars ?? networkStatus?.wifi?.bars);
-  const simBars = explicitLocalMode ? 0 : normalizeBars(networkStatus?.sim_signal_bars ?? networkStatus?.sim?.bars);
+  const wifiBars = explicitLocalMode
+    ? 0
+    : normalizeBars(networkStatus?.wifi_signal_bars ?? networkStatus?.wifi?.bars, wifiConnected ? 2 : 0);
+  const simBars = explicitLocalMode
+    ? 0
+    : normalizeBars(networkStatus?.sim_signal_bars ?? networkStatus?.sim?.bars, simConnected ? 2 : 0);
   const wifiTone = wifiBars >= 3 ? "good" : wifiConnected ? "weak" : "offline";
   const simTone = simBars >= 3 ? "good" : simPresent ? "weak" : "offline";
   const wifiDbm = numberOrNull(networkStatus?.wifi_signal_dbm ?? networkStatus?.wifi?.dbm);
@@ -60,9 +64,9 @@ export function getNetworkIndicators(networkStatus) {
   };
 }
 
-function normalizeBars(value) {
+function normalizeBars(value, fallback = 0) {
   const bars = Number(value);
-  return Number.isFinite(bars) ? Math.max(0, Math.min(4, Math.round(bars))) : 0;
+  return Number.isFinite(bars) ? Math.max(0, Math.min(4, Math.round(bars))) : fallback;
 }
 
 function normalizePercent(value) {

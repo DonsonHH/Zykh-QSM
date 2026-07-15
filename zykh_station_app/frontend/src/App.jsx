@@ -159,7 +159,12 @@ export function App() {
         ) : page === "medicines" ? (
           <Medicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />
         ) : page === "inquiry" ? (
-          <Inquiry notify={notify} onViewCandidates={handleViewCandidates} onNavigate={handleNav} />
+          <Inquiry
+            notify={notify}
+            onViewCandidates={handleViewCandidates}
+            onNavigate={handleNav}
+            networkStatus={networkStatus}
+          />
         ) : page === "records" ? (
           <Records notify={notify} networkStatus={networkStatus} />
         ) : page === "scan" ? (

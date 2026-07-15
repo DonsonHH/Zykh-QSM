@@ -7,7 +7,6 @@ const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
   "components/BottomNav.jsx",
   "components/InquiryChatStep.jsx",
-  "components/TopBar.jsx",
   "pages/IdleScreen.jsx",
   "pages/Scan.jsx",
   "pages/Vitals.jsx"
@@ -54,7 +53,12 @@ assert.match(component, /document\.addEventListener\("pointerdown"/, "screen int
 assert.match(component, /event\.isPrimary === false/, "secondary pointer events can replay the logo");
 
 const topBar = await readFile(`${sourceRoot}/components/TopBar.jsx`, "utf8");
-assert.match(topBar, /<StrokeDrawIcon[^>]*replayOnPointer/, "brand logo does not replay after a screen touch");
+assert.match(topBar, /<BrandLogoImage/, "brand logo does not use the supplied static image");
+assert.doesNotMatch(topBar, /StrokeDrawIcon/, "top bar brand logo should stay static");
+
+const idleScreen = await readFile(`${sourceRoot}/pages/IdleScreen.jsx`, "utf8");
+assert.match(idleScreen, /icon=\{BrandMarkGlyph\}/, "idle screen does not use the previous brand glyph");
+assert.match(idleScreen, /<HandwrittenHello/, "idle screen greeting animation is missing");
 
 const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
 assert.match(bottomNav, /mode="once"/, "bottom navigation icon motion is not single-shot");
@@ -72,6 +76,17 @@ assert.match(styles, /prefers-reduced-motion:\s*reduce/, "reduced motion fallbac
 const appStyles = await readFile(`${sourceRoot}/styles/app.css`, "utf8");
 assert.match(appStyles, /--motion-phase-duration:\s*1600ms/, "CSS motion phase is not synchronized");
 assert.match(appStyles, /--motion-cycle-duration:\s*3200ms/, "CSS motion cycle is not synchronized");
+assert.match(
+  appStyles,
+  /\.handwritten-hello-stroke[\s\S]*animation-duration:\s*var\(--motion-phase-duration\)/,
+  "hello animation does not use the shared motion phase"
+);
+assert.match(
+  appStyles,
+  /\.handwritten-hello-stroke[\s\S]*animation-direction:\s*alternate/,
+  "hello animation does not complete a synchronized forward/reverse cycle"
+);
+assert.doesNotMatch(appStyles, /handwritten-hello[^}]*6400ms/, "hello animation still uses a private cycle");
 assert.match(appStyles, /\.vitals-measure-progress/, "vitals progress feedback is missing");
 assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does not advance from left to right");
 assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
