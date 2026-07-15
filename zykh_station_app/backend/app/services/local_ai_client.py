@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -86,6 +87,61 @@ class LocalAiClient:
             "raw": data,
         }
 
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.15,
+        max_tokens: int = 120,
+    ) -> Iterator[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "model": settings.local_ai_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "cache_prompt": True,
+        }
+        request = Request(
+            self._url(settings.local_ai_chat_path),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        )
+        try:
+            response = self.opener(request, timeout=settings.local_ai_timeout_seconds)
+        except HTTPError as exc:
+            detail = self._http_error_detail(exc)
+            yield {"type": "error", "source": "local_llm", "message": f"离线模型 HTTP {exc.code}: {detail}".rstrip()}
+            return
+        except (URLError, TimeoutError, OSError) as exc:
+            yield {"type": "error", "source": "local_llm", "message": f"离线模型请求失败：{exc}"}
+            return
+
+        reply = ""
+        try:
+            with response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    value = line[5:].strip()
+                    if value == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(value)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = self._delta_text(data)
+                    if delta:
+                        reply += delta
+                        yield {"type": "delta", "source": "local_llm", "text": delta}
+        except OSError as exc:
+            yield {"type": "error", "source": "local_llm", "message": f"离线模型流中断：{exc}"}
+            return
+        yield {"type": "done", "source": "local_llm", "reply": reply}
+
     @staticmethod
     def extract_text(data: dict[str, Any]) -> str:
         choices = data.get("choices")
@@ -101,6 +157,20 @@ class LocalAiClient:
         text = str(content or "").strip()
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
         return text
+
+    @staticmethod
+    def _delta_text(data: dict[str, Any]) -> str:
+        choices = data.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        delta = choice.get("delta") if isinstance(choice, dict) else {}
+        delta = delta if isinstance(delta, dict) else {}
+        content = delta.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text") or item.get("content") or "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return str(content or "")
 
     def _url(self, path: str) -> str:
         normalized = path if path.startswith("/") else f"/{path}"

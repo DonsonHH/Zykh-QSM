@@ -374,7 +374,7 @@ class QsmClient:
         if volume is not None:
             payload["volume"] = max(0, min(int(volume), 255))
         if speed is not None:
-            payload["speed"] = max(0.75, min(float(speed), 1.45))
+            payload["speed"] = max(0.75, min(float(speed), 1.80))
         normalized_mode = (tts_mode or "auto").strip().lower()
         payload["tts_mode"] = normalized_mode if normalized_mode in {"auto", "cloud", "offline"} else "auto"
         return self._qsm_action(settings.qsm_audio_speak_path, payload, "语音播报", timeout=settings.qsm_audio_timeout_seconds)

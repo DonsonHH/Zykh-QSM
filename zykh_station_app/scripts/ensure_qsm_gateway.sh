@@ -9,6 +9,10 @@ AUDIO_HOST_PORT="${QSM_AUDIO_CAPTURE_FORWARD_HOST_PORT:-18082}"
 AUDIO_DEVICE_PORT="${QSM_AUDIO_CAPTURE_FORWARD_DEVICE_PORT:-8082}"
 LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
 LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
+LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
+LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-8084}"
+AUDIO_STREAM_HOST_PORT="${QSM_AUDIO_STREAM_HOST_PORT:-19001}"
+AUDIO_STREAM_DEVICE_PORT="${QSM_AUDIO_STREAM_DEVICE_PORT:-19001}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
@@ -75,6 +79,20 @@ log "建立麦克风采集端口转发：127.0.0.1:${AUDIO_HOST_PORT} -> tcp:${A
 $ADB_PREFIX forward "tcp:${AUDIO_HOST_PORT}" "tcp:${AUDIO_DEVICE_PORT}" >/dev/null 2>&1 || warn "麦克风采集端口转发失败。"
 log "建立离线模型端口转发：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1 || warn "离线模型端口转发失败。"
+if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_asr.sh' >/dev/null 2>&1; then
+  $ADB_PREFIX shell 'sh /userdata/zykh_app/scripts/start_local_asr.sh' >/dev/null 2>&1 \
+    || warn "板端本地语音识别服务未能启动。"
+else
+  warn "板端尚未部署本地语音识别；联网时仍可使用云端识别。"
+fi
+if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_tts_server.sh' >/dev/null 2>&1; then
+  $ADB_PREFIX shell 'sh /userdata/zykh_app/scripts/start_local_tts_server.sh' >/dev/null 2>&1 \
+    || warn "板端常驻离线语音服务未能启动，将使用兼容回退。"
+fi
+log "建立本地语音识别端口转发：127.0.0.1:${LOCAL_ASR_HOST_PORT} -> tcp:${LOCAL_ASR_DEVICE_PORT}"
+$ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" >/dev/null 2>&1 || warn "本地语音识别端口转发失败。"
+log "建立实时音频播放端口转发：127.0.0.1:${AUDIO_STREAM_HOST_PORT} -> tcp:${AUDIO_STREAM_DEVICE_PORT}"
+$ADB_PREFIX forward "tcp:${AUDIO_STREAM_HOST_PORT}" "tcp:${AUDIO_STREAM_DEVICE_PORT}" >/dev/null 2>&1 || warn "实时音频播放端口转发失败。"
 
 if gateway_ready && face_ready && audio_ready; then
   log "端口转发后外设网关和人脸识别均已可访问。"

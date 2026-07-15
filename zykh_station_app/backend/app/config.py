@@ -80,7 +80,10 @@ class Settings:
     qsm_audio_play_path: str = _env("QSM_AUDIO_PLAY_PATH", "/api/audio/play")
     qsm_audio_stream_start_path: str = _env("QSM_AUDIO_STREAM_START_PATH", "/api/audio/stream/start")
     qsm_audio_stream_stop_path: str = _env("QSM_AUDIO_STREAM_STOP_PATH", "/api/audio/stream/stop")
+    qsm_audio_stream_host: str = _env("QSM_AUDIO_STREAM_HOST", "127.0.0.1")
     qsm_audio_stream_port: int = int(_env("QSM_AUDIO_STREAM_PORT", "19001"))
+    qsm_local_asr_url: str = _env("QSM_LOCAL_ASR_URL", "ws://127.0.0.1:18084")
+    qsm_local_asr_timeout_seconds: float = float(_env("QSM_LOCAL_ASR_TIMEOUT_SECONDS", "4"))
     qsm_network_status_path: str = _env("QSM_NETWORK_STATUS_PATH", "/api/network/status")
     qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")
     qsm_network_timeout_seconds: float = float(_env("QSM_NETWORK_TIMEOUT_SECONDS", "3"))
@@ -104,15 +107,15 @@ class Settings:
         "https://api.deepseek.com/chat/completions",
     )
     ai_api_key: str = _env("AI_API_KEY", "")
-    ai_api_key_file: Path = Path(_env("AI_API_KEY_FILE", "/userdata/zykh_app/data/ai-api-key.txt"))
+    ai_api_key_file: Path = Path(_env("AI_API_KEY_FILE", str(DATA_DIR / "ai-api-key.txt")))
     ai_model: str = _env("AI_MODEL", "deepseek-v4-flash")
-    ai_enable_thinking: bool = _env("AI_ENABLE_THINKING", "false").strip().lower() in {
+    ai_enable_thinking: bool = _env("AI_ENABLE_THINKING", "true").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
-    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "false").strip().lower() in {
+    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -132,7 +135,19 @@ class Settings:
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     )
     dashscope_api_key: str = _env("DASHSCOPE_API_KEY", "")
-    dashscope_api_key_file: Path = Path(_env("DASHSCOPE_API_KEY_FILE", "/userdata/zykh_app/data/dashscope-api-key.txt"))
+    dashscope_api_key_file: Path = Path(_env("DASHSCOPE_API_KEY_FILE", str(DATA_DIR / "dashscope-api-key.txt")))
+    qwen_realtime_tts_url: str = _env("QWEN_REALTIME_TTS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+    qwen_realtime_tts_model: str = _env(
+        "QWEN_REALTIME_TTS_MODEL",
+        "qwen3-tts-instruct-flash-realtime-2026-01-22",
+    )
+    qwen_realtime_tts_voice: str = _env("QWEN_REALTIME_TTS_VOICE", "Cherry")
+    qwen_realtime_tts_speed: float = float(_env("QWEN_REALTIME_TTS_SPEED", "1.72"))
+    qwen_realtime_tts_instructions: str = _env(
+        "QWEN_REALTIME_TTS_INSTRUCTIONS",
+        "语速明显偏快，停顿短，吐字清晰，语气温和自然，适合家庭康护终端播报。",
+    )
+    qwen_realtime_tts_timeout_seconds: float = float(_env("QWEN_REALTIME_TTS_TIMEOUT_SECONDS", "30"))
     qwen_vision_model: str = _env("QWEN_VISION_MODEL", "qwen3.6-flash")
     showapi_app_key_file: Path = Path(_env("SHOWAPI_APP_KEY_FILE", "/userdata/zykh_app/data/showapi-app-key.txt"))
     sync_endpoint: str = _env("SYNC_ENDPOINT", "")

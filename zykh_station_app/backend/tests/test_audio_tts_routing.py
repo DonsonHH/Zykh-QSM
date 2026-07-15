@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import asyncio
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -37,6 +38,21 @@ class FakeQsmClient:
         }
 
 
+class FakeRealtimeTts:
+    def __init__(self, _client) -> None:
+        self.calls: list[tuple[str, str, int | None, float | None]] = []
+
+    async def speak(self, text, api_key, *, volume=None, speed=None):
+        self.calls.append((text, api_key, volume, speed))
+        return {
+            "ok": True,
+            "mode": "qwen-realtime-pcm",
+            "offline": False,
+            "first_audio_ms": 320,
+            "detail": "ok",
+        }
+
+
 class AudioTtsRoutingTest(unittest.TestCase):
     def test_local_network_forces_offline_tts(self) -> None:
         client = FakeQsmClient()
@@ -45,7 +61,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.NetworkService, "status", return_value={"mode": "local"}),
             patch.object(audio, "_record"),
         ):
-            result = audio.audio_speak(SpeakRequest(text="请安全用药。", speed=1.2))
+            result = asyncio.run(audio.audio_speak(SpeakRequest(text="请安全用药。", speed=1.2)))
 
         self.assertEqual(client.speak_calls[0][3], "offline")
         self.assertEqual(result["engine"], "offline-sherpa-onnx")
@@ -53,15 +69,20 @@ class AudioTtsRoutingTest(unittest.TestCase):
 
     def test_online_network_uses_auto_mode(self) -> None:
         client = FakeQsmClient()
+        realtime = FakeRealtimeTts(client)
         with (
             patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio, "QwenRealtimeTts", return_value=realtime),
+            patch.object(audio, "_read_api_key", return_value="private"),
             patch.object(audio.NetworkService, "status", return_value={"mode": "wifi"}),
             patch.object(audio, "_record"),
         ):
-            result = audio.audio_speak(SpeakRequest(text="联网播报。"))
+            result = asyncio.run(audio.audio_speak(SpeakRequest(text="联网播报。")))
 
-        self.assertEqual(client.speak_calls[0][3], "auto")
-        self.assertEqual(result["engine"], "qwen-tts")
+        self.assertEqual(client.speak_calls, [])
+        self.assertEqual(realtime.calls[0][0], "联网播报。")
+        self.assertEqual(result["engine"], "qwen-realtime-pcm")
+        self.assertEqual(result["first_audio_ms"], 320)
 
     def test_local_network_cannot_be_overridden_with_cloud_mode(self) -> None:
         client = FakeQsmClient()
@@ -70,7 +91,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.NetworkService, "status", return_value={"mode": "local"}),
             patch.object(audio, "_record"),
         ):
-            audio.audio_speak(SpeakRequest(text="指定云端。", mode="cloud"))
+            asyncio.run(audio.audio_speak(SpeakRequest(text="指定云端。", mode="cloud")))
 
         self.assertEqual(client.speak_calls[0][3], "offline")
 
@@ -81,7 +102,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.NetworkService, "status", return_value={"mode": "wifi"}),
             patch.object(audio, "_record"),
         ):
-            audio.audio_speak(SpeakRequest(text="指定离线。", mode="offline"))
+            asyncio.run(audio.audio_speak(SpeakRequest(text="指定离线。", mode="offline")))
 
         self.assertEqual(client.speak_calls[0][3], "offline")
 
@@ -92,7 +113,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
 
         payload = action.call_args.args[1]
         self.assertEqual(payload["volume"], 255)
-        self.assertEqual(payload["speed"], 1.45)
+        self.assertEqual(payload["speed"], 1.8)
         self.assertEqual(payload["tts_mode"], "auto")
 
 

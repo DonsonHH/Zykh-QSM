@@ -1,5 +1,17 @@
 import React from "react";
-import { HeartHandshake, Signal, SignalLow, SlidersHorizontal, Wifi, WifiOff } from "lucide-react";
+import {
+  HeartHandshake,
+  SignalHigh,
+  SignalLow,
+  SignalMedium,
+  SignalZero,
+  SlidersHorizontal,
+  Wifi,
+  WifiHigh,
+  WifiLow,
+  WifiOff,
+  WifiZero
+} from "lucide-react";
 import { formatClock, formatDay } from "../utils/time.js";
 import { getNetworkIndicators } from "../utils/network.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
@@ -31,11 +43,11 @@ export function TopBar({ networkStatus, now, page, onOpenSystemCheck }) {
         ) : null}
         <div className={`network-cluster ${localMode ? "offline local-only" : ""}`} role="group" aria-label="网络状态">
           <div className={`mini-network ${wifi.tone}`} aria-label={wifi.label} title={wifi.label}>
-            {wifi.connected ? <Wifi size={24} aria-hidden="true" /> : <WifiOff size={24} aria-hidden="true" />}
+            <WifiStrength connected={wifi.connected} bars={wifi.bars} />
             <span>WiFi</span>
           </div>
           <div className={`mini-network ${sim.tone}`} aria-label={sim.label} title={sim.label}>
-            {sim.tone === "good" ? <Signal size={24} aria-hidden="true" /> : <SignalLow size={24} aria-hidden="true" />}
+            <SimStrength connected={sim.connected} bars={sim.bars} />
             <span>SIM</span>
           </div>
         </div>
@@ -45,4 +57,30 @@ export function TopBar({ networkStatus, now, page, onOpenSystemCheck }) {
       </div>
     </header>
   );
+}
+
+function WifiStrength({ connected, bars }) {
+  if (!connected) {
+    return <WifiOff size={24} aria-hidden="true" />;
+  }
+  if (bars === 0) {
+    return <WifiZero size={24} aria-hidden="true" />;
+  }
+  if (bars === 1) {
+    return <WifiLow size={24} aria-hidden="true" />;
+  }
+  return bars >= 4 ? <Wifi size={24} aria-hidden="true" /> : <WifiHigh size={24} aria-hidden="true" />;
+}
+
+function SimStrength({ connected, bars }) {
+  if (!connected || bars === 0) {
+    return <SignalZero size={24} aria-hidden="true" />;
+  }
+  if (bars === 1) {
+    return <SignalLow size={24} aria-hidden="true" />;
+  }
+  if (bars === 2) {
+    return <SignalMedium size={24} aria-hidden="true" />;
+  }
+  return <SignalHigh size={24} aria-hidden="true" />;
 }

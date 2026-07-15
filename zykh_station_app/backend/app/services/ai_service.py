@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+from collections.abc import Iterator
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -49,6 +50,31 @@ class AiService:
             "cloud_configured": bool(key),
             "cloud_model": settings.ai_model,
             "local": self.local_client.status(),
+        }
+
+    def warm_local(self) -> dict[str, Any]:
+        status = self.local_client.status()
+        if not status.get("ready"):
+            return {
+                "ok": False,
+                "ready": False,
+                "message": status.get("error_message") or "离线模型尚未就绪。",
+            }
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": self._local_system_prompt()},
+                {
+                    "role": "user",
+                    "content": self._chat_user_prompt("请开始确认身份。", {}),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=1,
+        )
+        return {
+            "ok": bool(result.get("ok")),
+            "ready": True,
+            "message": "离线问询缓存已预热。" if result.get("ok") else result.get("error_message") or "预热失败。",
         }
 
     def chat(self, message: str) -> dict[str, Any]:
@@ -106,6 +132,86 @@ class AiService:
             "offline": False,
         }
 
+    def stream(self, message: str, context: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:
+        message = message.strip()
+        emergency = self._emergency_reply(message)
+        if emergency:
+            yield {"type": "meta", "source": emergency["source"], "model": emergency["model"]}
+            yield {"type": "delta", "source": emergency["source"], "text": emergency["reply"]}
+            yield {"type": "done", "source": emergency["source"], "reply": emergency["reply"]}
+            return
+
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        local_reason = ""
+        if settings.ai_mode == "local" or self._network_local_mode():
+            local_reason = "当前为离线模式。"
+        elif not key:
+            local_reason = "未配置云端密钥。"
+        elif settings.ai_mode == "auto" and not self._cloud_reachable():
+            local_reason = "当前未检测到可用云端网络。"
+        if local_reason:
+            yield from self._stream_local(message, context, local_reason)
+            return
+
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": self._system_prompt()},
+                {"role": "user", "content": self._chat_user_prompt(message, context)},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 180,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        self._apply_provider_options(payload, enable_thinking=settings.ai_enable_thinking)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+        )
+        try:
+            response = urlopen(request, timeout=settings.ai_chat_timeout_seconds)
+        except HTTPError as exc:
+            yield from self._stream_local(message, context, f"云端通道 HTTP {exc.code}。")
+            return
+        except (URLError, TimeoutError, OSError) as exc:
+            yield from self._stream_local(message, context, f"云端通道暂不可用：{exc}。")
+            return
+
+        yield {"type": "meta", "source": "cloud", "model": settings.ai_model}
+        reply = ""
+        try:
+            with response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    value = line[5:].strip()
+                    if value == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(value)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = LocalAiClient._delta_text(data)
+                    if delta:
+                        reply += delta
+                        yield {"type": "delta", "source": "cloud", "text": delta}
+        except OSError as exc:
+            yield {"type": "error", "source": "cloud", "message": f"云端流式响应中断：{exc}"}
+            return
+
+        guarded = self._guard_stream_reply(reply, message)
+        if guarded != reply.strip():
+            yield {"type": "replace", "source": "cloud", "text": guarded}
+        yield {"type": "done", "source": "cloud", "reply": guarded}
+
     def evaluate_inquiry(self, request: InquiryEvaluateRequest) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if settings.ai_mode == "local" or self._network_local_mode():
@@ -160,10 +266,52 @@ class AiService:
         reply = self.chat(message)["reply"]
         return [reply[index : index + 18] for index in range(0, len(reply), 18)] or [""]
 
+    def _stream_local(
+        self,
+        message: str,
+        context: dict[str, Any] | None,
+        reason: str,
+    ) -> Iterator[dict[str, Any]]:
+        messages = [
+            {"role": "system", "content": self._local_system_prompt()},
+            {"role": "user", "content": self._chat_user_prompt(message, context)},
+        ]
+        yielded = False
+        reply = ""
+        for event in self.local_client.stream(messages, temperature=0.15, max_tokens=120):
+            if event.get("type") == "delta":
+                if not yielded:
+                    yielded = True
+                    yield {
+                        "type": "meta",
+                        "source": "local_llm",
+                        "model": settings.local_ai_model,
+                        "fallback_reason": reason,
+                    }
+                text = str(event.get("text") or "")
+                reply += text
+                yield {"type": "delta", "source": "local_llm", "text": text}
+            elif event.get("type") == "error":
+                rules = self._rules_reply(message, f"{reason}{event.get('message') or ''}")
+                yield {"type": "meta", "source": rules["source"], "model": rules["model"]}
+                yield {"type": "delta", "source": rules["source"], "text": rules["reply"]}
+                yield {"type": "done", "source": rules["source"], "reply": rules["reply"]}
+                return
+        guarded = self._guard_stream_reply(reply, message)
+        if not yielded:
+            rules = self._rules_reply(message, f"{reason}离线模型未返回有效内容。")
+            yield {"type": "meta", "source": rules["source"], "model": rules["model"]}
+            yield {"type": "delta", "source": rules["source"], "text": rules["reply"]}
+            yield {"type": "done", "source": rules["source"], "reply": rules["reply"]}
+            return
+        if guarded != reply.strip():
+            yield {"type": "replace", "source": "local_llm", "text": guarded}
+        yield {"type": "done", "source": "local_llm", "reply": guarded}
+
     def _local_model_reply(self, message: str, reason: str) -> dict[str, Any]:
         result = self.local_client.chat(
             [
-                {"role": "system", "content": self._system_prompt()},
+                {"role": "system", "content": self._local_system_prompt()},
                 {"role": "user", "content": message or "请先引导我说明现在最不舒服的地方。"},
             ],
             temperature=0.2,
@@ -193,34 +341,60 @@ class AiService:
         }
 
     def _system_prompt(self) -> str:
-        medicines = MedicineRepository().list_all()
-        latest_vitals = VitalsRepository().latest_for_context()
-        medicine_text = "；".join(
-            f"{medicine.name}({medicine.category}, 库存{medicine.stock}{medicine.unit})"
-            for medicine in medicines[:12]
-        ) or "暂无药品库存"
-        vitals_text = "暂无体征记录"
-        if latest_vitals:
-            vitals_text = (
-                f"体温{latest_vitals.temperature or '--'}℃，"
-                f"心率{latest_vitals.heart_rate or '--'}次/分，"
-                f"血氧{latest_vitals.spo2 or '--'}%，"
-                f"血压参考{latest_vitals.systolic_pressure or '--'}/{latest_vitals.diastolic_pressure or '--'}mmHg，"
-                f"呼吸频率{latest_vitals.respiratory_rate or '--'}次/分，"
-                f"时间{latest_vitals.measured_at}"
-            )
         return "\n".join(
             [
                 "你是智药康护终端的 AI应急问询助手，使用中文。",
                 "你只能做健康信息整理、风险提示、药品信息匹配和禁忌核验，不能替代医生诊断或处方。",
                 "不能说用户应该吃某药；只能提示可查看候选药品类别和安全提示。",
                 "不能判断用户属于轻症或无需处理，不能猜测病因；每次只追问一个缺失信息。",
-                "身份、症状、持续时间、已用药和禁忌未收集完整前，不要罗列药柜库存。",
+                "按顺序核对症状、持续时间、已用药、过敏禁忌和体征；一次只问一个缺失项。",
+                "终端当前只稳定读取体温、心率和血氧；需要体征时只引导这三项，不要求血压或HRV。",
+                "缺少体征时在简短回复末尾加 [NEED_VITALS]；信息完整且无紧急危险信号时加 [READY_FOR_SAFETY_ANALYSIS]。",
+                "不要罗列药柜库存；候选药品必须留到结构化安全核验阶段。",
                 "中高风险、禁忌不明或症状严重时，建议联系医生、家人或远程协助人员。",
-                "对话问询时一次只追问一个关键问题，回复控制在 60 个中文字符内，不要 Markdown，不要编号列表。",
-                f"最近体征：{vitals_text}",
-                f"家庭药柜药品：{medicine_text}",
+                "回复控制在 45 个中文字符内，不要 Markdown，不要编号列表，不输出思考过程。",
             ]
+        )
+
+    @staticmethod
+    def _local_system_prompt() -> str:
+        return "\n".join(
+            [
+                "你是家庭康护终端的安全问询助手，只用中文。",
+                "不诊断、不下处方、不直接指令服药。",
+                "依次确认身份、症状、持续时间、已用药、禁忌和体征；每次只问一项。",
+                "体征只询问体温、心率、血氧，不询问血压或HRV。",
+                "缺体征加[NEED_VITALS]；信息完整且无紧急信号加[READY_FOR_SAFETY_ANALYSIS]。",
+                "胸痛、呼吸困难或意识不清时立即提示求助。",
+                "回复不超过45字，不列清单，不输出思考过程。",
+            ]
+        )
+
+    @staticmethod
+    def _chat_user_prompt(message: str, context: dict[str, Any] | None = None) -> str:
+        context = context if isinstance(context, dict) else {}
+        profile = context.get("profile") if isinstance(context.get("profile"), dict) else {}
+        profile_text = "/".join(
+            str(value).strip()
+            for value in (
+                profile.get("name"),
+                f"{profile.get('age')}岁" if profile.get("age") else "",
+                profile.get("conditions"),
+                f"禁忌:{profile.get('allergies')}" if profile.get("allergies") else "",
+            )
+            if str(value or "").strip()
+        )
+        transcript = str(context.get("transcript") or "").strip()[-180:]
+        vitals = str(context.get("vitals") or "").strip()[:100]
+        return json.dumps(
+            {
+                "使用人": profile_text or "待确认",
+                "体征": vitals or "未测量",
+                "已知自述": transcript or "暂无",
+                "本轮输入": message,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
     def _inquiry_system_prompt(self) -> str:
@@ -356,6 +530,14 @@ class AiService:
             text = f"{text} 如出现或持续存在上述危险信号，请立即联系医生或急救人员。"
         return self._compact_chat_reply(text)
 
+    def _guard_stream_reply(self, reply: str, user_message: str = "") -> str:
+        markers = "".join(
+            marker for marker in ("[NEED_VITALS]", "[READY_FOR_SAFETY_ANALYSIS]") if marker in reply
+        )
+        clean = reply.replace("[NEED_VITALS]", "").replace("[READY_FOR_SAFETY_ANALYSIS]", "").strip()
+        guarded = self._guard_reply(clean, user_message)
+        return f"{guarded}{markers}"
+
     @staticmethod
     def _compact_chat_reply(text: str) -> str:
         normalized = re.sub(r"\s+", "", text).strip()
@@ -454,6 +636,7 @@ class AiService:
             payload["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
             if enable_thinking:
                 payload["reasoning_effort"] = "high"
+                payload.pop("temperature", None)
             return
         if enable_thinking:
             payload["enable_thinking"] = True

@@ -139,7 +139,11 @@ The UART collection window defaults to 16 seconds. This stays below the existing
 
 QSM camera proxy methods live in `services/qsm_camera_service.py`. Identity calls use `services/qsm_face_client.py`; `services/identity_service.py` only resolves identities already bound to service users. Unknown or historical unbound face subjects are reported for administrator handling and never create a profile automatically.
 
-The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host realtime-ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Capture gain changes are forwarded to the QSM `Mic` mixer control.
+The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host realtime-ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Online mode sends it to Qwen realtime ASR; local mode converts it to float PCM and sends it to the QSM sherpa-onnx server on board port `8084` (host forward `18084`). Capture gain changes are forwarded to the QSM `Mic` mixer control.
+
+The speaker has two low-latency paths. Online Qwen realtime TTS writes 24 kHz PCM deltas to board port `19001` as they arrive. Offline TTS uses the resident VITS service on board loopback port `19002`, which avoids reloading the model and plays callback chunks during synthesis. Both paths return structured latency metrics and fall back without exposing transport details in the terminal UI.
+
+WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes from the QSM EC200A `AT+CSQ` response and is converted to dBm, percentage and 0-4 bars. The top bar therefore reflects each live link independently instead of assuming full signal.
 
 By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. 取药确认 still requires the safety checkbox and request body `confirm_real_dispense=true`, writes a local record, then calls the gateway dispense path. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 

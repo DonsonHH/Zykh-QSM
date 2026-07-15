@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 class AiChatRequest(BaseModel):
     message: str = ""
     messages: list[dict[str, str]] = Field(default_factory=list)
+    context: dict[str, object] = Field(default_factory=dict)
 
     def text(self) -> str:
         if self.message.strip():
@@ -29,6 +30,11 @@ def ai_status() -> dict[str, object]:
     return AiService().status()
 
 
+@router.post("/warm-local")
+def warm_local_ai() -> dict[str, object]:
+    return AiService().warm_local()
+
+
 @router.post("/chat")
 def ai_chat(request: AiChatRequest) -> dict[str, object]:
     return AiService().chat(request.text())
@@ -37,14 +43,13 @@ def ai_chat(request: AiChatRequest) -> dict[str, object]:
 @router.post("/chat/stream")
 def ai_chat_stream(request: AiChatRequest):
     def events():
-        result = AiService().chat(request.text())
-        source = str(result.get("source") or "rules_fallback")
-        model = str(result.get("model") or "")
-        reply = str(result.get("reply") or "")
-        yield f"event: meta\ndata: {json.dumps({'ok': True, 'source': source, 'model': model}, ensure_ascii=False)}\n\n"
-        chunks = [reply[index : index + 18] for index in range(0, len(reply), 18)] or [""]
-        for chunk in chunks:
-            yield f"event: delta\ndata: {json.dumps({'text': chunk, 'source': source}, ensure_ascii=False)}\n\n"
-        yield "event: done\ndata: {\"ok\":true}\n\n"
+        for event in AiService().stream(request.text(), context=request.context):
+            event_type = str(event.get("type") or "message")
+            payload = {key: value for key, value in event.items() if key != "type"}
+            yield f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(events(), media_type="text/event-stream")
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

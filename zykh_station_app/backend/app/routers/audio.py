@@ -21,8 +21,10 @@ from pydantic import BaseModel
 from ..config import settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
+from ..services.local_asr_client import LocalAsrClient
 from ..services.network_service import NetworkService
 from ..services.qsm_client import QsmClient
+from ..services.qwen_realtime_tts import QwenRealtimeTts
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 
@@ -113,27 +115,57 @@ def audio_asr(request: AsrRequest) -> dict[str, object]:
 def audio_status() -> dict[str, object]:
     requested_mode = _tts_mode_for_network()
     result = QsmClient().audio_status()
+    local_asr = LocalAsrClient().status()
     return {
         "ok": bool(result.get("ok")),
         "requested_mode": requested_mode,
         "offline_available": bool(result.get("offline_available") or result.get("offline", {}).get("available")),
         "cloud_available": bool(result.get("cloud_available") or result.get("cloud", {}).get("available")),
+        "local_asr": local_asr,
+        "realtime_tts_configured": bool(_read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)),
         "raw": result,
     }
 
 
 @router.post("/speak")
-def audio_speak(request: SpeakRequest) -> dict[str, object]:
+async def audio_speak(request: SpeakRequest) -> dict[str, object]:
     client = QsmClient()
-    client.audio_stream_stop()
     network_mode = _tts_mode_for_network()
     requested_mode = "offline" if network_mode == "offline" else _normalize_tts_mode(request.mode) or network_mode
-    result = client.audio_speak(request.text, request.volume, request.speed, requested_mode)
+    result: dict[str, object]
+    realtime_failure = ""
+    if requested_mode != "offline":
+        api_key = _read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)
+        result = await QwenRealtimeTts(client).speak(
+            request.text,
+            api_key,
+            volume=request.volume,
+            speed=request.speed,
+        )
+        if not result.get("ok"):
+            realtime_failure = str(result.get("error_message") or "实时语音合成暂不可用。")
+            result = await asyncio.to_thread(
+                client.audio_speak,
+                request.text,
+                request.volume,
+                request.speed,
+                "offline",
+            )
+            result["fallback_reason"] = realtime_failure
+    else:
+        await asyncio.to_thread(client.audio_stream_stop)
+        result = await asyncio.to_thread(
+            client.audio_speak,
+            request.text,
+            request.volume,
+            request.speed,
+            "offline",
+        )
     actual_mode = str(result.get("mode") or "")
     description = (
         "已使用板端离线语音播报。"
-        if actual_mode == "offline-sherpa-onnx"
-        else "已请求外设播报。"
+        if actual_mode.startswith("offline")
+        else "实时语音已发送到外设喇叭。"
         if result.get("ok")
         else str(result.get("error_message") or result.get("detail") or "播报失败。")
     )
@@ -144,6 +176,9 @@ def audio_speak(request: SpeakRequest) -> dict[str, object]:
         "requested_mode": requested_mode,
         "engine": actual_mode,
         "offline": bool(result.get("offline")),
+        "first_audio_ms": result.get("first_audio_ms"),
+        "total_ms": result.get("total_ms"),
+        "fallback_reason": realtime_failure or result.get("fallback_reason") or "",
         "raw": result,
     }
 
@@ -222,10 +257,12 @@ def audio_stream_stop() -> dict[str, object]:
 @router.websocket("/asr/realtime")
 async def audio_asr_realtime(websocket: WebSocket) -> None:
     await websocket.accept()
+    if _asr_mode_for_network() == "local":
+        await _audio_asr_local(websocket)
+        return
     api_key = _read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)
     if not api_key:
-        await websocket.send_json({"type": "error", "message": "未配置实时语音识别 API Key。"})
-        await websocket.close(code=1011)
+        await _audio_asr_local(websocket, fallback_reason="云端语音密钥未配置。")
         return
 
     model = "qwen3-asr-flash-realtime"
@@ -366,7 +403,7 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
         return
     except Exception as exc:
         try:
-            await websocket.send_json({"type": "error", "message": f"实时语音识别连接失败：{exc}"})
+            await _audio_asr_local(websocket, fallback_reason=f"云端语音识别不可用：{exc}")
         except Exception:
             pass
 
@@ -382,6 +419,95 @@ def _tts_mode_for_network() -> str:
     except Exception:
         return "auto"
     return "offline" if str(network.get("mode") or "").lower() in {"local", "offline"} else "auto"
+
+
+def _asr_mode_for_network() -> str:
+    try:
+        network = NetworkService().status()
+    except Exception:
+        return "cloud"
+    return "local" if str(network.get("mode") or "").lower() in {"local", "offline"} else "cloud"
+
+
+async def _audio_asr_local(websocket: WebSocket, fallback_reason: str = "") -> None:
+    client = LocalAsrClient()
+    status = client.status()
+    if not status.get("ready"):
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "本地实时语音识别尚未启动，请检查外设语音服务。",
+                "detail": status.get("error_message") or fallback_reason,
+            }
+        )
+        await websocket.close(code=1011)
+        return
+
+    try:
+        mic_reader, mic_writer = await _open_qsm_mic_stream()
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": f"外设麦克风连接失败：{exc}"})
+        await websocket.close(code=1011)
+        return
+
+    stopped = asyncio.Event()
+    await websocket.send_json(
+        {
+            "type": "ready",
+            "model": status.get("model"),
+            "source": "qsm-local-asr",
+            "offline": True,
+            "fallback_reason": fallback_reason,
+        }
+    )
+
+    async def local_to_client() -> None:
+        async for text, final in client.recognize(mic_reader, stopped):
+            await websocket.send_json(
+                {
+                    "type": "transcript",
+                    "text": text,
+                    "final": final,
+                    "source": "qsm-local-asr",
+                }
+            )
+            if final:
+                return
+
+    async def client_control() -> None:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                stopped.set()
+                return
+            text = message.get("text")
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("type") == "stop":
+                stopped.set()
+                mic_writer.close()
+                await mic_writer.wait_closed()
+
+    consumer = asyncio.create_task(local_to_client())
+    control = asyncio.create_task(client_control())
+    try:
+        done, pending = await asyncio.wait({consumer, control}, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    except WebSocketDisconnect:
+        return
+    finally:
+        stopped.set()
+        if not mic_writer.is_closing():
+            mic_writer.close()
+            await mic_writer.wait_closed()
 
 
 def _record(record_type: str, title: str, description: str, ok: bool) -> None:

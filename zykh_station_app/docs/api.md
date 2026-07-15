@@ -196,7 +196,11 @@ Calls the QSM audio ASR path and returns recognized text or a structured gateway
 
 ### POST /api/audio/speak
 
-Calls the QSM speech path with text. The host selects `offline` when the terminal is in local mode and `auto` while online. `auto` prefers cloud speech and falls back to the QSM sherpa-onnx model. The response exposes `requested_mode`, `engine` and `offline`.
+Speaks text through the QSM speaker. Online mode uses Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the resident QSM sherpa-onnx TTS process. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`.
+
+### WebSocket /api/audio/asr/realtime
+
+Streams real FF Camera microphone PCM into Qwen realtime ASR while online or the QSM sherpa-onnx streaming recognizer while local. Both routes emit `ready`, partial/final `transcript`, and structured `error` events.
 
 ### GET /api/audio/status
 
@@ -216,4 +220,4 @@ Returns the selected AI mode, cloud configuration state and QSM offline-model he
 
 ### POST /api/ai/chat/stream
 
-Streams the same guarded AI response as server-sent events. Local-model and safety-rule responses use the same public event contract.
+Streams actual provider tokens as server-sent `meta`, `delta`, optional `replace`, and `done` events. Cloud DeepSeek reasoning remains hidden while final text is streamed. The QSM llama.cpp route uses the same true-streaming contract; `/api/ai/warm-local` primes its reusable prompt cache after startup.

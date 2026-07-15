@@ -18,6 +18,11 @@ CAMERA_STREAM_FPS="${CAMERA_STREAM_FPS:-30}"
 cd "$QSM_HOME" || exit 1
 mkdir -p "$QSM_HOME/data" "$QSM_HOME/scripts"
 
+if [ -x "$QSM_HOME/scripts/start_local_tts_server.sh" ]; then
+  sh "$QSM_HOME/scripts/start_local_tts_server.sh" >/dev/null 2>&1 || \
+    printf 'Warning: persistent offline TTS did not start; script fallback remains available.\n' >&2
+fi
+
 gateway_pids() {
   for process in /proc/[0-9]*; do
     [ -r "$process/cmdline" ] || continue

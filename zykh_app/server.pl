@@ -505,7 +505,23 @@ sub qsm_network_status {
     my $sim_present = ($lsusb ne '' || @tty || $ifconfig ne '' || $at->{at_ok}) ? JSON::PP::true : JSON::PP::false;
     my $connected_bool = ($ip_is_4g && $route_ok && ($ping_ok || $at->{registered})) ? 1 : 0;
     my $connected = $connected_bool ? JSON::PP::true : JSON::PP::false;
-    my $signal = $connected_bool ? 'good' : ($sim_present ? 'weak' : 'none');
+    my $signal_csq = int($at->{signal_csq} // 99);
+    my $signal_dbm = ($signal_csq >= 0 && $signal_csq <= 31) ? -113 + 2 * $signal_csq : '';
+    my $signal_percent = $signal_dbm ne '' ? int(($signal_dbm + 113) * 100 / 62 + 0.5) : 0;
+    $signal_percent = 0 if $signal_percent < 0;
+    $signal_percent = 100 if $signal_percent > 100;
+    my $signal_bars = $signal_dbm eq '' ? 0
+        : $signal_dbm >= -75 ? 4
+        : $signal_dbm >= -85 ? 3
+        : $signal_dbm >= -95 ? 2
+        : $signal_dbm >= -105 ? 1
+        : 0;
+    my $signal_level = $signal_bars == 4 ? 'excellent'
+        : $signal_bars == 3 ? 'good'
+        : $signal_bars == 2 ? 'fair'
+        : $signal_bars == 1 ? 'weak'
+        : 'none';
+    my $signal = !$sim_present ? 'none' : $signal_bars >= 3 ? 'good' : 'weak';
     my $status = $connected_bool ? 'good' : ($sim_present ? 'weak' : 'unavailable');
     my $detail;
     if ($connected_bool) {
@@ -526,6 +542,11 @@ sub qsm_network_status {
         sim_present => $sim_present,
         connected => $connected,
         signal => $signal,
+        signal_csq => $signal_csq,
+        signal_dbm => $signal_dbm,
+        signal_percent => $signal_percent,
+        signal_bars => $signal_bars,
+        signal_level => $signal_level,
         status => $status,
         ip => $ip || '',
         ip_is_4g => $ip_is_4g ? JSON::PP::true : JSON::PP::false,
@@ -1437,13 +1458,62 @@ sub offline_tts_status {
         "$voice_root/models/tts/number.fst",
     );
     my @missing = grep { !-s $_ } @required;
+    my $daemon = local_tts_daemon_status();
     return {
         available => @missing ? JSON::PP::false : JSON::PP::true,
         engine => 'sherpa-onnx',
         model => 'vits-piper-zh_CN-xiao_ya-medium-int8',
         script => $script,
         missing_count => scalar @missing,
+        streaming_available => $daemon->{ready},
+        streaming_port => $daemon->{port},
     };
+}
+
+sub local_tts_daemon_status {
+    my $port = int($ENV{QSM_LOCAL_TTS_PORT} || 19002);
+    my $socket = IO::Socket::INET->new(
+        PeerAddr => '127.0.0.1',
+        PeerPort => $port,
+        Proto => 'tcp',
+        Timeout => 0.35,
+    );
+    my $ready = $socket ? JSON::PP::true : JSON::PP::false;
+    close $socket if $socket;
+    return { ready => $ready, port => $port };
+}
+
+sub speak_offline_streaming {
+    my ($text, $speed, $volume) = @_;
+    my $port = int($ENV{QSM_LOCAL_TTS_PORT} || 19002);
+    my $socket = IO::Socket::INET->new(
+        PeerAddr => '127.0.0.1',
+        PeerPort => $port,
+        Proto => 'tcp',
+        Timeout => 2,
+    );
+    return { ok => JSON::PP::false, error => '离线语音常驻服务未连接' } unless $socket;
+    $socket->autoflush(1);
+
+    my $bytes = Encode::encode('UTF-8', $text);
+    my $header = sprintf("%.2f\t%d\t%d\n", $speed, $volume, length($bytes));
+    my $response = '';
+    my $error = '';
+    eval {
+        local $SIG{ALRM} = sub { die "timeout\n" };
+        alarm(int($ENV{QSM_LOCAL_TTS_TIMEOUT} || 45));
+        print {$socket} $header;
+        print {$socket} $bytes;
+        $response = <$socket> // '';
+        alarm(0);
+    };
+    $error = $@ if $@;
+    alarm(0);
+    close $socket;
+    return { ok => JSON::PP::false, error => '离线语音常驻服务超时' } if $error;
+    my $result = eval { decode_json($response) };
+    return { ok => JSON::PP::false, error => '离线语音常驻服务返回无效内容' } unless $result && ref($result) eq 'HASH';
+    return $result;
 }
 
 sub audio_status {
@@ -1491,10 +1561,10 @@ sub speak_text {
 
     release_audio_playback_device();
     my $vol = speaker_volume($p->{volume});
-    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.32;
-    $tts_speed = 1.32 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
+    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.55;
+    $tts_speed = 1.55 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
     $tts_speed = 0.75 if $tts_speed < 0.75;
-    $tts_speed = 1.45 if $tts_speed > 1.45;
+    $tts_speed = 1.80 if $tts_speed > 1.80;
     my $requested_mode = normalize_tts_mode($p->{tts_mode} || $p->{mode} || $ENV{TTS_MODE} || 'auto');
     my $play = sub {
         my ($file) = @_;
@@ -1523,6 +1593,12 @@ sub speak_text {
     }
 
     if ($offline->{available}) {
+        if ($offline->{streaming_available}) {
+            push @attempts, {
+                mode => 'offline-sherpa-onnx-stream',
+                streaming => 1,
+            };
+        }
         my $out = "$dir/offline-tts-$$.wav";
         my $length_scale = 1 / $tts_speed;
         $length_scale = 0.70 if $length_scale < 0.70;
@@ -1566,10 +1642,26 @@ sub speak_text {
     my @failures;
     for my $index (0 .. $#attempts) {
         my $attempt = $attempts[$index];
+        if ($attempt->{streaming}) {
+            my $run = speak_offline_streaming($text, $tts_speed, $vol);
+            if ($run->{ok}) {
+                return {
+                    %$run,
+                    requested_mode => $requested_mode,
+                    offline => JSON::PP::true,
+                    fallback => $index > 0 ? JSON::PP::true : JSON::PP::false,
+                    volume => $vol,
+                    speed => $tts_speed + 0,
+                    detail => '已使用常驻离线模型边合成边播放。',
+                };
+            }
+            push @failures, "$attempt->{mode}: " . ($run->{error} || 'unknown');
+            next;
+        }
         my $log = "$DATA_DIR/audio-speak-$attempt->{mode}.log";
         my $run = run_tts_command($attempt->{command}, $log, $attempt->{timeout});
         if ($run->{ok}) {
-            my $is_offline = $attempt->{mode} eq 'offline-sherpa-onnx';
+            my $is_offline = $attempt->{mode} =~ /^offline-sherpa-onnx/;
             return {
                 ok => JSON::PP::true,
                 mode => $attempt->{mode},

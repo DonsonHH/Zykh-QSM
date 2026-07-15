@@ -13,7 +13,8 @@
 - 药品页取药确认，默认调用真实外设网关并保留本地记录；
 - AI应急问询、风险提示、药品信息匹配、禁忌核验；
 - QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，支持云端失败自动切换；
-- QSM 上运行的 sherpa-onnx 中文离线 TTS，本地模式不访问云端语音服务；
+- QSM 上运行的 sherpa-onnx 中文实时语音识别与常驻离线 TTS，本地模式不访问云端语音服务；
+- 联网时使用 Qwen3 实时 TTS 增量 PCM，边生成边送入 QSM 喇叭；
 - 本地记录聚合和待同步队列；
 - QSM real/mock 接入验证接口。
 - 体征读取、扫码识别、真实取药确认联调和外设能力展示入口。
@@ -106,12 +107,14 @@ QSM_BASE_URL=http://127.0.0.1:18080
 QSM_TIMEOUT_SECONDS=5
 QSM_FACE_BASE_URL=http://127.0.0.1:18081
 QSM_MIC_BASE_URL=http://127.0.0.1:18082
+QSM_LOCAL_ASR_URL=ws://127.0.0.1:18084
 QSM_VITALS_PREFER_FULL=false
 DISPENSE_DRY_RUN=false
 ENABLE_REAL_DISPENSE=1
 AI_MODE=auto
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_MODEL=deepseek-v4-flash
+AI_ENABLE_THINKING=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
@@ -119,7 +122,7 @@ LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 
 real 模式用于本机访问外设网关。如果 real 模式不可用，后端返回结构化错误并让首页显示“暂不可用”，不会用假体征或假识别结果掩盖问题。`QSM_MODE=mock` 只保留为本地闭环检查选项。
 
-当前硬件分工：摄像头、FF Camera 麦克风、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关把 `S16_LE/16kHz/单声道` PCM 流转发给本机实时语音识别链路。人脸特征提取和比对在 QSM 运行，主机 SQLite 只保存不含生物特征的服务对象映射。
+当前硬件分工：摄像头、FF Camera 麦克风、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，主机 SQLite 只保存不含生物特征的服务对象映射。
 
 身体状态测量页通过 `/api/vitals/read-all` 同时读取 GY-614 额温和 QSM UART8 综合体征模块。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。血压、呼吸频率和 HRV 统一作为健康状态辅助参考，不作为诊断依据。
 
@@ -137,7 +140,7 @@ sh scripts/deploy_qsm_gateway.sh
 AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
-export AI_API_KEY_FILE=/userdata/zykh_app/data/ai-api-key.txt
+export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
 `AI_MODE=auto` 默认先调用云端；密钥缺失、网络不可达或云请求失败时，会自动调用 QSM 上真实运行的 Qwen3.5 GGUF 模型。只有 QSM 离线模型也不可用时，才进入确定性的安全规则兜底。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
@@ -159,7 +162,14 @@ cd zykh_station_app
 INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
 ```
 
-本地模式会强制使用板端 `sherpa-onnx`；联网模式优先使用云端 TTS，云端失败时自动回退板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+继续部署常驻离线 TTS 和本地实时语音识别服务：
+
+```bash
+sh scripts/deploy_local_tts_server.sh
+sh scripts/deploy_local_asr.sh
+```
+
+本地模式会强制使用板端 `sherpa-onnx`；联网模式使用 `qwen3-tts-instruct-flash-realtime-2026-01-22`，收到音频增量后立即写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 
@@ -179,7 +189,7 @@ sh scripts/start_4g.sh
 
 ## QSM real 模式验证
 
-主外设网关、人脸识别网关、麦克风采集网关和离线模型分别转发到 `http://127.0.0.1:18080`、`http://127.0.0.1:18081`、`http://127.0.0.1:18082` 与 `http://127.0.0.1:18083`：
+主外设网关、人脸识别网关、麦克风采集网关、离线语言模型和离线实时语音识别分别转发到 `18080`、`18081`、`18082`、`18083` 与 `18084`；实时 PCM 外放使用 `19001`：
 
 ```bash
 cd zykh_station_app

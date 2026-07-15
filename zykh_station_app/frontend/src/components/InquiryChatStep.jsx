@@ -41,7 +41,7 @@ function speakLocally(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = 1.3;
+  utterance.rate = 1.55;
   utterance.pitch = 1;
   window.speechSynthesis.speak(utterance);
   return true;
@@ -167,22 +167,6 @@ export function InquiryChatStep({
     });
   }
 
-  function buildPrompt(text, knownTranscript, currentProfile) {
-    return [
-      "你是家庭康护场景中的 AI 应急问询助手，使用中文自然对话。",
-      "你要像医生助理一样一步一步询问，但不能替代医生诊断或处方。",
-      "先确认身份和基础病，再确认症状、持续时间、已用药、过敏禁忌和体征。",
-      "如果还缺体征，请在回复末尾加 [NEED_VITALS]。",
-      "当你判断信息足够且风险不是高危或紧急时，在回复末尾加 [READY_FOR_SAFETY_ANALYSIS]。",
-      "不要说用户应该吃某药；只能说可查看候选药品类别和安全提示。",
-      "回复控制在 70 个中文字符以内，适合语音播报。",
-      `当前使用人：${currentProfile.name}，年龄：${currentProfile.age || "待补充"}，基础信息：${currentProfile.conditions || "待补充"}，过敏禁忌：${currentProfile.allergies || "待补充"}，备注：${currentProfile.note || "无"}`,
-      `最近体征：${vitalsSummary || "未测量"}`,
-      `本次用户输入：${text}`,
-      `已知对话：${knownTranscript || "暂无"}`
-    ].join("\n");
-  }
-
   function isDemoHeatDizzy(content, currentProfile) {
     return currentProfile?.name === "张三" && /中暑|头晕|头昏|暑热|暑湿/.test(content);
   }
@@ -192,7 +176,7 @@ export function InquiryChatStep({
     if (!clean) {
       return;
     }
-    speakText(clean, 230, 1.32)
+    speakText(clean, 230, 1.72)
       .then((data) => {
         if (!data.ok) {
           speakLocally(clean);
@@ -250,12 +234,11 @@ export function InquiryChatStep({
       return;
     }
 
-    const knownTranscript = transcriptFrom(nextMessages);
-    await streamAssistant(buildPrompt(content, knownTranscript, currentProfile), nextMessages, currentProfile);
+    await streamAssistant(content, nextMessages, currentProfile);
     setSending(false);
   }
 
-  async function streamAssistant(prompt, currentMessages, currentProfile) {
+  async function streamAssistant(message, currentMessages, currentProfile) {
     const placeholderId = `assistant-${Date.now()}`;
     setMessages([...currentMessages, { id: placeholderId, role: "assistant", content: "", source: "cloud", streaming: true }]);
     let fullText = "";
@@ -267,7 +250,14 @@ export function InquiryChatStep({
           Accept: "text/event-stream",
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message: prompt })
+        body: JSON.stringify({
+          message,
+          context: {
+            profile: currentProfile,
+            vitals: vitalsSummary,
+            transcript: transcriptFrom(currentMessages)
+          }
+        })
       });
       if (!response.ok || !response.body) {
         throw new Error(`请求失败：${response.status}`);
@@ -284,6 +274,11 @@ export function InquiryChatStep({
         const events = buffer.split("\n\n");
         buffer = events.pop() || "";
         for (const event of events) {
+          const eventType = event
+            .split("\n")
+            .find((line) => line.startsWith("event: "))
+            ?.slice(7)
+            .trim();
           const dataLine = event.split("\n").find((line) => line.startsWith("data: "));
           if (!dataLine) {
             continue;
@@ -291,6 +286,14 @@ export function InquiryChatStep({
           const data = JSON.parse(dataLine.slice(6));
           if (data.source) {
             streamSource = data.source;
+          }
+          if (eventType === "replace" && typeof data.text === "string") {
+            fullText = data.text;
+            updateLastAssistant(cleanAssistantReply(fullText), { source: streamSource, streaming: true });
+            continue;
+          }
+          if (eventType === "done" && data.reply && !fullText) {
+            fullText = data.reply;
           }
           if (data.text) {
             fullText += data.text;
@@ -342,7 +345,7 @@ export function InquiryChatStep({
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data || "{}");
         if (data.type === "ready") {
-          setVoiceMessage("正在听，请自然说话。");
+          setVoiceMessage(data.offline ? "本地识别正在听，请自然说话。" : "正在听，请自然说话。");
           return;
         }
         if (data.type === "error") {
@@ -360,7 +363,7 @@ export function InquiryChatStep({
         }
       };
       ws.onerror = () => {
-        const message = "实时语音识别连接失败，请检查网络和 API Key。";
+        const message = "实时语音识别连接失败，请检查外设语音服务。";
         setVoiceMessage(message);
         notify(message);
         stopVoice(false);
