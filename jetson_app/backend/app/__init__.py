@@ -1,1 +1,0 @@
-"""QSM master application backend."""

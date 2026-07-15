@@ -6,21 +6,28 @@
 
 本仓库包含：
 
-- `zykh_app/`：板端 Perl 后端、Go 原生 HDMI UI、Web 调试页、启动脚本
-- `jetson_app/`：QSM368ZP-WF 核心终端平台应用，包含 FastAPI 后端、React/Vite Kiosk UI、SQLite 主库、ADB/API 网关代理
-- `智药康护-QSM368ZP-WF-项目调试记录.md`：项目调试记录和部署说明
+- `zykh_station_app/`：当前主应用，包含 FastAPI、React/Vite Kiosk、SQLite、QSM 适配器、离线模型部署与设备联调脚本
+- `zykh_app/`：保留的板端 Perl/Go 网关实现和历史硬件调试工具，仅用于板端维护与参考
+- `智药康护-QSM368ZP-WF-项目调试记录.md`：历史硬件调试记录和部署说明
 
 敏感信息不写入仓库。Wi-Fi 密码、AI API Key 等请在板端通过环境变量或 `/userdata` 下的本地文件配置。
 
-当前推荐的新部署形态（对外叙事统一为 QSM368ZP-WF 核心终端平台 + 外设采集与执行控制平台）：
+当前部署形态：
 
 ```text
-QSM368ZP-WF 核心终端平台
-  127.0.0.1:8088  FastAPI + React Kiosk + SQLite 主库
-  127.0.0.1:18080 adb forward 到外设采集与执行控制平台 /api/*
+本机 zykh_station_app
+  127.0.0.1:8000   FastAPI + SQLite
+  127.0.0.1:5173   React/Vite Kiosk
+  127.0.0.1:18080  QSM 主外设网关
+  127.0.0.1:18081  QSM 人脸识别网关
+  127.0.0.1:18082  QSM 麦克风采集网关
+  127.0.0.1:18083  QSM llama.cpp 离线模型
 
-外设采集与执行控制平台
-  127.0.0.1:8080  zykh_app/server.pl 硬件网关
+QSM368ZP-WF
+  8080  摄像头、体征、音频播放和药柜控制
+  8081  人脸特征提取与匹配
+  8082  FF Camera 麦克风 PCM 采集
+  8083  Qwen3.5 GGUF 离线问询
 ```
 
 安全声明：AI 不诊断、不开药、不生成处方，只提供应急辅助问询、药品辅助匹配、风险提示和用药安全核验。中/高/紧急风险必须管理员复核或联系医生/救援人员。
