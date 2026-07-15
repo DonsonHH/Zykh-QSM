@@ -1,6 +1,5 @@
 import React from "react";
 import { HomeHero } from "../components/HomeHero.jsx";
-import { QuickActions } from "../components/QuickActions.jsx";
 
 export function Home({ dashboard, identity, identityStatus, identityMessage, onNavigate, notify }) {
   function handleQuickAction(action) {
@@ -31,8 +30,9 @@ export function Home({ dashboard, identity, identityStatus, identityMessage, onN
         identityStatus={identityStatus}
         identityMessage={identityMessage}
         onNavigate={onNavigate}
+        quickActions={dashboard?.quick_actions || []}
+        onQuickAction={handleQuickAction}
       />
-      <QuickActions actions={dashboard?.quick_actions || []} onSelect={handleQuickAction} />
     </main>
   );
 }

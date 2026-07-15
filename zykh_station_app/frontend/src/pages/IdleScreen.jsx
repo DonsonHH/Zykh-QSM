@@ -1,15 +1,11 @@
 import React from "react";
-import { HeartHandshake, ScanFace, Wifi } from "lucide-react";
+import { HeartHandshake, ScanFace, Signal, SignalLow, Wifi, WifiOff } from "lucide-react";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 import { formatClock, formatDay } from "../utils/time.js";
+import { getNetworkIndicators } from "../utils/network.js";
 
 export function IdleScreen({ now, networkStatus, onWake }) {
-  const online = Boolean(
-    networkStatus?.wifi_connected ||
-      networkStatus?.sim_connected ||
-      networkStatus?.wifi?.connected ||
-      networkStatus?.sim?.connected
-  );
+  const { localMode, wifi, sim } = getNetworkIndicators(networkStatus);
   return (
     <main className="idle-screen" id="main-content" onClick={onWake}>
       <div className="idle-brand">
@@ -18,7 +14,6 @@ export function IdleScreen({ now, networkStatus, onWake }) {
         </span>
         <div>
           <strong>智药康护终端</strong>
-          <p>家庭康护与安全用药服务</p>
         </div>
       </div>
 
@@ -28,15 +23,20 @@ export function IdleScreen({ now, networkStatus, onWake }) {
           <span>{formatDay(now)}</span>
         </div>
         <button type="button" className="idle-wake-button">
-          <StrokeDrawIcon icon={ScanFace} size={58} strokeWidth={2} mode="yoyo" active />
+          <StrokeDrawIcon icon={ScanFace} size={88} strokeWidth={1.9} mode="yoyo" active />
         </button>
         <h1>轻触屏幕开始使用</h1>
-        <p>唤醒后将重新确认本次使用人</p>
       </section>
 
-      <div className={`idle-network ${online ? "online" : "offline"}`}>
-        <Wifi size={22} aria-hidden="true" />
-        <span>{online ? "网络已连接" : "当前使用本地服务"}</span>
+      <div className={`idle-network ${localMode ? "local" : ""}`} role="group" aria-label="网络状态">
+        <span className={`idle-network-item ${wifi.tone}`} aria-label={wifi.label} title={wifi.label}>
+          {wifi.connected ? <Wifi size={24} aria-hidden="true" /> : <WifiOff size={24} aria-hidden="true" />}
+          <b>WiFi</b>
+        </span>
+        <span className={`idle-network-item ${sim.tone}`} aria-label={sim.label} title={sim.label}>
+          {sim.tone === "good" ? <Signal size={24} aria-hidden="true" /> : <SignalLow size={24} aria-hidden="true" />}
+          <b>SIM</b>
+        </span>
       </div>
     </main>
   );

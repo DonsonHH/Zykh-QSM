@@ -226,8 +226,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           <ArrowLeft size={24} aria-hidden="true" />
         </button>
         <div>
-          <p>后台设置</p>
-          <h2>药柜、服务对象、声音与网络状态</h2>
+          <h2>终端设置</h2>
         </div>
       </section>
 
@@ -236,8 +235,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           <header>
             <PackageCheck size={28} aria-hidden="true" />
             <div>
-              <p>药柜维护</p>
-              <h3>药品信息与柜门</h3>
+              <h3>药柜维护</h3>
             </div>
           </header>
 
@@ -298,8 +296,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           <header>
             <UserRound size={28} aria-hidden="true" />
             <div>
-              <p>服务对象</p>
-              <h3>姓名、年龄与病症</h3>
+              <h3>服务对象</h3>
             </div>
           </header>
 
@@ -359,7 +356,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
               disabled={!selectedUser || enrollingFace || deletingUser}
             >
               <ScanFace size={22} aria-hidden="true" />
-              {enrollingFace ? "多角度录入中..." : "多角度录入人脸"}
+              {enrollingFace ? "录入中..." : "录入人脸"}
             </button>
             <button
               className="secondary-action danger-action"
@@ -381,8 +378,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           <header>
             <Volume2 size={28} aria-hidden="true" />
             <div>
-              <p>声音设备</p>
-              <h3>外放与麦克风</h3>
+              <h3>声音设备</h3>
             </div>
           </header>
 
@@ -423,8 +419,7 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
           <header>
             {localNetworkMode ? <WifiOff size={28} aria-hidden="true" /> : <Signal size={28} aria-hidden="true" />}
             <div>
-              <p>网络状态</p>
-              <h3>{localNetworkMode ? "本地化运行" : "外设 SIM 状态"}</h3>
+              <h3>{localNetworkMode ? "本地化运行" : "SIM 网络状态"}</h3>
             </div>
           </header>
 

@@ -143,9 +143,7 @@ a:focus-visible {
 }
 
 .idle-brand strong,
-.idle-brand p,
-.idle-wake-area h1,
-.idle-wake-area p {
+.idle-wake-area h1 {
   margin: 0;
 }
 
@@ -156,17 +154,10 @@ a:focus-visible {
   font-weight: 950;
 }
 
-.idle-brand p {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 16px;
-  font-weight: 800;
-}
-
 .idle-wake-area {
   align-self: center;
   justify-self: center;
-  min-width: 520px;
+  min-width: 440px;
   display: grid;
   justify-items: center;
   text-align: center;
@@ -195,9 +186,9 @@ a:focus-visible {
 
 .idle-wake-button {
   position: relative;
-  width: 132px;
-  height: 132px;
-  min-height: 132px;
+  width: 176px;
+  height: 176px;
+  min-height: 176px;
   display: grid;
   place-items: center;
   border: 1px solid #a8c8f4;
@@ -218,38 +209,49 @@ a:focus-visible {
 }
 
 .idle-wake-area h1 {
-  margin-top: 24px;
+  margin-top: 26px;
   color: var(--text);
-  font-size: 34px;
+  font-size: 36px;
   line-height: 1.1;
   font-weight: 950;
 }
 
-.idle-wake-area p {
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 18px;
-  font-weight: 800;
-}
-
 .idle-network {
   justify-self: end;
-  min-height: 48px;
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(82px, 1fr));
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   border: 1px solid #d6e3f2;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.9);
-  color: #64748b;
-  padding: 8px 14px;
-  font-size: 15px;
-  font-weight: 850;
+  padding: 6px;
 }
 
-.idle-network.online {
-  border-color: #b7e6d8;
+.idle-network-item {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  background: #f2f6fb;
+  color: #64748b;
+}
+
+.idle-network-item.good {
+  background: #effcf7;
   color: #087c68;
+}
+
+.idle-network-item.weak {
+  background: #fff7ed;
+  color: #8a4708;
+}
+
+.idle-network-item b {
+  font-size: 15px;
+  font-weight: 950;
 }
 
 .toast {
@@ -296,8 +298,8 @@ a:focus-visible {
 }
 
 .brand-mark {
-  width: 58px;
-  height: 58px;
+  width: 62px;
+  height: 62px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -315,17 +317,9 @@ a:focus-visible {
 }
 
 .brand-block h1 {
-  font-size: 28px;
+  font-size: 31px;
   line-height: 1.08;
-  font-weight: 850;
-}
-
-.brand-block p {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1.25;
-  white-space: nowrap;
+  font-weight: 900;
 }
 
 .clock-block {
@@ -359,14 +353,14 @@ a:focus-visible {
 .status-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: 142px minmax(260px, 310px) 56px;
+  grid-template-columns: 142px 224px 56px;
   align-items: center;
   gap: 10px;
   justify-self: end;
 }
 
 .top-bar.home-top .status-controls {
-  grid-template-columns: minmax(260px, 310px) 56px;
+  grid-template-columns: 224px 56px;
 }
 
 .network-cluster {
@@ -402,9 +396,9 @@ a:focus-visible {
   min-width: 0;
   min-height: 44px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
-  column-gap: 6px;
+  column-gap: 7px;
   border-radius: 13px;
   background: #fff7ed;
   color: #8a4708;
@@ -421,19 +415,7 @@ a:focus-visible {
   color: #64748b;
 }
 
-.mini-network.local-summary {
-  grid-column: 1 / 3;
-  border: 1px solid #d7e2ee;
-  background: #eef4fa;
-  color: #4b5d73;
-}
-
-.mini-network svg {
-  grid-row: span 2;
-}
-
-.mini-network span,
-.mini-network strong {
+.mini-network span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -441,15 +423,8 @@ a:focus-visible {
 }
 
 .mini-network span {
-  font-size: 12px;
+  font-size: 15px;
   line-height: 1;
-  font-weight: 900;
-}
-
-.mini-network strong {
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1.05;
   font-weight: 950;
 }
 
@@ -566,15 +541,49 @@ a:focus-visible {
 .home-page {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 86px;
-  gap: 16px;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .hero-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.16fr) minmax(420px, 0.84fr);
   gap: 16px;
+}
+
+.home-side-stack {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 112px;
+  gap: 16px;
+}
+
+.home-side-stack .quick-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.home-side-stack .quick-action {
+  height: 112px;
+  min-height: 112px;
+  border-color: #c9ddfa;
+  background: #f1f6ff;
+  padding-inline: 26px;
+}
+
+.home-side-stack .quick-icon {
+  width: 70px;
+  height: 70px;
+  border-radius: 20px;
+}
+
+.home-side-stack .quick-icon svg {
+  width: 42px;
+  height: 42px;
+}
+
+.home-side-stack .quick-action strong {
+  font-size: 28px;
 }
 
 .metric-grid {
@@ -729,7 +738,7 @@ a:focus-visible {
 
 .medicines-main-panel {
   display: grid;
-  grid-template-rows: 64px 1fr 28px;
+  grid-template-rows: 64px minmax(0, 1fr);
   gap: 12px;
   padding: 20px;
 }
@@ -787,13 +796,26 @@ a:focus-visible {
   letter-spacing: 0;
 }
 
-.medicines-heading p,
-.detail-heading p,
 .modal-heading p {
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 16px;
   line-height: 1.2;
+}
+
+.medicines-stock-summary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #cfe0fb;
+  border-radius: 16px;
+  background: #f1f6ff;
+  color: #2457a7;
+  padding: 0 14px;
+  font-size: 17px;
+  line-height: 1;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .scan-button {
@@ -960,7 +982,7 @@ a:focus-visible {
   min-height: 54px;
   display: grid;
   grid-template-columns: 40px 1fr;
-  grid-template-rows: 1fr 18px;
+  grid-template-rows: minmax(0, 1fr);
   align-items: center;
   column-gap: 8px;
   border: 1px solid var(--border);
@@ -987,7 +1009,7 @@ a:focus-visible {
 }
 
 .cabinet-slot-number {
-  grid-row: 1 / 3;
+  grid-row: 1;
   width: 38px;
   height: 38px;
   display: grid;
@@ -1007,31 +1029,21 @@ a:focus-visible {
 
 .cabinet-slot strong {
   min-width: 0;
+  display: -webkit-box;
   overflow: hidden;
   color: var(--text);
-  font-size: 15px;
-  line-height: 1.12;
+  font-size: 16px;
+  line-height: 1.16;
   font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cabinet-slot small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
-  font-weight: 850;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .cabinet-slot.medium,
 .cabinet-slot.small {
   min-height: 45px;
   grid-template-columns: 32px minmax(0, 1fr);
-  grid-template-rows: 1fr 14px;
+  grid-template-rows: minmax(0, 1fr);
   column-gap: 6px;
   padding: 5px 7px;
   place-items: stretch;
@@ -1055,32 +1067,24 @@ a:focus-visible {
 
 .cabinet-slot.medium .cabinet-slot-number,
 .cabinet-slot.small .cabinet-slot-number {
-  width: 30px;
-  height: 30px;
-  grid-row: 1 / 3;
+  width: 32px;
+  height: 32px;
+  grid-row: 1;
   border-radius: 11px;
   font-size: 17px;
 }
 
 .cabinet-slot.medium strong,
 .cabinet-slot.small strong {
-  display: block;
-  font-size: 12px;
-  line-height: 1.05;
-}
-
-.cabinet-slot.medium small,
-.cabinet-slot.small small {
-  display: block;
-  font-size: 11px;
-  line-height: 1;
+  font-size: 13px;
+  line-height: 1.12;
 }
 
 .medicine-card {
   min-width: 0;
   min-height: 72px;
   display: grid;
-  grid-template-columns: 46px 1fr auto;
+  grid-template-columns: 50px minmax(0, 1fr) 58px;
   align-items: center;
   gap: 10px;
   border: 1px solid var(--border);
@@ -1096,14 +1100,44 @@ a:focus-visible {
   background: #eef5ff;
 }
 
-.medicine-box {
-  width: 44px;
-  height: 44px;
+.medicine-type-icon {
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   border-radius: 16px;
   background: #eaf2ff;
   color: var(--primary);
+}
+
+.medicine-type-icon.teal {
+  background: #e9faf5;
+  color: #087c68;
+}
+
+.medicine-type-icon.purple {
+  background: #f3f0ff;
+  color: #6d48c7;
+}
+
+.medicine-type-icon.orange {
+  background: #fff5e8;
+  color: #b65c09;
+}
+
+.medicine-type-icon.cyan {
+  background: #eaf8fb;
+  color: #0f7891;
+}
+
+.medicine-type-icon.rose {
+  background: #fff0f3;
+  color: #be4563;
+}
+
+.medicine-type-icon.detail-icon {
+  width: 50px;
+  height: 50px;
 }
 
 .medicine-card-copy,
@@ -1131,35 +1165,36 @@ a:focus-visible {
 }
 
 .medicine-card-meta {
-  align-items: flex-end;
-  gap: 6px;
-}
-
-.medicine-card-meta b {
-  color: var(--text);
-  font-size: 17px;
-  line-height: 1;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
+  align-items: stretch;
 }
 
 .medicine-card-meta em {
-  min-width: 48px;
-  border-radius: 14px;
+  min-width: 56px;
+  min-height: 50px;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 16px;
   background: white;
   color: var(--primary);
-  padding: 5px 9px;
+  padding: 8px 7px;
   text-align: center;
-  font-size: 13px;
   font-style: normal;
   font-weight: 850;
 }
 
-.medicine-list-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 28px;
+.medicine-card-meta b {
+  font-size: 25px;
+  line-height: 1;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.medicine-card-meta small {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 900;
 }
 
 .medicine-detail-panel {
@@ -1756,15 +1791,6 @@ a:focus-visible {
   padding: 8px 16px;
 }
 
-.settings-header-card p,
-.settings-card header p {
-  margin: 0 0 5px;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1;
-  font-weight: 850;
-}
-
 .settings-header-card h2,
 .settings-card header h3 {
   margin: 0;
@@ -2045,8 +2071,8 @@ a:focus-visible {
 .service-user-actions .secondary-action {
   min-width: 0;
   gap: 5px;
-  padding-inline: 6px;
-  font-size: 14px;
+  padding-inline: 5px;
+  font-size: 15px;
   white-space: nowrap;
 }
 
@@ -3122,18 +3148,11 @@ a:focus-visible {
   color: var(--primary);
 }
 
-.chat-title-row p {
-  margin: 0 0 5px;
-  color: var(--primary);
-  font-size: 15px;
-  font-weight: 900;
-}
-
 .chat-title-row h2 {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.05;
   font-weight: 950;
   text-overflow: ellipsis;
@@ -3327,7 +3346,7 @@ a:focus-visible {
 .inquiry-page.conversation-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 0.9fr) minmax(0, 2.1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 16px;
   justify-content: stretch;
 }
@@ -3335,15 +3354,13 @@ a:focus-visible {
 .inquiry-context-panel {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-rows: 264px minmax(0, 1fr);
-  gap: 14px;
+  display: block;
 }
 
-.inquiry-user-card,
-.inquiry-history-card {
+.inquiry-user-card {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   border: 1px solid var(--border);
   border-radius: 24px;
   background: var(--surface);
@@ -3354,43 +3371,37 @@ a:focus-visible {
 
 .inquiry-user-card {
   display: grid;
-  grid-template-rows: 50px 46px 58px 42px 18px 32px;
-  gap: 8px;
+  grid-template-rows: 56px 72px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
 }
 
 .inquiry-user-card.dynamic {
-  grid-template-rows: 50px 46px 58px 42px 18px 32px;
+  grid-template-rows: 56px 72px minmax(0, 1fr);
 }
 
-.user-identity-status {
-  min-width: 0;
-  border: 1px solid #dce9f7;
-  border-radius: 16px;
-  background: #f8fbff;
-  padding: 8px 12px;
+.user-context-heading {
+  grid-template-columns: 46px minmax(0, 1fr) 42px;
 }
 
-.user-identity-status strong,
-.user-identity-status span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.identity-confirmation-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #f2f6fb;
+  color: #64748b;
 }
 
-.user-identity-status strong {
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1.1;
-  font-weight: 950;
+.identity-confirmation-icon.matched {
+  background: #e9faf4;
+  color: #087c68;
 }
 
-.user-identity-status span {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1;
-  font-weight: 800;
+.identity-confirmation-icon.identifying {
+  background: #eaf2ff;
+  color: var(--primary);
 }
 
 .context-heading {
@@ -3410,19 +3421,11 @@ a:focus-visible {
   padding: 10px;
 }
 
-.context-heading p {
-  margin: 0 0 5px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1;
-  font-weight: 900;
-}
-
 .context-heading h2 {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 25px;
+  font-size: 23px;
   line-height: 1.05;
   font-weight: 950;
   text-overflow: ellipsis;
@@ -3472,6 +3475,14 @@ a:focus-visible {
   padding: 9px 12px;
 }
 
+.user-profile-grid article {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--primary);
+  padding: 12px;
+}
+
 .user-profile-grid span {
   display: block;
   color: var(--muted);
@@ -3481,11 +3492,58 @@ a:focus-visible {
 
 .user-profile-grid strong {
   display: block;
-  margin-top: 5px;
+  min-width: 0;
+  overflow: hidden;
+  margin-top: 0;
   color: var(--text);
   font-size: 18px;
   line-height: 1;
   font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-health-facts {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.user-health-facts article {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #e3edf8;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  color: var(--primary);
+  padding: 11px 13px;
+}
+
+.user-health-facts article:nth-child(2) {
+  color: #b65c09;
+  background: #fff9ef;
+}
+
+.user-health-facts article:nth-child(3) {
+  color: #6d48c7;
+  background: #f8f5ff;
+}
+
+.user-health-facts strong {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 900;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .user-profile-note {
@@ -3666,6 +3724,21 @@ a:focus-visible {
   color: white;
   font-size: 20px;
   box-shadow: 0 10px 20px rgba(37, 99, 235, 0.15);
+  transition: transform 160ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.voice-chat-button.compact.listening {
+  border-color: #087c68;
+  background: #0f9f8f;
+  box-shadow: 0 0 0 6px rgba(15, 159, 143, 0.13), 0 12px 24px rgba(15, 159, 143, 0.2);
+}
+
+.voice-chat-button.compact:active {
+  transform: scale(0.97);
+}
+
+.voice-chat-button.compact.processing {
+  background: #6d48c7;
 }
 
 .chat-voice-bar .chat-voice-status {
@@ -3679,6 +3752,18 @@ a:focus-visible {
   font-size: 17px;
   line-height: 1.2;
   font-weight: 850;
+}
+
+.chat-voice-bar .chat-voice-status.listening {
+  border-color: #a8e3d6;
+  background: #effcf7;
+  color: #087c68;
+}
+
+.chat-voice-bar .chat-voice-status.processing {
+  border-color: #d8ccfa;
+  background: #f7f4ff;
+  color: #5f3bb0;
 }
 
 .chat-bubble.streaming p::after {
@@ -4128,7 +4213,6 @@ a:focus-visible {
   padding: 16px;
 }
 
-.records-panel-heading p,
 .sync-status-card p {
   margin: 0 0 5px;
   color: var(--muted);
@@ -4141,7 +4225,7 @@ a:focus-visible {
 .sync-status-card h2 {
   margin: 0;
   color: var(--text);
-  font-size: 25px;
+  font-size: 26px;
   line-height: 1.05;
   font-weight: 900;
   letter-spacing: 0;
@@ -4151,8 +4235,8 @@ a:focus-visible {
 .recent-records-panel,
 .today-plan-panel {
   display: grid;
-  grid-template-rows: 48px 1fr;
-  gap: 12px;
+  grid-template-rows: 34px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .service-user-list,
@@ -4362,7 +4446,7 @@ a:focus-visible {
 
 .sync-status-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 154px;
+  grid-template-columns: minmax(0, 1fr) 136px;
   grid-template-rows: auto 1fr;
   align-items: center;
   gap: 4px 12px;
@@ -4398,6 +4482,11 @@ a:focus-visible {
   line-height: 1.1;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.sync-status-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sync-status-meta strong {
@@ -4452,18 +4541,18 @@ a:focus-visible {
 
 .vitals-guide-panel {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr) 62px;
+  grid-template-rows: 44px minmax(0, 1fr) 62px;
   gap: 14px;
 }
 
 .vitals-result-panel {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr) 72px;
+  grid-template-rows: 44px minmax(0, 1fr) 72px;
   gap: 10px;
 }
 
 .vitals-result-panel.has-reference {
-  grid-template-rows: 52px minmax(0, 1fr) 62px 72px;
+  grid-template-rows: 44px minmax(0, 1fr) 62px 72px;
 }
 
 .vitals-page-heading,
@@ -4474,26 +4563,28 @@ a:focus-visible {
   gap: 14px;
 }
 
-.vitals-page-heading p,
-.vitals-result-heading p {
-  margin: 0 0 5px;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1;
-  font-weight: 850;
-}
-
 .vitals-page-heading h2,
 .vitals-result-heading h2 {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 28px;
+  font-size: 30px;
   line-height: 1.08;
   font-weight: 900;
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vitals-result-heading > span {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 15px;
+  background: #eef5ff;
+  color: var(--primary);
 }
 
 .vitals-visual-guide {
@@ -4525,7 +4616,7 @@ a:focus-visible {
 
 .vitals-pose-graphic {
   position: relative;
-  min-height: 176px;
+  min-height: 212px;
   display: grid;
   place-items: center;
   border-radius: 22px;
@@ -4567,42 +4658,24 @@ a:focus-visible {
 }
 
 .vitals-pose-label {
-  min-height: 62px;
+  min-height: 54px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   gap: 11px;
   margin-top: 12px;
 }
 
-.vitals-pose-label > div {
-  min-width: 0;
-}
-
-.vitals-pose-label strong,
-.vitals-pose-label > div > span {
-  display: block;
-}
-
 .vitals-pose-label strong {
   color: var(--text);
-  font-size: 21px;
+  font-size: 23px;
   line-height: 1.1;
   font-weight: 900;
 }
 
-.vitals-pose-label > div > span {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.2;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
 .vitals-pose-icon {
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   border-radius: 14px;
@@ -4616,12 +4689,10 @@ a:focus-visible {
 
 .vitals-action-row {
   display: grid;
-  grid-template-columns: 1fr 156px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.vitals-action-row .primary-action,
-.vitals-action-row .secondary-action {
+.vitals-action-row .primary-action {
   min-height: 62px;
 }
 
@@ -4632,28 +4703,26 @@ a:focus-visible {
   gap: 9px;
 }
 
-.vitals-action-row .secondary-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.vitals-primary-action.cancel {
+  background: #c2413b;
+  box-shadow: 0 10px 20px rgba(194, 65, 59, 0.16);
 }
 
 .vitals-result-placeholder {
+  position: relative;
   grid-row: 2 / -1;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(116px, 1fr) auto 58px 8px;
-  align-items: center;
-  gap: 12px;
+  place-items: center;
   overflow: hidden;
-  padding: 8px 4px 2px;
+  padding: 0;
 }
 
 .vitals-result-visual {
   position: relative;
-  width: 154px;
-  height: 132px;
+  width: 300px;
+  height: 300px;
   margin: 0 auto;
   display: grid;
   place-items: center;
@@ -4663,60 +4732,41 @@ a:focus-visible {
 .vitals-result-heart {
   position: relative;
   z-index: 2;
-  width: 82px;
-  height: 82px;
+  width: 170px;
+  height: 170px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   border: 1px solid #dbe8f8;
   background: #ffffff;
   color: var(--primary);
-  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.1);
+  box-shadow: 0 14px 34px rgba(37, 99, 235, 0.12);
 }
 
 .vitals-result-visual.is-measuring .vitals-result-heart {
   animation: vitals-heart-beat var(--motion-cycle-duration) ease-in-out infinite;
 }
 
-.vitals-heart-pulses {
+.vitals-measure-progress {
   position: absolute;
-  z-index: 1;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
+  left: 50%;
+  bottom: 18px;
+  width: min(260px, 72%);
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3edf8;
+  transform: translateX(-50%);
 }
 
-.vitals-heart-pulses i {
-  position: absolute;
-  width: 82px;
-  height: 82px;
-  border-radius: 50%;
-  background: rgba(37, 99, 235, 0.12);
-  opacity: 0;
-  transform: scale(0.96);
-  animation: vitals-heart-echo var(--motion-cycle-duration) cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
-}
-
-.vitals-heart-pulses i:nth-child(2) {
-  animation-delay: var(--motion-phase-duration);
-}
-
-@keyframes vitals-heart-echo {
-  0% {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-
-  12% {
-    opacity: 0.48;
-  }
-
-  58%,
-  100% {
-    opacity: 0;
-    transform: scale(1.58);
-  }
+.vitals-measure-progress i {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #0f9f8f);
+  transform-origin: left center;
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes vitals-heart-beat {
@@ -4741,97 +4791,6 @@ a:focus-visible {
     transform: scale(1.025);
     box-shadow: 0 9px 26px rgba(37, 99, 235, 0.14);
   }
-}
-
-.vitals-placeholder-copy {
-  min-width: 0;
-  text-align: center;
-}
-
-.vitals-placeholder-copy p,
-.vitals-placeholder-copy h3,
-.vitals-placeholder-copy span {
-  margin: 0;
-}
-
-.vitals-placeholder-copy p {
-  color: var(--primary);
-  font-size: 15px;
-  line-height: 1.2;
-  font-weight: 900;
-}
-
-.vitals-placeholder-copy h3 {
-  margin-top: 6px;
-  color: var(--text);
-  font-size: 24px;
-  line-height: 1.15;
-  font-weight: 900;
-  letter-spacing: 0;
-}
-
-.vitals-result-placeholder.measuring .vitals-placeholder-copy h3 {
-  color: var(--primary);
-  font-size: 32px;
-  font-variant-numeric: tabular-nums;
-}
-
-.vitals-placeholder-copy span {
-  display: block;
-  margin-top: 7px;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.25;
-  font-weight: 780;
-}
-
-.vitals-preview-items {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.vitals-preview-items > span {
-  min-width: 0;
-  min-height: 58px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: 14px;
-  background: #f3f7fc;
-  color: #536982;
-  font-size: 13px;
-  line-height: 1;
-  font-weight: 850;
-  white-space: nowrap;
-}
-
-.vitals-preview-items svg {
-  color: #3978c7;
-}
-
-.vitals-result-placeholder.measuring .vitals-preview-items > span {
-  background: #eef5ff;
-  color: #244c85;
-}
-
-.vitals-placeholder-progress {
-  align-self: end;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e2eaf4;
-}
-
-.vitals-placeholder-progress i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--primary);
-  transition: width 350ms ease;
 }
 
 .vitals-metric-grid {
@@ -5052,15 +5011,6 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.scan-heading p,
-.scan-result-heading p {
-  margin: 0 0 5px;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1;
-  font-weight: 850;
 }
 
 .scan-heading h2,
@@ -5385,7 +5335,6 @@ a:focus-visible {
   padding: 14px 20px;
 }
 
-.home-time-panel p,
 .home-time-panel .home-time-date {
   margin: 0;
   color: var(--muted);
@@ -5395,7 +5344,7 @@ a:focus-visible {
 
 .home-time-panel strong {
   display: block;
-  margin: 8px 0;
+  margin: 0 0 10px;
   color: var(--text);
   font-size: 50px;
   line-height: 0.92;
@@ -5404,8 +5353,8 @@ a:focus-visible {
 }
 
 .home-time-panel .home-time-icon {
-  width: 72px;
-  height: 72px;
+  width: 78px;
+  height: 78px;
   display: grid;
   place-items: center;
   justify-self: end;
@@ -5422,9 +5371,24 @@ a:focus-visible {
 .home-task-panel {
   min-height: 0;
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) 68px;
+  gap: 12px;
+}
+
+.medication-summary-card .metric-grid {
+  min-height: 0;
+  margin-top: 0;
+}
+
+.medication-summary-card .metric-grid article {
+  min-height: 0;
+  padding-block: 14px;
+}
+
+.medication-summary-card .next-dose {
+  min-height: 68px;
+  margin-top: 0;
 }
 
 .card-heading.compact {
@@ -5467,12 +5431,38 @@ a:focus-visible {
 }
 
 .card-heading.compact h2 {
-  font-size: 25px;
+  font-size: 27px;
 }
 
 .inquiry-entry-card {
   gap: 18px;
   padding: 22px 26px;
+}
+
+.home-side-stack .inquiry-entry-card {
+  gap: 12px;
+  padding: 18px 22px;
+}
+
+.home-side-stack .inquiry-visual-panel {
+  min-height: 130px;
+  flex: 1 1 auto;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.home-side-stack .inquiry-visual-panel article {
+  gap: 9px;
+  border-radius: 20px;
+}
+
+.home-side-stack .inquiry-visual-panel svg {
+  width: 29px;
+  height: 29px;
+}
+
+.home-side-stack .inquiry-visual-panel span {
+  font-size: 17px;
 }
 
 .inquiry-visual-panel {
@@ -5587,8 +5577,8 @@ a:focus-visible {
 
 .quick-action {
   min-width: 0;
-  height: 78px;
-  min-height: 78px;
+  height: 86px;
+  min-height: 86px;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -5607,8 +5597,8 @@ a:focus-visible {
 }
 
 .quick-icon {
-  width: 50px;
-  height: 50px;
+  width: 58px;
+  height: 58px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -5632,25 +5622,19 @@ a:focus-visible {
 
 .quick-copy {
   min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
-.quick-action strong,
-.quick-action small {
+.quick-action strong {
   display: block;
 }
 
 .quick-action strong {
   color: var(--text);
-  font-size: 23px;
+  font-size: 25px;
   line-height: 1.15;
   font-weight: 900;
-}
-
-.quick-action small {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1.15;
 }
 
 .stat-item {
@@ -5797,6 +5781,14 @@ a:focus-visible {
   color: var(--primary);
 }
 
+.bottom-nav-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -5808,7 +5800,6 @@ a:focus-visible {
   }
 
   .idle-screen,
-  .vitals-heart-pulses i,
   .vitals-result-visual.is-measuring .vitals-result-heart {
     animation: none !important;
   }

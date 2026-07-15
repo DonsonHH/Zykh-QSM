@@ -5,7 +5,6 @@ export function ServiceUserList({ users = [] }) {
   return (
     <section className="records-panel service-users-panel">
       <div className="records-panel-heading">
-        <p>服务对象</p>
         <h2>服务对象</h2>
       </div>
       <div className="service-user-list">

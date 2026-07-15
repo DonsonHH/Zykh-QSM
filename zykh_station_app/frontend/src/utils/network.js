@@ -15,6 +15,39 @@ export function isLocalNetworkMode(networkStatus) {
   );
 }
 
+export function getNetworkIndicators(networkStatus) {
+  const explicitLocalMode = isLocalNetworkMode(networkStatus);
+  const rawWifiConnected = Boolean(networkStatus?.wifi_connected || networkStatus?.wifi?.connected);
+  const rawSimConnected = Boolean(networkStatus?.sim_connected || networkStatus?.sim?.connected);
+  const rawSimPresent = Boolean(networkStatus?.sim_present || networkStatus?.sim?.present || rawSimConnected);
+  const wifiConnected = explicitLocalMode ? false : rawWifiConnected;
+  const simConnected = explicitLocalMode ? false : rawSimConnected;
+  const simPresent = explicitLocalMode ? false : rawSimPresent;
+  const wifiSignal = explicitLocalMode
+    ? "none"
+    : networkStatus?.wifi_signal || networkStatus?.wifi?.signal || (wifiConnected ? "good" : "none");
+  const simSignal = explicitLocalMode
+    ? "none"
+    : networkStatus?.sim_signal || networkStatus?.sim?.signal || (simConnected ? "good" : simPresent ? "weak" : "none");
+  const wifiTone = wifiSignal === "good" ? "good" : wifiConnected ? "weak" : "offline";
+  const simTone = simSignal === "good" ? "good" : simPresent ? "weak" : "offline";
+
+  return {
+    localMode: explicitLocalMode || (!wifiConnected && !simConnected),
+    wifi: {
+      connected: wifiConnected,
+      tone: wifiTone,
+      label: wifiTone === "good" ? "WiFi 网络良好" : wifiTone === "weak" ? "WiFi 信号偏弱" : "WiFi 未连接"
+    },
+    sim: {
+      connected: simConnected,
+      present: simPresent,
+      tone: simTone,
+      label: simTone === "good" ? "SIM 网络良好" : simTone === "weak" ? "SIM 信号偏弱" : "SIM 未连接"
+    }
+  };
+}
+
 export function localNetworkCopy(networkStatus) {
   if (isLocalNetworkMode(networkStatus)) {
     const localModelReady = Boolean(networkStatus?.local_ai?.ready) || networkStatus?.ai_mode === "local_llm";

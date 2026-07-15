@@ -142,7 +142,6 @@ export function App() {
         ) : (
           <>
         <TopBar
-          site={dashboard.site}
           networkStatus={networkStatus}
           now={now}
           page={page}

@@ -39,7 +39,6 @@ export function CabinetSlotMap({ medicines, selectedMedicine, onSelect, notify }
       >
         <span className="cabinet-slot-number">{slot}</span>
         <strong>{medicine?.name || "空仓"}</strong>
-        <small>{medicine ? `${medicine.stock}${medicine.unit}` : "待补货"}</small>
       </button>
     );
   }

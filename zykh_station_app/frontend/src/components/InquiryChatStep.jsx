@@ -41,7 +41,7 @@ function speakLocally(text) {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "zh-CN";
-  utterance.rate = 1.15;
+  utterance.rate = 1.3;
   utterance.pitch = 1;
   window.speechSynthesis.speak(utterance);
   return true;
@@ -192,7 +192,7 @@ export function InquiryChatStep({
     if (!clean) {
       return;
     }
-    speakText(clean, 230, 1.18)
+    speakText(clean, 230, 1.32)
       .then((data) => {
         if (!data.ok) {
           speakLocally(clean);
@@ -425,6 +425,15 @@ export function InquiryChatStep({
     }
   }
 
+  function handleVoicePress() {
+    try {
+      navigator.vibrate?.(listening ? [24, 36, 24] : 36);
+    } catch {
+      // Vibration feedback is optional.
+    }
+    startVoice();
+  }
+
   return (
     <section className="inquiry-chat-step voice-only" aria-label="AI 对话问询">
       <section className="chat-main-panel">
@@ -433,8 +442,7 @@ export function InquiryChatStep({
             <Bot size={26} />
           </span>
           <div>
-            <p>AI 对话问询</p>
-            <h2>{activeProfile?.name ? `${activeProfile.name} · 语音对话` : "先确认身份"}</h2>
+            <h2>{activeProfile?.name ? `AI问询 · ${activeProfile.name}` : "AI问询 · 身份确认"}</h2>
           </div>
           <div className="chat-icon-actions">
             <button type="button" className="chat-speak-button icon-only" onClick={() => playReply(lastAssistantMessage(messages))} aria-label="重播最近回复">
@@ -463,15 +471,23 @@ export function InquiryChatStep({
         </div>
 
         <div className="chat-voice-bar">
-          <button className="voice-chat-button compact" type="button" onClick={startVoice} disabled={sending}>
+          <button
+            className={`voice-chat-button compact ${listening ? "listening" : sending ? "processing" : ""}`}
+            type="button"
+            onClick={handleVoicePress}
+            disabled={sending}
+            aria-pressed={listening}
+          >
             {listening ? (
               <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />
             ) : (
               <Mic size={23} aria-hidden="true" />
             )}
-            {listening ? "结束并发送" : "点击说话并发送"}
+            {sending ? "AI 正在整理" : listening ? "正在听 · 点击发送" : "点击开始说话"}
           </button>
-          <div className="voice-status chat-voice-status">{voiceMessage}</div>
+          <div className={`voice-status chat-voice-status ${listening ? "listening" : sending ? "processing" : ""}`} aria-live="polite">
+            {voiceMessage}
+          </div>
         </div>
       </section>
     </section>

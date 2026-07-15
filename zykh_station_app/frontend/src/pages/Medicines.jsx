@@ -106,11 +106,9 @@ export function Medicines({ notify, focus, onNavigate }) {
     <main className="medicines-page" id="main-content">
       <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""}`}>
         <div className="medicines-heading">
-          <div>
-            <h2>家庭药柜</h2>
-            <p>{loading ? "正在读取药柜" : `${stockedCount}/23 仓有库存`}</p>
-          </div>
+          <h2>家庭药柜</h2>
           <div className="medicines-heading-actions">
+            <span className="medicines-stock-summary">{loading ? "读取中" : `${stockedCount}/23 仓`}</span>
             <div className="medicine-view-toggle" aria-label="药品显示方式">
               <button
                 type="button"
@@ -169,7 +167,6 @@ export function Medicines({ notify, focus, onNavigate }) {
           />
         )}
 
-        {viewMode === "list" ? <p className="medicine-list-note">当前展示 {medicines.length} 个药柜条目。</p> : null}
       </section>
 
       <MedicineDetailPanel medicine={selectedMedicine} onConfirm={openConfirm} />

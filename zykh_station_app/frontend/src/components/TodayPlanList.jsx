@@ -5,8 +5,7 @@ export function TodayPlanList({ plans = [] }) {
   return (
     <section className="records-panel today-plan-panel">
       <div className="records-panel-heading">
-        <p>今日用药计划</p>
-        <h2>计划概览</h2>
+        <h2>今日用药计划</h2>
       </div>
       <div className="today-plan-list">
         {plans.map((plan) => {

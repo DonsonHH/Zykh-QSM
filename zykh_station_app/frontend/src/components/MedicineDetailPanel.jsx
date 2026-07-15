@@ -1,5 +1,6 @@
 import React from "react";
 import { CalendarDays, PackageOpen, ShieldAlert, Tags } from "lucide-react";
+import { MedicineIcon } from "./MedicineIcon.jsx";
 
 export function MedicineDetailPanel({ medicine, onConfirm }) {
   if (!medicine) {
@@ -14,11 +15,8 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
   return (
     <aside className="medicine-detail-panel">
       <div className="detail-heading">
-        <span className="detail-icon" aria-hidden="true">
-          <PackageOpen size={34} strokeWidth={2.1} />
-        </span>
+        <MedicineIcon medicine={medicine} size={34} className="detail-icon" />
         <div>
-          <p>药品信息</p>
           <h2>{medicine.name}</h2>
         </div>
       </div>

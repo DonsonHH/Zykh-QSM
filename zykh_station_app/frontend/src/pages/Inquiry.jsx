@@ -1,7 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { HeartPulse, History, UserRound } from "lucide-react";
+import {
+  BadgeCheck,
+  CakeSlice,
+  CircleHelp,
+  HeartPulse,
+  House,
+  NotebookText,
+  ScanFace,
+  ShieldAlert,
+  UserRound
+} from "lucide-react";
 import { openCabinet } from "../api/dispense.js";
-import { evaluateInquiry, loadInquiryRecords } from "../api/inquiry.js";
+import { evaluateInquiry } from "../api/inquiry.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
@@ -43,58 +53,6 @@ function normalizeUser(user) {
   };
 }
 
-function inferHistoryPerson(record) {
-  const text = `${record.symptoms_summary || ""} ${record.description || ""} ${record.title || ""}`;
-  const matched = text.match(/张三|李四|王五/);
-  return matched?.[0] || "家庭成员";
-}
-
-function historyTitle(record) {
-  const text = record.symptoms_summary || record.description || record.title || "";
-  if (/中暑|头晕|头昏/.test(text)) {
-    return "中暑头晕问询";
-  }
-  if (/发热|头痛/.test(text)) {
-    return "发热头痛问询";
-  }
-  if (/咳嗽|流涕|感冒/.test(text)) {
-    return "咳嗽流涕问询";
-  }
-  if (/腹泻|胃痛|肠胃/.test(text)) {
-    return "肠胃不适问询";
-  }
-  if (/过敏|瘙痒/.test(text)) {
-    return "皮肤过敏问询";
-  }
-  const compact = text.replace(/\s+/g, "").slice(0, 10);
-  return compact ? `${compact}问询` : "健康问询";
-}
-
-function formatHistoryTime(value) {
-  if (!value || value === "--:--") {
-    return "--:--";
-  }
-  const date = new Date(value.replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-function summarizeRecord(record) {
-  return {
-    id: record.inquiry_id || record.id,
-    person: inferHistoryPerson(record),
-    title: historyTitle(record),
-    time: record.created_at || record.time || "--:--",
-    summary: record.symptoms_summary || record.description || "可继续补充当前症状变化。",
-    seed: [
-      { role: "user", content: record.symptoms_summary || record.description || "" },
-      { role: "assistant", content: "已打开历史问询。请继续说出现在的症状变化。" }
-    ].filter((message) => message.content)
-  };
-}
-
 export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   const initialDraft = readDraft();
   const [step, setStep] = useState(initialDraft?.step || "start");
@@ -102,16 +60,13 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
   const [result, setResult] = useState(null);
   const [blockedReason, setBlockedReason] = useState("");
   const [serviceUsers, setServiceUsers] = useState([]);
-  const [historyItems, setHistoryItems] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(initialDraft?.selectedUserId || "");
-  const [selectedHistoryId, setSelectedHistoryId] = useState("");
   const [chatSessionId, setChatSessionId] = useState(0);
   const [pendingCabinetAction, setPendingCabinetAction] = useState(null);
   const [cabinetCountdown, setCabinetCountdown] = useState(0);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
-    message: faceIdentityMessage,
     identify: identifyFace,
     clear: clearFaceIdentity
   } = useFaceIdentity();
@@ -120,16 +75,15 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)),
     [selectedUserId, serviceUsers]
   );
-  const selectedHistory = useMemo(
-    () => historyItems.find((item) => item.id === selectedHistoryId) || null,
-    [historyItems, selectedHistoryId]
-  );
+  const identityPresentation = selectedUser
+    ? { icon: BadgeCheck, tone: "matched", label: `已确认使用人：${selectedUser.name}` }
+    : faceIdentityStatus === "identifying"
+      ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
+      : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
+  const IdentityIcon = identityPresentation.icon;
 
   useEffect(() => {
     refreshUsers();
-    loadInquiryRecords()
-      .then((data) => setHistoryItems((data.records || []).map(summarizeRecord).slice(0, 6)))
-      .catch(() => setHistoryItems([]));
   }, []);
 
   useEffect(() => {
@@ -296,7 +250,6 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
     setPendingCabinetAction(null);
     setCabinetCountdown(0);
     setSelectedUserId("");
-    setSelectedHistoryId("");
     setChatSessionId((value) => value + 1);
     clearFaceIdentity();
     try {
@@ -311,76 +264,46 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
 
   return (
     <main className="inquiry-page conversation-layout" id="main-content">
-      <aside className="inquiry-context-panel" aria-label="使用人和问询记录">
+      <aside className="inquiry-context-panel" aria-label="使用人信息">
         <section className="inquiry-user-card dynamic">
-          <div className="context-heading">
+          <div className="context-heading user-context-heading">
             <UserRound size={26} aria-hidden="true" />
             <div>
-              <p>当前使用人</p>
-              <h2>{selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
+              <h2>使用人 · {selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
             </div>
-          </div>
-
-          <div className="user-identity-status">
-            <strong>{selectedUser ? "已通过人脸确认" : faceIdentityMessage}</strong>
-            <span>{selectedUser ? "AI 将结合基础信息继续问询" : "请正对摄像头；新服务对象请先由管理员建档"}</span>
+            <span
+              className={`identity-confirmation-icon ${identityPresentation.tone}`}
+              role="img"
+              aria-label={identityPresentation.label}
+              title={identityPresentation.label}
+            >
+              <IdentityIcon size={24} aria-hidden="true" />
+            </span>
           </div>
 
           <div className="user-profile-grid">
-            <article>
-              <span>年龄</span>
+            <article aria-label="年龄">
+              <CakeSlice size={22} aria-hidden="true" />
               <strong>{selectedUser?.age ? `${selectedUser.age}岁` : "待补充"}</strong>
             </article>
-            <article>
-              <span>身份</span>
+            <article aria-label="家庭身份">
+              <House size={22} aria-hidden="true" />
               <strong>{selectedUser?.role || "待确认"}</strong>
             </article>
           </div>
-          <div className="user-profile-note">
-            <HeartPulse size={20} aria-hidden="true" />
-            <p>{selectedUser?.conditions || "AI 会继续询问基础病和过敏禁忌。"}</p>
-          </div>
-          <p className="user-profile-muted">过敏/禁忌：{selectedUser?.allergies || "待补充"}</p>
-          <p className="user-profile-muted">{selectedUser?.note || "请通过语音补充近期症状、已用药和病例信息。"}</p>
-        </section>
-
-        <section className="inquiry-history-card">
-          <div className="context-heading compact">
-            <History size={24} aria-hidden="true" />
-            <div>
-              <p>历史记录</p>
-              <h2>最近问询</h2>
-            </div>
-          </div>
-          <div className="history-list">
-            {historyItems.length ? (
-              historyItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={item.id === selectedHistoryId ? "active" : ""}
-                  onClick={() => {
-                    setSelectedHistoryId(item.id);
-                    setStep("start");
-                    setResult(null);
-                    setChatSessionId((value) => value + 1);
-                    try {
-                      window.sessionStorage.removeItem("zykh-inquiry-chat-draft");
-                      window.sessionStorage.removeItem("zykh-inquiry-awaiting-vitals");
-                    } catch {
-                      // sessionStorage is optional.
-                    }
-                  }}
-                >
-                  <span>
-                    {item.person} · {formatHistoryTime(item.time)}
-                  </span>
-                  <strong>{item.title}</strong>
-                </button>
-              ))
-            ) : (
-              <p className="empty-history">暂无历史问询。开始语音问询后会在这里保留记录。</p>
-            )}
+          <div className="user-health-facts">
+            <article aria-label="基础病信息">
+              <HeartPulse size={23} aria-hidden="true" />
+              <strong>{selectedUser?.conditions || "基础病待补充"}</strong>
+            </article>
+            <article aria-label="过敏和禁忌信息">
+              <ShieldAlert size={23} aria-hidden="true" />
+              <strong>{selectedUser?.allergies || "过敏禁忌待补充"}</strong>
+            </article>
+            <article aria-label="病例备注">
+              <NotebookText size={23} aria-hidden="true" />
+              <strong>{selectedUser?.note || "通过语音继续补充"}</strong>
+            </article>
           </div>
         </section>
       </aside>
@@ -388,13 +311,12 @@ export function Inquiry({ notify, onViewCandidates, onNavigate }) {
       <section className="inquiry-flow-card chat-only" aria-label="AI 应急问询流程">
         {step === "start" ? (
           <InquiryChatStep
-            key={`${selectedHistory?.id || "new"}-${chatSessionId}`}
+            key={`new-${chatSessionId}`}
             notify={notify}
             onStructuredAnalyze={analyzeChatTranscript}
             onOpenVitals={() => onNavigate("vitals", { returnTo: "inquiry" })}
             onDemoRecommendation={handleDemoRecommendation}
             profile={selectedUser}
-            history={selectedHistory}
           />
         ) : step === "analyzing" ? (
           <InquiryAnalyzingStep />

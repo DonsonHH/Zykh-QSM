@@ -9,7 +9,6 @@ export function InquiryEntryCard({ inquiry, onStart }) {
           <Bot size={34} strokeWidth={2.1} />
         </span>
         <div>
-          <p className="eyebrow">应急问询</p>
           <h2>{inquiry.title || "AI应急问询"}</h2>
         </div>
       </div>

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
+  "components/BottomNav.jsx",
   "components/InquiryChatStep.jsx",
   "components/TopBar.jsx",
   "pages/IdleScreen.jsx",
@@ -55,6 +56,10 @@ assert.match(component, /event\.isPrimary === false/, "secondary pointer events 
 const topBar = await readFile(`${sourceRoot}/components/TopBar.jsx`, "utf8");
 assert.match(topBar, /<StrokeDrawIcon[^>]*replayOnPointer/, "brand logo does not replay after a screen touch");
 
+const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
+assert.match(bottomNav, /mode="once"/, "bottom navigation icon motion is not single-shot");
+assert.match(bottomNav, /token:\s*current\.token \+ 1/, "repeated taps cannot replay bottom navigation motion");
+
 for (const file of allowedDrawFiles) {
   const content = await readFile(`${sourceRoot}/${file}`, "utf8");
   assert.doesNotMatch(content, /<StrokeDrawIcon[^>]*(?:duration|stagger|hold)=/, `${file} overrides the shared timing`);
@@ -67,8 +72,9 @@ assert.match(styles, /prefers-reduced-motion:\s*reduce/, "reduced motion fallbac
 const appStyles = await readFile(`${sourceRoot}/styles/app.css`, "utf8");
 assert.match(appStyles, /--motion-phase-duration:\s*1600ms/, "CSS motion phase is not synchronized");
 assert.match(appStyles, /--motion-cycle-duration:\s*3200ms/, "CSS motion cycle is not synchronized");
-assert.match(appStyles, /\.vitals-heart-pulses/, "vitals pulse feedback is missing");
-assert.match(appStyles, /@keyframes vitals-heart-echo/, "vitals pulse feedback does not animate");
+assert.match(appStyles, /\.vitals-measure-progress/, "vitals progress feedback is missing");
+assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does not advance from left to right");
+assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
 assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating vitals loader is still present");
 
 const packageJson = JSON.parse(await readFile(`${frontendRoot}package.json`, "utf8"));

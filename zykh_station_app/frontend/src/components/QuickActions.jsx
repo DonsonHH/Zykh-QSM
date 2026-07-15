@@ -21,11 +21,10 @@ export function QuickActions({ actions, onSelect }) {
             onClick={() => onSelect(action)}
           >
             <span className="quick-icon" aria-hidden="true">
-              <Icon size={30} strokeWidth={2.1} />
+              <Icon size={36} strokeWidth={2.05} />
             </span>
             <span className="quick-copy">
               <strong>{action.title}</strong>
-              <small>{action.subtitle}</small>
             </span>
           </button>
         );

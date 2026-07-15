@@ -153,10 +153,7 @@ export function Scan({ notify, onNavigate }) {
           <button className="icon-action" type="button" onClick={() => onNavigate("home")} aria-label="返回首页">
             <ArrowLeft size={24} aria-hidden="true" />
           </button>
-          <div>
-            <p>扫码识别</p>
-            <h2>拍照 / 条码核验</h2>
-          </div>
+          <h2>扫码核验</h2>
         </div>
 
         <div className={`camera-stage live ${cameraStatus === "unavailable" ? "unavailable" : ""}`}>
@@ -205,10 +202,7 @@ export function Scan({ notify, onNavigate }) {
           <span aria-hidden="true">
             <BadgeCheck size={34} />
           </span>
-          <div>
-            <p>识别结果</p>
-            <h2>{result ? result.name : "等待核验"}</h2>
-          </div>
+          <h2>{result ? result.name : "识别结果"}</h2>
         </div>
 
         {result ? (

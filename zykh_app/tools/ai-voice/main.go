@@ -188,7 +188,7 @@ func runTTS(args []string) error {
 	output := fs.String("output", "", "output wav")
 	model := fs.String("model", "qwen3-tts-instruct-flash-realtime", "tts model")
 	voice := fs.String("voice", "Cherry", "voice")
-	instructions := fs.String("instructions", "面向老人，语速稍慢，语气温和清晰。", "voice instructions")
+	instructions := fs.String("instructions", "面向老人，语速自然偏快，停顿简短，语气温和清晰。", "voice instructions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

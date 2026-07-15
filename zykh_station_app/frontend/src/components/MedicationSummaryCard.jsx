@@ -14,7 +14,6 @@ export function MedicationSummaryCard({ medication, identity, identityStatus, id
     <section className="card task-card medication-summary-card">
       <div className="home-time-panel">
         <div>
-          <p>当前时间</p>
           <strong>{formatClock(now)}</strong>
           <span className="home-time-date">{formatDay(now)}</span>
         </div>
@@ -24,19 +23,18 @@ export function MedicationSummaryCard({ medication, identity, identityStatus, id
       </div>
 
       <div className="home-task-panel">
-          <div className="card-heading compact">
+        <div className="card-heading compact">
           <span className="card-icon blue" aria-hidden="true">
             <CalendarClock size={30} strokeWidth={2.1} />
           </span>
-            <div>
-              <p className="eyebrow">今日任务</p>
-              <h2>今日用药</h2>
-            </div>
-            <span className={`home-current-user ${identityStatus}`} title={identityMessage}>
-              <ScanFace size={18} aria-hidden="true" />
-              {identity?.name || (identityStatus === "identifying" ? "确认中" : "未确认")}
-            </span>
+          <div>
+            <h2>今日用药</h2>
           </div>
+          <span className={`home-current-user ${identityStatus}`} title={identityMessage}>
+            <ScanFace size={18} aria-hidden="true" />
+            {identity?.name || (identityStatus === "identifying" ? "确认中" : "未确认")}
+          </span>
+        </div>
 
         <div className="metric-grid" aria-label="今日用药摘要">
           <article>

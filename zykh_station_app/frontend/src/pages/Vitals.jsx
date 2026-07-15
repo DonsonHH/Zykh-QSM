@@ -6,8 +6,10 @@ import {
   Gauge,
   HeartPulse,
   MoveVertical,
+  RotateCcw,
   ScanFace,
   ShieldCheck,
+  Square,
   Thermometer,
   Waves,
   Wind
@@ -17,20 +19,17 @@ import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const measurementSeconds = 18;
 
-export function Vitals({ notify, onNavigate, returnPage = "home" }) {
+export function Vitals({ onNavigate, returnPage = "home" }) {
   const [phase, setPhase] = useState("idle");
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [countdown, setCountdown] = useState(measurementSeconds);
   const requestIdRef = useRef(0);
 
-  const returnLabel = returnPage === "inquiry" ? "返回问询" : "返回首页";
   const status = useMemo(() => describeVitals(result, errorMessage, phase), [errorMessage, phase, result]);
   const auxiliaryMetrics = useMemo(() => buildAuxiliaryMetrics(result), [result]);
   const hasFingerTemperature = hasReading(result?.body_temperature);
-  const elapsedSeconds = measurementSeconds - countdown;
-  const progressPercent =
-    phase === "done" ? 100 : phase === "measuring" ? Math.min(100, Math.round((elapsedSeconds / measurementSeconds) * 100)) : 0;
+  const coreComplete = hasCoreVitals(result);
 
   useEffect(() => {
     if (phase !== "measuring") {
@@ -59,11 +58,9 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
         if (data.ok === false || data.status === "unavailable") {
           const message = data.error_message || "体征设备暂不可用，可稍后重试。";
           setErrorMessage(message);
-          notify(message);
           return;
         }
         if (!hasCoreVitals(data)) {
-          notify(missingCoreVitalsMessage(data));
           return;
         }
         try {
@@ -71,7 +68,6 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
         } catch {
           // sessionStorage is optional.
         }
-        notify("体征测量已完成");
       })
       .catch((error) => {
         if (requestId !== requestIdRef.current) {
@@ -80,25 +76,49 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
         const message = error.message || "体征设备暂不可用，可稍后重试。";
         setErrorMessage(message);
         setPhase("done");
-        notify(message);
       });
+  }
+
+  function handleCancel() {
+    requestIdRef.current += 1;
+    setPhase("idle");
+    setCountdown(measurementSeconds);
+    setResult(null);
+    setErrorMessage("");
   }
 
   function handleBack() {
     onNavigate(returnPage === "inquiry" ? "inquiry" : "home");
   }
 
+  function handlePrimaryAction() {
+    if (phase === "measuring") {
+      handleCancel();
+      return;
+    }
+    if (phase === "done" && coreComplete) {
+      handleBack();
+      return;
+    }
+    handleMeasure();
+  }
+
+  const actionLabel =
+    phase === "measuring"
+      ? `取消测量 · ${countdown}秒`
+      : phase === "done" && coreComplete
+        ? returnPage === "inquiry"
+          ? "返回问询"
+          : "返回上一页"
+        : phase === "done"
+          ? "重新测量"
+          : "开始测量";
+
   return (
     <main className="vitals-page" id="main-content">
       <section className="vitals-guide-panel">
         <div className="vitals-page-heading">
-          <button className="icon-action" type="button" onClick={handleBack} aria-label={returnLabel}>
-            <ArrowLeft size={24} aria-hidden="true" />
-          </button>
-          <div>
-            <p>身体状态</p>
-            <h2>{phase === "measuring" ? "正在测量" : result ? "测量结果" : "一键测量"}</h2>
-          </div>
+          <h2>{phase === "measuring" ? "正在测量" : result ? "测量结果" : "身体状态测量"}</h2>
         </div>
 
         <div className={`vitals-visual-guide ${phase}`}>
@@ -119,10 +139,7 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
               <span className="vitals-pose-icon forehead" aria-hidden="true">
                 <Thermometer size={24} />
               </span>
-              <div>
-                <strong>额温</strong>
-                <span>屏幕上方 · 约20cm</span>
-              </div>
+              <strong>额温</strong>
             </div>
           </article>
 
@@ -138,21 +155,27 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
               <span className="vitals-pose-icon fingertip" aria-hidden="true">
                 <HeartPulse size={24} />
               </span>
-              <div>
-                <strong>心率 · 血氧</strong>
-                <span>右前方 · 指尖感应区</span>
-              </div>
+              <strong>心率 · 血氧</strong>
             </div>
           </article>
         </div>
 
         <div className="vitals-action-row">
-          <button className="primary-action" type="button" onClick={handleMeasure} disabled={phase === "measuring"}>
-            <Activity size={24} aria-hidden="true" />
-            <span>{phase === "measuring" ? `正在测量 · ${countdown}秒` : result ? "重新测量" : "开始测量"}</span>
-          </button>
-          <button className="secondary-action compact" type="button" onClick={handleBack}>
-            {returnLabel}
+          <button
+            className={`primary-action vitals-primary-action ${phase === "measuring" ? "cancel" : ""}`}
+            type="button"
+            onClick={handlePrimaryAction}
+          >
+            {phase === "measuring" ? (
+              <Square size={22} fill="currentColor" aria-hidden="true" />
+            ) : phase === "done" && coreComplete ? (
+              <ArrowLeft size={24} aria-hidden="true" />
+            ) : phase === "done" ? (
+              <RotateCcw size={24} aria-hidden="true" />
+            ) : (
+              <Activity size={24} aria-hidden="true" />
+            )}
+            <span>{actionLabel}</span>
           </button>
         </div>
       </section>
@@ -165,10 +188,7 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
           <span aria-hidden="true">
             <Thermometer size={34} />
           </span>
-          <div>
-            <p>实时结果</p>
-            <h2 aria-live="polite">{status.title}</h2>
-          </div>
+          <h2 aria-live="polite">{status.title}</h2>
         </div>
 
         {result ? (
@@ -221,56 +241,38 @@ export function Vitals({ notify, onNavigate, returnPage = "home" }) {
               </span>
               <div>
                 <strong>{status.summary}</strong>
-                <p>{status.detail}</p>
+                {status.tone === "warn" ? <p>{status.detail}</p> : null}
               </div>
             </div>
           </>
         ) : (
-          <ResultPlaceholder phase={phase} countdown={countdown} progressPercent={progressPercent} />
+          <ResultPlaceholder phase={phase} countdown={countdown} />
         )}
       </section>
     </main>
   );
 }
 
-function ResultPlaceholder({ phase, countdown, progressPercent }) {
+function ResultPlaceholder({ phase, countdown }) {
   const measuring = phase === "measuring";
-  const previewItems = [
-    { label: "心率", icon: HeartPulse },
-    { label: "血氧", icon: Activity },
-    { label: "体温", icon: Thermometer },
-    { label: "身体参考", icon: Waves }
-  ];
+  const progress = Math.min(1, Math.max(0, (measurementSeconds - countdown) / measurementSeconds));
 
   return (
-    <div className={`vitals-result-placeholder ${measuring ? "measuring" : "idle"}`}>
+    <div
+      className={`vitals-result-placeholder ${measuring ? "measuring" : "idle"}`}
+      role="status"
+      aria-label={measuring ? "体征数据采集中" : "等待开始体征测量"}
+    >
       <div className={`vitals-result-visual ${measuring ? "is-measuring" : ""}`} aria-hidden="true">
-        {measuring ? (
-          <span className="vitals-heart-pulses">
-            <i />
-            <i />
-          </span>
-        ) : null}
         <span className="vitals-result-heart">
-          <HeartPulse size={54} strokeWidth={1.9} />
+          <HeartPulse size={104} strokeWidth={1.75} />
         </span>
       </div>
-      <div className="vitals-placeholder-copy">
-        <p>{measuring ? "数据采集中" : "本次测量"}</p>
-        <h3>{measuring ? `${countdown} 秒` : "心率、血氧与体温"}</h3>
-        <span>{measuring ? "读数稳定后自动完成" : "点击左侧开始测量"}</span>
-      </div>
-      <div className="vitals-preview-items" aria-label="可测量项目">
-        {previewItems.map(({ label, icon: Icon }) => (
-          <span key={label}>
-            <Icon size={20} aria-hidden="true" />
-            {label}
-          </span>
-        ))}
-      </div>
-      <div className="vitals-placeholder-progress" aria-hidden="true">
-        <i style={{ width: `${measuring ? progressPercent : 0}%` }} />
-      </div>
+      {measuring ? (
+        <span className="vitals-measure-progress" aria-hidden="true">
+          <i style={{ transform: `scaleX(${progress})` }} />
+        </span>
+      ) : null}
     </div>
   );
 }

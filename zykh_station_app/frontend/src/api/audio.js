@@ -8,7 +8,7 @@ export function readSpeech(duration = 4) {
   return apiPost("/api/audio/asr", { duration });
 }
 
-export function speakText(text, volume, speed = 1.18) {
+export function speakText(text, volume, speed = 1.32) {
   return apiPost("/api/audio/speak", { text, volume, speed });
 }
 

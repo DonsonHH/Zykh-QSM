@@ -1420,8 +1420,8 @@ sub speak_text {
     release_audio_playback_device();
     $text = substr($text, 0, int($ENV{TTS_MAX_CHARS} || 240));
     my $vol = speaker_volume($p->{volume});
-    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.18;
-    $tts_speed = 1.18 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
+    my $tts_speed = $p->{speed} || $ENV{TTS_SPEED} || 1.32;
+    $tts_speed = 1.32 unless $tts_speed =~ /^\d+(?:\.\d+)?$/;
     $tts_speed = 0.75 if $tts_speed < 0.75;
     $tts_speed = 1.45 if $tts_speed > 1.45;
     my $play = sub {
@@ -1445,6 +1445,7 @@ sub speak_text {
                ' --output ' . shell_quote($out) .
                ' --model ' . shell_quote($ENV{TTS_MODEL} || 'qwen3-tts-instruct-flash-realtime') .
                ' --voice ' . shell_quote($ENV{TTS_VOICE} || 'Cherry') .
+               ' --instructions ' . shell_quote($ENV{TTS_INSTRUCTIONS} || '面向老人，语速自然偏快，停顿简短，语气温和清晰。') .
                ' && ' . $play->($out);
         $mode = 'qwen-tts';
     } elsif ($ENV{TTS_CMD}) {
