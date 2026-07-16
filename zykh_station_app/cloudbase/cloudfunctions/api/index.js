@@ -2,6 +2,7 @@ const cloud = require("wx-server-sdk");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
+const schemaRevision = "2.1";
 
 const collections = {
   devices: "devices",
@@ -112,6 +113,17 @@ async function setDocument(collection, id, data) {
   await db.collection(collection).doc(id).set({ data: cleanData(data) });
 }
 
+async function listAllDeviceRows(collection, deviceId, maximum = 2000) {
+  const rows = [];
+  for (let offset = 0; offset < maximum; offset += 100) {
+    const result = await db.collection(collection).where({ deviceId }).orderBy("_id", "asc").skip(offset).limit(100).get();
+    const batch = result.data || [];
+    rows.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return rows;
+}
+
 async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
   const ids = [];
   for (const row of rows || []) {
@@ -119,9 +131,9 @@ async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
     ids.push(id);
     await setDocument(collection, id, Object.assign(cleanData(row), { deviceId, syncOwner: "zykh_station_app", updatedAt: nowText() }));
   }
-  const existing = await db.collection(collection).where({ deviceId }).limit(100).get();
+  const existing = await listAllDeviceRows(collection, deviceId);
   const keep = new Set(ids);
-  await Promise.all((existing.data || []).filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id)).map(item => db.collection(collection).doc(item._id).remove()));
+  await Promise.all(existing.filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id)).map(item => db.collection(collection).doc(item._id).remove()));
   return ids.length;
 }
 
@@ -205,8 +217,8 @@ async function upsertSnapshotBatch(data) {
 async function finalizeSnapshot(data) {
   const [collection] = snapshotKind(data.kind, data.deviceId);
   const keep = new Set(data.ids || []);
-  const existing = await db.collection(collection).where({ deviceId: data.deviceId }).limit(100).get();
-  const stale = (existing.data || []).filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id));
+  const existing = await listAllDeviceRows(collection, data.deviceId);
+  const stale = existing.filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id));
   await Promise.all(stale.map(item => db.collection(collection).doc(item._id).remove()));
   if (data.kind === "records") await cleanupLegacyRecords(data.deviceId);
   return { kind: data.kind, removed: stale.length };
@@ -214,8 +226,8 @@ async function finalizeSnapshot(data) {
 
 async function cleanupLegacyRecords(deviceId) {
   const legacyTypes = new Set(["SERVICE_USER", "TODAY_PLAN", "INQUIRY"]);
-  const result = await db.collection(collections.records).where({ deviceId }).limit(100).get();
-  const legacy = (result.data || []).filter(item => legacyTypes.has(item.type) && !item.syncOwner);
+  const records = await listAllDeviceRows(collections.records, deviceId);
+  const legacy = records.filter(item => legacyTypes.has(item.type) && !item.syncOwner);
   await Promise.all(legacy.map(item => db.collection(collections.records).doc(item._id).remove()));
   return legacy.length;
 }
@@ -299,10 +311,10 @@ async function createCommand(data, wxContext) {
   return Object.assign({ _id: result._id }, row);
 }
 
-async function handleAction(payload, wxContext) {
+async function handleAction(payload, wxContext, isHttp = false) {
   const action = payload.action;
   const data = payload.data || {};
-  if (action === "PING") return { ok: true, time: nowText(), schemaVersion: 2, collections };
+  if (action === "PING") return { ok: true, time: nowText(), schemaVersion: 2, schemaRevision, collections };
   if (boardActions.has(action)) {
     const error = validateDevice(data);
     if (error) return error;
@@ -320,7 +332,10 @@ async function handleAction(payload, wxContext) {
     case "FINALIZE_SNAPSHOT": return finalizeSnapshot(data);
     case "PULL_COMMANDS": return pullCommands(data);
     case "ACK_COMMAND": return ackCommand(data);
-    case "CREATE_COMMAND": return createCommand(data, wxContext);
+    case "CREATE_COMMAND": {
+      if (isHttp) throw new Error("miniprogram function invocation required");
+      return createCommand(data, wxContext);
+    }
     case "GET_DEVICE": {
       try { return (await db.collection(collections.devices).doc(data.deviceId).get()).data || null; } catch (error) { return null; }
     }
@@ -341,7 +356,7 @@ exports.main = async event => {
   const parsed = parseEvent(event);
   if (parsed.isHttp && event.httpMethod === "OPTIONS") return httpResult({ ok: true });
   try {
-    const result = await handleAction(parsed.payload, cloud.getWXContext());
+    const result = await handleAction(parsed.payload, cloud.getWXContext(), parsed.isHttp);
     return parsed.isHttp ? httpResult(result) : result;
   } catch (error) {
     const result = { ok: false, error: error && error.message ? error.message : String(error) };

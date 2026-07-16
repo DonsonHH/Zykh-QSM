@@ -31,10 +31,14 @@ class FakeCloudSyncWorker(CloudSyncWorker):
 
 
 class FakeV2CloudSyncWorker(FakeCloudSyncWorker):
+    def __init__(self, revision: str = "2.1") -> None:
+        super().__init__()
+        self.revision = revision
+
     def _call(self, action: str, data: dict[str, object]):
         self.calls.append((action, data))
         if action == "PING":
-            return {"ok": True, "schemaVersion": 2}
+            return {"ok": True, "schemaVersion": 2, "schemaRevision": self.revision}
         if action == "PULL_COMMANDS":
             return []
         if action == "UPSERT_SNAPSHOT_BATCH":
@@ -106,6 +110,16 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(set(finalized), {"medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"})
         self.assertTrue(all(len(payload["rows"]) <= 20 for payload in batches))
         self.assertTrue(all(len(__import__("json").dumps(payload, ensure_ascii=False).encode("utf-8")) < 60_000 for payload in batches))
+
+    def test_schema_revision_change_forces_full_snapshot_resync(self) -> None:
+        first = FakeV2CloudSyncWorker("2.1")
+        first.run_once()
+        second = FakeV2CloudSyncWorker("2.2")
+
+        count, _ = second.run_once()
+
+        self.assertGreater(count, 0)
+        self.assertTrue(any(action == "UPSERT_SNAPSHOT_BATCH" for action, _ in second.calls))
 
     def test_ack_failure_never_reexecutes_completed_hardware_command(self) -> None:
         worker = AckFailureWorker()

@@ -41,6 +41,7 @@ class CloudSyncWorker:
         self._state_lock = threading.Lock()
         self._last_snapshot_hash = ""
         self._cloud_schema_version: int | None = None
+        self._cloud_schema_revision = ""
         self._cloud_schema_checked_at = 0.0
         self._connected = False
         self._last_error = ""
@@ -104,7 +105,9 @@ class CloudSyncWorker:
 
             encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             schema_version = self._detect_schema_version()
-            snapshot_hash = hashlib.sha256(f"{schema_version}:{encoded}".encode("utf-8")).hexdigest()
+            snapshot_hash = hashlib.sha256(
+                f"{schema_version}:{self._cloud_schema_revision}:{encoded}".encode("utf-8")
+            ).hexdigest()
             synced_count = 0
             if not self._last_snapshot_hash:
                 self._last_snapshot_hash = db.get_setting("cloud_snapshot_hash", "")
@@ -301,6 +304,7 @@ class CloudSyncWorker:
         if self._cloud_schema_version is None or now - self._cloud_schema_checked_at >= 30:
             ping = self._call("PING", {})
             self._cloud_schema_version = int(ping.get("schemaVersion") or 1) if isinstance(ping, dict) else 1
+            self._cloud_schema_revision = str(ping.get("schemaRevision") or "") if isinstance(ping, dict) else ""
             self._cloud_schema_checked_at = now
         return self._cloud_schema_version
 

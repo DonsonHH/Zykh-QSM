@@ -43,6 +43,8 @@ tcb login
 sh zykh_station_app/scripts/deploy_cloudbase_sync.sh
 ```
 
+部署脚本会自动检查并创建 `service_users`、`today_plans`、`inquiries`，随后通过小体积 ZIP 直接更新现有 Event 云函数，保留原 `/api` HTTP 路由。它不会把函数类型改成 HTTP，也不依赖容易超时的 COS 上传；最终必须检测到 `schemaVersion=2` 才会成功退出。
+
 也可以在微信开发者工具中，把 `zykh_station_app/cloudbase/cloudfunctions/api/` 复制为项目的 `cloudfunctions/api/`，然后右键选择“上传并部署：云端安装依赖”。
 
 当前云开发环境：
@@ -59,7 +61,7 @@ curl -sS -H 'Content-Type: application/json' \
   https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api
 ```
 
-返回中的 `schemaVersion` 应为 `2`。
+返回中的 `schemaVersion` 应为 `2`，并带有 `schemaRevision`。终端把 revision 纳入 snapshot hash；云函数清理或映射逻辑升级后会自动触发一次完整重同步。
 
 ## 小程序反向命令
 
@@ -68,6 +70,8 @@ curl -sS -H 'Content-Type: application/json' \
 `cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅优先使用 CloudBase 数据库变更监听，5 秒周期刷新作为断线兜底；v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
 
 `remoteCommands.js` 优先调用 v2 的 `CREATE_COMMAND`。云端仍是 v1 时会兼容为小程序直接写入 `commands` 集合；CloudBase 自动附带的 `_openid` 仍由终端核验，确定性 `requestId` 也会防止重复创建同一次开柜请求。
+
+`CREATE_COMMAND` 只接受微信小程序通过 `wx.cloud.callFunction` 发起的 Event 调用。公共 HTTP `/api` 即使携带相同 action 也会被拒绝，防止外部请求伪造远程开柜命令。
 
 同步与命令兼容契约可在主机执行：
 

@@ -3,7 +3,7 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 ENV_ID="${CLOUDBASE_ENV_ID:-cloud1-d6gv6t2jf3f2c541c}"
-FUNCTION_DIR="$ROOT_DIR/cloudbase/cloudfunctions/api"
+ENDPOINT="${CLOUD_SYNC_ENDPOINT:-https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api}"
 
 if [ -n "${CLOUDBASE_CLI:-}" ]; then
   CLI="$CLOUDBASE_CLI"
@@ -16,12 +16,14 @@ else
   exit 1
 fi
 
-[ -f "$FUNCTION_DIR/index.js" ] || {
-  printf '[cloudbase] 找不到云函数源码：%s\n' "$FUNCTION_DIR" >&2
+PYTHON="${PYTHON:-$(command -v python3 || command -v python)}"
+[ -n "$PYTHON" ] || {
+  printf '[cloudbase] 未找到 Python 3。\n' >&2
   exit 1
 }
 
-printf '[cloudbase] 环境：%s\n' "$ENV_ID"
-printf '[cloudbase] 请先在云开发控制台确认集合存在：service_users、today_plans、inquiries。\n'
-"$CLI" -e "$ENV_ID" fn deploy api --force --dir "$FUNCTION_DIR" --httpFn --path /api
-printf '[cloudbase] api 云函数部署完成。\n'
+exec "$PYTHON" "$ROOT_DIR/scripts/deploy_cloudbase_sync.py" \
+  --cli "$CLI" \
+  --env-id "$ENV_ID" \
+  --endpoint "$ENDPOINT" \
+  --function-dir "$ROOT_DIR/cloudbase/cloudfunctions/api"
