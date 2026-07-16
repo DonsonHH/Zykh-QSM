@@ -151,9 +151,11 @@ The speaker has two low-latency paths. Online Qwen realtime TTS writes 24 kHz PC
 
 WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes from the QSM EC200A `AT+CSQ` response and is converted to dBm, percentage and 0-4 bars. The top bar therefore reflects each live link independently instead of assuming full signal.
 
-By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. The user explicitly starts fingerprint or face confirmation in the 取药确认 modal. A successful result is shown with the resolved local user before the UI sends `confirm_real_dispense=true`, writes the local record and calls the gateway dispense path. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
+By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues to the gateway dispense call after identity and optional today-plan ownership checks succeed. Successful real actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 
 `scripts/deploy_qsm_gateway.sh` can install the AS608 payload when it finds `QSM368ZP-AS608-offline-deploy(1).zip` at the repository root, or when `QSM_FINGERPRINT_BUNDLE` points to the package. Template IDs `0..15` remain reserved; host-created bindings start at 16. Fingerprint templates stay inside AS608 and face features stay on QSM. The host stores only local subject mappings, match counters, last-seen timestamps and dispense audit records.
+
+The gateway also exposes best-effort `/api/fingerprint/standby` and `/api/fingerprint/wake`. The verified AS608-compatible unit reports Aura LED command `0x35` as unsupported, so complete power-off requires a hardware-controlled `Vt/WAK` connection; the four UART/USB-TTL data and power wires cannot provide software power gating.
 
 ## Device endpoints
 
@@ -173,6 +175,8 @@ POST /api/identity/resolve
 POST /api/identity/enroll/{service_user_id}
 GET  /api/fingerprint/status
 POST /api/fingerprint/identify
+POST /api/fingerprint/standby
+POST /api/fingerprint/wake
 POST /api/fingerprint/enroll/{service_user_id}
 DELETE /api/fingerprint/{service_user_id}
 ```

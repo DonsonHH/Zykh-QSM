@@ -61,11 +61,11 @@ class DashboardService:
         status = self.get_status()
         qsm = self.qsm_client.get_qsm_status()
         medicines = self.medicine_service.list_medicines().medicines
-        plans = self.records_service.list_today_plans()
+        plans = self.records_service.list_today_plans(due_only=True)
         if target_user:
             plans = [plan for plan in plans if plan.target_user == target_user]
-        pending_plans = [plan for plan in plans if plan.status != "已执行"]
-        next_plan = pending_plans[0] if pending_plans else (plans[0] if plans else None)
+        pending_plans = [plan for plan in plans if plan.status == "待执行"]
+        next_plan = pending_plans[0] if pending_plans else None
         temperature = qsm.vitals.get("temperature_c")
         return DashboardPayload(
             site=site,
@@ -83,6 +83,10 @@ class DashboardService:
                         medicine=plan.medicine,
                         status=plan.status,
                         target_user=plan.target_user,
+                        medicine_id=plan.medicine_id,
+                        service_user_id=plan.service_user_id,
+                        dose=plan.dose,
+                        frequency_label=plan.frequency_label,
                     )
                     for plan in plans
                 ],

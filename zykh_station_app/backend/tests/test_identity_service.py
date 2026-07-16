@@ -107,6 +107,8 @@ class IdentityServiceTest(unittest.TestCase):
         self.assertEqual(result.status, "created")
         self.assertTrue(result.new_guest)
         self.assertTrue(result.user.id.startswith("guest-"))
+        self.assertTrue(result.user.name.startswith("游客 "))
+        self.assertEqual(result.user.status, "游客")
         self.assertEqual(len(face.enrolled_subjects), 1)
 
 

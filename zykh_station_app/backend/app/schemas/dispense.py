@@ -14,6 +14,7 @@ class DispenseConfirmRequest(BaseModel):
     target_user_name: str = "家庭成员"
     verification_method: str = "manual"
     verification_score: float | None = None
+    today_plan_id: str = ""
 
 
 class DispenseOpenRequest(BaseModel):
@@ -59,6 +60,8 @@ class DispenseRecord(BaseModel):
     target_user_name: str = "家庭成员"
     verification_method: str = "manual"
     verification_score: float | None = None
+    target_user_type: str = "registered"
+    today_plan_id: str = ""
     created_at: str
 
 

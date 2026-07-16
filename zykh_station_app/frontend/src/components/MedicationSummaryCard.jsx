@@ -1,12 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { CalendarClock, Clock3, UsersRound } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { CalendarClock, Clock3, Fingerprint, UsersRound } from "lucide-react";
 import { formatClock, formatDay } from "../utils/time.js";
 
-const PLAN_ROTATION_MS = 4500;
-
-export function MedicationSummaryCard({ medication }) {
+export function MedicationSummaryCard({ medication, onQuickDispense, quickDispenseBusy = false }) {
   const [now, setNow] = useState(new Date());
-  const [planIndex, setPlanIndex] = useState(0);
   const plans = medication.plans?.length
     ? medication.plans
     : medication.featured_medicine
@@ -26,21 +23,10 @@ export function MedicationSummaryCard({ medication }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    setPlanIndex(0);
-  }, [plans.map((plan) => plan.id).join("|")]);
-
-  useEffect(() => {
-    if (plans.length < 2) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      setPlanIndex((current) => (current + 1) % plans.length);
-    }, PLAN_ROTATION_MS);
-    return () => window.clearInterval(timer);
-  }, [plans.length]);
-
-  const activePlan = plans[planIndex] || null;
+  const activePlan = useMemo(
+    () => plans.find((plan) => plan.status === "待执行") || plans[0] || null,
+    [plans]
+  );
 
   return (
     <section className="card task-card medication-summary-card">
@@ -79,25 +65,32 @@ export function MedicationSummaryCard({ medication }) {
           </article>
         </div>
 
-        <div className="next-dose" aria-label="今日用药计划轮播">
-          <span className="avatar" aria-hidden="true">
-            <UsersRound size={26} strokeWidth={2.2} />
-          </span>
-          <div className="next-dose-viewport" aria-hidden="true">
-            <div className="next-dose-track" style={{ "--plan-offset": `${planIndex * -48}px` }}>
-              {plans.map((plan) => (
-                <article className="next-dose-item" key={plan.id}>
-                  <strong>{plan.target_user} · {plan.time}</strong>
-                  <span>{plan.medicine} · {plan.status}</span>
-                </article>
-              ))}
+        {activePlan ? (
+          <div className="home-dose-task" aria-label="下一条用药计划">
+            <span className="avatar" aria-hidden="true">
+              <UsersRound size={28} strokeWidth={2.2} />
+            </span>
+            <div className="home-dose-person">
+              <strong>{activePlan.target_user} · {activePlan.time}</strong>
+              <span>{activePlan.frequency_label || "每天"} · {activePlan.dose || "按说明"}</span>
             </div>
+            <div className="home-dose-medicine">
+              <strong>{activePlan.medicine}</strong>
+              <span className={activePlan.status === "待执行" ? "pending" : "done"}>{activePlan.status}</span>
+            </div>
+            <button
+              type="button"
+              className="home-quick-dispense"
+              disabled={activePlan.status !== "待执行" || quickDispenseBusy}
+              onClick={() => onQuickDispense?.(activePlan)}
+            >
+              <Fingerprint size={22} aria-hidden="true" />
+              {quickDispenseBusy ? "读取中" : "一键取药"}
+            </button>
           </div>
-          <span className="screen-reader-only" aria-live="polite">
-            {activePlan ? `${activePlan.target_user}，${activePlan.time}，${activePlan.medicine}，${activePlan.status}` : "今日暂无用药计划"}
-          </span>
-          <small className="next-dose-count">{plans.length ? `${planIndex + 1}/${plans.length}` : "0/0"}</small>
-        </div>
+        ) : (
+          <div className="home-dose-empty">今日暂无用药计划</div>
+        )}
       </div>
     </section>
   );

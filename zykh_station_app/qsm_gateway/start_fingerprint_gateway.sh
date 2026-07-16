@@ -44,6 +44,8 @@ echo "$pid" >"$PID_FILE"
 sleep 1
 
 if kill -0 "$pid" 2>/dev/null; then
+  AS608_DEVICE="${AS608_DEVICE:-/dev/zykh-fingerprint}" \
+    perl "${QSM_FINGERPRINT_DRIVER:-/userdata/zykh_app/scripts/as608.pl}" led off >>"$LOG_FILE" 2>&1 || true
   printf 'QSM fingerprint gateway started on port %s, pid=%s\n' "$QSM_FINGERPRINT_PORT" "$pid"
   exit 0
 fi

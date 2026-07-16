@@ -507,6 +507,42 @@
 
 .admin-form-grid label.span-two { grid-column: 1 / -1; }
 
+.admin-weekday-picker {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  border: 1px solid #d8e1eb;
+  border-radius: 9px;
+  padding: 8px;
+}
+
+.admin-weekday-picker legend {
+  padding: 0 4px;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-weekday-picker button {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid #d8e1eb;
+  border-radius: 7px;
+  background: #f7f9fc;
+  color: #526173;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-weekday-picker button.active {
+  border-color: #8db4f2;
+  background: #eaf2ff;
+  color: #1e5fc7;
+}
+
 .admin-form-grid label > span {
   color: #475467;
   font-size: 11px;

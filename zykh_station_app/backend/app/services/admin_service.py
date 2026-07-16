@@ -196,7 +196,7 @@ class AdminService:
 
     def list_today_plans(self) -> tuple[list, list, list]:
         records = RecordsService()
-        return records.list_today_plans(), records.list_service_users(), self.list_medicines()
+        return records.list_today_plans(due_only=False), records.list_service_users(), self.list_medicines()
 
     def create_today_plan(self, request: TodayPlanCreateRequest) -> object:
         try:

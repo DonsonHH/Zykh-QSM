@@ -221,7 +221,7 @@ class CloudSyncWorker:
 
         records_service = RecordsService()
         service_users = [item.model_dump(mode="json") for item in records_service.list_service_users()]
-        plans = [item.model_dump(mode="json") for item in records_service.list_today_plans()]
+        plans = [item.model_dump(mode="json") for item in records_service.list_today_plans(due_only=False)]
         inquiries = [item.model_dump(mode="json") for item in InquiryRepository().list_records()]
         records = []
         for item in DispenseRepository().list_records():
@@ -229,7 +229,7 @@ class CloudSyncWorker:
             row.update(
                 {
                     "type": "DISPENSE",
-                    "message": f"{item.target_user_name}于{item.created_at}取用{item.medicine_name}",
+                    "message": f"{CloudSyncWorker._cloud_record_actor(item.target_user_name, item.target_user_type)}于{item.created_at}取用{item.medicine_name}",
                     "createdAt": item.created_at,
                 }
             )
@@ -266,6 +266,12 @@ class CloudSyncWorker:
             "vitals": vitals,
             "records": records,
         }
+
+    @staticmethod
+    def _cloud_record_actor(name: str, user_type: str) -> str:
+        if user_type == "guest":
+            return name if str(name).startswith("游客") else f"游客（{name or '未登记'}）"
+        return name or "家庭成员"
 
     def _sync_snapshot(self, snapshot: dict[str, list[dict[str, object]]]) -> int:
         if self._cloud_schema_version < 2:

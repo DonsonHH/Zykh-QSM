@@ -52,4 +52,4 @@ def delete_service_user(user_id: str) -> ServiceUsersResponse:
 
 @router.get("/today-plans", response_model=TodayPlansResponse)
 def today_plans() -> TodayPlansResponse:
-    return TodayPlansResponse(plans=RecordsService().list_today_plans())
+    return TodayPlansResponse(plans=RecordsService().list_today_plans(due_only=True))

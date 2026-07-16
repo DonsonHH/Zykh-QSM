@@ -7,18 +7,17 @@ import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
-export function DispenseConfirmModal({ medicine, open, submitting, result, error, onCancel, onSubmit }) {
+export function DispenseConfirmModal({ medicine, plan = null, open, submitting, result, error, onCancel, onSubmit }) {
   const [quantity, setQuantity] = useState(1);
   const [method, setMethod] = useState("fingerprint");
   const [phase, setPhase] = useState("idle");
   const [verificationError, setVerificationError] = useState("");
   const [verifiedIdentity, setVerifiedIdentity] = useState(null);
-  const [verificationMeta, setVerificationMeta] = useState(null);
   const [previewActive, setPreviewActive] = useState(false);
   const [previewRetry, setPreviewRetry] = useState(0);
   const [previewReady, setPreviewReady] = useState(false);
   const sessionRef = useRef(0);
-  const busy = ["verifying", "opening"].includes(phase) || submitting;
+  const busy = ["verifying", "recognized", "opening"].includes(phase) || submitting;
 
   useEffect(() => {
     if (open) {
@@ -28,7 +27,6 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       setPhase("idle");
       setVerificationError("");
       setVerifiedIdentity(null);
-      setVerificationMeta(null);
       setPreviewActive(false);
       setPreviewRetry(0);
       setPreviewReady(false);
@@ -52,13 +50,12 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
     setMethod(nextMethod);
     setVerificationError("");
     setVerifiedIdentity(null);
-    setVerificationMeta(null);
     setPreviewActive(nextMethod === "face");
     setPreviewReady(false);
   }
 
-  async function verifyIdentity() {
-    if (busy || ["recognized", "complete"].includes(phase)) {
+  async function verifyAndOpen() {
+    if (busy || phase === "complete") {
       return;
     }
     const session = sessionRef.current;
@@ -77,31 +74,20 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       if (!verification?.ok || !verification?.user) {
         throw new Error(verification?.error_message || verification?.message || "身份确认未完成");
       }
+      if (plan?.service_user_id && verification.user.id !== plan.service_user_id) {
+        throw new Error(`该计划属于${plan.target_user}，请由本人完成身份确认`);
+      }
       if (session !== sessionRef.current) {
         return;
       }
       setVerifiedIdentity(verification.user);
-      setVerificationMeta(verification);
       activateIdentity(verification.user);
       setPhase("recognized");
-    } catch (requestError) {
-      setPhase("idle");
-      setVerificationError(requestError.message || "身份确认失败");
-      if (method === "face") {
-        setPreviewActive(true);
-        setPreviewRetry((current) => current + 1);
+      await wait(520);
+      if (session !== sessionRef.current) {
+        return;
       }
-    }
-  }
-
-  async function confirmAndOpen() {
-    if (phase !== "recognized" || busy || !verifiedIdentity) {
-      return;
-    }
-    const session = sessionRef.current;
-    setVerificationError("");
-    setPhase("opening");
-    try {
+      setPhase("opening");
       const dispense = await onSubmit({
         medicine_id: medicine.id,
         slot: medicine.slot,
@@ -109,10 +95,11 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
         reason: "家庭药柜取药确认",
         confirmed_safety_notice: true,
         confirm_real_dispense: true,
-        target_user_id: verifiedIdentity.id,
-        target_user_name: verifiedIdentity.name,
+        target_user_id: verification.user.id,
+        target_user_name: verification.user.name,
         verification_method: method,
-        verification_score: verificationMeta?.score ?? null
+        verification_score: verification.score ?? null,
+        today_plan_id: plan?.id || ""
       });
       if (dispense && dispense.ok === false) {
         throw new Error(dispense.message || "柜门未能打开");
@@ -122,8 +109,12 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       }
     } catch (requestError) {
       if (session === sessionRef.current) {
-        setPhase("recognized");
-        setVerificationError(requestError.message || "柜门未能打开");
+        setPhase("idle");
+        setVerificationError(requestError.message || "身份确认或开柜未完成");
+        if (method === "face") {
+          setPreviewActive(true);
+          setPreviewRetry((current) => current + 1);
+        }
       }
     }
   }
@@ -146,17 +137,13 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
             : method === "fingerprint" ? "请将手指放在识别模块" : "请正对摄像头";
   const stageDescription =
     phase === "recognized"
-      ? verificationMeta?.new_guest
-        ? "已建立本地访客档案，请核对身份后确认开柜"
-        : verificationMeta?.match_count
-          ? `第 ${verificationMeta.match_count} 次身份确认，请核对姓名后开柜`
-          : "请核对姓名后确认开柜"
+      ? "正在核对用药计划，随后自动打开柜门"
       : phase === "opening"
         ? `${medicine.hardware_slot || medicine.slot} 号柜即将开启`
         : phase === "complete"
           ? "请取出药品并关闭柜门"
           : method === "fingerprint"
-            ? "识别成功后会显示使用人，请确认姓名后再打开柜门"
+            ? "点击一次后完成身份确认并自动打开柜门"
             : "陌生使用人会在本机留存面部特征，便于后续核对";
   const actionLabel =
     phase === "verifying"
@@ -166,12 +153,12 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
       : phase === "opening"
         ? "正在打开柜门"
         : phase === "recognized"
-          ? "确认取药并开柜"
+          ? "身份已确认"
         : phase === "complete"
           ? "柜门已打开"
           : method === "fingerprint"
-            ? "开始指纹确认"
-            : "开始面部确认";
+            ? "确认身份并开柜"
+            : "确认身份并开柜";
 
   return (
     <div className="modal-layer" role="presentation">
@@ -195,7 +182,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
             <div className="modal-medicine-meta compact-meta">
               <article>
                 <span>当前使用人</span>
-                <strong>{verifiedIdentity?.name || "等待确认"}</strong>
+                <strong>{verifiedIdentity?.name || plan?.target_user || "等待确认"}</strong>
               </article>
               <article>
                 <span>柜门</span>
@@ -205,6 +192,12 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
                 <span>有效期</span>
                 <strong>{medicine.expire_date}</strong>
               </article>
+            </div>
+
+            <div className="modal-usage-guidance">
+              <strong>本次用法</strong>
+              <span>{plan?.dose || medicine.safety_note || "请按药品说明使用"}</span>
+              {plan?.frequency_label ? <small>{plan.frequency_label} · {plan.time}</small> : null}
             </div>
 
             <label className="quantity-control" htmlFor="dispense-quantity">
@@ -285,7 +278,7 @@ export function DispenseConfirmModal({ medicine, open, submitting, result, error
               className="primary-action biometric-confirm-action"
               type="button"
               disabled={busy || phase === "complete"}
-              onClick={phase === "recognized" ? confirmAndOpen : verifyIdentity}
+              onClick={verifyAndOpen}
             >
               {phase === "complete" ? <CheckCircle2 size={24} aria-hidden="true" /> : method === "fingerprint" ? <Fingerprint size={24} aria-hidden="true" /> : <ScanFace size={24} aria-hidden="true" />}
               <span>{actionLabel}</span>

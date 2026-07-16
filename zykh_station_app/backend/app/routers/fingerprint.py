@@ -19,6 +19,16 @@ def identify_fingerprint(timeout: int = Query(default=45, ge=5, le=60)) -> Finge
     return FingerprintService().identify(timeout=timeout)
 
 
+@router.post("/standby", response_model=FingerprintActionResponse)
+def fingerprint_standby() -> FingerprintActionResponse:
+    return FingerprintService().standby()
+
+
+@router.post("/wake", response_model=FingerprintActionResponse)
+def fingerprint_wake() -> FingerprintActionResponse:
+    return FingerprintService().wake()
+
+
 @router.post("/enroll/{user_id}", response_model=FingerprintActionResponse)
 def enroll_fingerprint(user_id: str, timeout: int = Query(default=60, ge=10, le=90)) -> FingerprintActionResponse:
     return FingerprintService().start_enrollment(user_id, timeout=timeout)

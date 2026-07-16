@@ -13,7 +13,7 @@ class DispenseRepository:
                 SELECT id, medicine_id, medicine_name, slot, hardware_slot, quantity,
                        unit, reason, dry_run, message, qsm_ok, qsm_detail,
                        target_user_id, target_user_name, verification_method,
-                       verification_score, created_at
+                       verification_score, target_user_type, today_plan_id, created_at
                 FROM dispense_records
                 ORDER BY created_at DESC
                 """
@@ -36,6 +36,8 @@ class DispenseRepository:
                 target_user_name=row["target_user_name"] or "家庭成员",
                 verification_method=row["verification_method"] or "manual",
                 verification_score=float(row["verification_score"]) if row["verification_score"] is not None else None,
+                target_user_type=row["target_user_type"] or "registered",
+                today_plan_id=row["today_plan_id"] or "",
                 created_at=row["created_at"],
             )
             for row in rows
@@ -50,9 +52,9 @@ class DispenseRepository:
                   id, medicine_id, medicine_name, slot, hardware_slot, quantity,
                   unit, reason, dry_run, message, qsm_ok, qsm_detail,
                   target_user_id, target_user_name, verification_method,
-                  verification_score, created_at
+                  verification_score, target_user_type, today_plan_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -71,6 +73,8 @@ class DispenseRepository:
                     record.target_user_name,
                     record.verification_method,
                     record.verification_score,
+                    record.target_user_type,
+                    record.today_plan_id,
                     record.created_at,
                 ),
             )

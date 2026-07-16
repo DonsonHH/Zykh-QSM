@@ -163,7 +163,7 @@ class IdentityService:
         db.init_db()
         now = datetime.now()
         user_id = f"guest-{now.strftime('%Y%m%d-%H%M')}-{uuid4().hex[:5]}"
-        name = f"访客 {now.strftime('%m%d-%H%M')}"
+        name = f"游客 {now.strftime('%m%d-%H%M')}"
         user = ServiceUser(
             id=user_id,
             name=name,
@@ -171,7 +171,7 @@ class IdentityService:
             profile="未登记",
             allergies="",
             note="面部确认建立，可在设置中补充资料",
-            status="访客",
+            status="游客",
         )
         with db.connect() as conn:
             conn.execute(

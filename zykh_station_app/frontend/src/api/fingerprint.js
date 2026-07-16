@@ -8,6 +8,14 @@ export function identifyFingerprint(timeout = 45) {
   return apiPost(`/api/fingerprint/identify?timeout=${timeout}`, {});
 }
 
+export function setFingerprintStandby() {
+  return apiPost("/api/fingerprint/standby", {});
+}
+
+export function wakeFingerprint() {
+  return apiPost("/api/fingerprint/wake", {});
+}
+
 export function enrollFingerprint(userId, timeout = 45) {
   return apiPost(`/api/fingerprint/enroll/${encodeURIComponent(userId)}?timeout=${timeout}`, {});
 }

@@ -16,9 +16,12 @@ export function TodayPlanList({ plans = [] }) {
               <time>{plan.time}</time>
               <div>
                 <strong>{plan.target_user} · {plan.medicine}</strong>
-                <span>{plan.dose || "按说明"} · {plan.status}</span>
+                <span>{plan.dose || "按说明"} · {plan.frequency_label || "每天"}</span>
               </div>
-              <Icon size={22} aria-hidden="true" />
+              <div className="today-plan-state">
+                <Icon size={20} aria-hidden="true" />
+                <em>{plan.status}</em>
+              </div>
             </article>
           );
         })}

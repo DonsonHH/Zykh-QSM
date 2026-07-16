@@ -97,6 +97,8 @@ def init_db() -> None:
         _ensure_column(conn, "dispense_records", "target_user_name", "TEXT NOT NULL DEFAULT '家庭成员'")
         _ensure_column(conn, "dispense_records", "verification_method", "TEXT NOT NULL DEFAULT 'manual'")
         _ensure_column(conn, "dispense_records", "verification_score", "REAL")
+        _ensure_column(conn, "dispense_records", "target_user_type", "TEXT NOT NULL DEFAULT 'registered'")
+        _ensure_column(conn, "dispense_records", "today_plan_id", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS device_action_records (
@@ -243,6 +245,11 @@ def init_db() -> None:
         _ensure_column(conn, "today_plans", "service_user_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "dose", "TEXT NOT NULL DEFAULT '按说明'")
         _ensure_column(conn, "today_plans", "updated_at", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "schedule_type", "TEXT NOT NULL DEFAULT 'daily'")
+        _ensure_column(conn, "today_plans", "interval_days", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "today_plans", "weekdays_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "today_plans", "start_date", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "last_action_date", "TEXT NOT NULL DEFAULT ''")
         _migrate_today_plans(conn)
         _seed_service_data(conn)
 
@@ -254,6 +261,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
 
 
 def _migrate_today_plans(conn: sqlite3.Connection) -> None:
+    today = datetime.now().strftime("%Y-%m-%d")
     conn.execute(
         """
         UPDATE today_plans
@@ -284,6 +292,9 @@ def _migrate_today_plans(conn: sqlite3.Connection) -> None:
         """,
         (now_text(),),
     )
+    conn.execute("UPDATE today_plans SET start_date=? WHERE start_date=''", (today,))
+    conn.execute("UPDATE today_plans SET interval_days=1 WHERE interval_days<1")
+    conn.execute("UPDATE today_plans SET schedule_type='daily' WHERE schedule_type NOT IN ('daily', 'interval', 'weekly')")
 
 
 def health_check() -> dict[str, object]:

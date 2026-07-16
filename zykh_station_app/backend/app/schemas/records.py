@@ -19,6 +19,7 @@ class RecentRecord(BaseModel):
     target_user: str
     status: str
     sync_status: str
+    target_user_type: str = "registered"
 
 
 class RecordsSummaryResponse(BaseModel):
@@ -74,6 +75,14 @@ class TodayPlan(BaseModel):
     target_user: str
     dose: str = "按说明"
     updated_at: str = ""
+    schedule_type: str = "daily"
+    interval_days: int = 1
+    weekdays: list[int] = Field(default_factory=list)
+    start_date: str = ""
+    last_action_date: str = ""
+    due_today: bool = True
+    next_due_date: str = ""
+    frequency_label: str = "每天"
 
 
 class TodayPlanCreateRequest(BaseModel):
@@ -82,6 +91,10 @@ class TodayPlanCreateRequest(BaseModel):
     service_user_id: str = Field(min_length=1, max_length=100)
     dose: str = Field(default="按说明", max_length=40)
     status: str = Field(default="待执行", max_length=20)
+    schedule_type: str = Field(default="daily", max_length=20)
+    interval_days: int = Field(default=1, ge=1, le=30)
+    weekdays: list[int] = Field(default_factory=list)
+    start_date: str = Field(default="", max_length=10)
 
 
 class TodayPlanUpdateRequest(BaseModel):
@@ -90,6 +103,10 @@ class TodayPlanUpdateRequest(BaseModel):
     service_user_id: str | None = Field(default=None, min_length=1, max_length=100)
     dose: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=20)
+    schedule_type: str | None = Field(default=None, max_length=20)
+    interval_days: int | None = Field(default=None, ge=1, le=30)
+    weekdays: list[int] | None = None
+    start_date: str | None = Field(default=None, max_length=10)
 
 
 class TodayPlansResponse(BaseModel):

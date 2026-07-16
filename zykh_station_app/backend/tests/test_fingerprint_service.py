@@ -21,6 +21,7 @@ class FakeFingerprintClient:
         self.deleted: list[int] = []
         self.enrolled: list[int] = []
         self.progress_event = "place_finger_first"
+        self.power_actions: list[str] = []
 
     def status(self) -> dict[str, object]:
         return {"ok": True, "status": "available", "count": 1, "capacity": 300}
@@ -44,6 +45,14 @@ class FakeFingerprintClient:
     def delete(self, template_id: int) -> dict[str, object]:
         self.deleted.append(template_id)
         return {"ok": True, "status": "deleted", "id": template_id}
+
+    def standby(self) -> dict[str, object]:
+        self.power_actions.append("standby")
+        return {"ok": True, "status": "complete"}
+
+    def wake(self) -> dict[str, object]:
+        self.power_actions.append("wake")
+        return {"ok": True, "status": "complete"}
 
 
 class TimeoutFingerprintClient(FakeFingerprintClient):
@@ -131,6 +140,17 @@ class FingerprintServiceTest(unittest.TestCase):
         self.assertFalse(response.ok)
         self.assertNotIn("finger_removal_timeout", response.message)
         self.assertIn("完全抬起", response.message)
+
+    def test_fingerprint_light_can_enter_standby_and_wake(self) -> None:
+        service = FingerprintService(client=self.client)
+
+        standby = service.standby()
+        wake = service.wake()
+
+        self.assertTrue(standby.ok)
+        self.assertEqual(standby.status, "standby")
+        self.assertTrue(wake.ok)
+        self.assertEqual(self.client.power_actions, ["standby", "wake"])
 
 
 if __name__ == "__main__":

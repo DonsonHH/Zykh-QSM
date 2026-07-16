@@ -46,6 +46,12 @@ class QsmFingerprintClient:
     def delete(self, template_id: int) -> dict[str, Any]:
         return self._request(settings.qsm_fingerprint_delete_path, payload={"template_id": template_id}, timeout=12)
 
+    def standby(self) -> dict[str, Any]:
+        return self._request(settings.qsm_fingerprint_standby_path, payload={}, timeout=12)
+
+    def wake(self) -> dict[str, Any]:
+        return self._request(settings.qsm_fingerprint_wake_path, payload={}, timeout=12)
+
     def _request(
         self,
         path: str,

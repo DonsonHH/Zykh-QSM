@@ -84,6 +84,8 @@ class Settings:
         "QSM_FINGERPRINT_ENROLL_PROGRESS_PATH", "/api/fingerprint/enroll/progress"
     )
     qsm_fingerprint_delete_path: str = _env("QSM_FINGERPRINT_DELETE_PATH", "/api/fingerprint/delete")
+    qsm_fingerprint_standby_path: str = _env("QSM_FINGERPRINT_STANDBY_PATH", "/api/fingerprint/standby")
+    qsm_fingerprint_wake_path: str = _env("QSM_FINGERPRINT_WAKE_PATH", "/api/fingerprint/wake")
     qsm_fingerprint_template_start: int = int(_env("QSM_FINGERPRINT_TEMPLATE_START", "16"))
     qsm_dispense_path: str = _env("QSM_DISPENSE_PATH", "/api/dispense")
     qsm_audio_asr_path: str = _env("QSM_AUDIO_ASR_PATH", "/api/audio/asr")

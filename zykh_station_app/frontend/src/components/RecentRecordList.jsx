@@ -25,6 +25,7 @@ export function RecentRecordList({ records }) {
                 <strong>{record.title}</strong>
                 <p>{record.description ? `数量 ${record.description}` : "已完成取药记录"}</p>
               </div>
+              {record.target_user_type === "guest" ? <em className="record-guest-label">游客</em> : null}
             </article>
           );
         })}

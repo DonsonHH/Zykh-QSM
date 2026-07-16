@@ -24,7 +24,7 @@ class As608DriverTest(unittest.TestCase):
     def test_no_valid_image_is_accepted_as_stable_finger_removal(self) -> None:
         master, slave = pty.openpty()
         tty.setraw(slave)
-        responses = iter([0x00, 0x00, 0x15, 0x15, 0x00, 0x00, 0x00, 0x00])
+        capture_responses = iter([0x00, 0x15, 0x15, 0x00])
         instructions: list[int] = []
         stop = threading.Event()
 
@@ -51,8 +51,10 @@ class As608DriverTest(unittest.TestCase):
                     if len(buffer) < total_length:
                         break
                     packet, buffer = buffer[:total_length], buffer[total_length:]
-                    instructions.append(packet[9])
-                    os.write(master, acknowledgement(next(responses)))
+                    instruction = packet[9]
+                    instructions.append(instruction)
+                    code = next(capture_responses) if instruction == 0x01 else 0x00
+                    os.write(master, acknowledgement(code))
 
         thread = threading.Thread(target=emulate_module, daemon=True)
         thread.start()
@@ -85,7 +87,7 @@ class As608DriverTest(unittest.TestCase):
                 "enrolled",
             ],
         )
-        self.assertEqual(instructions, [0x01, 0x02, 0x01, 0x01, 0x01, 0x02, 0x05, 0x06])
+        self.assertEqual(instructions, [0x35, 0x01, 0x02, 0x01, 0x01, 0x01, 0x02, 0x05, 0x06, 0x35])
 
 
 if __name__ == "__main__":

@@ -90,11 +90,15 @@ Returns recent inquiry results.
 
 ### GET /api/records/summary
 
-Returns local SQLite record counters for the records page.
+Returns record-page counters. `local_record_count` includes only successful real dispense actions; dry-run and failed device actions remain available to protected diagnostics but are not counted as family pickup records.
 
 ### GET /api/records/recent
 
-Returns a compact list of recent local service records, including inquiry, dispense, vitals and scan records.
+Returns a compact list of successful real family pickup records. Each item includes `target_user_type=registered|guest`; guest rows are explicitly labelled as tourists in the terminal UI.
+
+### GET /api/records/today-plans
+
+Returns only plans due on the current date. Plan responses include `schedule_type` (`daily`, `interval`, `weekly`), `interval_days`, ISO weekday values in `weekdays`, `start_date`, `last_action_date`, `due_today`, `next_due_date` and a display-ready `frequency_label`.
 
 ### GET /api/sync/status
 
@@ -198,6 +202,10 @@ Returns AS608 availability, module template count and host-side bound-user count
 
 Waits for a finger, matches the AS608 template and returns the bound service user. An unbound board template returns `status=unbound` and cannot open a cabinet.
 
+### POST /api/fingerprint/standby and POST /api/fingerprint/wake
+
+Best-effort AS608 indicator control used when entering or leaving the idle screen. Modules that do not implement Aura LED command `0x35` return HTTP 200 with `status=unsupported`; identity functions remain available.
+
 ### POST /api/fingerprint/enroll/{service_user_id}
 
 Guides two placements of the same finger, stores the template in AS608 and stores only the template-to-user mapping in SQLite.
@@ -268,3 +276,5 @@ Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mod
 - `POST /api/admin/system/action`
 
 The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. The UI uses a normal yes/no confirmation while the server still validates an internal operation token; every protected action creates an `admin_audit_records` entry. Log output is limited to an allowlist, updates only while the log page is mounted, and redacts API keys, bearer tokens and secrets.
+
+Administrator today-plan create/update payloads accept `schedule_type`, `interval_days`, `weekdays` and `start_date`. A successful plan dispense is serialized per plan, validates the recognized person and medicine, and records `last_action_date` so recurring plans become pending again only on their next due date.

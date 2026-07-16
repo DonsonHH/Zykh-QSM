@@ -42,7 +42,7 @@ class StaticRecordsService:
         TodayPlan(id="plan-2000", time="20:00", medicine_id="medicine-c", medicine="蒙脱石散", service_user_id="wangwu", status="待执行", target_user="王五"),
     ]
 
-    def list_today_plans(self) -> list[TodayPlan]:
+    def list_today_plans(self, *, due_only: bool = False) -> list[TodayPlan]:
         return self.plans
 
 

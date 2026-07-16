@@ -5,6 +5,7 @@ import { TopBar } from "./components/TopBar.jsx";
 import { loadDashboard } from "./api/dashboard.js";
 import { loadNetworkStatus } from "./api/network.js";
 import { loadBasicSettings } from "./api/settings.js";
+import { setFingerprintStandby, wakeFingerprint } from "./api/fingerprint.js";
 import { mockDashboard } from "./api/mockData.js";
 import { Home } from "./pages/Home.jsx";
 import { ComingSoon } from "./pages/ComingSoon.jsx";
@@ -95,12 +96,18 @@ export function App() {
     };
   }, []);
 
+  const refreshDashboard = useCallback(() => loadDashboard().then(setDashboard), []);
+
   useEffect(() => {
-    const refresh = () => loadDashboard().then(setDashboard);
-    refresh();
-    const timer = window.setInterval(refresh, 30000);
+    refreshDashboard();
+    const timer = window.setInterval(refreshDashboard, 30000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshDashboard]);
+
+  useEffect(() => {
+    const action = idle ? setFingerprintStandby() : wakeFingerprint();
+    action.catch(() => undefined);
+  }, [idle]);
 
   useEffect(() => {
     if (startsIdle) {
@@ -192,7 +199,12 @@ export function App() {
         {page === "admin" ? (
           <AdminConsole onExit={() => handleNav("settings", { transition: "backward" })} />
         ) : idle ? (
-          <IdleScreen now={now} networkStatus={networkStatus} onWake={handleWake} />
+          <IdleScreen
+            now={now}
+            networkStatus={networkStatus}
+            medication={dashboard?.medication}
+            onWake={handleWake}
+          />
         ) : (
           <>
         <TopBar
@@ -206,6 +218,7 @@ export function App() {
             dashboard={dashboard}
             onNavigate={handleNav}
             notify={notify}
+            onDashboardRefresh={refreshDashboard}
           />
         ) : page === "medicines" ? (
           <Medicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />

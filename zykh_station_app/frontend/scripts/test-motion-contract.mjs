@@ -105,8 +105,8 @@ assert.doesNotMatch(wakeHandler, /clearIdentity\(\)/, "waking the home screen st
 assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearIdentity\(\)/, "entering idle mode no longer clears the prior user session");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
-assert.match(home, /PLAN_ROTATION_MS\s*=\s*4500/, "home medication plans do not rotate every few seconds");
-assert.match(home, /next-dose-track/, "home medication plans do not use a scrolling track");
+assert.doesNotMatch(home, /PLAN_ROTATION_MS|planIndex|next-dose-track/, "home medication task still rotates away from the active action");
+assert.match(home, /home-quick-dispense/, "home medication task is missing the one-tap dispense entry");
 assert.doesNotMatch(home, /home-current-user|ScanFace/, "home medication summary still exposes identity confirmation");
 
 const medicines = await readFile(`${sourceRoot}/pages/Medicines.jsx`, "utf8");
@@ -116,7 +116,9 @@ const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmMo
 assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
 assert.match(dispenseModal, /verifyDispenseIdentity/, "dispense confirmation is missing face verification");
 assert.match(dispenseModal, /setPhase\("recognized"\)/, "recognized users are not shown before cabinet opening");
-assert.match(dispenseModal, /phase === "recognized" \? confirmAndOpen : verifyIdentity/, "dispense does not require an explicit post-recognition confirmation");
+assert.match(dispenseModal, /async function verifyAndOpen/, "dispense is missing the one-tap biometric workflow");
+assert.match(dispenseModal, /setPhase\("recognized"\)[\s\S]*setPhase\("opening"\)[\s\S]*await onSubmit/, "dispense does not automatically continue from biometric verification to cabinet opening");
+assert.doesNotMatch(dispenseModal, /confirmAndOpen|verifyIdentity/, "dispense still requires a second confirmation click");
 assert.match(dispenseModal, /sessionRef\.current/, "closing the modal cannot cancel a delayed cabinet action");
 assert.doesNotMatch(dispenseModal, /safety-confirmed|confirm-check/, "legacy duplicate safety checkbox is still rendered");
 

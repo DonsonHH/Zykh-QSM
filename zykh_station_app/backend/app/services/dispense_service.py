@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 from uuid import uuid4
 
+from .. import db
 from ..config import settings
 from ..db import now_text
 from ..repositories.dispense_repository import DispenseRepository
@@ -24,6 +26,8 @@ class DispenseError(Exception):
 
 
 class DispenseService:
+    _plan_dispense_lock = threading.Lock()
+
     def __init__(
         self,
         medicine_repository: MedicineRepository | None = None,
@@ -35,6 +39,12 @@ class DispenseService:
         self.qsm_client = qsm_client or QsmClient()
 
     def confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
+        if request.today_plan_id:
+            with self._plan_dispense_lock:
+                return self._confirm(request, force_dry_run)
+        return self._confirm(request, force_dry_run)
+
+    def _confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
         medicine = self.medicine_repository.get_by_id(request.medicine_id)
         if medicine is None:
             raise DispenseError("未找到该药品。", status_code=404)
@@ -42,19 +52,56 @@ class DispenseService:
             raise DispenseError("药品仓位与当前库存记录不一致。")
         if request.confirmed_safety_notice is not True:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
+        canonical_name, target_user_type = self._resolve_identity(request.target_user_id, request.target_user_name)
+        request = request.model_copy(update={"target_user_name": canonical_name})
+        if request.today_plan_id:
+            from .records_service import RecordsService
+
+            try:
+                RecordsService().validate_dispense_plan(
+                    request.today_plan_id,
+                    request.medicine_id,
+                    request.target_user_id,
+                )
+            except ValueError as exc:
+                raise DispenseError(str(exc)) from exc
         dry_run = self._should_dry_run(request, medicine, force_dry_run)
         qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
         qsm_ok = bool(qsm_result.get("ok"))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if not dry_run and not qsm_ok:
             message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
-            record = self._build_record(request, medicine, dry_run, message, qsm_ok=False, qsm_detail=qsm_detail)
+            record = self._build_record(
+                request,
+                medicine,
+                dry_run,
+                message,
+                qsm_ok=False,
+                qsm_detail=qsm_detail,
+                target_user_type=target_user_type,
+            )
             self.dispense_repository.append(record)
             return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
         message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
-        record = self._build_record(request, medicine, dry_run, message, qsm_ok=qsm_ok, qsm_detail=qsm_detail)
+        record = self._build_record(
+            request,
+            medicine,
+            dry_run,
+            message,
+            qsm_ok=qsm_ok,
+            qsm_detail=qsm_detail,
+            target_user_type=target_user_type,
+        )
         self.dispense_repository.append(record)
+        if request.today_plan_id and not dry_run:
+            from .records_service import RecordsService
+
+            RecordsService().complete_today_plan(
+                request.today_plan_id,
+                request.medicine_id,
+                request.target_user_id,
+            )
         return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
     def open_cabinet(self, request: DispenseOpenRequest) -> DispenseOpenResponse:
@@ -88,6 +135,11 @@ class DispenseService:
         if request.target_user_name and request.medicine_id:
             medicine = self.medicine_repository.get_by_id(request.medicine_id)
             if medicine is not None:
+                target_user_name, target_user_type = self._resolve_identity(
+                    request.target_user_id,
+                    request.target_user_name,
+                    require_known=False,
+                )
                 record = DispenseRecord(
                     id=f"dispense-{uuid4().hex[:12]}",
                     medicine_id=medicine.id,
@@ -98,13 +150,14 @@ class DispenseService:
                     unit=medicine.unit,
                     reason=request.reason,
                     dry_run=False,
-                    message=f"{request.target_user_name}已打开{medicine.hardware_slot}号柜。",
+                    message=f"{target_user_name}已打开{medicine.hardware_slot}号柜。",
                     qsm_ok=True,
                     qsm_detail=qsm_detail,
                     target_user_id=request.target_user_id,
-                    target_user_name=request.target_user_name,
+                    target_user_name=target_user_name,
                     verification_method="manual",
                     verification_score=None,
+                    target_user_type=target_user_type,
                     created_at=now_text(),
                 )
                 self.dispense_repository.append(record)
@@ -149,6 +202,7 @@ class DispenseService:
         message: str,
         qsm_ok: bool,
         qsm_detail: str,
+        target_user_type: str,
     ) -> DispenseRecord:
         record_id = f"{'dryrun' if dry_run else 'dispense'}-{uuid4().hex[:12]}"
         return DispenseRecord(
@@ -168,5 +222,34 @@ class DispenseService:
             target_user_name=request.target_user_name.strip() or "家庭成员",
             verification_method=request.verification_method.strip() or "manual",
             verification_score=request.verification_score,
+            target_user_type=target_user_type,
+            today_plan_id=request.today_plan_id,
             created_at=now_text(),
         )
+
+    @staticmethod
+    def _resolve_identity(
+        target_user_id: str,
+        target_user_name: str,
+        *,
+        require_known: bool = True,
+    ) -> tuple[str, str]:
+        user_id = str(target_user_id or "").strip()
+        supplied_name = str(target_user_name or "").strip()
+        if user_id:
+            db.init_db()
+            with db.connect() as conn:
+                row = conn.execute(
+                    "SELECT name, status FROM service_users WHERE id=?",
+                    (user_id,),
+                ).fetchone()
+            if row:
+                status = str(row["status"] or "")
+                user_type = "guest" if user_id.startswith("guest-") or status in {"访客", "游客"} else "registered"
+                return str(row["name"]), user_type
+            if require_known:
+                raise DispenseError("身份记录不存在，请重新进行指纹或面部确认。")
+        if supplied_name:
+            visitor = supplied_name.startswith(("访客", "游客"))
+            return supplied_name, "guest" if visitor or not user_id else "registered"
+        return "游客", "guest"

@@ -77,6 +77,18 @@ class FingerprintService:
             message=f"指纹已确认：{user.name}",
         )
 
+    def standby(self) -> FingerprintActionResponse:
+        result = self.client.standby()
+        if not result.get("ok"):
+            return self._failure(result, "指纹模块暂时无法进入待机状态。")
+        return FingerprintActionResponse(ok=True, status="standby", event="led", message="指纹识别灯已关闭。")
+
+    def wake(self) -> FingerprintActionResponse:
+        result = self.client.wake()
+        if not result.get("ok"):
+            return self._failure(result, "指纹模块暂时无法唤醒识别灯。")
+        return FingerprintActionResponse(ok=True, status="awake", event="led", message="指纹识别已唤醒。")
+
     def enroll_user(self, user_id: str, timeout: int = 45) -> FingerprintActionResponse:
         prepared = self._prepare_enrollment(user_id)
         if isinstance(prepared, FingerprintActionResponse):

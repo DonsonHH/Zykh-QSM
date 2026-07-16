@@ -81,6 +81,12 @@ sub route_request {
         return send_json($client, 200, invalid_template_response()) unless defined $template_id;
         return send_json($client, 200, run_driver(8, 'delete', $template_id));
     }
+    if ($method eq 'POST' && $path eq '/api/fingerprint/standby') {
+        return send_json($client, 200, run_driver(8, 'led', 'off'));
+    }
+    if ($method eq 'POST' && $path eq '/api/fingerprint/wake') {
+        return send_json($client, 200, run_driver(8, 'led', 'breathe'));
+    }
     return send_json($client, 404, { ok => JSON::PP::false, status => 'not_found', error_message => 'Fingerprint API not found' });
 }
 

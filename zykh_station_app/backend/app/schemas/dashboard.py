@@ -12,6 +12,10 @@ class MedicationPlanItem(BaseModel):
     medicine: str
     status: str
     target_user: str
+    medicine_id: str = ""
+    service_user_id: str = ""
+    dose: str = "按说明"
+    frequency_label: str = "每天"
 
 
 class MedicationSummary(BaseModel):

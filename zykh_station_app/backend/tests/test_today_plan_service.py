@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -69,6 +70,55 @@ class TodayPlanServiceTest(unittest.TestCase):
                     service_user_id="zhangsan",
                 )
             )
+
+    def test_interval_and_weekly_plans_only_appear_on_due_dates(self) -> None:
+        self.service.list_today_plans()
+        start = date(2026, 7, 16)
+        interval = self.service.create_today_plan(
+            TodayPlanCreateRequest(
+                time="09:30",
+                medicine_id="slot-02-centrum",
+                service_user_id="lisi",
+                schedule_type="interval",
+                interval_days=2,
+                start_date=start.isoformat(),
+            )
+        )
+        weekly = self.service.create_today_plan(
+            TodayPlanCreateRequest(
+                time="21:00",
+                medicine_id="slot-08-huoxiang-zhengqi",
+                service_user_id="wangwu",
+                schedule_type="weekly",
+                weekdays=[start.isoweekday()],
+                start_date=start.isoformat(),
+            )
+        )
+
+        due_on_start = {plan.id for plan in self.service.list_today_plans(due_only=True, reference_date=start)}
+        due_next_day = {
+            plan.id for plan in self.service.list_today_plans(due_only=True, reference_date=start + timedelta(days=1))
+        }
+        due_two_days_later = {
+            plan.id for plan in self.service.list_today_plans(due_only=True, reference_date=start + timedelta(days=2))
+        }
+
+        self.assertIn(interval.id, due_on_start)
+        self.assertIn(weekly.id, due_on_start)
+        self.assertNotIn(interval.id, due_next_day)
+        self.assertNotIn(weekly.id, due_next_day)
+        self.assertIn(interval.id, due_two_days_later)
+        self.assertEqual(interval.frequency_label, "每 2 天")
+        self.assertTrue(weekly.frequency_label.startswith("每周"))
+
+    def test_completed_recurring_plan_returns_to_pending_on_next_due_day(self) -> None:
+        plan = self.service.list_today_plans(due_only=True)[0]
+        completed = self.service.complete_today_plan(plan.id, plan.medicine_id, plan.service_user_id)
+
+        self.assertEqual(completed.status, "已执行")
+        tomorrow = date.today() + timedelta(days=1)
+        next_day = next(item for item in self.service.list_today_plans(reference_date=tomorrow) if item.id == plan.id)
+        self.assertEqual(next_day.status, "待执行")
 
 
 if __name__ == "__main__":

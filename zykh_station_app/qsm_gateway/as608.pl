@@ -8,6 +8,8 @@ $| = 1;
 
 my $device = $ENV{AS608_DEVICE} // '/dev/zykh-fingerprint';
 my $command = shift(@ARGV) // 'status';
+my $port;
+my $restore_led_on_exit = $command eq 'identify' || $command eq 'enroll';
 
 open(my $lock, '>', '/tmp/zykh-as608.lock')
     or die "cannot open fingerprint lock: $!\n";
@@ -22,6 +24,7 @@ Usage:
   as608.pl enroll ID [timeout_seconds]
   as608.pl identify [timeout_seconds]
   as608.pl delete ID
+  as608.pl led off|on|breathe
 Environment: AS608_DEVICE=/dev/ttyUSBn
 USAGE
 }
@@ -95,7 +98,7 @@ if (-x '/userdata/zykh_app/bin/ch340_init') {
 system('stty', '-F', $device, 'raw', '-echo') == 0
     or fail_json('tty_raw_mode_failed');
 
-sysopen(my $port, $device, O_RDWR | O_NOCTTY | O_NONBLOCK)
+sysopen($port, $device, O_RDWR | O_NOCTTY | O_NONBLOCK)
     or fail_json("cannot_open_serial:$!");
 binmode($port);
 
@@ -165,6 +168,35 @@ sub transact {
     fail_json(sprintf('module_timeout_command_0x%02x', $instruction));
 }
 
+sub led_params {
+    my ($mode) = @_;
+    return (0x04, 0x00, 0x02, 0x00) if $mode eq 'off';
+    return (0x03, 0x00, 0x02, 0x00) if $mode eq 'on';
+    return (0x01, 0x70, 0x02, 0x00) if $mode eq 'breathe';
+    return;
+}
+
+sub set_led_mode {
+    my ($mode) = @_;
+    my @params = led_params($mode);
+    return { ok => 0, supported => 0, error => 'invalid_led_mode' } unless @params;
+    my $reply = transact(0x35, @params);
+    return { ok => 1, supported => 1, mode => $mode } if $reply->[0] == 0x00;
+    return {
+        ok => 0,
+        supported => 0,
+        mode => $mode,
+        error => 'led_' . confirmation_name($reply->[0]),
+        code => $reply->[0],
+    };
+}
+
+END {
+    if ($restore_led_on_exit && defined($port)) {
+        eval { set_led_mode('off') };
+    }
+}
+
 sub confirmation_name {
     my ($code) = @_;
     return $confirmation_text{$code} // sprintf('unknown_0x%02x', $code);
@@ -217,6 +249,14 @@ if ($command eq 'count') {
     exit 0;
 }
 
+if ($command eq 'led') {
+    my $mode = shift(@ARGV) // 'off';
+    usage() unless $mode =~ /\A(?:off|on|breathe)\z/;
+    my $result = set_led_mode($mode);
+    emit_event(%$result, event => 'led', status => $result->{ok} ? 'complete' : 'unsupported');
+    exit($result->{ok} ? 0 : 2);
+}
+
 if ($command eq 'status') {
     my $sys = transact(0x0f);
     fail_json('status_' . confirmation_name($sys->[0]), $sys->[0])
@@ -239,6 +279,7 @@ if ($command eq 'enroll') {
     usage() unless defined($id) && $id =~ /\A\d+\z/ && $id <= 299;
     my $timeout = shift(@ARGV) // 60;
 
+    set_led_mode('breathe');
     emit_event(ok => 1, event => 'place_finger_first', id => $id);
     wait_for_finger($timeout);
     image_to_buffer(1);
@@ -261,6 +302,7 @@ if ($command eq 'enroll') {
 
 if ($command eq 'identify') {
     my $timeout = shift(@ARGV) // 45;
+    set_led_mode('breathe');
     emit_event(ok => 1, event => 'place_finger');
     wait_for_finger($timeout);
     image_to_buffer(1);
