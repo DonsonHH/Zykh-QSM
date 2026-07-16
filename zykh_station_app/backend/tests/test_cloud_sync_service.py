@@ -155,6 +155,35 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertTrue(worker._recent_remote_open(8))
         self.assertFalse(worker._recent_remote_open(9))
 
+    def test_remote_cabinet_requires_confirmation_and_miniprogram_identity(self) -> None:
+        worker = FakeCloudSyncWorker()
+
+        with self.assertRaisesRegex(CloudSyncError, "明确确认"):
+            worker._open_cabinet({"slot": 8}, {"_openid": "wechat-user"})
+        with self.assertRaisesRegex(CloudSyncError, "小程序身份"):
+            worker._open_cabinet({"slot": 8, "remote_confirmed": True}, {})
+
+    def test_confirmed_miniprogram_command_reaches_dispense_service(self) -> None:
+        worker = FakeCloudSyncWorker()
+        response = SimpleNamespace(model_dump=lambda mode: {"ok": True, "slot": 8, "mode": mode})
+        with patch("app.services.cloud_sync_service.DispenseService") as service_class:
+            service_class.return_value.open_cabinet.return_value = response
+            result = worker._open_cabinet(
+                {
+                    "slot": 8,
+                    "remote_confirmed": True,
+                    "target_user_name": "张三",
+                    "reason": "家属端远程开柜",
+                },
+                {"_openid": "wechat-user"},
+            )
+
+        request = service_class.return_value.open_cabinet.call_args.args[0]
+        self.assertEqual(result["slot"], 8)
+        self.assertEqual(request.slot, 8)
+        self.assertTrue(request.confirmed_open)
+        self.assertEqual(request.target_user_name, "张三")
+
 
 if __name__ == "__main__":
     unittest.main()
