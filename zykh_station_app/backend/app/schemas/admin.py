@@ -125,3 +125,5 @@ class AdminBiometricResponse(BaseModel):
     status: str
     message: str
     user: ServiceUser | None = None
+    job_id: str | None = None
+    event: str | None = None

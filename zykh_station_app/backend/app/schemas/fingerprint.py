@@ -25,5 +25,7 @@ class FingerprintActionResponse(BaseModel):
     score: float | None = None
     match_count: int = 0
     last_seen_at: str | None = None
+    job_id: str | None = None
+    event: str | None = None
     message: str
     error_message: str | None = None

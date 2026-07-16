@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Fingerprint, LoaderCircle, ScanFace, X, XCircle } from "lucide-react";
 
-export function AdminBiometricDialog({ open, mode, user, onEnroll, onClose, onComplete }) {
+export function AdminBiometricDialog({ open, mode, user, onEnroll, onProgress, onClose, onComplete }) {
   const [phase, setPhase] = useState("preview");
   const [message, setMessage] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
   const sessionRef = useRef(0);
   const isFace = mode === "face";
+  const [event, setEvent] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -15,6 +16,7 @@ export function AdminBiometricDialog({ open, mode, user, onEnroll, onClose, onCo
     setPhase("preview");
     setMessage("");
     setPreviewFailed(false);
+    setEvent("");
     setPreviewKey((value) => value + 1);
     return () => {
       sessionRef.current += 1;
@@ -34,6 +36,27 @@ export function AdminBiometricDialog({ open, mode, user, onEnroll, onClose, onCo
       if (result?.ok === false) {
         setPhase("error");
         setMessage(result.message || "录入未完成，请检查设备后重试。");
+        return;
+      }
+      if (!isFace && result?.job_id && result?.status === "running") {
+        let current = result;
+        setEvent(current.event || "place_finger_first");
+        setMessage(current.message || "请将手指完整覆盖识别区域。");
+        while (session === sessionRef.current && current?.status === "running") {
+          await new Promise((resolve) => window.setTimeout(resolve, 350));
+          current = await onProgress(user.id, result.job_id);
+          if (session !== sessionRef.current) return;
+          setEvent(current?.event || "");
+          setMessage(current?.message || "正在采集指纹特征。");
+        }
+        if (current?.ok === false || current?.status !== "enrolled") {
+          setPhase("error");
+          setMessage(current?.message || "录入未完成，请检查设备后重试。");
+          return;
+        }
+        setPhase("success");
+        setMessage(current.message || "指纹录入完成。");
+        onComplete?.(current);
         return;
       }
       setPhase("success");
@@ -83,15 +106,15 @@ export function AdminBiometricDialog({ open, mode, user, onEnroll, onClose, onCo
             <div className="admin-fingerprint-guide">
               <span className="fingerprint-rings"><Fingerprint size={82} strokeWidth={1.7} /></span>
               <strong>使用常用手指完成录入</strong>
-              <p>擦干手指后完整覆盖识别区域，采集期间不要快速抬起。</p>
+              <p>首次采集后请完全移开手指，再按提示放置同一根手指。</p>
             </div>
           ) : null}
 
           {phase === "running" ? (
-            <div className="admin-biometric-progress">
+            <div className={`admin-biometric-progress ${event || "starting"}`}>
               <span>{isFace ? <ScanFace size={70} /> : <Fingerprint size={70} />}</span>
               <LoaderCircle className="admin-spin" size={30} />
-              <strong>{isFace ? "正在采集人脸特征" : "正在采集指纹特征"}</strong>
+              <strong>{isFace ? "正在采集人脸特征" : event === "remove_finger" ? "请完全移开手指" : event === "place_same_finger_second" ? "请再次放置同一根手指" : "请放置手指"}</strong>
               <p>{message}</p>
             </div>
           ) : null}

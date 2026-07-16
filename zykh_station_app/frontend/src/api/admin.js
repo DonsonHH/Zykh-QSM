@@ -90,6 +90,12 @@ export function enrollAdminFingerprint(userId) {
   return adminRequest(`/api/admin/users/${encodeURIComponent(userId)}/fingerprint`, { method: "POST", payload: {} });
 }
 
+export function loadAdminFingerprintEnrollment(userId, jobId) {
+  return adminRequest(
+    `/api/admin/users/${encodeURIComponent(userId)}/fingerprint/${encodeURIComponent(jobId)}`
+  );
+}
+
 export function removeAdminFingerprint(userId, confirmation) {
   return adminRequest(`/api/admin/users/${encodeURIComponent(userId)}/fingerprint`, {
     method: "DELETE",

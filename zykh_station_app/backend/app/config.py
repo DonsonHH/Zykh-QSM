@@ -77,6 +77,12 @@ class Settings:
     qsm_fingerprint_status_path: str = _env("QSM_FINGERPRINT_STATUS_PATH", "/api/fingerprint/status")
     qsm_fingerprint_identify_path: str = _env("QSM_FINGERPRINT_IDENTIFY_PATH", "/api/fingerprint/identify")
     qsm_fingerprint_enroll_path: str = _env("QSM_FINGERPRINT_ENROLL_PATH", "/api/fingerprint/enroll")
+    qsm_fingerprint_enroll_start_path: str = _env(
+        "QSM_FINGERPRINT_ENROLL_START_PATH", "/api/fingerprint/enroll/start"
+    )
+    qsm_fingerprint_enroll_progress_path: str = _env(
+        "QSM_FINGERPRINT_ENROLL_PROGRESS_PATH", "/api/fingerprint/enroll/progress"
+    )
     qsm_fingerprint_delete_path: str = _env("QSM_FINGERPRINT_DELETE_PATH", "/api/fingerprint/delete")
     qsm_fingerprint_template_start: int = int(_env("QSM_FINGERPRINT_TEMPLATE_START", "16"))
     qsm_dispense_path: str = _env("QSM_DISPENSE_PATH", "/api/dispense")
@@ -178,6 +184,29 @@ class Settings:
     qwen_vision_model: str = _env("QWEN_VISION_MODEL", "qwen3.6-flash")
     showapi_app_key_file: Path = Path(_env("SHOWAPI_APP_KEY_FILE", "/userdata/zykh_app/data/showapi-app-key.txt"))
     sync_endpoint: str = _env("SYNC_ENDPOINT", "")
+    cloud_sync_enabled: bool = _env("CLOUD_SYNC_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    cloud_sync_endpoint: str = _env(
+        "CLOUD_SYNC_ENDPOINT",
+        "https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api",
+    )
+    cloud_sync_device_id: str = _env("CLOUD_SYNC_DEVICE_ID", "zykh-qsm-001")
+    cloud_sync_device_secret: str = _env("CLOUD_SYNC_DEVICE_SECRET", "")
+    cloud_sync_device_secret_file: Path = Path(
+        _env("CLOUD_SYNC_DEVICE_SECRET_FILE", str(DATA_DIR / "cloud-device-secret.txt"))
+    )
+    cloud_sync_interval_seconds: float = float(_env("CLOUD_SYNC_INTERVAL_SECONDS", "2"))
+    cloud_sync_timeout_seconds: float = float(_env("CLOUD_SYNC_TIMEOUT_SECONDS", "12"))
+    cloud_remote_cabinet_enabled: bool = _env("CLOUD_REMOTE_CABINET_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     real_dispense_test_slot: str = _env("REAL_DISPENSE_TEST_SLOT", "")
     enable_real_dispense: bool = _env("ENABLE_REAL_DISPENSE", "1").strip().lower() in {
         "1",

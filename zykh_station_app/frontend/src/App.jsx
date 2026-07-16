@@ -177,7 +177,6 @@ export function App() {
   }
 
   function handleWake() {
-    clearIdentity();
     commitViewChange("wake", () => {
       setPage("home");
       setIdle(false);

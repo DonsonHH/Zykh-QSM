@@ -101,7 +101,8 @@ assert.doesNotMatch(app, /loadDashboard\(identity|__unconfirmed__/, "home dashbo
 const wakeHandler = app.match(/function handleWake\(\) \{([\s\S]*?)\n  \}/)?.[1] || "";
 assert.ok(wakeHandler, "home wake handler is missing");
 assert.doesNotMatch(wakeHandler, /identify|capture|verify/, "waking the home screen still triggers identity recognition");
-assert.match(wakeHandler, /clearIdentity\(\)/, "waking the home screen does not reset the prior user session");
+assert.doesNotMatch(wakeHandler, /clearIdentity\(\)/, "waking the home screen still changes identity state");
+assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearIdentity\(\)/, "entering idle mode no longer clears the prior user session");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
 assert.match(home, /PLAN_ROTATION_MS\s*=\s*4500/, "home medication plans do not rotate every few seconds");

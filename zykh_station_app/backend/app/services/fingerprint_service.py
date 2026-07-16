@@ -78,32 +78,110 @@ class FingerprintService:
         )
 
     def enroll_user(self, user_id: str, timeout: int = 45) -> FingerprintActionResponse:
+        prepared = self._prepare_enrollment(user_id)
+        if isinstance(prepared, FingerprintActionResponse):
+            return prepared
+        user, template_id = prepared
+        result = self.client.enroll(template_id, timeout=timeout)
+        if not result.get("ok") or str(result.get("event") or result.get("status")) not in {"enrolled", "complete"}:
+            return self._failure(result, "指纹录入未完成，请按提示连续放置同一手指。", user=user, template_id=template_id)
+        self._bind_identity(user_id, template_id)
+        return FingerprintActionResponse(ok=True, status="enrolled", event="enrolled", user=user, template_id=template_id, message=f"{user.name}的指纹已录入。")
+
+    def start_enrollment(self, user_id: str, timeout: int = 60) -> FingerprintActionResponse:
+        prepared = self._prepare_enrollment(user_id)
+        if isinstance(prepared, FingerprintActionResponse):
+            return prepared
+        user, template_id = prepared
+        result = self.client.start_enrollment(template_id, timeout=timeout)
+        if not result.get("ok"):
+            return self._failure(result, "无法启动指纹录入。", user=user, template_id=template_id)
+        job_id = str(result.get("job_id") or "").strip()
+        if not job_id:
+            return FingerprintActionResponse(
+                ok=False,
+                status="invalid",
+                user=user,
+                template_id=template_id,
+                message="指纹模块未返回录入任务编号。",
+                error_message="指纹模块未返回录入任务编号。",
+            )
+        event = str(result.get("event") or "place_finger_first")
+        message = self._event_message(event)
+        now = db.now_text()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO fingerprint_enrollment_jobs(
+                  job_id, service_user_id, template_id, status, event, message, created_at, updated_at
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
+                """,
+                (job_id, user_id, template_id, event, message, now, now),
+            )
+        return FingerprintActionResponse(
+            ok=True,
+            status="running",
+            event=event,
+            job_id=job_id,
+            user=user,
+            template_id=template_id,
+            message=message,
+        )
+
+    def enrollment_progress(self, user_id: str, job_id: str) -> FingerprintActionResponse:
         user = self._get_user(user_id)
         if user is None:
             return FingerprintActionResponse(ok=False, status="not_found", message="服务对象不存在。", error_message="服务对象不存在。")
         db.init_db()
         with db.connect() as conn:
-            existing = conn.execute(
-                "SELECT template_id FROM fingerprint_identities WHERE service_user_id=?",
-                (user_id,),
+            job = conn.execute(
+                "SELECT service_user_id, template_id, status, event, message FROM fingerprint_enrollment_jobs WHERE job_id=?",
+                (job_id,),
             ).fetchone()
-            used = {int(row["template_id"]) for row in conn.execute("SELECT template_id FROM fingerprint_identities")}
-        template_id = int(existing["template_id"]) if existing else self._next_template_id(used)
-        if template_id is None:
-            return FingerprintActionResponse(ok=False, status="full", user=user, message="指纹模板空间已满。", error_message="指纹模板空间已满。")
-        if existing:
-            self.client.delete(template_id)
-        result = self.client.enroll(template_id, timeout=timeout)
-        if not result.get("ok") or str(result.get("event") or result.get("status")) not in {"enrolled", "complete"}:
-            return self._failure(result, "指纹录入未完成，请按提示连续放置同一手指。", user=user, template_id=template_id)
-        now = db.now_text()
-        with db.connect() as conn:
-            conn.execute("DELETE FROM fingerprint_identities WHERE template_id=? OR service_user_id=?", (template_id, user_id))
-            conn.execute(
-                "INSERT INTO fingerprint_identities(template_id, service_user_id, score, match_count, enrolled_at, last_seen_at) VALUES (?, ?, NULL, 0, ?, ?)",
-                (template_id, user_id, now, now),
+        if job is None or str(job["service_user_id"]) != user_id:
+            return FingerprintActionResponse(ok=False, status="not_found", user=user, job_id=job_id, message="指纹录入任务不存在。", error_message="指纹录入任务不存在。")
+        template_id = int(job["template_id"])
+        if str(job["status"]) == "enrolled":
+            return FingerprintActionResponse(
+                ok=True,
+                status="enrolled",
+                event="enrolled",
+                job_id=job_id,
+                user=user,
+                template_id=template_id,
+                message=str(job["message"]),
             )
-        return FingerprintActionResponse(ok=True, status="enrolled", user=user, template_id=template_id, message=f"{user.name}的指纹已录入。")
+        result = self.client.enrollment_progress(job_id)
+        event = str(result.get("event") or job["event"] or "running")
+        status = str(result.get("status") or "running")
+        if not result.get("ok") and status != "running":
+            response = self._failure(result, "指纹录入未完成，请重新录入。", user=user, template_id=template_id, job_id=job_id, event=event)
+            self._save_enrollment_job(job_id, response.status, event, response.message)
+            return response
+        if status in {"enrolled", "complete"} or event == "enrolled":
+            self._bind_identity(user_id, template_id)
+            message = f"{user.name}的指纹已录入。"
+            self._save_enrollment_job(job_id, "enrolled", "enrolled", message)
+            return FingerprintActionResponse(
+                ok=True,
+                status="enrolled",
+                event="enrolled",
+                job_id=job_id,
+                user=user,
+                template_id=template_id,
+                message=message,
+            )
+        message = self._event_message(event)
+        self._save_enrollment_job(job_id, "running", event, message)
+        return FingerprintActionResponse(
+            ok=True,
+            status="running",
+            event=event,
+            job_id=job_id,
+            user=user,
+            template_id=template_id,
+            message=message,
+        )
 
     def delete_user(self, user_id: str) -> FingerprintActionResponse:
         user = self._get_user(user_id)
@@ -119,6 +197,50 @@ class FingerprintService:
         with db.connect() as conn:
             conn.execute("DELETE FROM fingerprint_identities WHERE template_id=?", (template_id,))
         return FingerprintActionResponse(ok=True, status="deleted", user=user, template_id=template_id, message="指纹已删除。")
+
+    def _prepare_enrollment(self, user_id: str) -> tuple[ServiceUser, int] | FingerprintActionResponse:
+        user = self._get_user(user_id)
+        if user is None:
+            return FingerprintActionResponse(ok=False, status="not_found", message="服务对象不存在。", error_message="服务对象不存在。")
+        db.init_db()
+        with db.connect() as conn:
+            existing = conn.execute(
+                "SELECT template_id FROM fingerprint_identities WHERE service_user_id=?",
+                (user_id,),
+            ).fetchone()
+            used = {int(row["template_id"]) for row in conn.execute("SELECT template_id FROM fingerprint_identities")}
+        template_id = int(existing["template_id"]) if existing else self._next_template_id(used)
+        if template_id is None:
+            return FingerprintActionResponse(ok=False, status="full", user=user, message="指纹模板空间已满。", error_message="指纹模板空间已满。")
+        return user, template_id
+
+    @staticmethod
+    def _bind_identity(user_id: str, template_id: int) -> None:
+        now = db.now_text()
+        with db.connect() as conn:
+            conn.execute("DELETE FROM fingerprint_identities WHERE template_id=? OR service_user_id=?", (template_id, user_id))
+            conn.execute(
+                "INSERT INTO fingerprint_identities(template_id, service_user_id, score, match_count, enrolled_at, last_seen_at) VALUES (?, ?, NULL, 0, ?, ?)",
+                (template_id, user_id, now, now),
+            )
+
+    @staticmethod
+    def _save_enrollment_job(job_id: str, status: str, event: str, message: str) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE fingerprint_enrollment_jobs SET status=?, event=?, message=?, updated_at=? WHERE job_id=?",
+                (status, event, message, db.now_text(), job_id),
+            )
+
+    @staticmethod
+    def _event_message(event: str) -> str:
+        return {
+            "place_finger_first": "请将常用手指完整覆盖识别区域并保持不动。",
+            "remove_finger": "首次采集完成，请将手指完全移开。",
+            "finger_removed": "已检测到手指移开，请准备再次放置。",
+            "place_same_finger_second": "请再次放置同一根手指并保持不动。",
+            "enrolled": "指纹录入完成。",
+        }.get(event, "正在采集指纹特征，请按屏幕提示操作。")
 
     @staticmethod
     def _next_template_id(used: set[int]) -> int | None:
@@ -155,6 +277,9 @@ class FingerprintService:
             "two_captures_not_match": "两次采集不是同一根手指，请重新录入。",
             "image_too_messy": "指纹图像不清晰，请擦拭手指和识别窗口后重试。",
             "feature_too_few": "采集到的指纹特征不足，请完整按住识别窗口。",
+            "too_few_features": "采集到的指纹特征不足，请完整按住识别窗口。",
+            "finger_removal_timeout": "首次采集后未检测到手指移开，请完全抬起手指后重新录入。",
+            "busy": "已有指纹录入正在进行，请先完成当前录入。",
             "not_found": "未匹配到已录入指纹，可改用面部确认。",
         }
         message = messages.get(code, code or fallback)

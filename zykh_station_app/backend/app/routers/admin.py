@@ -145,7 +145,31 @@ def admin_unbind_face(user_id: str, payload: AdminConfirmationRequest, _: str = 
 @router.post("/users/{user_id}/fingerprint", response_model=AdminBiometricResponse)
 def admin_enroll_fingerprint(user_id: str, _: str = Depends(require_admin)) -> AdminBiometricResponse:
     result = AdminService().enroll_fingerprint(user_id)
-    return AdminBiometricResponse(ok=result.ok, status=result.status, message=result.message, user=result.user)
+    return AdminBiometricResponse(
+        ok=result.ok,
+        status=result.status,
+        message=result.message,
+        user=result.user,
+        job_id=result.job_id,
+        event=result.event,
+    )
+
+
+@router.get("/users/{user_id}/fingerprint/{job_id}", response_model=AdminBiometricResponse)
+def admin_fingerprint_enrollment_progress(
+    user_id: str,
+    job_id: str,
+    _: str = Depends(require_admin),
+) -> AdminBiometricResponse:
+    result = AdminService().fingerprint_enrollment_progress(user_id, job_id)
+    return AdminBiometricResponse(
+        ok=result.ok,
+        status=result.status,
+        message=result.message,
+        user=result.user,
+        job_id=result.job_id,
+        event=result.event,
+    )
 
 
 @router.delete("/users/{user_id}/fingerprint", response_model=AdminBiometricResponse)

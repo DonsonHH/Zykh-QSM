@@ -5,6 +5,7 @@ import {
   deleteAdminUser,
   enrollAdminFace,
   enrollAdminFingerprint,
+  loadAdminFingerprintEnrollment,
   loadAdminUsers,
   removeAdminFace,
   removeAdminFingerprint,
@@ -155,6 +156,14 @@ export function AdminUsers({ notify, onSessionExpired }) {
         onEnroll={async (userId) => {
           try {
             return await (biometricMode === "face" ? enrollAdminFace(userId) : enrollAdminFingerprint(userId));
+          } catch (error) {
+            if (/会话/.test(error.message || "")) onSessionExpired();
+            throw error;
+          }
+        }}
+        onProgress={async (userId, jobId) => {
+          try {
+            return await loadAdminFingerprintEnrollment(userId, jobId);
           } catch (error) {
             if (/会话/.test(error.message || "")) onSessionExpired();
             throw error;

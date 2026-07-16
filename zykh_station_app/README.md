@@ -99,6 +99,17 @@ KIOSK_BROWSER_LOG=terminal sh scripts/launch_kiosk.sh
 sh scripts/open_kiosk.sh
 ```
 
+## 微信小程序与云同步
+
+FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和取药记录，并拉取小程序命令。网络中断不影响本地使用，恢复后自动补传。
+
+```bash
+curl http://127.0.0.1:8000/api/sync/status
+curl -X POST http://127.0.0.1:8000/api/sync/run
+```
+
+云函数源码、部署脚本和远程命令说明见 [docs/cloudbase-sync.md](docs/cloudbase-sync.md)。
+
 ## 配置
 
 默认配置见 `backend/.env.example`：
@@ -121,6 +132,9 @@ AI_ENABLE_THINKING=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
+CLOUD_SYNC_ENABLED=true
+CLOUD_SYNC_DEVICE_ID=zykh-qsm-001
+CLOUD_SYNC_INTERVAL_SECONDS=2
 ADMIN_DEBUG_PIN=1145
 ADMIN_SESSION_MINUTES=30
 ```

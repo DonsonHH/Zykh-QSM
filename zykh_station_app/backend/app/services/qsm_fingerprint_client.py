@@ -30,6 +30,19 @@ class QsmFingerprintClient:
             timeout=max(settings.qsm_fingerprint_timeout_seconds, (timeout * 3) + 20),
         )
 
+    def start_enrollment(self, template_id: int, timeout: int = 60) -> dict[str, Any]:
+        return self._request(
+            settings.qsm_fingerprint_enroll_start_path,
+            payload={"template_id": template_id, "timeout": timeout},
+            timeout=12,
+        )
+
+    def enrollment_progress(self, job_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        path = f"{settings.qsm_fingerprint_enroll_progress_path}?job_id={quote(job_id, safe='')}"
+        return self._request(path, timeout=8)
+
     def delete(self, template_id: int) -> dict[str, Any]:
         return self._request(settings.qsm_fingerprint_delete_path, payload={"template_id": template_id}, timeout=12)
 

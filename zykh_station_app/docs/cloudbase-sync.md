@@ -1,0 +1,113 @@
+# CloudBase 与微信小程序同步
+
+## 当前链路
+
+主机 FastAPI 是终端数据的主同步代理：
+
+```text
+SQLite / QSM 外设
+  -> FastAPI CloudSyncWorker（2 秒周期）
+  -> CloudBase HTTP 云函数 api
+  -> devices / medicines / vitals / records / commands
+  -> 微信小程序
+```
+
+小程序反向操作通过 `commands` 集合完成。主机拉取命令并将其置为 `running`，执行后 ACK 为 `done` 或 `failed`。`cloud_command_history` 保存本地执行结果，同一命令 ID 即使重复下发也不会重复执行。
+
+## 已同步数据
+
+- 设备在线状态和同步代理版本；
+- 23 个药柜仓位及药品信息；
+- 服务对象；
+- 今日计划；
+- 体征记录；
+- AI 问询记录；
+- 家庭取药记录。
+
+线上仍是旧版云函数时，终端自动使用 v1 兼容动作。药品写入 `medicines`，其余新增业务数据以结构化记录写入 `records`。部署 v2 云函数后会自动切换到 `service_users`、`today_plans`、`inquiries` 等独立集合。v2 还会锁定 schema 2 主代理：旧 `cloud_agent.pl` 不能再覆盖设备状态，也不能抢先拉取新命令。
+
+## 部署 v2 云函数
+
+先在微信云开发控制台创建集合：
+
+```text
+service_users
+today_plans
+inquiries
+```
+
+登录并部署：
+
+```bash
+tcb login
+sh zykh_station_app/scripts/deploy_cloudbase_sync.sh
+```
+
+也可以在微信开发者工具中，把 `zykh_station_app/cloudbase/cloudfunctions/api/` 复制为项目的 `cloudfunctions/api/`，然后右键选择“上传并部署：云端安装依赖”。
+
+当前云开发环境：
+
+```text
+cloud1-d6gv6t2jf3f2c541c
+```
+
+部署后验证：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -d '{"action":"PING","data":{}}' \
+  https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api
+```
+
+返回中的 `schemaVersion` 应为 `2`。
+
+## 小程序反向命令
+
+可将 `cloudbase/miniprogram/remoteCommands.js` 放入小程序工具目录。它使用云函数 `CREATE_COMMAND`，避免页面直接拼装命令结构。
+
+`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。v2 下读取独立集合；v1 下自动从设备 `syncSummary` 和原有集合组合数据。订阅在页面 `onUnload` 时必须调用返回的停止函数。
+
+支持：
+
+```text
+AUDIO_BEEP
+READ_VITALS_ALL
+AI_CHAT
+UPSERT_MEDICINE
+UPSERT_SERVICE_USER
+UPSERT_TODAY_PLAN
+OPEN_CABINET
+```
+
+远程开柜必须包含：
+
+```json
+{
+  "slot": 8,
+  "request_id": "open-唯一请求编号",
+  "remote_confirmed": true,
+  "actor_name": "家属",
+  "reason": "家属端远程开柜"
+}
+```
+
+终端还会核验命令来源的微信 OpenID、仓位范围和 `CLOUD_REMOTE_CABINET_ENABLED`。命令 ID 用于防止重复开柜；同一仓位 10 秒内的第二个远程开柜请求也会被拒绝。执行成功但 ACK 暂时断网时只补传结果，不会重新操作柜门。
+
+## 配置与状态
+
+参考 `backend/.env.example`。设备密钥只放在环境变量或：
+
+```text
+zykh_station_app/backend/data/cloud-device-secret.txt
+```
+
+不要提交密钥文件。
+
+状态接口：
+
+```text
+GET /api/sync/status
+POST /api/sync/run
+```
+
+`connected=true` 且 `last_sync_at` 持续更新表示双向轮询正常。断网时本地数据保留在 SQLite，恢复网络后自动补传。

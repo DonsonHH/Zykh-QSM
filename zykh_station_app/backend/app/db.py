@@ -158,6 +158,18 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS cloud_command_history (
+              command_id TEXT PRIMARY KEY,
+              command_type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              result_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS service_users (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -198,6 +210,20 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "fingerprint_identities", "match_count", "INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fingerprint_enrollment_jobs (
+              job_id TEXT PRIMARY KEY,
+              service_user_id TEXT NOT NULL,
+              template_id INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              event TEXT NOT NULL,
+              message TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS today_plans (

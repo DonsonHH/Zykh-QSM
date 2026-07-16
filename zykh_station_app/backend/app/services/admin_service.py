@@ -167,8 +167,14 @@ class AdminService:
         return message
 
     def enroll_fingerprint(self, user_id: str) -> object:
-        result = FingerprintService().enroll_user(user_id, timeout=45)
-        self.audit("fingerprint.enroll", user_id, "success" if result.ok else "failed", result.message)
+        result = FingerprintService().start_enrollment(user_id, timeout=60)
+        self.audit("fingerprint.enroll.start", user_id, "success" if result.ok else "failed", result.message)
+        return result
+
+    def fingerprint_enrollment_progress(self, user_id: str, job_id: str) -> object:
+        result = FingerprintService().enrollment_progress(user_id, job_id)
+        if result.status in {"enrolled", "error", "timeout", "not_found"}:
+            self.audit("fingerprint.enroll.finish", user_id, "success" if result.ok else "failed", result.message)
         return result
 
     def delete_fingerprint(self, user_id: str, confirmation: str) -> object:

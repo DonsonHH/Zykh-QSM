@@ -23,6 +23,7 @@ LOCAL_AUDIO_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/audio_capture_gatew
 LOCAL_AUDIO_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_audio_capture_gateway.sh"
 LOCAL_FINGERPRINT_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/fingerprint_gateway.pl"
 LOCAL_FINGERPRINT_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_fingerprint_gateway.sh"
+LOCAL_FINGERPRINT_DRIVER="$REPO_ROOT/zykh_station_app/qsm_gateway/as608.pl"
 FACE_BUNDLE="${QSM_FACE_BUNDLE:-}"
 FINGERPRINT_BUNDLE="${QSM_FINGERPRINT_BUNDLE:-}"
 TEMP_DIR=""
@@ -44,6 +45,7 @@ fail() {
 [ -f "$LOCAL_AUDIO_START" ] || fail "找不到麦克风采集启动脚本：$LOCAL_AUDIO_START"
 [ -f "$LOCAL_FINGERPRINT_GATEWAY" ] || fail "找不到指纹识别网关：$LOCAL_FINGERPRINT_GATEWAY"
 [ -f "$LOCAL_FINGERPRINT_START" ] || fail "找不到指纹识别启动脚本：$LOCAL_FINGERPRINT_START"
+[ -f "$LOCAL_FINGERPRINT_DRIVER" ] || fail "找不到指纹驱动：$LOCAL_FINGERPRINT_DRIVER"
 command -v adb >/dev/null 2>&1 || fail "未找到 adb"
 
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
@@ -125,9 +127,10 @@ if ! $ADB_PREFIX shell "test -f '$QSM_HOME/scripts/as608.pl' -a -x '$QSM_HOME/sc
   rm -rf "$TEMP_DIR"
   TEMP_DIR=""
 fi
+$ADB_PREFIX push "$LOCAL_FINGERPRINT_DRIVER" "$QSM_HOME/scripts/as608.pl" >/dev/null || fail "推送优化后的 AS608 指纹驱动失败"
 $ADB_PREFIX push "$LOCAL_FINGERPRINT_GATEWAY" "$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl" >/dev/null || fail "推送指纹识别网关失败"
 $ADB_PREFIX push "$LOCAL_FINGERPRINT_START" "$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh" >/dev/null || fail "推送指纹启动脚本失败"
-$ADB_PREFIX shell "chmod +x '$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl' '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'; QSM_FINGERPRINT_HOME='$QSM_FINGERPRINT_HOME' QSM_FINGERPRINT_PORT='$FINGERPRINT_DEVICE_PORT' sh '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'" >/dev/null \
+$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/as608.pl' '$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl' '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'; QSM_FINGERPRINT_HOME='$QSM_FINGERPRINT_HOME' QSM_FINGERPRINT_PORT='$FINGERPRINT_DEVICE_PORT' sh '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'" >/dev/null \
   || fail "启动板端指纹识别网关失败"
 
 log "建立端口转发：127.0.0.1:$HOST_PORT -> tcp:$DEVICE_PORT"

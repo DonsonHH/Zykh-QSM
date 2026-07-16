@@ -20,6 +20,7 @@ class FakeFingerprintClient:
         self.match_id = 16
         self.deleted: list[int] = []
         self.enrolled: list[int] = []
+        self.progress_event = "place_finger_first"
 
     def status(self) -> dict[str, object]:
         return {"ok": True, "status": "available", "count": 1, "capacity": 300}
@@ -30,6 +31,15 @@ class FakeFingerprintClient:
     def enroll(self, template_id: int, timeout: int = 45) -> dict[str, object]:
         self.enrolled.append(template_id)
         return {"ok": True, "status": "enrolled", "event": "enrolled", "id": template_id}
+
+    def start_enrollment(self, template_id: int, timeout: int = 60) -> dict[str, object]:
+        self.enrolled.append(template_id)
+        return {"ok": True, "status": "running", "event": "place_finger_first", "job_id": "job-1", "id": template_id}
+
+    def enrollment_progress(self, job_id: str) -> dict[str, object]:
+        if self.progress_event == "enrolled":
+            return {"ok": True, "status": "enrolled", "event": "enrolled", "job_id": job_id, "id": 16}
+        return {"ok": True, "status": "running", "event": self.progress_event, "job_id": job_id, "id": 16}
 
     def delete(self, template_id: int) -> dict[str, object]:
         self.deleted.append(template_id)
@@ -89,6 +99,38 @@ class FingerprintServiceTest(unittest.TestCase):
         self.assertEqual(result.status, "timeout")
         self.assertNotIn("finger_wait_timeout", result.message)
         self.assertIn("未检测到手指", result.message)
+
+    def test_async_enrollment_exposes_removal_step_then_binds_on_completion(self) -> None:
+        service = FingerprintService(client=self.client)
+        started = service.start_enrollment("zhangsan")
+
+        self.assertTrue(started.ok)
+        self.assertEqual(started.status, "running")
+        self.assertEqual(started.job_id, "job-1")
+        self.client.progress_event = "remove_finger"
+        removal = service.enrollment_progress("zhangsan", "job-1")
+        self.assertEqual(removal.event, "remove_finger")
+        self.assertIn("完全移开", removal.message)
+
+        self.client.progress_event = "enrolled"
+        completed = service.enrollment_progress("zhangsan", "job-1")
+        identified = service.identify()
+
+        self.assertTrue(completed.ok)
+        self.assertEqual(completed.status, "enrolled")
+        self.assertTrue(identified.ok)
+        self.assertEqual(identified.user.id, "zhangsan")
+        self.assertEqual(self.client.deleted, [])
+
+    def test_removal_timeout_has_actionable_message(self) -> None:
+        response = FingerprintService._failure(
+            {"ok": False, "status": "error", "error_message": "finger_removal_timeout"},
+            "fallback",
+        )
+
+        self.assertFalse(response.ok)
+        self.assertNotIn("finger_removal_timeout", response.message)
+        self.assertIn("完全抬起", response.message)
 
 
 if __name__ == "__main__":

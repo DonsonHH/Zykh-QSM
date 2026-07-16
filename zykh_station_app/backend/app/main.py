@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .config import settings
+from .services.cloud_sync_service import cloud_sync_worker
 from .routers import admin, ai, audio, camera, dashboard, device, dispense, fingerprint, health, identity, inquiry, medicines, network, qsm, records, settings as settings_router, site, status, sync, vitals
 
 
@@ -52,3 +53,9 @@ app = create_app()
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    cloud_sync_worker.start()
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    cloud_sync_worker.stop()
