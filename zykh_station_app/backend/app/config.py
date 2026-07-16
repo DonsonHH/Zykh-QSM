@@ -108,6 +108,22 @@ class Settings:
         "yes",
         "on",
     }
+    admin_debug_pin: str = _env("ADMIN_DEBUG_PIN", "2468")
+    admin_session_minutes: int = int(_env("ADMIN_SESSION_MINUTES", "30"))
+    admin_allow_system_actions: bool = _env("ADMIN_ALLOW_SYSTEM_ACTIONS", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    admin_restart_command: str = _env(
+        "ADMIN_RESTART_COMMAND",
+        f"sh {APP_ROOT / 'scripts' / 'admin_restart_app.sh'}",
+    )
+    admin_reboot_command: str = _env("ADMIN_REBOOT_COMMAND", "sudo -n systemctl reboot")
+    display_output: str = _env("DISPLAY_OUTPUT", "auto")
+    display_name: str = _env("DISPLAY", ":0")
+    display_xauthority: str = _env("XAUTHORITY", str(Path.home() / ".Xauthority"))
     local_camera_mode: str = _env("LOCAL_CAMERA_MODE", "real").strip().lower()
     local_camera_device: str = _env("LOCAL_CAMERA_DEVICE", "auto")
     local_camera_capture_cmd: str = _env("LOCAL_CAMERA_CAPTURE_CMD", "")

@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from .medicine import Medicine, MedicineUpdateRequest
+from .records import ServiceUser, ServiceUserCreateRequest, ServiceUserUpdateRequest
+
+
+class AdminSessionRequest(BaseModel):
+    pin: str = Field(min_length=4, max_length=32)
+
+
+class AdminSessionResponse(BaseModel):
+    ok: bool = True
+    token: str
+    expires_at: str
+    expires_in_seconds: int
+
+
+class AdminAuditRecord(BaseModel):
+    id: str
+    created_at: str
+    actor: str
+    action: str
+    target: str
+    result: str
+    detail: str
+
+
+class AdminOverviewResponse(BaseModel):
+    ok: bool = True
+    generated_at: str
+    host: dict[str, object]
+    counts: dict[str, int]
+    devices: dict[str, object]
+    network: dict[str, object]
+    recent_audit: list[AdminAuditRecord]
+
+
+class AdminLogSource(BaseModel):
+    id: str
+    label: str
+    available: bool
+    size: int = 0
+
+
+class AdminLogsResponse(BaseModel):
+    ok: bool = True
+    source: str
+    label: str
+    lines: list[str]
+    updated_at: str
+    sources: list[AdminLogSource]
+
+
+class AdminSystemActionRequest(BaseModel):
+    action: str
+    confirmation: str = ""
+
+
+class AdminActionResponse(BaseModel):
+    ok: bool
+    accepted: bool = False
+    action: str
+    message: str
+    detail: str = ""
+
+
+class AdminUsersResponse(BaseModel):
+    ok: bool = True
+    users: list[ServiceUser]
+    biometrics: dict[str, dict[str, object]] = Field(default_factory=dict)
+
+
+class AdminUserCreateRequest(ServiceUserCreateRequest):
+    pass
+
+
+class AdminUserUpdateRequest(ServiceUserUpdateRequest):
+    pass
+
+
+class AdminMedicinesResponse(BaseModel):
+    ok: bool = True
+    medicines: list[Medicine]
+
+
+class AdminMedicineUpdateRequest(MedicineUpdateRequest):
+    pass
+
+
+class AdminCabinetOpenRequest(BaseModel):
+    confirmation: str
+    reason: str = "管理员调试开柜"
+
+
+class AdminConfirmationRequest(BaseModel):
+    confirmation: str
+
+
+class AdminBiometricResponse(BaseModel):
+    ok: bool
+    status: str
+    message: str
+    user: ServiceUser | None = None

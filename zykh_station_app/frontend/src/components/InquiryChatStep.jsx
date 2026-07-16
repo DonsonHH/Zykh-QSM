@@ -185,7 +185,7 @@ export function InquiryChatStep({
     if (!clean) {
       return;
     }
-    speakText(clean, 230, 1.32, isLocalNetworkMode(networkStatus) ? "offline" : "auto")
+    speakText(clean, undefined, 1.32, isLocalNetworkMode(networkStatus) ? "offline" : "auto")
       .then((data) => {
         if (!data.ok) {
           speakLocally(clean);

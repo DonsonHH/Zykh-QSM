@@ -65,7 +65,10 @@ class AiStreamingTest(unittest.TestCase):
         service._system_prompt = lambda: "安全提示"
         service._cloud_reachable = lambda: True
 
-        with patch("app.services.ai_service.urlopen", return_value=StreamingResponse(payload)):
+        with (
+            patch("app.services.ai_service.urlopen", return_value=StreamingResponse(payload)),
+            patch("app.services.ai_service.db.get_setting", return_value="sim"),
+        ):
             events = list(service.stream("我头晕", context={"profile": {"name": "张三"}}))
 
         text = "".join(str(event.get("text") or "") for event in events)

@@ -30,6 +30,14 @@ from ..services.qwen_realtime_tts import QwenRealtimeTts
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 
 
+def _saved_volume(key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(db.get_setting(key, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 class SpeakRequest(BaseModel):
     text: str
     volume: int | None = None
@@ -131,6 +139,7 @@ def audio_status() -> dict[str, object]:
 @router.post("/speak")
 async def audio_speak(request: SpeakRequest) -> dict[str, object]:
     client = QsmClient()
+    volume = request.volume if request.volume is not None else _saved_volume("speaker_volume", 230, 0, 255)
     network_mode = _tts_mode_for_network()
     requested_mode = "offline" if network_mode == "offline" else _normalize_tts_mode(request.mode) or network_mode
     result: dict[str, object]
@@ -140,7 +149,7 @@ async def audio_speak(request: SpeakRequest) -> dict[str, object]:
         result = await QwenRealtimeTts(client).speak(
             request.text,
             api_key,
-            volume=request.volume,
+            volume=volume,
             speed=request.speed,
         )
         if not result.get("ok"):
@@ -148,7 +157,7 @@ async def audio_speak(request: SpeakRequest) -> dict[str, object]:
             result = await asyncio.to_thread(
                 client.audio_speak,
                 request.text,
-                request.volume,
+                volume,
                 request.speed,
                 "offline",
             )
@@ -158,7 +167,7 @@ async def audio_speak(request: SpeakRequest) -> dict[str, object]:
         result = await asyncio.to_thread(
             client.audio_speak,
             request.text,
-            request.volume,
+            volume,
             request.speed,
             "offline",
         )
@@ -188,7 +197,8 @@ async def audio_speak(request: SpeakRequest) -> dict[str, object]:
 def audio_beep(request: BeepRequest | None = None) -> dict[str, object]:
     client = QsmClient()
     client.audio_stream_stop()
-    result = client.audio_beep(request.volume if request else None)
+    volume = request.volume if request and request.volume is not None else _saved_volume("speaker_volume", 230, 0, 255)
+    result = client.audio_beep(volume)
     _record("提示音", "提示音测试", "已请求外设播放提示音。" if result.get("ok") else str(result.get("error_message") or "提示音失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}
 

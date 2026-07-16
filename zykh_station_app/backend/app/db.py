@@ -39,6 +39,19 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS admin_audit_records (
+              id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              actor TEXT NOT NULL,
+              action TEXT NOT NULL,
+              target TEXT NOT NULL,
+              result TEXT NOT NULL,
+              detail TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS medicines (
               id TEXT PRIMARY KEY,
               slot TEXT NOT NULL,

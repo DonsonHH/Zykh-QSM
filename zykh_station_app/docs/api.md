@@ -188,7 +188,7 @@ Runs the explicit face-confirmation path from the dispense modal. A matched face
 
 ### POST /api/identity/enroll/{service_user_id}
 
-Captures multiple QSM face samples and binds them to an existing service user. This is used by the Settings page administrator action.
+Captures multiple QSM face samples and binds them to an existing service user. The protected administrator API wraps this action for the debug console.
 
 ### GET /api/fingerprint/status
 
@@ -241,3 +241,29 @@ Returns the selected AI mode, cloud configuration state and QSM offline-model he
 ### POST /api/ai/chat/stream
 
 Streams actual provider tokens as server-sent `meta`, `delta`, optional `replace`, and `done` events. Cloud DeepSeek reasoning remains hidden while final text is streamed. The QSM llama.cpp route uses the same true-streaming contract; `/api/ai/warm-local` primes its reusable prompt cache after startup.
+
+## Terminal settings
+
+### `GET /api/settings/basic`
+
+Returns the persisted user-adjustable settings together with current Wi-Fi, SIM and microphone availability.
+
+### `PATCH /api/settings/basic`
+
+Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mode`, `speaker_volume`, `microphone_volume`, `display_brightness` or `idle_timeout_seconds`. Only submitted fields are applied. Hardware failures are returned in `warnings` without discarding the saved preference.
+
+## Administrator debug API
+
+`/api/admin/*` routes require an in-memory bearer session created by `POST /api/admin/session`. Sessions expire automatically and are stored by the frontend only in `sessionStorage`.
+
+- `POST /api/admin/session`, `DELETE /api/admin/session`
+- `GET /api/admin/overview`
+- `GET /api/admin/logs?source=backend`
+- `GET|POST|PATCH|DELETE /api/admin/users...`
+- `POST|DELETE /api/admin/users/{id}/face`
+- `POST|DELETE /api/admin/users/{id}/fingerprint`
+- `GET|PATCH /api/admin/medicines...`
+- `POST /api/admin/cabinet/{slot}/open`
+- `POST /api/admin/system/action`
+
+The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. Destructive actions require a matching confirmation string and create an `admin_audit_records` entry. Log output is limited to an allowlist and redacts API keys, bearer tokens and secrets.

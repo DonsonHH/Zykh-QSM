@@ -4,6 +4,7 @@ import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { loadDashboard } from "./api/dashboard.js";
 import { loadNetworkStatus } from "./api/network.js";
+import { loadBasicSettings } from "./api/settings.js";
 import { mockDashboard } from "./api/mockData.js";
 import { Home } from "./pages/Home.jsx";
 import { ComingSoon } from "./pages/ComingSoon.jsx";
@@ -14,6 +15,7 @@ import { Scan } from "./pages/Scan.jsx";
 import { Vitals } from "./pages/Vitals.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { IdleScreen } from "./pages/IdleScreen.jsx";
+import { AdminConsole } from "./pages/AdminConsole.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
@@ -63,11 +65,22 @@ export function App() {
   const [medicineFocus, setMedicineFocus] = useState(null);
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [networkStatus, setNetworkStatus] = useState(null);
+  const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
+  const [idleSeconds, setIdleSeconds] = useState(Number.isFinite(configuredIdleSeconds) ? Math.max(0, configuredIdleSeconds) : 90);
   const toastTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
   const { clear: clearIdentity } = useFaceIdentity({ auto: false });
-  const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
-  const idleSeconds = Number.isFinite(configuredIdleSeconds) ? Math.max(15, configuredIdleSeconds) : 90;
+
+  useEffect(() => {
+    const applySettings = (settings) => {
+      const value = Number(settings?.idle_timeout_seconds);
+      if (Number.isFinite(value)) setIdleSeconds(Math.max(0, value));
+    };
+    loadBasicSettings().then((data) => applySettings(data.settings)).catch(() => undefined);
+    const handleSettings = (event) => applySettings(event.detail);
+    window.addEventListener("zykh:settings-updated", handleSettings);
+    return () => window.removeEventListener("zykh:settings-updated", handleSettings);
+  }, []);
 
   useEffect(() => {
     loadNetworkStatus().then(setNetworkStatus).catch(() => setNetworkStatus(null));
@@ -96,7 +109,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (idle) {
+    if (idle || page === "admin" || idleSeconds === 0) {
       window.clearTimeout(idleTimerRef.current);
       return undefined;
     }
@@ -118,7 +131,7 @@ export function App() {
       window.clearTimeout(idleTimerRef.current);
       events.forEach((event) => window.removeEventListener(event, resetTimer));
     };
-  }, [clearIdentity, idle, idleSeconds]);
+  }, [clearIdentity, idle, idleSeconds, page]);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -134,7 +147,8 @@ export function App() {
       nextPage !== "records" &&
       nextPage !== "scan" &&
       nextPage !== "vitals" &&
-      nextPage !== "settings"
+      nextPage !== "settings" &&
+      nextPage !== "admin"
     ) {
       notify("下一阶段开发中");
     }
@@ -175,8 +189,10 @@ export function App() {
       <a className="skip-link" href="#main-content">
         跳到主要内容
       </a>
-      <section className={`kiosk-frame ${idle ? "idle-frame" : ""}`} aria-label="智药康护终端">
-        {idle ? (
+      <section className={`kiosk-frame ${idle ? "idle-frame" : ""} ${page === "admin" ? "admin-frame" : ""}`} aria-label="智药康护终端">
+        {page === "admin" ? (
+          <AdminConsole onExit={() => handleNav("settings", { transition: "backward" })} />
+        ) : idle ? (
           <IdleScreen now={now} networkStatus={networkStatus} onWake={handleWake} />
         ) : (
           <>
