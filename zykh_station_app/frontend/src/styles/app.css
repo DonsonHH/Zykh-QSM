@@ -325,6 +325,7 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .handwritten-hello {
+  --hello-cycle-duration: 5000ms;
   width: 300px;
   height: 90px;
   margin-top: 6px;
@@ -337,7 +338,7 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   stroke-linecap: round;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation-duration: var(--motion-cycle-duration);
+  animation-duration: var(--hello-cycle-duration);
   animation-timing-function: linear;
   animation-iteration-count: infinite;
   animation-direction: normal;
@@ -357,12 +358,12 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
     stroke-dashoffset: 1;
   }
 
-  11%,
-  50% {
+  10%,
+  55% {
     stroke-dashoffset: 0;
   }
 
-  61%,
+  65%,
   100% {
     stroke-dashoffset: -1;
   }
@@ -370,16 +371,15 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 
 @keyframes handwritten-hello-word {
   0%,
-  11% {
+  10% {
     stroke-dashoffset: 1;
   }
 
-  42%,
-  61% {
+  45%,
+  65% {
     stroke-dashoffset: 0;
   }
 
-  92%,
   100% {
     stroke-dashoffset: -1;
   }
