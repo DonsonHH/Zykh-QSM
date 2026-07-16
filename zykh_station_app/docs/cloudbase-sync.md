@@ -65,7 +65,15 @@ curl -sS -H 'Content-Type: application/json' \
 
 可将 `cloudbase/miniprogram/remoteCommands.js` 放入小程序工具目录。它使用云函数 `CREATE_COMMAND`，避免页面直接拼装命令结构。
 
-`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。v2 下读取独立集合；v1 下自动从设备 `syncSummary` 和原有集合组合数据。订阅在页面 `onUnload` 时必须调用返回的停止函数。
+`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅优先使用 CloudBase 数据库变更监听，5 秒周期刷新作为断线兜底；v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
+
+`remoteCommands.js` 优先调用 v2 的 `CREATE_COMMAND`。云端仍是 v1 时会兼容为小程序直接写入 `commands` 集合；CloudBase 自动附带的 `_openid` 仍由终端核验，确定性 `requestId` 也会防止重复创建同一次开柜请求。
+
+同步与命令兼容契约可在主机执行：
+
+```bash
+node zykh_station_app/cloudbase/miniprogram/test-sync-contract.cjs
+```
 
 支持：
 
