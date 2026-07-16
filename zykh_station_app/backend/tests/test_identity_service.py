@@ -52,6 +52,38 @@ class IdentityServiceTest(unittest.TestCase):
         self.assertIsNone(result.user)
         self.assertEqual(face.enrolled_subjects, [])
 
+    def test_no_face_preserves_retryable_status_with_terminal_copy(self) -> None:
+        face = FakeFaceClient(
+            {
+                "ok": False,
+                "status": "no_face",
+                "error_message": "画面中未检测到清晰人脸，请正对摄像头后重试。",
+            }
+        )
+
+        result = IdentityService(face_client=face).verify_for_dispense(samples=18)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "no_face")
+        self.assertEqual(result.error_message, "未检测到可确认的人脸。")
+        self.assertEqual(face.enrolled_subjects, [])
+
+    def test_unavailable_face_does_not_create_guest(self) -> None:
+        face = FakeFaceClient(
+            {
+                "ok": False,
+                "status": "unavailable",
+                "error_message": "人脸识别未返回有效结果。",
+            }
+        )
+
+        result = IdentityService(face_client=face).verify_for_dispense(samples=18)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "unavailable")
+        self.assertEqual(result.error_message, "人脸识别未返回有效结果。")
+        self.assertEqual(face.enrolled_subjects, [])
+
     def test_matched_subject_returns_bound_service_user(self) -> None:
         face = FakeFaceClient({"ok": True, "status": "unknown", "confidence": -1})
         service = IdentityService(face_client=face)

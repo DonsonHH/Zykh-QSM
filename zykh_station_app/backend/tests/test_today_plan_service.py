@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,19 +31,24 @@ class TodayPlanServiceTest(unittest.TestCase):
         self.db_patch.stop()
         self.temp_dir.cleanup()
 
-    def test_default_plan_uses_existing_user_and_cabinet_medicine(self) -> None:
+    def test_default_plans_seed_two_people_with_three_labeled_tasks_each(self) -> None:
         plans = self.service.list_today_plans()
 
-        self.assertEqual(len(plans), 1)
-        self.assertEqual(plans[0].target_user, "张三")
-        self.assertEqual(plans[0].medicine_id, "slot-21-amlodipine")
-        self.assertEqual(plans[0].medicine, "苯磺酸氨氯地平片")
+        self.assertEqual(len(plans), 6)
+        self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "李四": 3})
+        self.assertEqual(
+            {plan.timing_label for plan in plans},
+            {"早餐前", "早餐后", "午饭后", "晚饭后", "睡前"},
+        )
+        self.assertIn("slot-21-amlodipine", {plan.medicine_id for plan in plans})
+        self.assertTrue(all(plan.status == "待执行" for plan in plans))
 
     def test_plan_crud_keeps_normalized_links_and_does_not_reseed_after_delete(self) -> None:
-        default_plan = self.service.list_today_plans()[0]
+        default_plans = self.service.list_today_plans()
         created = self.service.create_today_plan(
             TodayPlanCreateRequest(
                 time="20:30",
+                timing_label="晚饭后",
                 medicine_id="slot-02-centrum",
                 service_user_id="lisi",
                 dose="1片",
@@ -51,13 +57,19 @@ class TodayPlanServiceTest(unittest.TestCase):
         )
         self.assertEqual(created.target_user, "李四")
         self.assertEqual(created.medicine, "多维元素片")
+        self.assertEqual(created.timing_label, "晚饭后")
 
-        updated = self.service.update_today_plan(created.id, TodayPlanUpdateRequest(status="已执行", time="21:00"))
+        updated = self.service.update_today_plan(
+            created.id,
+            TodayPlanUpdateRequest(status="已执行", time="21:00", timing_label="睡前"),
+        )
         self.assertEqual(updated.status, "已执行")
         self.assertEqual(updated.time, "21:00")
+        self.assertEqual(updated.timing_label, "睡前")
 
         self.service.delete_today_plan(created.id)
-        self.service.delete_today_plan(default_plan.id)
+        for plan in default_plans:
+            self.service.delete_today_plan(plan.id)
         self.assertEqual(self.service.list_today_plans(), [])
 
     def test_invalid_user_or_medicine_is_rejected(self) -> None:

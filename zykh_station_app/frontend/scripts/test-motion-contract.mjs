@@ -8,6 +8,7 @@ const allowedDrawFiles = new Set([
   "components/BottomNav.jsx",
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
+  "components/InquiryEntryCard.jsx",
   "components/InquiryIdentityGate.jsx",
   "pages/IdleScreen.jsx",
   "pages/Scan.jsx",
@@ -103,11 +104,44 @@ assert.ok(wakeHandler, "home wake handler is missing");
 assert.doesNotMatch(wakeHandler, /identify|capture|verify/, "waking the home screen still triggers identity recognition");
 assert.doesNotMatch(wakeHandler, /clearIdentity\(\)/, "waking the home screen still changes identity state");
 assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearIdentity\(\)/, "entering idle mode no longer clears the prior user session");
+assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearInquirySession\(\)[\s\S]*?clearIdentity\(\)/, "entering idle mode does not reset the inquiry identity flow");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
-assert.doesNotMatch(home, /PLAN_ROTATION_MS|planIndex|next-dose-track/, "home medication task still rotates away from the active action");
-assert.match(home, /home-quick-dispense/, "home medication task is missing the one-tap dispense entry");
+assert.match(home, /plan\.status === "待执行"/, "home medication list includes completed plans");
+assert.match(home, /orderMedicationPlans\(plans, now\)\.slice\(0, 3\)/, "home does not limit its nearest pending task list to three items");
+assert.match(home, /home-medication-list/, "home medication tasks are not rendered as a list");
+assert.doesNotMatch(home, /metric-grid/, "home medication card still renders the removed summary metrics");
+assert.match(home, /home-plan-picker-trigger/, "home medication list has no scalable overflow picker");
+assert.match(home, /全部待办/, "home medication card no longer exposes the full pending-task list");
+assert.match(home, /<small>待取出<\/small>/, "home medication rows do not use the requested pending pickup label");
+assert.doesNotMatch(home, /未完成\s*\{index/, "home medication rows still expose task fractions");
+assert.match(home, /<MedicationTaskPicker/, "additional medication tasks cannot be selected from the overflow picker");
+assert.match(home, /onPickPlan=\{pickPlanAndDispense\}/, "task picker does not open the selected task's dispense flow");
+assert.match(home, /onClick=\{\(\) => onQuickDispense\?\.\(plan\)\}/, "visible medication tasks do not open their own dispense flow");
 assert.doesNotMatch(home, /home-current-user|ScanFace/, "home medication summary still exposes identity confirmation");
+
+const homeHero = await readFile(`${sourceRoot}/components/HomeHero.jsx`, "utf8");
+assert.ok(
+  homeHero.indexOf("<InquiryEntryCard") < homeHero.indexOf("<MedicationSummaryCard"),
+  "AI inquiry is not the first primary home task"
+);
+
+const inquiryEntry = await readFile(`${sourceRoot}/components/InquiryEntryCard.jsx`, "utf8");
+assert.match(inquiryEntry, /StrokeDrawIcon[^>]*icon=\{Bot\}[^>]*mode="once"/, "home inquiry assistant is missing its one-shot draw motion");
+assert.doesNotMatch(inquiryEntry, /mode="yoyo"/, "home inquiry assistant animation should settle into a complete static icon");
+
+const quickActions = await readFile(`${sourceRoot}/components/QuickActions.jsx`, "utf8");
+assert.match(quickActions, /quick-action-cta/, "body measurement card has no explicit action button");
+assert.match(quickActions, /开始测量/, "body measurement action is not clearly labeled");
+assert.match(appStyles, /\.quick-action-cta[\s\S]*min-height:\s*58px/, "body measurement action is too small for touch use");
+
+const medicationTaskPicker = await readFile(`${sourceRoot}/components/MedicationTaskPicker.jsx`, "utf8");
+assert.match(medicationTaskPicker, /role="dialog"/, "medication task picker is not an accessible dialog");
+assert.match(medicationTaskPicker, /plan\.target_user/, "task picker does not distinguish people sharing the same time");
+assert.match(medicationTaskPicker, /plan\.medicine/, "task picker does not identify the selected medicine");
+assert.match(medicationTaskPicker, /plan\.dose/, "task picker does not show the dose for repeated user tasks");
+assert.match(medicationTaskPicker, /medicationPlanTimeLabel\(plan\)/, "task picker cannot display meal-related or unrestricted schedule labels");
+assert.match(appStyles, /\.home-task-picker-list[\s\S]*overflow-y:\s*auto/, "large medication task queues cannot scroll");
 
 const medicines = await readFile(`${sourceRoot}/pages/Medicines.jsx`, "utf8");
 assert.doesNotMatch(medicines, /useFaceIdentity/, "opening the medicines page still starts identity recognition");
@@ -115,17 +149,53 @@ assert.doesNotMatch(medicines, /useFaceIdentity/, "opening the medicines page st
 const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmModal.jsx`, "utf8");
 assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
 assert.match(dispenseModal, /verifyDispenseIdentity/, "dispense confirmation is missing face verification");
+assert.match(dispenseModal, /useState\("face"\)/, "dispense confirmation does not default to face verification");
+assert.match(dispenseModal, /useState\(false\)[\s\S]*previewRetry/, "face preview starts before the user confirms identity");
+assert.match(dispenseModal, /faceVerificationActive && previewActive/, "face preview is not preserved while verification runs");
+assert.match(dispenseModal, /DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15/, "dispense fingerprint timeout is still too long");
+assert.match(dispenseModal, /await nextPaint\(\)[\s\S]*setPreviewActive\(true\)[\s\S]*await nextPaint\(\)/, "face preview is not remounted safely before retry");
+assert.match(dispenseModal, /key=\{`\$\{previewAttempt\}-\$\{previewRetry\}`\}/, "face preview retry reuses the stale image element");
+assert.match(dispenseModal, /waitForPreviewFrame\(attempt\)[\s\S]*await previewFrame[\s\S]*verifyDispenseIdentity/, "face verification starts before the preview has produced its first frame");
+assert.doesNotMatch(dispenseModal, /await wait\(240\)/, "face verification still relies on a fixed mount delay");
+assert.match(dispenseModal, /setPhase\("face_retry"\)/, "technical face failures do not have a retry-only state");
+assert.match(dispenseModal, /retryOnlyFaceFailure[\s\S]*重新识别[\s\S]*failedGuestConfirmation/, "retry-only face failure is not separated from visitor confirmation");
+assert.match(dispenseModal, /!result && \(verificationError \|\| error\)/, "dispense success can still render together with a stale face error");
 assert.match(dispenseModal, /setPhase\("recognized"\)/, "recognized users are not shown before cabinet opening");
 assert.match(dispenseModal, /async function verifyAndOpen/, "dispense is missing the one-tap biometric workflow");
-assert.match(dispenseModal, /setPhase\("recognized"\)[\s\S]*setPhase\("opening"\)[\s\S]*await onSubmit/, "dispense does not automatically continue from biometric verification to cabinet opening");
+assert.match(dispenseModal, /await submitDispense\(verification\.user/, "known users do not automatically continue to cabinet opening");
 assert.doesNotMatch(dispenseModal, /confirmAndOpen|verifyIdentity/, "dispense still requires a second confirmation click");
+assert.match(dispenseModal, /setPhase\("guest_confirm"\)/, "unknown face flow has no second confirmation state");
+assert.match(dispenseModal, /face_guest_confirmed/, "unknown face confirmation is not recorded explicitly");
+assert.match(dispenseModal, /确认访客取药并开柜/, "visitor confirmation does not use the requested action label");
+assert.match(dispenseModal, /biometric-action-row[\s\S]*faceVerificationActive[\s\S]*正在确认面部[\s\S]*访客取药/, "face verification actions are not split into equal bottom controls");
+assert.match(dispenseModal, /正在确认面部/, "face verification status does not use the requested wording");
+assert.match(dispenseModal, /guestTrigger === "recognition_failed"[\s\S]*重新识别/, "failed face verification cannot be retried");
+assert.match(dispenseModal, /failedGuestConfirmation[\s\S]*重新识别[\s\S]*确认访客取药/, "failed face actions are not grouped in the requested order");
+assert.match(dispenseModal, /verificationAttemptRef/, "stale face results can overwrite the visitor confirmation state");
+assert.match(dispenseModal, /today_plan_id:\s*guest \? ""/, "guest dispense can incorrectly complete another person's plan");
 assert.match(dispenseModal, /sessionRef\.current/, "closing the modal cannot cancel a delayed cabinet action");
 assert.doesNotMatch(dispenseModal, /safety-confirmed|confirm-check/, "legacy duplicate safety checkbox is still rendered");
+assert.doesNotMatch(
+  dispenseModal,
+  /点击一次后完成身份确认并自动打开柜门|陌生使用人会在本机留存面部特征|未识别到人脸？以游客身份继续|本次将以游客（未识别人脸）记录|请将手指放在识别模块|请正对摄像头|biometric-guest-during-scan/,
+  "dispense confirmation still contains removed visitor or automatic-opening guidance"
+);
 
 const inquiry = await readFile(`${sourceRoot}/pages/Inquiry.jsx`, "utf8");
 assert.match(inquiry, /<InquiryIdentityGate/, "inquiry does not stop for visible identity confirmation");
 assert.match(inquiry, /setIdentityConfirmed\(true\)/, "inquiry identity cannot be explicitly confirmed");
 assert.match(inquiry, /activateOnMatch: false/, "inquiry face match is activated before the user confirms it");
+assert.doesNotMatch(inquiry, /guestConfirmationPending/, "visitor inquiry still requires a duplicate second screen");
+assert.match(inquiry, /onRequestGuest=\{confirmGuestInquiry\}/, "visitor inquiry does not continue directly from the identity gate");
+assert.match(inquiry, /onReset=\{resetFlow\}/, "chat reset does not return to identity confirmation");
+
+const inquiryGate = await readFile(`${sourceRoot}/components/InquiryIdentityGate.jsx`, "utf8");
+assert.doesNotMatch(inquiryGate, /guestConfirmation|onConfirmGuest|访客问询确认|确认并开始问询/, "identity gate still contains a duplicate visitor confirmation step");
+assert.doesNotMatch(inquiryGate, /<p>\{message|正在通过人脸确认使用人|摄像头正在执行另一项任务/, "identity gate still exposes face-recognition technical copy");
+
+const inquiryChat = await readFile(`${sourceRoot}/components/InquiryChatStep.jsx`, "utf8");
+assert.match(inquiryChat, /onClick=\{onReset\}/, "chat reset button does not delegate to the full inquiry reset");
+assert.doesNotMatch(inquiryChat, /正在通过人脸确认使用人/, "chat still seeds the removed face-recognition technical copy");
 
 const packageJson = JSON.parse(await readFile(`${frontendRoot}package.json`, "utf8"));
 assert.equal(packageJson.dependencies?.["lottie-web"], undefined, "lottie-web should not be bundled");

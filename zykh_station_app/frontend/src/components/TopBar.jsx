@@ -6,13 +6,12 @@ import { formatClock, formatDay } from "../utils/time.js";
 import { BrandLogoImage } from "./BrandLogoImage.jsx";
 import { NetworkStatusIcons } from "./NetworkStatusIcons.jsx";
 
-export function TopBar({ networkStatus, now, page, onOpenSystemCheck }) {
-  const showHeaderClock = page !== "home";
+export function TopBar({ networkStatus, now, onOpenSystemCheck }) {
   const dayText = formatDay(now);
   const [dateText, weekText = ""] = dayText.split(/(?=星期)/);
 
   return (
-    <header className={`top-bar ${showHeaderClock ? "with-clock" : "home-top"}`}>
+    <header className="top-bar with-clock">
       <div className="brand-block">
         <div className="brand-mark" aria-hidden="true">
           <BrandLogoImage size={68} />
@@ -23,13 +22,11 @@ export function TopBar({ networkStatus, now, page, onOpenSystemCheck }) {
       </div>
 
       <div className="status-controls">
-        {showHeaderClock ? (
-          <div className="clock-block compact" aria-live="polite">
-            <strong>{formatClock(now)}</strong>
-            <span className="date-line">{dateText}</span>
-            <span className="weekday-line">{weekText}</span>
-          </div>
-        ) : null}
+        <div className="clock-block compact" aria-live="polite">
+          <strong>{formatClock(now)}</strong>
+          <span className="date-line">{dateText}</span>
+          <span className="weekday-line">{weekText}</span>
+        </div>
         <NetworkStatusIcons networkStatus={networkStatus} />
         <button className="system-check-button" type="button" onClick={onOpenSystemCheck} aria-label="打开设置">
           <SlidersHorizontal size={24} aria-hidden="true" />

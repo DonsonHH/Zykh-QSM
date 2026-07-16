@@ -46,7 +46,7 @@ export function useFaceIdentity({ auto = true, activateOnMatch = true } = {}) {
     const generation = identityGenerationRef.current;
     const request = (async () => {
       setStatus("identifying");
-      setMessage("正在通过人脸确认使用人...");
+      setMessage("");
       try {
         const result = await resolveIdentity();
         if (generation !== identityGenerationRef.current) {

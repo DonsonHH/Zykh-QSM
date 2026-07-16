@@ -53,7 +53,7 @@ class RecordsService:
     def get_recent_records(self) -> list[RecentRecord]:
         sync_status = self.sync_service.get_status()
         records = self._dispense_records(sync_status.sync_status)
-        return sorted(records, key=lambda record: record.time, reverse=True)[:8]
+        return records[:20]
 
     def list_service_users(self) -> list[ServiceUser]:
         db.init_db()
@@ -141,7 +141,7 @@ class RecordsService:
         with db.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT p.id, p.time, p.medicine_id, m.name AS medicine,
+                SELECT p.id, p.time, p.timing_label, p.medicine_id, m.name AS medicine,
                        p.service_user_id, p.status, u.name AS target_user,
                        p.dose, p.updated_at, p.schedule_type, p.interval_days,
                        p.weekdays_json, p.start_date, p.last_action_date
@@ -158,6 +158,7 @@ class RecordsService:
         db.init_db()
         values = self._validated_plan_values(
             time_value=request.time,
+            timing_label=request.timing_label,
             medicine_id=request.medicine_id,
             service_user_id=request.service_user_id,
             dose=request.dose,
@@ -172,14 +173,15 @@ class RecordsService:
             conn.execute(
                 """
                 INSERT INTO today_plans(
-                  id, time, medicine_id, service_user_id, dose, status,
+                  id, time, timing_label, medicine_id, service_user_id, dose, status,
                   medicine, target_user, updated_at, schedule_type, interval_days,
                   weekdays_json, start_date, last_action_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id,
                     values["time"],
+                    values["timing_label"],
                     values["medicine_id"],
                     values["service_user_id"],
                     values["dose"],
@@ -201,6 +203,7 @@ class RecordsService:
         stored_status = current.status if current.status in self._plan_statuses else "待执行"
         values = self._validated_plan_values(
             time_value=request.time if request.time is not None else current.time,
+            timing_label=request.timing_label if request.timing_label is not None else current.timing_label,
             medicine_id=request.medicine_id if request.medicine_id is not None else current.medicine_id,
             service_user_id=request.service_user_id if request.service_user_id is not None else current.service_user_id,
             dose=request.dose if request.dose is not None else current.dose,
@@ -217,13 +220,14 @@ class RecordsService:
             conn.execute(
                 """
                 UPDATE today_plans
-                SET time=?, medicine_id=?, service_user_id=?, dose=?, status=?,
+                SET time=?, timing_label=?, medicine_id=?, service_user_id=?, dose=?, status=?,
                     medicine=?, target_user=?, updated_at=?, schedule_type=?,
                     interval_days=?, weekdays_json=?, start_date=?, last_action_date=?
                 WHERE id=?
                 """,
                 (
                     values["time"],
+                    values["timing_label"],
                     values["medicine_id"],
                     values["service_user_id"],
                     values["dose"],
@@ -280,6 +284,7 @@ class RecordsService:
         self,
         *,
         time_value: str,
+        timing_label: str,
         medicine_id: str,
         service_user_id: str,
         dose: str,
@@ -296,6 +301,7 @@ class RecordsService:
         if normalized_status not in self._plan_statuses:
             raise ValueError("计划状态不支持")
         normalized_dose = str(dose or "").strip()[:40] or "按说明"
+        normalized_timing_label = str(timing_label or "").strip()[:12]
         normalized_schedule = str(schedule_type or "daily").strip().lower()
         if normalized_schedule not in self._schedule_types:
             raise ValueError("计划周期不支持")
@@ -317,6 +323,7 @@ class RecordsService:
             raise ValueError("计划服务对象不存在")
         return {
             "time": time_value,
+            "timing_label": normalized_timing_label,
             "medicine_id": str(medicine["id"]),
             "service_user_id": str(user["id"]),
             "dose": normalized_dose,
@@ -348,6 +355,7 @@ class RecordsService:
         return TodayPlan(
             id=str(row["id"]),
             time=str(row["time"]),
+            timing_label=str(row.get("timing_label") or ""),
             medicine_id=str(row["medicine_id"]),
             medicine=str(row["medicine"]),
             service_user_id=str(row["service_user_id"]),
@@ -405,47 +413,65 @@ class RecordsService:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
+        seed_version = "family-demo-v2"
+        demo_plans = (
+            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "1片"),
+            ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", "zhangsan", "1片"),
+            ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "zhangsan", "每侧1喷"),
+            ("plan-demo-lisi-lactulose", "07:30", "早餐前", "slot-06-lactulose", "lisi", "10毫升"),
+            ("plan-demo-lisi-bifid", "13:00", "午饭后", "slot-09-bifid-triple", "lisi", "2粒"),
+            ("plan-demo-lisi-hydrotalcite", "19:00", "晚饭后", "slot-12-hydrotalcite", "lisi", "1片"),
+        )
         with db.connect() as conn:
             seed = conn.execute("SELECT value FROM app_settings WHERE key='today_plan_seed_version'").fetchone()
-            if seed and seed["value"] == "normalized-v1":
+            if seed and seed["value"] == seed_version:
                 return
-            if conn.execute("SELECT COUNT(*) AS count FROM today_plans").fetchone()["count"] == 0:
-                user = conn.execute("SELECT id, name FROM service_users WHERE name='张三' LIMIT 1").fetchone()
-                medicine = conn.execute(
-                    "SELECT id, name FROM medicines WHERE id='slot-21-amlodipine' LIMIT 1"
+            # This one-time migration replaces the old single demo row with the
+            # six-task family scenario requested for the kiosk home screen.
+            conn.execute("DELETE FROM today_plans")
+            for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
+                user = conn.execute(
+                    "SELECT id, name FROM service_users WHERE id=? LIMIT 1",
+                    (user_id,),
                 ).fetchone()
-                if user and medicine:
-                    conn.execute(
-                        """
-                        INSERT INTO today_plans(
-                          id, time, medicine_id, service_user_id, dose, status,
-                          medicine, target_user, updated_at, schedule_type,
-                          interval_days, weekdays_json, start_date, last_action_date
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            "plan-zhangsan-amlodipine",
-                            "08:00",
-                            medicine["id"],
-                            user["id"],
-                            "1片",
-                            "待执行",
-                            medicine["name"],
-                            user["name"],
-                            db.now_text(),
-                            "daily",
-                            1,
-                            "[]",
-                            date.today().isoformat(),
-                            "",
-                        ),
-                    )
+                medicine = conn.execute(
+                    "SELECT id, name FROM medicines WHERE id=? LIMIT 1",
+                    (medicine_id,),
+                ).fetchone()
+                if not user or not medicine:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO today_plans(
+                      id, time, timing_label, medicine_id, service_user_id, dose, status,
+                      medicine, target_user, updated_at, schedule_type,
+                      interval_days, weekdays_json, start_date, last_action_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        plan_id,
+                        time_value,
+                        timing_label,
+                        medicine["id"],
+                        user["id"],
+                        dose,
+                        "待执行",
+                        medicine["name"],
+                        user["name"],
+                        db.now_text(),
+                        "daily",
+                        1,
+                        "[]",
+                        date.today().isoformat(),
+                        "",
+                    ),
+                )
             conn.execute(
                 """
-                INSERT INTO app_settings(key, value, updated_at) VALUES ('today_plan_seed_version', 'normalized-v1', ?)
+                INSERT INTO app_settings(key, value, updated_at) VALUES ('today_plan_seed_version', ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
                 """,
-                (db.now_text(),),
+                (seed_version, db.now_text()),
             )
 
     def _inquiry_records(self, sync_status: str) -> list[RecentRecord]:
@@ -464,20 +490,41 @@ class RecordsService:
         ]
 
     def _dispense_records(self, sync_status: str) -> list[RecentRecord]:
-        return [
-            RecentRecord(
-                id=record.id,
-                time=self._time_part(record.created_at),
-                type="取药记录",
-                title=f"{self._dispense_actor(record.target_user_name, record.target_user_type)}取走{record.medicine_name}",
-                description=f"{record.quantity}{record.unit}",
-                target_user=record.target_user_name,
-                status="已记录",
-                sync_status=sync_status,
-                target_user_type=record.target_user_type,
+        records = self._successful_dispense_records()
+        user_ids = {record.target_user_id for record in records if record.target_user_id}
+        user_names: dict[str, str] = {}
+        if user_ids:
+            placeholders = ",".join("?" for _ in user_ids)
+            with db.connect() as conn:
+                rows = conn.execute(
+                    f"SELECT id, name FROM service_users WHERE id IN ({placeholders})",
+                    tuple(user_ids),
+                ).fetchall()
+            user_names = {str(row["id"]): str(row["name"]) for row in rows}
+
+        recent: list[RecentRecord] = []
+        for record in records:
+            stored_name = str(record.target_user_name or "").strip()
+            display_name = user_names.get(record.target_user_id) or stored_name
+            if not display_name or display_name == "家庭成员":
+                display_name = "游客"
+            user_type = record.target_user_type
+            if display_name == "游客" and not record.target_user_id:
+                user_type = "guest"
+            recent.append(
+                RecentRecord(
+                    id=record.id,
+                    time=self._history_time(record.created_at),
+                    type="取药记录",
+                    title=record.medicine_name,
+                    description=f"{record.quantity}{record.unit}",
+                    target_user=display_name,
+                    status="已记录",
+                    sync_status=sync_status,
+                    target_user_type=user_type,
+                )
             )
-            for record in self._successful_dispense_records()
-        ]
+        return recent
 
     def _successful_dispense_records(self) -> list[DispenseRecord]:
         return [
@@ -508,10 +555,9 @@ class RecordsService:
         return value[:5] or "--:--"
 
     @staticmethod
-    def _dispense_actor(name: str, user_type: str) -> str:
-        normalized = str(name or "").strip()
-        if user_type == "guest":
-            if normalized and not normalized.startswith("游客"):
-                return f"游客（{normalized}）"
-            return normalized or "游客"
-        return normalized or "家庭成员"
+    def _history_time(value: str) -> str:
+        normalized = str(value or "").replace("T", " ")
+        match = re.match(r"\d{4}-(\d{2}-\d{2})\s+(\d{2}:\d{2})", normalized)
+        if match:
+            return f"{match.group(1)} {match.group(2)}"
+        return normalized[:16] or "时间未记录"

@@ -18,6 +18,7 @@ import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
+import { clearInquirySession, INQUIRY_DRAFT_KEY } from "../utils/inquirySession.js";
 
 const initialForm = {
   symptoms_text: "",
@@ -28,11 +29,9 @@ const initialForm = {
   include_vitals: false
 };
 
-const draftKey = "zykh-inquiry-draft";
-
 function readDraft() {
   try {
-    const raw = window.sessionStorage.getItem(draftKey);
+    const raw = window.sessionStorage.getItem(INQUIRY_DRAFT_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -56,7 +55,9 @@ function normalizeUser(user) {
 
 export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus }) {
   const initialDraft = readDraft();
-  const restoredIdentityConfirmed = Boolean(initialDraft?.identityConfirmed && initialDraft?.selectedUserId);
+  const restoredIdentityConfirmed = Boolean(
+    initialDraft?.identityConfirmed && (initialDraft?.selectedUserId || initialDraft?.guestUser)
+  );
   const [step, setStep] = useState(restoredIdentityConfirmed ? initialDraft?.step || "start" : "start");
   const [form, setForm] = useState(initialDraft?.form || initialForm);
   const [result, setResult] = useState(null);
@@ -64,20 +65,20 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
   const [serviceUsers, setServiceUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(restoredIdentityConfirmed ? initialDraft.selectedUserId : "");
   const [identityConfirmed, setIdentityConfirmed] = useState(restoredIdentityConfirmed);
+  const [guestUser, setGuestUser] = useState(restoredIdentityConfirmed ? initialDraft?.guestUser || null : null);
   const [chatSessionId, setChatSessionId] = useState(0);
   const [pendingCabinetAction, setPendingCabinetAction] = useState(null);
   const [cabinetCountdown, setCabinetCountdown] = useState(0);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
-    message: faceIdentityMessage,
     identify: identifyFace,
     clear: clearFaceIdentity
   } = useFaceIdentity({ auto: false, activateOnMatch: false });
 
   const selectedUser = useMemo(
-    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)) || (identityConfirmed ? normalizeUser(faceIdentity) : null),
-    [faceIdentity, identityConfirmed, selectedUserId, serviceUsers]
+    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)) || (identityConfirmed ? normalizeUser(guestUser || faceIdentity) : null),
+    [faceIdentity, guestUser, identityConfirmed, selectedUserId, serviceUsers]
   );
   const candidateUser = identityConfirmed ? null : normalizeUser(faceIdentity);
   const displayedUser = selectedUser || candidateUser;
@@ -100,11 +101,11 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, selectedUserId, identityConfirmed }));
+      window.sessionStorage.setItem(INQUIRY_DRAFT_KEY, JSON.stringify({ step, form, selectedUserId, identityConfirmed, guestUser }));
     } catch {
       // Draft storage is optional.
     }
-  }, [step, form, selectedUserId, identityConfirmed]);
+  }, [step, form, selectedUserId, identityConfirmed, guestUser]);
 
   function confirmIdentity() {
     if (!faceIdentity?.id) {
@@ -112,6 +113,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     }
     setSelectedUserId(faceIdentity.id);
     setIdentityConfirmed(true);
+    setGuestUser(null);
     activateIdentity(faceIdentity);
     refreshUsers();
     notify(`已确认使用人：${faceIdentity.name}`);
@@ -120,8 +122,27 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
   function retryIdentity() {
     setSelectedUserId("");
     setIdentityConfirmed(false);
+    setGuestUser(null);
     clearFaceIdentity();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
+  }
+
+  function confirmGuestInquiry() {
+    const visitor = {
+      id: "",
+      name: "访客",
+      age: 0,
+      profile: "身份未登记",
+      allergies: "待问询确认",
+      note: "本次问询以访客身份进行",
+      status: "游客"
+    };
+    clearFaceIdentity();
+    setGuestUser(visitor);
+    setSelectedUserId("");
+    setIdentityConfirmed(true);
+    activateIdentity(visitor);
+    notify("已以访客身份开始问询");
   }
 
   useEffect(() => {
@@ -273,15 +294,10 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     setCabinetCountdown(0);
     setSelectedUserId("");
     setIdentityConfirmed(false);
+    setGuestUser(null);
     setChatSessionId((value) => value + 1);
     clearFaceIdentity();
-    try {
-      window.sessionStorage.removeItem(draftKey);
-      window.sessionStorage.removeItem("zykh-inquiry-chat-draft");
-      window.sessionStorage.removeItem("zykh-inquiry-awaiting-vitals");
-    } catch {
-      // sessionStorage is optional.
-    }
+    clearInquirySession();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 250);
   }
 
@@ -337,9 +353,9 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
           <InquiryIdentityGate
             candidate={candidateUser}
             status={faceIdentityStatus}
-            message={faceIdentityMessage}
             onConfirm={confirmIdentity}
             onRetry={retryIdentity}
+            onRequestGuest={confirmGuestInquiry}
           />
         ) : step === "start" ? (
           <InquiryChatStep
@@ -348,6 +364,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
             onStructuredAnalyze={analyzeChatTranscript}
             onOpenVitals={() => onNavigate("vitals", { returnTo: "inquiry" })}
             onDemoRecommendation={handleDemoRecommendation}
+            onReset={resetFlow}
             profile={selectedUser}
             networkStatus={networkStatus}
           />

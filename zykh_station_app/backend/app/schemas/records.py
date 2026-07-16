@@ -68,6 +68,7 @@ class ServiceUserUpdateRequest(BaseModel):
 class TodayPlan(BaseModel):
     id: str
     time: str
+    timing_label: str = ""
     medicine_id: str
     medicine: str
     service_user_id: str
@@ -87,6 +88,7 @@ class TodayPlan(BaseModel):
 
 class TodayPlanCreateRequest(BaseModel):
     time: str = Field(min_length=5, max_length=5)
+    timing_label: str = Field(default="", max_length=12)
     medicine_id: str = Field(min_length=1, max_length=100)
     service_user_id: str = Field(min_length=1, max_length=100)
     dose: str = Field(default="按说明", max_length=40)
@@ -99,6 +101,7 @@ class TodayPlanCreateRequest(BaseModel):
 
 class TodayPlanUpdateRequest(BaseModel):
     time: str | None = Field(default=None, min_length=5, max_length=5)
+    timing_label: str | None = Field(default=None, max_length=12)
     medicine_id: str | None = Field(default=None, min_length=1, max_length=100)
     service_user_id: str | None = Field(default=None, min_length=1, max_length=100)
     dose: str | None = Field(default=None, max_length=40)

@@ -12,13 +12,13 @@ export function HomeHero({ dashboard, onNavigate, quickActions, onQuickAction, o
 
   return (
     <section className="hero-grid" aria-label="首页核心任务">
-      <MedicationSummaryCard
-        medication={dashboard?.medication || {}}
-        onQuickDispense={onQuickDispense}
-        quickDispenseBusy={quickDispenseBusy}
-      />
+      <InquiryEntryCard inquiry={dashboard?.inquiry || {}} onStart={() => onNavigate("inquiry")} />
       <div className="home-side-stack">
-        <InquiryEntryCard inquiry={dashboard?.inquiry || {}} onStart={() => onNavigate("inquiry")} />
+        <MedicationSummaryCard
+          medication={dashboard?.medication || {}}
+          onQuickDispense={onQuickDispense}
+          quickDispenseBusy={quickDispenseBusy}
+        />
         <QuickActions actions={[vitalsAction]} onSelect={onQuickAction} />
       </div>
     </section>

@@ -28,7 +28,7 @@ export function Records({ notify, networkStatus }) {
   const [todayPlans, setTodayPlans] = useState([]);
   const [syncing, setSyncing] = useState(false);
 
-  function refreshRecords() {
+  function refreshRecords({ silent = false } = {}) {
     return Promise.all([loadRecordsSummary(), loadRecentRecords(), loadSyncStatus(), loadServiceUsers(), loadTodayPlans()])
       .then(([summaryResponse, recentResponse, syncResponse, usersResponse, plansResponse]) => {
         setSummary(summaryResponse.summary || defaultSummary);
@@ -37,11 +37,15 @@ export function Records({ notify, networkStatus }) {
         setServiceUsers(usersResponse.users || []);
         setTodayPlans(plansResponse.plans || []);
       })
-      .catch((error) => notify(error.message || "记录数据加载失败"));
+      .catch((error) => {
+        if (!silent) notify(error.message || "记录数据加载失败");
+      });
   }
 
   useEffect(() => {
     refreshRecords();
+    const timer = window.setInterval(() => refreshRecords({ silent: true }), 3000);
+    return () => window.clearInterval(timer);
   }, []);
 
   function handleSync() {

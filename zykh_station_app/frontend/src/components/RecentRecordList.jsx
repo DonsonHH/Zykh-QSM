@@ -13,22 +13,26 @@ export function RecentRecordList({ records }) {
         <h2>家庭取药记录</h2>
       </div>
       <div className="recent-record-list">
-        {(records || []).slice(0, 5).map((record) => {
+        {(records || []).map((record) => {
           const Icon = recordIcons[record.type] || ClipboardCheck;
           return (
             <article key={record.id} className="recent-record-row">
               <span className="recent-record-icon" aria-hidden="true">
                 <Icon size={22} />
               </span>
-              <time>{record.time}</time>
-              <div>
+              <div className="recent-record-person">
+                <strong>{record.target_user || "游客"}</strong>
+                <time>{record.time}</time>
+              </div>
+              <div className="recent-record-medicine">
                 <strong>{record.title}</strong>
-                <p>{record.description ? `数量 ${record.description}` : "已完成取药记录"}</p>
+                <p>{record.description ? `取走 ${record.description}` : "已完成取药"}</p>
               </div>
               {record.target_user_type === "guest" ? <em className="record-guest-label">游客</em> : null}
             </article>
           );
         })}
+        {(!records || records.length === 0) && <p className="empty-list-note">暂无家庭取药记录</p>}
       </div>
     </section>
   );

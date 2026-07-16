@@ -9,6 +9,7 @@ from .status import StatusChip
 class MedicationPlanItem(BaseModel):
     id: str
     time: str
+    timing_label: str = ""
     medicine: str
     status: str
     target_user: str

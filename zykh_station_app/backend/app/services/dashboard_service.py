@@ -80,6 +80,7 @@ class DashboardService:
                     MedicationPlanItem(
                         id=plan.id,
                         time=plan.time,
+                        timing_label=plan.timing_label,
                         medicine=plan.medicine,
                         status=plan.status,
                         target_user=plan.target_user,

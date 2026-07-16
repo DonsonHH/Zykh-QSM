@@ -18,6 +18,7 @@ import { Settings } from "./pages/Settings.jsx";
 import { IdleScreen } from "./pages/IdleScreen.jsx";
 import { AdminConsole } from "./pages/AdminConsole.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
+import { clearInquirySession } from "./utils/inquirySession.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
 let viewTransitionToken = 0;
@@ -111,6 +112,7 @@ export function App() {
 
   useEffect(() => {
     if (startsIdle) {
+      clearInquirySession();
       clearIdentity();
     }
   }, []);
@@ -124,6 +126,7 @@ export function App() {
       window.clearTimeout(idleTimerRef.current);
       idleTimerRef.current = window.setTimeout(() => {
         commitViewChange("sleep", () => {
+          clearInquirySession();
           clearIdentity();
           setMedicineFocus(null);
           setPage("home");

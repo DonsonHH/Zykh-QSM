@@ -244,6 +244,7 @@ def init_db() -> None:
         _ensure_column(conn, "today_plans", "medicine_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "service_user_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "dose", "TEXT NOT NULL DEFAULT '按说明'")
+        _ensure_column(conn, "today_plans", "timing_label", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "updated_at", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "schedule_type", "TEXT NOT NULL DEFAULT 'daily'")
         _ensure_column(conn, "today_plans", "interval_days", "INTEGER NOT NULL DEFAULT 1")

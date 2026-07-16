@@ -1,8 +1,14 @@
 import React from "react";
-import { BadgeCheck, RotateCcw, ScanFace, UserCheck } from "lucide-react";
+import { BadgeCheck, RotateCcw, ScanFace, UserCheck, UserRound } from "lucide-react";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
-export function InquiryIdentityGate({ candidate, status, message, onConfirm, onRetry }) {
+export function InquiryIdentityGate({
+  candidate,
+  status,
+  onConfirm,
+  onRetry,
+  onRequestGuest
+}) {
   const identifying = status === "identifying" || status === "idle";
 
   return (
@@ -40,13 +46,23 @@ export function InquiryIdentityGate({ candidate, status, message, onConfirm, onR
           <div className="inquiry-identity-copy">
             <span>AI 应急问询</span>
             <h2>{identifying ? "正在确认使用人" : "暂未识别到使用人"}</h2>
-            <p>{message || "请正对摄像头并保持片刻。"}</p>
           </div>
-          {!identifying && (
-            <button type="button" className="primary-action inquiry-identity-retry" onClick={onRetry}>
-              <RotateCcw size={23} aria-hidden="true" />
-              重新识别
+          {identifying ? (
+            <button type="button" className="secondary-action inquiry-identity-retry" onClick={onRequestGuest}>
+              <UserRound size={23} aria-hidden="true" />
+              不等待识别，以访客身份继续
             </button>
+          ) : (
+            <div className="inquiry-identity-actions">
+              <button type="button" className="secondary-action" onClick={onRetry}>
+                <RotateCcw size={23} aria-hidden="true" />
+                重新识别
+              </button>
+              <button type="button" className="primary-action" onClick={onRequestGuest}>
+                <UserRound size={23} aria-hidden="true" />
+                以访客身份继续
+              </button>
+            </div>
           )}
         </>
       )}

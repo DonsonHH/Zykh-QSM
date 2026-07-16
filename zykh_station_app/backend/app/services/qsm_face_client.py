@@ -57,7 +57,7 @@ class QsmFaceClient:
         except URLError as exc:
             return self._error(f"人脸识别网关连接失败：{exc.reason}")
         except (TimeoutError, socket.timeout):
-            return self._error("人脸识别超时，请正对摄像头后重试。")
+            return self._error("人脸识别超时，请重新识别。")
         except (OSError, json.JSONDecodeError) as exc:
             return self._error(f"人脸识别暂不可用：{exc}")
 

@@ -137,7 +137,7 @@ sub identify_face {
             confidence => $match->{confidence} + 0,
             match_votes => int($match->{votes} || 0),
             observed_matches => int($match->{observed}),
-            error_message => '多帧结果不一致，请正对摄像头后重试。',
+            error_message => '多帧结果不一致，请重新识别。',
             captured_at => now_text(),
         };
     }
@@ -146,7 +146,7 @@ sub identify_face {
             ok => JSON::PP::false,
             status => 'no_face',
             confidence => 0,
-            error_message => '画面中未检测到清晰人脸，请正对摄像头后重试。',
+            error_message => '未检测到可确认的人脸。',
             captured_at => now_text(),
         };
     }

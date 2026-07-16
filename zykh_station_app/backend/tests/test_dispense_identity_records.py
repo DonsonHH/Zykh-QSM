@@ -39,7 +39,10 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_scheduled_dispense_requires_expected_person_and_completes_plan(self) -> None:
-        plan = self.records.list_today_plans(due_only=True)[0]
+        plan = next(
+            item for item in self.records.list_today_plans(due_only=True)
+            if item.target_user == "张三"
+        )
         medicine = MedicineService().get_medicine(plan.medicine_id)
         self.assertIsNotNone(medicine)
         request = DispenseConfirmRequest(
@@ -60,7 +63,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(self.records.get_today_plan(plan.id).status, "已执行")
         saved = self.service.list_records()[0]
-        self.assertEqual(saved.target_user_name, "张三")
+        self.assertEqual(saved.target_user_name, plan.target_user)
         self.assertEqual(saved.target_user_type, "registered")
         self.assertEqual(saved.today_plan_id, plan.id)
 
@@ -95,7 +98,32 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         recent = self.records.get_recent_records()[0]
         self.assertEqual(record.target_user_name, "游客 0716-2100")
         self.assertEqual(record.target_user_type, "guest")
-        self.assertIn("游客", recent.title)
+        self.assertEqual(recent.target_user, "游客 0716-2100")
+        self.assertEqual(recent.title, medicine.name)
+        self.assertRegex(recent.time, r"\d{2}-\d{2} \d{2}:\d{2}")
+        self.assertEqual(recent.target_user_type, "guest")
+
+    def test_anonymous_face_fallback_is_recorded_as_named_visitor(self) -> None:
+        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
+        self.assertIsNotNone(medicine)
+
+        self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="游客二次确认取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="",
+                target_user_name="游客（未识别人脸）",
+                verification_method="face_guest_confirmed",
+            ),
+            force_dry_run=False,
+        )
+
+        recent = self.records.get_recent_records()[0]
+        self.assertEqual(recent.target_user, "游客（未识别人脸）")
         self.assertEqual(recent.target_user_type, "guest")
 
     def test_user_records_hide_dry_run_entries(self) -> None:

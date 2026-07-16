@@ -8,6 +8,7 @@
     "test:motion": "node scripts/test-motion-contract.mjs",
     "test:voice": "node scripts/test-voice-session.mjs",
     "test:medication-reminder": "node scripts/test-medication-reminder.mjs",
+    "test:home-medication": "node scripts/test-home-medication-plans.mjs",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },

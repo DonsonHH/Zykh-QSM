@@ -47,7 +47,7 @@ class IdentityService:
             )
 
         if status == "unknown":
-            message = "未匹配到已录入身份，请正对摄像头重试，或由管理员先建立服务对象并录入人脸。"
+            message = "未匹配到已登记家庭成员。"
             return IdentityResponse(
                 ok=False,
                 status="unknown",
@@ -56,7 +56,10 @@ class IdentityService:
                 error_message=message,
             )
 
-        message = str(result.get("error_message") or "暂时无法确认使用人，请正对摄像头后重试。")
+        if status == "no_face":
+            message = "未检测到可确认的人脸。"
+        else:
+            message = str(result.get("error_message") or "暂时无法确认使用人，请重新识别。")
         return IdentityResponse(
             ok=False,
             status=status,

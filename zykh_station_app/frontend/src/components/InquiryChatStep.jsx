@@ -6,9 +6,10 @@ import { aiSourceLabel } from "../utils/ai.js";
 import { isLocalNetworkMode } from "../utils/network.js";
 import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
+import { INQUIRY_CHAT_DRAFT_KEY, INQUIRY_VITALS_AWAITING_KEY } from "../utils/inquirySession.js";
 
-const chatDraftKey = "zykh-inquiry-chat-draft";
-const vitalsAwaitingKey = "zykh-inquiry-awaiting-vitals";
+const chatDraftKey = INQUIRY_CHAT_DRAFT_KEY;
+const vitalsAwaitingKey = INQUIRY_VITALS_AWAITING_KEY;
 const latestVitalsKey = "zykh-latest-vitals";
 
 function initialMessages(profile, history) {
@@ -16,7 +17,7 @@ function initialMessages(profile, history) {
     role: "assistant",
     content: profile
       ? `已匹配到${profile.name}。请直接说出现在最不舒服的地方。`
-      : "正在通过人脸确认使用人，请正对摄像头。确认后即可直接说出不舒服的地方。"
+      : "请先确认使用人后开始问询。"
   };
   if (!history?.seed?.length) {
     return [intro];
@@ -94,6 +95,7 @@ export function InquiryChatStep({
   onStructuredAnalyze,
   onOpenVitals,
   onDemoRecommendation,
+  onReset,
   profile,
   history,
   networkStatus
@@ -129,7 +131,7 @@ export function InquiryChatStep({
       setActiveProfile(profile);
       setMessages((current) => {
         const confirmation = { role: "assistant", content: `已确认使用人：${profile.name}。请直接说出现在最不舒服的地方。` };
-        if (current[0]?.role === "assistant" && current[0]?.content?.startsWith("正在通过人脸确认")) {
+        if (current[0]?.role === "assistant" && current[0]?.content?.startsWith("请先确认使用人")) {
           return [confirmation, ...current.slice(1)];
         }
         return [...current, confirmation];
@@ -198,8 +200,8 @@ export function InquiryChatStep({
     if (profileRef.current?.id) {
       return profileRef.current;
     }
-    appendMessage({ role: "assistant", content: "人脸身份尚未确认，请正对摄像头并稍候。" });
-    playReply("人脸身份尚未确认，请正对摄像头并稍候。");
+    appendMessage({ role: "assistant", content: "使用人尚未确认，请重新开始问询。" });
+    playReply("使用人尚未确认，请重新开始问询。");
     return null;
   }
 
@@ -464,23 +466,6 @@ export function InquiryChatStep({
     setVoicePhase(next);
   }
 
-  function reset() {
-    stopVoice(false);
-    window.speechSynthesis?.cancel();
-    setActiveProfile(null);
-    profileRef.current = null;
-    setVitalsSummary("");
-    setMessages(initialMessages(null, history));
-    setVoiceMessage("点击按钮开始语音问询。");
-    waitingForVitalsRef.current = false;
-    try {
-      window.sessionStorage.removeItem(chatDraftKey);
-      window.sessionStorage.removeItem(vitalsAwaitingKey);
-    } catch {
-      // sessionStorage is optional.
-    }
-  }
-
   function handleVoicePress() {
     try {
       navigator.vibrate?.(listening ? [24, 36, 24] : 36);
@@ -504,7 +489,7 @@ export function InquiryChatStep({
             <button type="button" className="chat-speak-button icon-only" onClick={() => playReply(lastAssistantMessage(messages))} aria-label="重播最近回复">
               <Volume2 size={21} aria-hidden="true" />
             </button>
-            <button type="button" className="chat-speak-button icon-only" onClick={reset} aria-label="重新对话">
+            <button type="button" className="chat-speak-button icon-only" onClick={onReset} aria-label="重新对话并确认使用人">
               <RotateCcw size={21} aria-hidden="true" />
             </button>
           </div>
