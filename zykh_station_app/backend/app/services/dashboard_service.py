@@ -6,6 +6,7 @@ from ..db import now_text
 from ..schemas.dashboard import (
     DashboardPayload,
     InquirySummary,
+    MedicationPlanItem,
     MedicationSummary,
     QuickAction,
     StationStat,
@@ -61,7 +62,6 @@ class DashboardService:
         qsm = self.qsm_client.get_qsm_status()
         medicines = self.medicine_service.list_medicines().medicines
         plans = self.records_service.list_today_plans()
-        identity_pending = target_user == "__unconfirmed__"
         if target_user:
             plans = [plan for plan in plans if plan.target_user == target_user]
         pending_plans = [plan for plan in plans if plan.status != "已执行"]
@@ -74,12 +74,18 @@ class DashboardService:
                 pending_people=len({plan.target_user for plan in pending_plans}),
                 pending_plans=len(pending_plans),
                 next_time=next_plan.time if next_plan else "--:--",
-                featured_subject=next_plan.target_user if next_plan else ("等待确认" if identity_pending else (target_user or "家庭药柜")),
-                featured_medicine=(
-                    next_plan.medicine
-                    if next_plan
-                    else ("确认使用人后加载个人计划" if identity_pending else "当前使用人暂无待执行计划")
-                ),
+                featured_subject=next_plan.target_user if next_plan else (target_user or "家庭药柜"),
+                featured_medicine=next_plan.medicine if next_plan else "今日暂无待执行计划",
+                plans=[
+                    MedicationPlanItem(
+                        id=plan.id,
+                        time=plan.time,
+                        medicine=plan.medicine,
+                        status=plan.status,
+                        target_user=plan.target_user,
+                    )
+                    for plan in plans
+                ],
             ),
             inquiry=InquirySummary(
                 title="AI应急问询",

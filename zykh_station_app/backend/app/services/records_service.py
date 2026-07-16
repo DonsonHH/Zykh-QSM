@@ -114,6 +114,7 @@ class RecordsService:
             if not existing:
                 raise ValueError("服务对象不存在")
             conn.execute("DELETE FROM face_identities WHERE service_user_id=?", (user_id,))
+            conn.execute("DELETE FROM fingerprint_identities WHERE service_user_id=?", (user_id,))
             conn.execute("DELETE FROM service_users WHERE id=?", (user_id,))
 
     def list_today_plans(self) -> list[TodayPlan]:

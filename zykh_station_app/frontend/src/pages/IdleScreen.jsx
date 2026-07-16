@@ -1,7 +1,6 @@
 import React from "react";
-import { BrandMarkGlyph } from "../components/BrandMarkGlyph.jsx";
+import { HeartHandshake } from "lucide-react";
 import { BrandLogoImage } from "../components/BrandLogoImage.jsx";
-import { HandwrittenHello } from "../components/HandwrittenHello.jsx";
 import { NetworkStatusIcons } from "../components/NetworkStatusIcons.jsx";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 import { formatClock, formatDay } from "../utils/time.js";
@@ -24,9 +23,11 @@ export function IdleScreen({ now, networkStatus, onWake }) {
           <span>{formatDay(now)}</span>
         </div>
         <button type="button" className="idle-wake-button">
-          <StrokeDrawIcon icon={BrandMarkGlyph} size={138} strokeWidth={2.2} mode="yoyo" active />
+          <span className="idle-wake-glyph" aria-hidden="true">
+            <HeartHandshake className="idle-wake-glyph-ghost" size={150} strokeWidth={1.9} />
+            <StrokeDrawIcon icon={HeartHandshake} size={150} strokeWidth={1.9} mode="yoyo" pace="idle" active />
+          </span>
         </button>
-        <HandwrittenHello />
         <h1>轻触屏幕开始使用</h1>
       </section>
 

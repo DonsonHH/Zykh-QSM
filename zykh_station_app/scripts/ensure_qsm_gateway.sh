@@ -7,6 +7,8 @@ FACE_HOST_PORT="${QSM_FACE_FORWARD_HOST_PORT:-18081}"
 FACE_DEVICE_PORT="${QSM_FACE_FORWARD_DEVICE_PORT:-8081}"
 AUDIO_HOST_PORT="${QSM_AUDIO_CAPTURE_FORWARD_HOST_PORT:-18082}"
 AUDIO_DEVICE_PORT="${QSM_AUDIO_CAPTURE_FORWARD_DEVICE_PORT:-8082}"
+FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
+FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
 LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
 LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
@@ -16,13 +18,16 @@ AUDIO_STREAM_DEVICE_PORT="${QSM_AUDIO_STREAM_DEVICE_PORT:-19001}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
+QSM_FINGERPRINT_BASE_URL="${QSM_FINGERPRINT_BASE_URL:-http://127.0.0.1:${FINGERPRINT_HOST_PORT}}"
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 QSM_FACE_HOME="${QSM_FACE_HOME:-/userdata/qsm-face}"
 QSM_AUDIO_HOME="${QSM_AUDIO_HOME:-/userdata/qsm-audio}"
+QSM_FINGERPRINT_HOME="${QSM_FINGERPRINT_HOME:-/userdata/qsm-fingerprint}"
 QSM_START_SCRIPT="${QSM_START_SCRIPT:-/userdata/zykh_app/scripts/start_station_gateway.sh}"
 QSM_FALLBACK_START_SCRIPT="${QSM_FALLBACK_START_SCRIPT:-/userdata/zykh_app/scripts/start_zykh_server.sh}"
 QSM_FACE_START_SCRIPT="${QSM_FACE_START_SCRIPT:-/userdata/qsm-face/start_face_gateway.sh}"
 QSM_AUDIO_START_SCRIPT="${QSM_AUDIO_START_SCRIPT:-/userdata/qsm-audio/start_audio_capture_gateway.sh}"
+QSM_FINGERPRINT_START_SCRIPT="${QSM_FINGERPRINT_START_SCRIPT:-/userdata/qsm-fingerprint/start_fingerprint_gateway.sh}"
 
 log() {
   printf '[qsm] %s\n' "$*"
@@ -44,10 +49,15 @@ audio_ready() {
   command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "$QSM_MIC_BASE_URL/api/audio/capture/status" >/dev/null 2>&1
 }
 
-if gateway_ready && face_ready && audio_ready; then
+fingerprint_ready() {
+  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$QSM_FINGERPRINT_BASE_URL/api/fingerprint/status" >/dev/null 2>&1
+}
+
+if gateway_ready && face_ready && audio_ready && fingerprint_ready; then
   log "外设网关已可访问：$QSM_BASE_URL"
   log "人脸识别网关已可访问：$QSM_FACE_BASE_URL"
   log "麦克风采集网关已可访问：$QSM_MIC_BASE_URL"
+  log "指纹识别网关已可访问：$QSM_FINGERPRINT_BASE_URL"
   exit 0
 fi
 
@@ -77,6 +87,8 @@ log "建立人脸识别端口转发：127.0.0.1:${FACE_HOST_PORT} -> tcp:${FACE_
 $ADB_PREFIX forward "tcp:${FACE_HOST_PORT}" "tcp:${FACE_DEVICE_PORT}" >/dev/null 2>&1 || warn "人脸识别端口转发失败。"
 log "建立麦克风采集端口转发：127.0.0.1:${AUDIO_HOST_PORT} -> tcp:${AUDIO_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${AUDIO_HOST_PORT}" "tcp:${AUDIO_DEVICE_PORT}" >/dev/null 2>&1 || warn "麦克风采集端口转发失败。"
+log "建立指纹识别端口转发：127.0.0.1:${FINGERPRINT_HOST_PORT} -> tcp:${FINGERPRINT_DEVICE_PORT}"
+$ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1 || warn "指纹识别端口转发失败。"
 log "建立离线模型端口转发：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1 || warn "离线模型端口转发失败。"
 if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_asr.sh' >/dev/null 2>&1; then
@@ -94,8 +106,8 @@ $ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" 
 log "建立实时音频播放端口转发：127.0.0.1:${AUDIO_STREAM_HOST_PORT} -> tcp:${AUDIO_STREAM_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${AUDIO_STREAM_HOST_PORT}" "tcp:${AUDIO_STREAM_DEVICE_PORT}" >/dev/null 2>&1 || warn "实时音频播放端口转发失败。"
 
-if gateway_ready && face_ready && audio_ready; then
-  log "端口转发后外设网关和人脸识别均已可访问。"
+if gateway_ready && face_ready && audio_ready && fingerprint_ready; then
+  log "端口转发后全部外设网关均已可访问。"
   exit 0
 fi
 
@@ -117,6 +129,12 @@ if ! audio_ready; then
     || warn "麦克风采集网关尚未部署；可运行 scripts/deploy_qsm_gateway.sh 完成部署。"
 fi
 
+if ! fingerprint_ready; then
+  log "尝试启动指纹识别网关服务。"
+  $ADB_PREFIX shell "if [ -x '$QSM_FINGERPRINT_START_SCRIPT' ]; then QSM_FINGERPRINT_HOME='$QSM_FINGERPRINT_HOME' QSM_FINGERPRINT_PORT='$FINGERPRINT_DEVICE_PORT' sh '$QSM_FINGERPRINT_START_SCRIPT'; else exit 1; fi" >/dev/null 2>&1 \
+    || warn "指纹识别网关尚未部署；可运行 scripts/deploy_qsm_gateway.sh 完成部署。"
+fi
+
 sleep 1
 if gateway_ready; then
   log "外设网关启动完成：$QSM_BASE_URL"
@@ -132,4 +150,9 @@ if audio_ready; then
   log "麦克风采集网关启动完成：$QSM_MIC_BASE_URL"
 else
   warn "麦克风采集网关仍不可访问；语音输入将显示真实不可用状态。"
+fi
+if fingerprint_ready; then
+  log "指纹识别网关启动完成：$QSM_FINGERPRINT_BASE_URL"
+else
+  warn "指纹识别网关仍不可访问；取药时可改用面部确认。"
 fi

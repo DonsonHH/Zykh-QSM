@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   Camera,
   CheckCircle2,
+  Fingerprint,
   HeartPulse,
   Mic,
   RefreshCcw,
@@ -27,6 +28,9 @@ const fallbackCheck = {
   local_camera_ok: false,
   local_camera_mode: "mock",
   local_camera_status: "mock",
+  fingerprint_ok: false,
+  fingerprint_status: "unavailable",
+  fingerprint_bound_users: 0,
   dispense_dry_run: true,
   local_ai_ok: false,
   local_ai_model: "",
@@ -154,6 +158,12 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       label: "体征模块",
       value: check.vitals_ok ? "可用" : "不可用",
       ok: check.vitals_ok
+    },
+    {
+      icon: Fingerprint,
+      label: "指纹模块",
+      value: check.fingerprint_ok ? `${check.fingerprint_bound_users || 0} 人已绑定` : "不可用",
+      ok: check.fingerprint_ok
     },
     {
       icon: ShieldCheck,

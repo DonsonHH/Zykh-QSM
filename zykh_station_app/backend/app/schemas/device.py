@@ -13,6 +13,9 @@ class DeviceCheckResponse(BaseModel):
     local_camera_ok: bool
     local_camera_mode: str
     local_camera_status: str
+    fingerprint_ok: bool
+    fingerprint_status: str
+    fingerprint_bound_users: int
     local_ai_ok: bool
     local_ai_model: str
     local_ai_status: str

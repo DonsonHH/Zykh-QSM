@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .site import SiteProfile
 from .status import StatusChip
+
+
+class MedicationPlanItem(BaseModel):
+    id: str
+    time: str
+    medicine: str
+    status: str
+    target_user: str
 
 
 class MedicationSummary(BaseModel):
@@ -12,6 +20,7 @@ class MedicationSummary(BaseModel):
     next_time: str
     featured_subject: str
     featured_medicine: str
+    plans: list[MedicationPlanItem] = Field(default_factory=list)
 
 
 class InquirySummary(BaseModel):

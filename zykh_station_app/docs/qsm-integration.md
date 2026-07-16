@@ -9,6 +9,7 @@ React/Vite UI -> FastAPI -> services/qsm_client.py -> http://127.0.0.1:18080
                                    qsm_face_client.py -> http://127.0.0.1:18081
                                    routers/audio.py -> http://127.0.0.1:18082
                                    local_ai_client.py -> http://127.0.0.1:18083
+                                   qsm_fingerprint_client.py -> http://127.0.0.1:18086
 ```
 
 QSM owns camera capture/streaming, face feature matching, temperature, integrated UART vitals, audio, cabinet-control peripherals and the llama.cpp offline language-model process. The local app owns UI, workflow, local records, safety rules, candidate medicine matching and 取药确认.
@@ -17,7 +18,7 @@ Latest hardware split:
 
 ```text
 Host app: React/Vite, FastAPI, SQLite, inquiry workflow, barcode/medicine recognition, identity mapping, touch UI.
-Peripheral gateway: FF Camera, face runtime, GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
+Peripheral gateway: FF Camera, face runtime, AS608 fingerprint templates, GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
 ```
 
 QSM exposes MJPEG and still-capture endpoints on its main gateway. FastAPI proxies `/api/camera/stream`, saves recent real frames for barcode recognition and retries the brief 5xx window caused by switching between live preview and face matching.
@@ -37,6 +38,8 @@ QSM_MIC_STATUS_PATH=/api/audio/capture/status
 QSM_MIC_STREAM_PATH=/api/audio/capture/stream
 QSM_MIC_RECORD_PATH=/api/audio/capture/record
 QSM_MIC_VOLUME_PATH=/api/audio/capture/volume
+QSM_FINGERPRINT_BASE_URL=http://127.0.0.1:18086
+QSM_FINGERPRINT_TEMPLATE_START=16
 QSM_VITALS_PREFER_FULL=false
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
@@ -88,6 +91,7 @@ adb forward tcp:18080 tcp:8080
 adb forward tcp:18081 tcp:8081
 adb forward tcp:18082 tcp:8082
 adb forward tcp:18083 tcp:8083
+adb forward tcp:18086 tcp:8086
 ```
 
 If any step fails, it prints a clear warning and exits without killing the app. Fix the gateway connection before real-device verification.
@@ -137,7 +141,9 @@ The UART collection window defaults to 16 seconds. This stays below the existing
 - `audio_speak()`
 - `audio_beep()`
 
-QSM camera proxy methods live in `services/qsm_camera_service.py`. Identity calls use `services/qsm_face_client.py`; `services/identity_service.py` only resolves identities already bound to service users. Unknown or historical unbound face subjects are reported for administrator handling and never create a profile automatically.
+QSM camera proxy methods live in `services/qsm_camera_service.py`. Normal identity calls use `services/qsm_face_client.py`; `services/identity_service.py` only resolves identities already bound to service users. Unknown or historical unbound face subjects are reported during wake-time recognition. The separate dispense verification endpoint can create a clearly labelled local visitor only after the user explicitly selects face confirmation.
+
+Fingerprint calls use `services/qsm_fingerprint_client.py`. The AS608 module stores fingerprint templates; SQLite stores only `template_id -> service_user_id`, last-seen time and match score. Existing board templates are never treated as identities unless they have a local binding. IDs 0-15 are reserved by default so the verified pre-existing board template is not overwritten.
 
 The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host realtime-ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Online mode sends it to Qwen realtime ASR; local mode converts it to float PCM and sends it to the QSM sherpa-onnx server on board port `8084` (host forward `18084`). Capture gain changes are forwarded to the QSM `Mic` mixer control.
 
@@ -163,6 +169,10 @@ GET  /api/qsm/capabilities
 GET  /api/identity/status
 POST /api/identity/resolve
 POST /api/identity/enroll/{service_user_id}
+GET  /api/fingerprint/status
+POST /api/fingerprint/identify
+POST /api/fingerprint/enroll/{service_user_id}
+DELETE /api/fingerprint/{service_user_id}
 ```
 
 Real mode without gateway:
@@ -210,7 +220,7 @@ The offline model is a real board-side process, not mock data. See [`offline-ai.
 
 `scripts/deploy_qsm_gateway.sh` starts the main gateway on board port `8080`, the face gateway on `8081`, and the FF Camera microphone gateway on `8082`. The face runtime reads `/dev/video23`, performs feature extraction/matching on QSM and stores its template database under `/userdata/qsm-face/data`. The host stores only the opaque face subject to service-user mapping.
 
-Matched users are attached to inquiry and dispense records. Identity resolution uses multiple-frame voting instead of accepting one highest-scoring frame. Unknown faces do not create a second person automatically. Administrators create or select a service user in Settings and use multi-angle enrollment while the person slowly turns left and right. After terminal inactivity, the wake screen clears the previous identity; tapping the screen starts a fresh recognition before personal tasks are loaded.
+Matched users are attached to inquiry and dispense records. Identity resolution uses multiple-frame voting instead of accepting one highest-scoring frame. Normal wake-time recognition never creates a person automatically. In the dispense modal, the user can explicitly choose face confirmation; if no existing subject matches, the app creates a clearly labelled local visitor and enrolls that face so later取药 records can identify the same person. Administrators can rename or complete that visitor in Settings. After terminal inactivity, the wake screen clears the previous identity; tapping the screen starts a fresh recognition before personal tasks are loaded.
 
 The bundled InspireFace community model is licensed for academic use only. A commercial deployment must replace it with a model and runtime carrying the required commercial rights.
 

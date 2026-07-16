@@ -25,7 +25,7 @@
 .stroke-draw-icon.is-drawing :is(path, circle, ellipse, line, polyline, polygon, rect) {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: selective-stroke-draw var(--stroke-draw-duration, 900ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: selective-stroke-draw var(--stroke-draw-duration, 1400ms) linear forwards;
   animation-delay: var(--stroke-draw-delay, 0ms);
 }
 

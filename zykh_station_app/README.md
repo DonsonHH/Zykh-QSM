@@ -21,7 +21,8 @@
 - 真实设备联调检查脚本和终端内系统检查入口。
 - QSM UART8 综合体征模块，支持心率、血氧、血压参考、呼吸频率和 HRV 数据。
 - QSM 摄像头实时预览、条码连续核验、FF Camera 麦克风采集和板端人脸身份确认。
-- 取药、问询和今日用药自动关联本次确认的服务对象；未知人脸不会自动建档，需由管理员绑定或录入。
+- QSM AS608 指纹确认：指纹模板保留在模块内，本机只保存服务对象映射；取药时指纹确认成功即可记录使用人并开柜。
+- 取药、问询和今日用药自动关联本次确认的服务对象；药品页支持指纹优先、面部辅助，陌生人明确选择面部确认后建立本地访客记录。
 - 终端空闲后进入唤醒页；下一位用户轻触屏幕后会清除上一位身份并重新进行人脸确认。
 
 ## 安全边界
@@ -107,6 +108,7 @@ QSM_BASE_URL=http://127.0.0.1:18080
 QSM_TIMEOUT_SECONDS=5
 QSM_FACE_BASE_URL=http://127.0.0.1:18081
 QSM_MIC_BASE_URL=http://127.0.0.1:18082
+QSM_FINGERPRINT_BASE_URL=http://127.0.0.1:18086
 QSM_LOCAL_ASR_URL=ws://127.0.0.1:18084
 QSM_VITALS_PREFER_FULL=false
 DISPENSE_DRY_RUN=false
@@ -122,7 +124,7 @@ LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 
 real 模式用于本机访问外设网关。如果 real 模式不可用，后端返回结构化错误并让首页显示“暂不可用”，不会用假体征或假识别结果掩盖问题。`QSM_MODE=mock` 只保留为本地闭环检查选项。
 
-当前硬件分工：摄像头、FF Camera 麦克风、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，主机 SQLite 只保存不含生物特征的服务对象映射。
+当前硬件分工：摄像头、FF Camera 麦克风、AS608 指纹模块、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，指纹模板保留在 AS608 内，主机 SQLite 只保存不含原始生物特征的服务对象映射。
 
 身体状态测量页通过 `/api/vitals/read-all` 同时读取 GY-614 额温和 QSM UART8 综合体征模块。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。血压、呼吸频率和 HRV 统一作为健康状态辅助参考，不作为诊断依据。
 
@@ -133,7 +135,7 @@ cd zykh_station_app
 sh scripts/deploy_qsm_gateway.sh
 ```
 
-该脚本会部署 `qsm_gateway/read_vitals_uart8.pl`、主网关启动包装、人脸识别网关和麦克风采集网关。检测到 `/home/jetson/QSM368ZP-board-face-recognition(1).zip`（或 `QSM_FACE_BUNDLE` 指定文件）时，还会部署板端运行库与模型。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率、血氧和额温作为本页核心测量值；三项齐全即判定测量完成。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
+该脚本会部署 `qsm_gateway/read_vitals_uart8.pl`、主网关启动包装、人脸识别网关、麦克风采集网关和 AS608 指纹网关。首次使用指纹模块前，需先安装用户提供的 AS608 离线部署包；脚本不会覆盖模块内已有模板。主机端新模板默认从 16 开始，0-15 保留给板端测试和迁移。检测到 `/home/jetson/QSM368ZP-board-face-recognition(1).zip`（或 `QSM_FACE_BUNDLE` 指定文件）时，还会部署板端运行库与模型。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率、血氧和额温作为本页核心测量值；三项齐全即判定测量完成。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
@@ -189,7 +191,7 @@ sh scripts/start_4g.sh
 
 ## QSM real 模式验证
 
-主外设网关、人脸识别网关、麦克风采集网关、离线语言模型和离线实时语音识别分别转发到 `18080`、`18081`、`18082`、`18083` 与 `18084`；实时 PCM 外放使用 `19001`：
+主外设网关、人脸识别网关、麦克风采集网关、离线语言模型、离线实时语音识别和指纹网关分别转发到 `18080`、`18081`、`18082`、`18083`、`18084` 与 `18086`；实时 PCM 外放使用 `19001`：
 
 ```bash
 cd zykh_station_app
@@ -235,6 +237,7 @@ npm run test:motion
 ```bash
 curl http://127.0.0.1:8000/api/qsm/status
 curl http://127.0.0.1:8000/api/identity/status
+curl http://127.0.0.1:8000/api/fingerprint/status
 curl -X POST http://127.0.0.1:8000/api/identity/resolve
 curl -X POST http://127.0.0.1:8000/api/vitals/read-all
 curl -X POST http://127.0.0.1:8000/api/audio/beep

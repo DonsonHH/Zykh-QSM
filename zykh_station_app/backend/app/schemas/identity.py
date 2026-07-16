@@ -13,6 +13,7 @@ class IdentityResponse(BaseModel):
     confidence: float | None = None
     message: str
     error_message: str | None = None
+    new_guest: bool = False
 
 
 class FaceEnrollmentResponse(IdentityResponse):

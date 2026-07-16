@@ -1,10 +1,9 @@
 import { apiGet } from "./client.js";
 import { mockDashboard } from "./mockData.js";
 
-export async function loadDashboard(targetUser = "") {
+export async function loadDashboard() {
   try {
-    const query = targetUser ? `?target_user=${encodeURIComponent(targetUser)}` : "";
-    return await apiGet(`/api/dashboard${query}`);
+    return await apiGet("/api/dashboard");
   } catch (error) {
     return { ...mockDashboard, offline: true, error: error.message };
   }

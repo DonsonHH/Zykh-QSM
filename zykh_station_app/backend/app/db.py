@@ -82,6 +82,8 @@ def init_db() -> None:
         )
         _ensure_column(conn, "dispense_records", "target_user_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "dispense_records", "target_user_name", "TEXT NOT NULL DEFAULT '家庭成员'")
+        _ensure_column(conn, "dispense_records", "verification_method", "TEXT NOT NULL DEFAULT 'manual'")
+        _ensure_column(conn, "dispense_records", "verification_score", "REAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS device_action_records (
@@ -161,6 +163,18 @@ def init_db() -> None:
               subject TEXT PRIMARY KEY,
               service_user_id TEXT NOT NULL UNIQUE,
               confidence REAL,
+              enrolled_at TEXT NOT NULL,
+              last_seen_at TEXT NOT NULL,
+              FOREIGN KEY(service_user_id) REFERENCES service_users(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fingerprint_identities (
+              template_id INTEGER PRIMARY KEY,
+              service_user_id TEXT NOT NULL UNIQUE,
+              score REAL,
               enrolled_at TEXT NOT NULL,
               last_seen_at TEXT NOT NULL,
               FOREIGN KEY(service_user_id) REFERENCES service_users(id)

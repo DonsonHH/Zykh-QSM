@@ -103,6 +103,8 @@ class DispenseService:
                     qsm_detail=qsm_detail,
                     target_user_id=request.target_user_id,
                     target_user_name=request.target_user_name,
+                    verification_method="manual",
+                    verification_score=None,
                     created_at=now_text(),
                 )
                 self.dispense_repository.append(record)
@@ -164,5 +166,7 @@ class DispenseService:
             qsm_detail=qsm_detail,
             target_user_id=request.target_user_id,
             target_user_name=request.target_user_name.strip() or "家庭成员",
+            verification_method=request.verification_method.strip() or "manual",
+            verification_score=request.verification_score,
             created_at=now_text(),
         )

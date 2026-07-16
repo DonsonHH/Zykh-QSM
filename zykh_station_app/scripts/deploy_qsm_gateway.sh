@@ -7,9 +7,12 @@ FACE_HOST_PORT="${QSM_FACE_FORWARD_HOST_PORT:-18081}"
 FACE_DEVICE_PORT="${QSM_FACE_FORWARD_DEVICE_PORT:-8081}"
 AUDIO_HOST_PORT="${QSM_AUDIO_CAPTURE_FORWARD_HOST_PORT:-18082}"
 AUDIO_DEVICE_PORT="${QSM_AUDIO_CAPTURE_FORWARD_DEVICE_PORT:-8082}"
+FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
+FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 QSM_FACE_HOME="${QSM_FACE_HOME:-/userdata/qsm-face}"
 QSM_AUDIO_HOME="${QSM_AUDIO_HOME:-/userdata/qsm-audio}"
+QSM_FINGERPRINT_HOME="${QSM_FINGERPRINT_HOME:-/userdata/qsm-fingerprint}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
 LOCAL_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
@@ -18,6 +21,8 @@ LOCAL_FACE_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/face_gateway.pl"
 LOCAL_FACE_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_face_gateway.sh"
 LOCAL_AUDIO_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/audio_capture_gateway.pl"
 LOCAL_AUDIO_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_audio_capture_gateway.sh"
+LOCAL_FINGERPRINT_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/fingerprint_gateway.pl"
+LOCAL_FINGERPRINT_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_fingerprint_gateway.sh"
 FACE_BUNDLE="${QSM_FACE_BUNDLE:-}"
 TEMP_DIR=""
 
@@ -36,6 +41,8 @@ fail() {
 [ -f "$LOCAL_FACE_START" ] || fail "找不到人脸识别启动脚本：$LOCAL_FACE_START"
 [ -f "$LOCAL_AUDIO_GATEWAY" ] || fail "找不到麦克风采集网关：$LOCAL_AUDIO_GATEWAY"
 [ -f "$LOCAL_AUDIO_START" ] || fail "找不到麦克风采集启动脚本：$LOCAL_AUDIO_START"
+[ -f "$LOCAL_FINGERPRINT_GATEWAY" ] || fail "找不到指纹识别网关：$LOCAL_FINGERPRINT_GATEWAY"
+[ -f "$LOCAL_FINGERPRINT_START" ] || fail "找不到指纹识别启动脚本：$LOCAL_FINGERPRINT_START"
 command -v adb >/dev/null 2>&1 || fail "未找到 adb"
 
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
@@ -91,12 +98,23 @@ $ADB_PREFIX push "$LOCAL_AUDIO_START" "$QSM_AUDIO_HOME/start_audio_capture_gatew
 $ADB_PREFIX shell "chmod +x '$QSM_AUDIO_HOME/audio_capture_gateway.pl' '$QSM_AUDIO_HOME/start_audio_capture_gateway.sh'; QSM_AUDIO_HOME='$QSM_AUDIO_HOME' QSM_AUDIO_CAPTURE_PORT='$AUDIO_DEVICE_PORT' sh '$QSM_AUDIO_HOME/start_audio_capture_gateway.sh'" >/dev/null \
   || fail "启动板端麦克风采集网关失败"
 
+log "部署 QSM AS608 指纹识别适配"
+$ADB_PREFIX shell "mkdir -p '$QSM_FINGERPRINT_HOME/logs'" >/dev/null || fail "创建板端指纹目录失败"
+$ADB_PREFIX shell "test -f '$QSM_HOME/scripts/as608.pl' -a -x '$QSM_HOME/scripts/init_fingerprint.sh'" >/dev/null 2>&1 \
+  || fail "板端缺少 AS608 驱动；请先安装 QSM368ZP-AS608 离线部署包。"
+$ADB_PREFIX push "$LOCAL_FINGERPRINT_GATEWAY" "$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl" >/dev/null || fail "推送指纹识别网关失败"
+$ADB_PREFIX push "$LOCAL_FINGERPRINT_START" "$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh" >/dev/null || fail "推送指纹启动脚本失败"
+$ADB_PREFIX shell "chmod +x '$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl' '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'; QSM_FINGERPRINT_HOME='$QSM_FINGERPRINT_HOME' QSM_FINGERPRINT_PORT='$FINGERPRINT_DEVICE_PORT' sh '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'" >/dev/null \
+  || fail "启动板端指纹识别网关失败"
+
 log "建立端口转发：127.0.0.1:$HOST_PORT -> tcp:$DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1 || fail "端口转发失败"
 log "建立人脸接口转发：127.0.0.1:$FACE_HOST_PORT -> tcp:$FACE_DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${FACE_HOST_PORT}" "tcp:${FACE_DEVICE_PORT}" >/dev/null 2>&1 || fail "人脸接口端口转发失败"
 log "建立麦克风接口转发：127.0.0.1:$AUDIO_HOST_PORT -> tcp:$AUDIO_DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${AUDIO_HOST_PORT}" "tcp:${AUDIO_DEVICE_PORT}" >/dev/null 2>&1 || fail "麦克风接口端口转发失败"
+log "建立指纹接口转发：127.0.0.1:$FINGERPRINT_HOST_PORT -> tcp:$FINGERPRINT_DEVICE_PORT"
+$ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1 || fail "指纹接口端口转发失败"
 
 command -v curl >/dev/null 2>&1 || fail "未找到 curl，无法完成真实体征验收。"
 count=0
@@ -122,6 +140,13 @@ case "$AUDIO_STATUS" in
   *'"source":"FF Camera"'*'"ok":true'*) log "FF Camera 麦克风采集已就绪。" ;;
   *'"ok":true'*'"source":"FF Camera"'*) log "FF Camera 麦克风采集已就绪。" ;;
   *) fail "麦克风采集状态未就绪：$AUDIO_STATUS" ;;
+esac
+
+FINGERPRINT_STATUS="$(curl -fsS --max-time 10 "http://127.0.0.1:${FINGERPRINT_HOST_PORT}/api/fingerprint/status" 2>/dev/null)" \
+  || fail "指纹识别网关已部署，但状态接口不可访问。"
+case "$FINGERPRINT_STATUS" in
+  *'"ok":true'*) log "AS608 指纹识别模块已就绪。" ;;
+  *) fail "指纹识别状态未就绪：$FINGERPRINT_STATUS" ;;
 esac
 
 log "读取一次 UART8 综合体征，未放手指时出现 awaiting_finger 也表示硬件链路已响应。"

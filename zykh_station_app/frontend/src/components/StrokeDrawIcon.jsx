@@ -2,8 +2,13 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const drawableSelector = "path, circle, ellipse, line, polyline, polygon, rect";
 const DRAW_PHASE_MS = 1600;
+const DRAW_CYCLE_MS = DRAW_PHASE_MS * 2;
 const DRAW_SEGMENT_MS = 900;
 const DRAW_HOLD_MS = 240;
+const IDLE_DRAW_PHASE_MS = 2500;
+const IDLE_DRAW_CYCLE_MS = IDLE_DRAW_PHASE_MS * 2;
+const IDLE_DRAW_SEGMENT_MS = 1400;
+const IDLE_DRAW_HOLD_MS = 400;
 
 export function StrokeDrawIcon({
   icon: Icon,
@@ -14,6 +19,7 @@ export function StrokeDrawIcon({
   mode = "once",
   active = true,
   replayOnPointer = false,
+  pace = "standard",
   label
 }) {
   const rootRef = useRef(null);
@@ -44,6 +50,12 @@ export function StrokeDrawIcon({
       return undefined;
     }
 
+    const idlePace = pace === "idle";
+    const phaseDuration = idlePace ? IDLE_DRAW_PHASE_MS : DRAW_PHASE_MS;
+    const cycleDuration = idlePace ? IDLE_DRAW_CYCLE_MS : DRAW_CYCLE_MS;
+    const segmentDuration = idlePace ? IDLE_DRAW_SEGMENT_MS : DRAW_SEGMENT_MS;
+    const holdDuration = idlePace ? IDLE_DRAW_HOLD_MS : DRAW_HOLD_MS;
+
     const parts = [...root.querySelectorAll(drawableSelector)];
     const resetParts = () => {
       parts.forEach((part) => {
@@ -64,39 +76,64 @@ export function StrokeDrawIcon({
     }
 
     setComplete(false);
-    const sequenceDuration = DRAW_PHASE_MS - DRAW_HOLD_MS;
+    const sequenceDuration = phaseDuration - holdDuration;
     const stagger =
-      parts.length > 1 ? Math.max(0, sequenceDuration - DRAW_SEGMENT_MS) / (parts.length - 1) : 0;
+      parts.length > 1 ? Math.max(0, sequenceDuration - segmentDuration) / (parts.length - 1) : 0;
     parts.forEach((part, index) => {
       part.setAttribute("pathLength", "1");
       part.style.setProperty("--stroke-draw-delay", `${delay + index * stagger}ms`);
-      part.style.setProperty("--stroke-draw-duration", `${DRAW_SEGMENT_MS}ms`);
+      part.style.setProperty("--stroke-draw-duration", `${segmentDuration}ms`);
     });
 
     if (typeof parts[0]?.animate === "function") {
       setProgrammatic(mode === "once");
       setLooping(mode === "yoyo");
       const animations = parts.map((part, index) => {
-        const startOffset = (index * stagger) / DRAW_PHASE_MS;
-        const endOffset = (index * stagger + DRAW_SEGMENT_MS) / DRAW_PHASE_MS;
+        const drawStart = index * stagger;
+        const drawEnd = drawStart + segmentDuration;
+        const eraseStart = phaseDuration + drawStart;
+        const eraseEnd = eraseStart + segmentDuration;
+        const keyframes =
+          mode === "yoyo"
+            ? [
+                { strokeDashoffset: 1, opacity: 0.24, offset: 0 },
+                {
+                  strokeDashoffset: 1,
+                  opacity: 0.24,
+                  offset: drawStart / cycleDuration,
+                  easing: "linear"
+                },
+                { strokeDashoffset: 0, opacity: 1, offset: drawEnd / cycleDuration },
+                {
+                  strokeDashoffset: 0,
+                  opacity: 1,
+                  offset: eraseStart / cycleDuration,
+                  easing: "linear"
+                },
+                { strokeDashoffset: -1, opacity: 1, offset: eraseEnd / cycleDuration },
+                { strokeDashoffset: -1, opacity: 1, offset: 1 }
+              ]
+            : [
+                { strokeDashoffset: 1, opacity: 0.24, offset: 0 },
+                {
+                  strokeDashoffset: 1,
+                  opacity: 0.24,
+                  offset: drawStart / phaseDuration,
+                  easing: "linear"
+                },
+                { strokeDashoffset: 0, opacity: 1, offset: drawEnd / phaseDuration },
+                { strokeDashoffset: 0, opacity: 1, offset: 1 }
+              ];
         part.style.strokeDasharray = "1";
         part.style.strokeDashoffset = "1";
         part.style.opacity = "0.24";
-        return part.animate(
-          [
-            { strokeDashoffset: 1, opacity: 0.24, offset: 0 },
-            { strokeDashoffset: 1, opacity: 0.24, offset: startOffset, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-            { strokeDashoffset: 0, opacity: 1, offset: endOffset },
-            { strokeDashoffset: 0, opacity: 1, offset: 1 }
-          ],
-          {
-            delay,
-            direction: mode === "yoyo" ? "alternate" : "normal",
-            duration: DRAW_PHASE_MS,
-            fill: "both",
-            iterations: mode === "yoyo" ? Infinity : 1
-          }
-        );
+        return part.animate(keyframes, {
+          delay,
+          direction: "normal",
+          duration: mode === "yoyo" ? cycleDuration : phaseDuration,
+          fill: "both",
+          iterations: mode === "yoyo" ? Infinity : 1
+        });
       });
 
       let timer;
@@ -106,7 +143,7 @@ export function StrokeDrawIcon({
           resetParts();
           setProgrammatic(false);
           setComplete(true);
-        }, delay + DRAW_PHASE_MS);
+        }, delay + phaseDuration);
       }
 
       return () => {
@@ -118,13 +155,13 @@ export function StrokeDrawIcon({
 
     setProgrammatic(false);
     setLooping(false);
-    const totalDuration = delay + DRAW_PHASE_MS;
+    const totalDuration = delay + phaseDuration;
     const timer = window.setTimeout(() => setComplete(true), totalDuration);
     return () => {
       window.clearTimeout(timer);
       resetParts();
     };
-  }, [Icon, active, delay, mode, replayToken]);
+  }, [Icon, active, delay, mode, pace, replayToken]);
 
   return (
     <span

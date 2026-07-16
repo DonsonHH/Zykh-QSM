@@ -12,6 +12,8 @@ class DispenseConfirmRequest(BaseModel):
     confirm_real_dispense: bool = False
     target_user_id: str = ""
     target_user_name: str = "家庭成员"
+    verification_method: str = "manual"
+    verification_score: float | None = None
 
 
 class DispenseOpenRequest(BaseModel):
@@ -55,6 +57,8 @@ class DispenseRecord(BaseModel):
     qsm_detail: str = ""
     target_user_id: str = ""
     target_user_name: str = "家庭成员"
+    verification_method: str = "manual"
+    verification_score: float | None = None
     created_at: str
 
 

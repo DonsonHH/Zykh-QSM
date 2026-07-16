@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, DoorOpen, Mic, PackageCheck, Save, ScanFace, Signal, Trash2, UserRound, Volume2, WifiOff } from "lucide-react";
+import { ArrowLeft, DoorOpen, Fingerprint, Mic, PackageCheck, Save, ScanFace, Signal, Trash2, UserRound, Volume2, WifiOff } from "lucide-react";
 import { openCabinet } from "../api/dispense.js";
 import { loadMedicines, updateMedicine } from "../api/medicines.js";
 import { loadNetworkStatus, setNetworkMode } from "../api/network.js";
@@ -7,6 +7,7 @@ import { setHostMicVolume, testAudioRelay } from "../api/audio.js";
 import { deleteServiceUser, loadServiceUsers, updateServiceUser } from "../api/records.js";
 import { isLocalNetworkMode } from "../utils/network.js";
 import { enrollIdentity } from "../api/identity.js";
+import { deleteFingerprint, enrollFingerprint, loadFingerprintStatus } from "../api/fingerprint.js";
 
 function toEditForm(medicine) {
   return {
@@ -43,6 +44,8 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
   const [savingUser, setSavingUser] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
   const [enrollingFace, setEnrollingFace] = useState(false);
+  const [enrollingFingerprint, setEnrollingFingerprint] = useState(false);
+  const [fingerprintStatus, setFingerprintStatus] = useState(null);
   const [opening, setOpening] = useState(false);
   const [speakerVolume, setSpeakerVolume] = useState(230);
   const [micVolume, setMicVolume] = useState(70);
@@ -76,6 +79,10 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
       })
       .catch((error) => notify(error.message || "服务对象加载失败"));
   }, [notify]);
+
+  useEffect(() => {
+    loadFingerprintStatus().then(setFingerprintStatus).catch(() => setFingerprintStatus(null));
+  }, []);
 
   useEffect(() => {
     setForm(toEditForm(selectedMedicine));
@@ -147,13 +154,16 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
       return;
     }
     setDeletingUser(true);
-    deleteServiceUser(selectedUser.id)
+    deleteFingerprint(selectedUser.id)
+      .catch(() => null)
+      .then(() => deleteServiceUser(selectedUser.id))
       .then((data) => {
         const rows = data.users || [];
         setServiceUsers(rows);
         setSelectedUserId(rows[0]?.id || "");
         setUserForm(toUserForm(rows[0] || null));
         notify("服务对象已删除");
+        loadFingerprintStatus().then(setFingerprintStatus).catch(() => setFingerprintStatus(null));
       })
       .catch((error) => notify(error.message || "服务对象删除失败"))
       .finally(() => setDeletingUser(false));
@@ -169,6 +179,21 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
       .then((data) => notify(data.message || (data.ok ? "人脸录入完成" : "人脸录入未完成")))
       .catch((error) => notify(error.message || "人脸录入失败"))
       .finally(() => setEnrollingFace(false));
+  }
+
+  function enrollSelectedUserFingerprint() {
+    if (!selectedUser || enrollingFingerprint) {
+      return;
+    }
+    setEnrollingFingerprint(true);
+    notify(`请让${selectedUser.name}按提示连续放置同一手指`);
+    enrollFingerprint(selectedUser.id, 45)
+      .then((data) => {
+        notify(data.message || (data.ok ? "指纹录入完成" : "指纹录入未完成"));
+        return loadFingerprintStatus().then(setFingerprintStatus);
+      })
+      .catch((error) => notify(error.message || "指纹录入失败"))
+      .finally(() => setEnrollingFingerprint(false));
   }
 
   function openSelectedCabinet() {
@@ -298,6 +323,9 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
             <div>
               <h3>服务对象</h3>
             </div>
+            <span className={`biometric-status-pill ${fingerprintStatus?.ok ? "available" : "unavailable"}`}>
+              指纹 {fingerprintStatus?.ok ? `${fingerprintStatus.bound_users} 人` : "不可用"}
+            </span>
           </header>
 
           <div className="settings-user-picker">
@@ -356,7 +384,17 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
               disabled={!selectedUser || enrollingFace || deletingUser}
             >
               <ScanFace size={22} aria-hidden="true" />
-              {enrollingFace ? "录入中..." : "录入人脸"}
+              {enrollingFace ? "录入中" : "人脸"}
+            </button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={enrollSelectedUserFingerprint}
+              disabled={!selectedUser || enrollingFingerprint || deletingUser}
+              title="录入指纹"
+            >
+              <Fingerprint size={22} aria-hidden="true" />
+              {enrollingFingerprint ? "录入中" : "指纹"}
             </button>
             <button
               className="secondary-action danger-action"
@@ -365,11 +403,11 @@ export function Settings({ notify, onNavigate, networkStatus, onNetworkStatusCha
               disabled={!selectedUser || deletingUser || savingUser}
             >
               <Trash2 size={22} aria-hidden="true" />
-              {deletingUser ? "删除中..." : "删除对象"}
+              {deletingUser ? "删除中" : "删除"}
             </button>
             <button className="primary-action" type="button" onClick={saveServiceUser} disabled={!selectedUser || savingUser || deletingUser}>
               <Save size={22} aria-hidden="true" />
-              {savingUser ? "保存中..." : "保存修改"}
+              {savingUser ? "保存中" : "保存"}
             </button>
           </div>
         </article>

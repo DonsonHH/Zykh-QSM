@@ -5,6 +5,7 @@ from ..schemas.device import DeviceCheckResponse
 from .qsm_camera_service import QsmCameraService
 from .qsm_client import QsmClient
 from .local_ai_client import LocalAiClient
+from .fingerprint_service import FingerprintService
 
 
 class DeviceCheckService:
@@ -13,10 +14,12 @@ class DeviceCheckService:
         qsm_client: QsmClient | None = None,
         qsm_camera: QsmCameraService | None = None,
         local_ai: LocalAiClient | None = None,
+        fingerprint: FingerprintService | None = None,
     ) -> None:
         self.qsm_client = qsm_client or QsmClient()
         self.qsm_camera = qsm_camera or QsmCameraService()
         self.local_ai = local_ai or LocalAiClient()
+        self.fingerprint = fingerprint or FingerprintService()
 
     def check(self) -> DeviceCheckResponse:
         errors: list[str] = []
@@ -27,11 +30,13 @@ class DeviceCheckService:
         vitals = self.qsm_client.read_vitals()
         camera_status = self.qsm_camera.capabilities()
         local_ai_status = self.local_ai.status()
+        fingerprint_status = self.fingerprint.status()
 
         qsm_status_ok = qsm_status.connected if qsm_status.mode == "real" else True
         vitals_ok = True if qsm_status.mode != "real" else vitals.get("source") == "real"
         camera_ok = camera_status == "available"
         local_ai_ok = bool(local_ai_status.get("ready"))
+        fingerprint_ok = fingerprint_status.ok
 
         if qsm_status.mode == "real" and not qsm_status.connected:
             warnings.append("外设网关未连接。")
@@ -48,6 +53,9 @@ class DeviceCheckService:
         if not local_ai_ok:
             warnings.append("离线问询模型暂未就绪。")
             recommendations.append("请运行 scripts/deploy_offline_ai.sh 或检查 QSM 模型进程。")
+        if not fingerprint_ok:
+            warnings.append("指纹模块暂不可用。")
+            recommendations.append("请检查 AS608 USB 连接、指纹网关和 18086 端口转发；取药时可改用面部确认。")
         if not real_dispense_enabled():
             warnings.append("开柜当前未启用真实联动。")
             recommendations.append("真实开柜需要 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1，并完成取药安全确认。")
@@ -65,6 +73,9 @@ class DeviceCheckService:
             local_camera_ok=camera_ok,
             local_camera_mode="qsm",
             local_camera_status=camera_status,
+            fingerprint_ok=fingerprint_ok,
+            fingerprint_status=fingerprint_status.status,
+            fingerprint_bound_users=fingerprint_status.bound_users,
             local_ai_ok=local_ai_ok,
             local_ai_model=str(local_ai_status.get("model") or ""),
             local_ai_status=str(local_ai_status.get("status") or "unavailable"),

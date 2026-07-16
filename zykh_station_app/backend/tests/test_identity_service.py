@@ -93,6 +93,17 @@ class IdentityServiceTest(unittest.TestCase):
         self.assertEqual(result.subject, "profile:removed-user")
         self.assertEqual(face.enrolled_subjects, [])
 
+    def test_unknown_face_can_create_consented_guest_for_dispense(self) -> None:
+        face = FakeFaceClient({"ok": True, "status": "unknown", "confidence": -1})
+
+        result = IdentityService(face_client=face).verify_for_dispense(samples=18)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "created")
+        self.assertTrue(result.new_guest)
+        self.assertTrue(result.user.id.startswith("guest-"))
+        self.assertEqual(len(face.enrolled_subjects), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

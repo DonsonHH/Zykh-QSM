@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { loadDashboard } from "./api/dashboard.js";
@@ -15,6 +16,41 @@ import { Settings } from "./pages/Settings.jsx";
 import { IdleScreen } from "./pages/IdleScreen.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 
+const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
+let viewTransitionToken = 0;
+
+function transitionKind(currentPage, nextPage, requestedKind) {
+  if (requestedKind) {
+    return requestedKind;
+  }
+  const currentIndex = primaryPageOrder.indexOf(currentPage);
+  const nextIndex = primaryPageOrder.indexOf(nextPage);
+  if (currentIndex >= 0 && nextIndex >= 0) {
+    return nextIndex < currentIndex ? "backward" : "forward";
+  }
+  return nextPage === "home" ? "backward" : "forward";
+}
+
+function commitViewChange(kind, update) {
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (reducedMotion || typeof document.startViewTransition !== "function") {
+    update();
+    return;
+  }
+
+  document.activeViewTransition?.skipTransition();
+  const token = ++viewTransitionToken;
+  document.documentElement.dataset.pageTransition = kind;
+  const transition = document.startViewTransition(() => flushSync(update));
+  transition.finished
+    .catch(() => undefined)
+    .finally(() => {
+      if (token === viewTransitionToken) {
+        delete document.documentElement.dataset.pageTransition;
+      }
+    });
+}
+
 export function App() {
   const initialParams = new URLSearchParams(window.location.search);
   const initialPage = initialParams.get("page") || "home";
@@ -29,8 +65,7 @@ export function App() {
   const [networkStatus, setNetworkStatus] = useState(null);
   const toastTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
-  const { identity, status: identityStatus, message: identityMessage, identify, clear: clearIdentity } =
-    useFaceIdentity({ auto: false });
+  const { clear: clearIdentity } = useFaceIdentity({ auto: false });
   const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
   const idleSeconds = Number.isFinite(configuredIdleSeconds) ? Math.max(15, configuredIdleSeconds) : 90;
 
@@ -48,11 +83,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const refresh = () => loadDashboard(identity?.name || "__unconfirmed__").then(setDashboard);
+    const refresh = () => loadDashboard().then(setDashboard);
     refresh();
     const timer = window.setInterval(refresh, 30000);
     return () => window.clearInterval(timer);
-  }, [identity?.name]);
+  }, []);
 
   useEffect(() => {
     if (startsIdle) {
@@ -68,10 +103,12 @@ export function App() {
     const resetTimer = () => {
       window.clearTimeout(idleTimerRef.current);
       idleTimerRef.current = window.setTimeout(() => {
-        clearIdentity();
-        setMedicineFocus(null);
-        setPage("home");
-        setIdle(true);
+        commitViewChange("sleep", () => {
+          clearIdentity();
+          setMedicineFocus(null);
+          setPage("home");
+          setIdle(true);
+        });
       }, idleSeconds * 1000);
     };
     const events = ["pointerdown", "keydown", "touchstart"];
@@ -101,34 +138,36 @@ export function App() {
     ) {
       notify("下一阶段开发中");
     }
-    if (nextPage === "vitals") {
-      setVitalsReturnPage(options.returnTo || page || "home");
+    const applyNavigation = () => {
+      if (nextPage === "vitals") {
+        setVitalsReturnPage(options.returnTo || page || "home");
+      }
+      if (nextPage === "medicines" && (options.medicineId || options.category)) {
+        setMedicineFocus({ medicineId: options.medicineId || null, category: options.category || null });
+      }
+      setPage(nextPage);
+    };
+    if (nextPage === page) {
+      applyNavigation();
+      return;
     }
-    if (nextPage === "medicines" && (options.medicineId || options.category)) {
-      setMedicineFocus({ medicineId: options.medicineId || null, category: options.category || null });
-    }
-    setPage(nextPage);
+    commitViewChange(transitionKind(page, nextPage, options.transition), applyNavigation);
   }
 
   function handleViewCandidates(focus) {
-    setMedicineFocus(focus);
-    setPage("medicines");
+    commitViewChange("forward", () => {
+      setMedicineFocus(focus);
+      setPage("medicines");
+    });
     notify("已筛选候选药品，请继续完成用药安全核验");
   }
 
   function handleWake() {
     clearIdentity();
-    setPage("home");
-    setIdle(false);
-    window.setTimeout(() => {
-      identify({ force: true })
-        .then((result) => {
-          if (!result?.ok) {
-            notify(result?.message || "暂时无法确认使用人，请正对摄像头后重试。");
-          }
-        })
-        .catch((error) => notify(error.message || "身份确认暂不可用"));
-    }, 250);
+    commitViewChange("wake", () => {
+      setPage("home");
+      setIdle(false);
+    });
   }
 
   return (
@@ -145,14 +184,11 @@ export function App() {
           networkStatus={networkStatus}
           now={now}
           page={page}
-          onOpenSystemCheck={() => setPage("settings")}
+          onOpenSystemCheck={() => handleNav("settings")}
         />
         {page === "home" ? (
           <Home
             dashboard={dashboard}
-            identity={identity}
-            identityStatus={identityStatus}
-            identityMessage={identityMessage}
             onNavigate={handleNav}
             notify={notify}
           />

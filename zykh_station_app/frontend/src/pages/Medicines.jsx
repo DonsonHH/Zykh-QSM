@@ -20,7 +20,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [viewMode, setViewMode] = useState(initialMedicineView);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const { identity, identify } = useFaceIdentity();
+  const { identity } = useFaceIdentity();
 
   useEffect(() => {
     setLoading(true);
@@ -61,23 +61,10 @@ export function Medicines({ notify, focus, onNavigate }) {
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
 
-  async function openConfirm() {
+  function openConfirm() {
     if (!selectedMedicine) {
       notify("请先选择药品");
       return;
-    }
-    if (!identity) {
-      notify("请正对摄像头，正在确认取药人");
-      try {
-        const resolved = await identify({ force: true });
-        if (!resolved.ok || !resolved.user) {
-          notify(resolved.error_message || resolved.message || "未能确认取药人");
-          return;
-        }
-      } catch (error) {
-        notify(error.message || "人脸识别暂不可用");
-        return;
-      }
     }
     setModalResult("");
     setModalError("");
@@ -87,7 +74,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   function handleConfirm(payload) {
     setSubmitting(true);
     setModalError("");
-    confirmDispense(payload)
+    return confirmDispense(payload)
       .then((data) => {
         setModalResult(data.message);
         notify(data.message);
@@ -97,8 +84,12 @@ export function Medicines({ notify, focus, onNavigate }) {
             setModalResult("");
           }, 650);
         }
+        return data;
       })
-      .catch((error) => setModalError(error.message || "取药确认失败"))
+      .catch((error) => {
+        setModalError(error.message || "取药确认失败");
+        throw error;
+      })
       .finally(() => setSubmitting(false));
   }
 

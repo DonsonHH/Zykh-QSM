@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime
+from uuid import uuid4
 
 from .. import db
 from ..schemas.identity import FaceEnrollmentResponse, IdentityResponse, IdentityStatusResponse
@@ -93,6 +95,36 @@ class IdentityService:
             message=f"{user.name}的人脸已录入。",
         )
 
+    def verify_for_dispense(self, samples: int = 18) -> IdentityResponse:
+        resolved = self.resolve()
+        if resolved.ok and resolved.user:
+            return resolved
+        if resolved.status != "unknown":
+            return resolved
+
+        user = self._create_guest_user()
+        subject = self._subject_for_user(user.id)
+        result = self.face_client.enroll(subject, samples=samples)
+        if not result.get("ok"):
+            with db.connect() as conn:
+                conn.execute("DELETE FROM service_users WHERE id=?", (user.id,))
+            message = str(result.get("error_message") or "面部信息留存未完成，请保持正对摄像头后重试。")
+            return IdentityResponse(
+                ok=False,
+                status=str(result.get("status") or "enroll_failed"),
+                message=message,
+                error_message=message,
+            )
+        self._bind(subject, user.id, None)
+        return IdentityResponse(
+            ok=True,
+            status="created",
+            user=user,
+            subject=subject,
+            message=f"已建立本地访客记录：{user.name}",
+            new_guest=True,
+        )
+
     def status(self) -> IdentityStatusResponse:
         result = self.face_client.status()
         db.init_db()
@@ -122,6 +154,28 @@ class IdentityService:
         user = self._get_user(subject.split(":", 1)[1])
         if user:
             self._bind(subject, user.id, None)
+        return user
+
+    @staticmethod
+    def _create_guest_user() -> ServiceUser:
+        db.init_db()
+        now = datetime.now()
+        user_id = f"guest-{now.strftime('%Y%m%d-%H%M')}-{uuid4().hex[:5]}"
+        name = f"访客 {now.strftime('%m%d-%H%M')}"
+        user = ServiceUser(
+            id=user_id,
+            name=name,
+            age=0,
+            profile="未登记",
+            allergies="",
+            note="面部确认建立，可在设置中补充资料",
+            status="访客",
+        )
+        with db.connect() as conn:
+            conn.execute(
+                "INSERT INTO service_users(id, name, age, profile, allergies, note, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user.id, user.name, user.age, user.profile, user.allergies, user.note, user.status),
+            )
         return user
 
     def _user_for_subject(self, subject: str) -> ServiceUser | None:

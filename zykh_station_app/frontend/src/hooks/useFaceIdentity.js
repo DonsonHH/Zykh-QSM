@@ -3,6 +3,19 @@ import { resolveIdentity } from "../api/identity.js";
 
 const storageKey = "zykh-active-face-identity";
 
+export function activateIdentity(identity) {
+  try {
+    if (identity) {
+      window.sessionStorage.setItem(storageKey, JSON.stringify(identity));
+    } else {
+      window.sessionStorage.removeItem(storageKey);
+    }
+  } catch {
+    // Session storage is optional.
+  }
+  window.dispatchEvent(new CustomEvent("zykh-identity-change", { detail: identity || null }));
+}
+
 function readStoredIdentity() {
   try {
     const raw = window.sessionStorage.getItem(storageKey);
@@ -43,12 +56,7 @@ export function useFaceIdentity({ auto = true } = {}) {
           setIdentity(result.user);
           setStatus(result.status || "matched");
           setMessage(result.message || `已确认使用人：${result.user.name}`);
-          try {
-            window.sessionStorage.setItem(storageKey, JSON.stringify(result.user));
-          } catch {
-            // Session storage is optional.
-          }
-          window.dispatchEvent(new CustomEvent("zykh-identity-change", { detail: result.user }));
+          activateIdentity(result.user);
           return result;
         }
         setStatus(result.status || "unavailable");

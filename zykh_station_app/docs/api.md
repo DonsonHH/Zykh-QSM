@@ -180,11 +180,31 @@ Returns QSM face-runtime availability, enrolled sample count and host-side ident
 
 ### POST /api/identity/resolve
 
-Matches the current QSM camera face to a service user. Unknown faces create and enroll a new local service-user profile; no original face image or biometric feature is stored in the host database.
+Matches the current QSM camera face to an existing service user. Unknown faces are reported and do not silently create a profile.
+
+### POST /api/identity/verify-dispense
+
+Runs the explicit face-confirmation path from the dispense modal. A matched face returns the existing service user. When the user has selected face confirmation and no match exists, it creates a local visitor record, enrolls the QSM face template and returns that visitor. The host does not store the original face image or feature vector.
 
 ### POST /api/identity/enroll/{service_user_id}
 
 Captures multiple QSM face samples and binds them to an existing service user. This is used by the Settings page administrator action.
+
+### GET /api/fingerprint/status
+
+Returns AS608 availability, module template count and host-side bound-user count. Templates 0-15 are reserved by default; host-managed enrollment starts at 16.
+
+### POST /api/fingerprint/identify
+
+Waits for a finger, matches the AS608 template and returns the bound service user. An unbound board template returns `status=unbound` and cannot open a cabinet.
+
+### POST /api/fingerprint/enroll/{service_user_id}
+
+Guides two placements of the same finger, stores the template in AS608 and stores only the template-to-user mapping in SQLite.
+
+### DELETE /api/fingerprint/{service_user_id}
+
+Deletes the mapped AS608 template and local binding for the selected service user.
 
 ### POST /api/medicine/visual-recognize
 

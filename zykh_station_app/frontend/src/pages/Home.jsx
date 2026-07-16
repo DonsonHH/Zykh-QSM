@@ -1,7 +1,7 @@
 import React from "react";
 import { HomeHero } from "../components/HomeHero.jsx";
 
-export function Home({ dashboard, identity, identityStatus, identityMessage, onNavigate, notify }) {
+export function Home({ dashboard, onNavigate, notify }) {
   function handleQuickAction(action) {
     if (action.id === "scan") {
       onNavigate("scan");
@@ -26,9 +26,6 @@ export function Home({ dashboard, identity, identityStatus, identityMessage, onN
     <main className="home-page" id="main-content">
       <HomeHero
         dashboard={dashboard}
-        identity={identity}
-        identityStatus={identityStatus}
-        identityMessage={identityMessage}
         onNavigate={onNavigate}
         quickActions={dashboard?.quick_actions || []}
         onQuickAction={handleQuickAction}

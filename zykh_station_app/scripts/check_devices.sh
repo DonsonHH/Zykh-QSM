@@ -8,11 +8,14 @@ FACE_HOST_PORT="${QSM_FACE_FORWARD_HOST_PORT:-18081}"
 FACE_DEVICE_PORT="${QSM_FACE_FORWARD_DEVICE_PORT:-8081}"
 AUDIO_HOST_PORT="${QSM_AUDIO_CAPTURE_FORWARD_HOST_PORT:-18082}"
 AUDIO_DEVICE_PORT="${QSM_AUDIO_CAPTURE_FORWARD_DEVICE_PORT:-8082}"
+FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
+FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
 LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
+QSM_FINGERPRINT_BASE_URL="${QSM_FINGERPRINT_BASE_URL:-http://127.0.0.1:${FINGERPRINT_HOST_PORT}}"
 LOCAL_AI_BASE_URL="${LOCAL_AI_BASE_URL:-http://127.0.0.1:${LOCAL_AI_HOST_PORT}}"
 BACKEND_URL="${ZYKH_BACKEND_URL:-http://127.0.0.1:8000}"
 
@@ -71,6 +74,11 @@ if command -v adb >/dev/null 2>&1; then
     else
       warn "麦克风服务转发未建立；请检查板端音频采集网关。"
     fi
+    if $ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1; then
+      ok "指纹服务转发已建立：127.0.0.1:${FINGERPRINT_HOST_PORT} -> tcp:${FINGERPRINT_DEVICE_PORT}"
+    else
+      warn "指纹服务转发未建立；取药时仍可改用面部确认。"
+    fi
     if $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1; then
       ok "离线模型转发已建立：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
     else
@@ -86,6 +94,7 @@ fi
 check_http "外设网关状态" "${QSM_BASE_URL}/api/status" 8 || true
 check_http "人脸识别网关" "${QSM_FACE_BASE_URL}/api/face/status" 15 || true
 check_http "FF Camera 麦克风" "${QSM_MIC_BASE_URL}/api/audio/capture/status" 8 || true
+check_http "AS608 指纹模块" "${QSM_FINGERPRINT_BASE_URL}/api/fingerprint/status" 10 || true
 check_http "QSM 离线模型" "${LOCAL_AI_BASE_URL}/health" 5 || true
 
 if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 12 -X POST "${QSM_BASE_URL}/api/camera/capture" >/dev/null 2>&1; then
@@ -103,6 +112,7 @@ else
 fi
 check_http "后端能力接口" "${BACKEND_URL}/api/qsm/capabilities" 10 || true
 check_http "后端身份接口" "${BACKEND_URL}/api/identity/status" 15 || true
+check_http "后端指纹接口" "${BACKEND_URL}/api/fingerprint/status" 15 || true
 check_http "后端麦克风接口" "${BACKEND_URL}/api/audio/host/status" 8 || true
 check_http "后端系统检查" "${BACKEND_URL}/api/device/check" 45 || true
 

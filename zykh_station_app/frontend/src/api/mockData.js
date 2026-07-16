@@ -15,7 +15,8 @@ export const mockDashboard = {
     pending_plans: 0,
     next_time: "--:--",
     featured_subject: "家庭药柜",
-    featured_medicine: "等待后端数据"
+    featured_medicine: "等待后端数据",
+    plans: []
   },
   inquiry: {
     title: "AI应急问询",
