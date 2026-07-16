@@ -308,20 +308,7 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .idle-wake-glyph {
-  position: relative;
-  width: 150px;
-  height: 150px;
-  display: grid;
-  place-items: center;
-}
-
-.idle-wake-glyph > * {
-  grid-area: 1 / 1;
-}
-
-.idle-wake-glyph-ghost {
-  color: #8eb8f5;
-  opacity: 0.2;
+  color: #2563eb;
 }
 
 .handwritten-hello {
@@ -542,6 +529,11 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .network-icons.local-only {
+  grid-template-columns: 58px;
+  justify-content: center;
+}
+
+.network-icons.single-link {
   grid-template-columns: 58px;
   justify-content: center;
 }
@@ -1805,6 +1797,13 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   animation: biometric-orbit 2.8s linear infinite;
 }
 
+.biometric-stage.recognized::after,
+.biometric-stage.complete::after {
+  border-color: rgba(18, 172, 142, 0.32);
+  opacity: 1;
+  animation: biometric-confirm-ring 900ms ease-out both;
+}
+
 .biometric-stage > svg,
 .biometric-stage > .stroke-draw-icon,
 .biometric-stage strong,
@@ -1861,6 +1860,21 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   font-weight: 750;
 }
 
+.biometric-stage .biometric-confirmed-glyph {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #eaf9f4;
+  color: #0b9b79;
+  animation: biometric-confirm-pop 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.biometric-stage .biometric-confirmed-glyph svg {
+  display: block;
+}
+
 .biometric-identity-note {
   min-height: 46px;
   display: flex;
@@ -1889,6 +1903,34 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 @keyframes biometric-orbit {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes biometric-confirm-ring {
+  0% {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+
+  55% {
+    opacity: 0.78;
+  }
+
+  100% {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+}
+
+@keyframes biometric-confirm-pop {
+  0% {
+    transform: scale(0.76);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
@@ -3975,6 +4017,11 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   color: #087c68;
 }
 
+.identity-confirmation-icon.candidate {
+  background: #fff6e7;
+  color: #b86000;
+}
+
 .identity-confirmation-icon.identifying {
   background: #eaf2ff;
   color: var(--primary);
@@ -4253,6 +4300,87 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   max-width: none;
   width: 100%;
   padding: 16px;
+}
+
+.inquiry-identity-gate {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(190px, 1fr) auto auto;
+  place-items: center;
+  gap: 16px;
+  border: 1px solid #dce8f4;
+  border-radius: 22px;
+  background: #fbfdff;
+  padding: 28px 40px;
+  text-align: center;
+}
+
+.inquiry-identity-visual {
+  display: grid;
+  place-items: center;
+  align-self: end;
+  width: 170px;
+  height: 170px;
+  border-radius: 50%;
+  background: #edf5ff;
+  color: var(--primary);
+}
+
+.inquiry-identity-match-icon {
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e9faf4;
+  color: #0b9b79;
+  animation: biometric-confirm-pop 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.inquiry-identity-copy span {
+  color: var(--primary);
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.inquiry-identity-copy h2 {
+  margin: 7px 0 8px;
+  color: var(--text);
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 950;
+}
+
+.inquiry-identity-copy p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.inquiry-identity-actions {
+  width: min(620px, 100%);
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.3fr);
+  gap: 12px;
+}
+
+.inquiry-identity-actions button,
+.inquiry-identity-retry {
+  min-height: 62px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 18px;
+  font-size: 19px;
+}
+
+.inquiry-identity-retry {
+  width: min(360px, 100%);
 }
 
 .inquiry-page.conversation-layout .inquiry-chat-step.voice-only {

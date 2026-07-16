@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RecordsSummary(BaseModel):
@@ -67,9 +67,29 @@ class ServiceUserUpdateRequest(BaseModel):
 class TodayPlan(BaseModel):
     id: str
     time: str
+    medicine_id: str
     medicine: str
+    service_user_id: str
     status: str
     target_user: str
+    dose: str = "按说明"
+    updated_at: str = ""
+
+
+class TodayPlanCreateRequest(BaseModel):
+    time: str = Field(min_length=5, max_length=5)
+    medicine_id: str = Field(min_length=1, max_length=100)
+    service_user_id: str = Field(min_length=1, max_length=100)
+    dose: str = Field(default="按说明", max_length=40)
+    status: str = Field(default="待执行", max_length=20)
+
+
+class TodayPlanUpdateRequest(BaseModel):
+    time: str | None = Field(default=None, min_length=5, max_length=5)
+    medicine_id: str | None = Field(default=None, min_length=1, max_length=100)
+    service_user_id: str | None = Field(default=None, min_length=1, max_length=100)
+    dose: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=20)
 
 
 class TodayPlansResponse(BaseModel):

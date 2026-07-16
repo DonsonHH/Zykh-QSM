@@ -2,12 +2,11 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr) 58px;
+  grid-template-rows: 58px minmax(0, 1fr);
   gap: 12px;
 }
 
-.basic-settings-header,
-.basic-settings-footer {
+.basic-settings-header {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -64,6 +63,34 @@
   font-weight: 800;
 }
 
+.settings-autosave-state {
+  min-width: 118px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #537066;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.settings-autosave-state.pending,
+.settings-autosave-state.saving {
+  color: #2563eb;
+}
+
+.settings-autosave-state.error {
+  color: #b42318;
+}
+
+.settings-autosave-state .spin {
+  animation: settings-spin 900ms linear infinite;
+}
+
+@keyframes settings-spin {
+  to { transform: rotate(360deg); }
+}
+
 .basic-settings-grid {
   min-height: 0;
   display: grid;
@@ -117,6 +144,17 @@
 .basic-setting-toggle-row strong,
 .basic-setting-toggle-row span {
   display: block;
+}
+
+.basic-setting-toggle-row small {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #8691a2;
+  font-size: 12px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .basic-setting-toggle-row strong {
@@ -276,38 +314,6 @@
   font-weight: 750;
 }
 
-.basic-settings-footer {
-  justify-content: flex-end;
-}
-
-.settings-refresh-button,
-.settings-save-button {
-  height: 56px;
-  min-height: 56px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border-radius: 15px;
-  padding: 0 22px;
-  font-size: 17px;
-  font-weight: 850;
-}
-
-.settings-refresh-button {
-  border: 1px solid #d4e0ec;
-  background: #fff;
-  color: #475467;
-}
-
-.settings-save-button {
-  min-width: 180px;
-  background: #2563eb;
-  color: #fff;
-}
-
-.settings-save-button:disabled,
-.settings-refresh-button:disabled,
 .settings-test-sound:disabled {
   cursor: default;
   opacity: 0.55;

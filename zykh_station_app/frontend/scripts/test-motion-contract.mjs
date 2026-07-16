@@ -8,6 +8,7 @@ const allowedDrawFiles = new Set([
   "components/BottomNav.jsx",
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
+  "components/InquiryIdentityGate.jsx",
   "pages/IdleScreen.jsx",
   "pages/Scan.jsx",
   "pages/Vitals.jsx"
@@ -106,6 +107,22 @@ const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`
 assert.match(home, /PLAN_ROTATION_MS\s*=\s*4500/, "home medication plans do not rotate every few seconds");
 assert.match(home, /next-dose-track/, "home medication plans do not use a scrolling track");
 assert.doesNotMatch(home, /home-current-user|ScanFace/, "home medication summary still exposes identity confirmation");
+
+const medicines = await readFile(`${sourceRoot}/pages/Medicines.jsx`, "utf8");
+assert.doesNotMatch(medicines, /useFaceIdentity/, "opening the medicines page still starts identity recognition");
+
+const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmModal.jsx`, "utf8");
+assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
+assert.match(dispenseModal, /verifyDispenseIdentity/, "dispense confirmation is missing face verification");
+assert.match(dispenseModal, /setPhase\("recognized"\)/, "recognized users are not shown before cabinet opening");
+assert.match(dispenseModal, /phase === "recognized" \? confirmAndOpen : verifyIdentity/, "dispense does not require an explicit post-recognition confirmation");
+assert.match(dispenseModal, /sessionRef\.current/, "closing the modal cannot cancel a delayed cabinet action");
+assert.doesNotMatch(dispenseModal, /safety-confirmed|confirm-check/, "legacy duplicate safety checkbox is still rendered");
+
+const inquiry = await readFile(`${sourceRoot}/pages/Inquiry.jsx`, "utf8");
+assert.match(inquiry, /<InquiryIdentityGate/, "inquiry does not stop for visible identity confirmation");
+assert.match(inquiry, /setIdentityConfirmed\(true\)/, "inquiry identity cannot be explicitly confirmed");
+assert.match(inquiry, /activateOnMatch: false/, "inquiry face match is activated before the user confirms it");
 
 const packageJson = JSON.parse(await readFile(`${frontendRoot}package.json`, "utf8"));
 assert.equal(packageJson.dependencies?.["lottie-web"], undefined, "lottie-web should not be bundled");

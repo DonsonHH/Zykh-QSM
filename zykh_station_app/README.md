@@ -22,9 +22,9 @@
 - QSM UART8 综合体征模块，支持心率、血氧、血压参考、呼吸频率和 HRV 数据。
 - QSM 摄像头实时预览、条码连续核验、FF Camera 麦克风采集和板端人脸身份确认。
 - QSM AS608 指纹确认：指纹模板保留在模块内，本机只保存服务对象映射；取药时指纹确认成功即可记录使用人并开柜。
-- 取药、问询和今日用药自动关联本次确认的服务对象；药品页支持指纹优先、面部辅助，陌生人明确选择面部确认后建立本地访客记录。
+- 取药、问询和今日用药关联已确认的服务对象；指纹或人脸匹配后先展示姓名，由用户再次确认身份后才进入问询或开柜。
 - 终端空闲后进入唤醒页；下一位用户轻触屏幕后会清除上一位身份并重新进行人脸确认。
-- 面向家庭用户的终端设置页只保留 Wi-Fi、SIM、问询模式、音量、亮度和自动息屏等真实控制；独立管理员调试台负责人员、生物识别、药柜、设备与日志维护。
+- 面向家庭用户的终端设置页自动保存 Wi-Fi、数据网络、问询模式、音量、亮度和自动息屏等真实控制；独立管理员调试台负责人员、生物识别、今日用药、药柜、设备与实时日志维护。
 
 ## 安全边界
 
@@ -121,15 +121,15 @@ AI_ENABLE_THINKING=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
-ADMIN_DEBUG_PIN=2468
+ADMIN_DEBUG_PIN=1145
 ADMIN_SESSION_MINUTES=30
 ```
 
 ## 终端设置与管理员调试
 
-终端右上角设置页用于家庭用户可直接调整的项目：Wi-Fi 与 SIM 开关、联网优先/本地问询、外放和麦克风音量、显示亮度及自动息屏时间。开关会调用本机或 QSM 的真实控制接口；某个外设暂不可用时，已保存的偏好仍会保留并返回可读警告。
+终端右上角设置页用于家庭用户直接调整 Wi-Fi 与数据网络开关、联网优先/本地问询、外放和麦克风音量、显示亮度及自动息屏时间。操作停止 900ms 后自动串行保存，连续拖动滑块不会并发调用硬件。数据网络区域显示 QSM 实际运营商和 `AT+CNUM` 返回的号码；模块未提供号码时明确显示未提供。
 
-设置页中的“管理员调试”进入独立鼠标操作界面。管理员口令验证后可查看运行概览、维护服务对象及人脸/指纹绑定、编辑 23 个药仓、现场开柜、检查设备、控制屏幕、重启应用以及查看脱敏日志。管理员令牌只保存在浏览器 `sessionStorage`，默认 30 分钟失效；开柜、删除、息屏和重启等操作还要求输入指定确认文本，并写入 `admin_audit_records`。
+设置页中的“管理员调试”进入独立鼠标操作界面。管理员口令验证后可查看运行概览、维护服务对象及人脸/指纹绑定、编辑今日用药计划和 23 个药仓、现场开柜、检查设备、控制屏幕、重启应用以及查看实时脱敏日志。管理员令牌只保存在浏览器 `sessionStorage`，默认 30 分钟失效；开柜、删除、息屏和重启使用普通二次确认，并写入 `admin_audit_records`。人脸录入提供实时取景预览，指纹录入显示准备、采集与结果状态。
 
 部署前必须在 `backend/.env.local` 修改默认口令：
 
@@ -154,7 +154,7 @@ cd zykh_station_app
 sh scripts/deploy_qsm_gateway.sh
 ```
 
-该脚本会部署 `qsm_gateway/read_vitals_uart8.pl`、主网关启动包装、人脸识别网关、麦克风采集网关和 AS608 指纹网关。首次使用指纹模块前，需先安装用户提供的 AS608 离线部署包；脚本不会覆盖模块内已有模板。主机端新模板默认从 16 开始，0-15 保留给板端测试和迁移。检测到 `/home/jetson/QSM368ZP-board-face-recognition(1).zip`（或 `QSM_FACE_BUNDLE` 指定文件）时，还会部署板端运行库与模型。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率、血氧和额温作为本页核心测量值；三项齐全即判定测量完成。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
+该脚本会部署 `qsm_gateway/read_vitals_uart8.pl`、主网关启动包装、人脸识别网关、麦克风采集网关和 AS608 指纹网关。若板端尚未安装 AS608 驱动，脚本会自动读取仓库根目录的 `QSM368ZP-AS608-offline-deploy(1).zip`；也可通过 `QSM_FINGERPRINT_BUNDLE=/path/to/package.zip` 指定离线包。部署不会删除或覆盖模块内已有模板。主机端新模板默认从 16 开始，0-15 保留给板端测试和迁移。检测到 `/home/jetson/QSM368ZP-board-face-recognition(1).zip`（或 `QSM_FACE_BUNDLE` 指定文件）时，还会部署板端运行库与模型。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率、血氧和额温作为本页核心测量值；三项齐全即判定测量完成。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
@@ -190,7 +190,7 @@ sh scripts/deploy_local_tts_server.sh
 sh scripts/deploy_local_asr.sh
 ```
 
-本地模式会使用板端中文流式 Zipformer Transducer、领域热词和 `modified_beam_search`；前端只有在识别会话与麦克风均就绪后才显示“正在听”。联网模式使用 `qwen3-asr-flash-realtime`。识别模式直接读取当前终端模式，云会话和 QSM 麦克风并行准备，不在按键关键路径重复执行完整 SIM/AT 探测。语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+本地模式会使用板端中文流式 Zipformer Transducer、领域热词和 `modified_beam_search`；前端只有在识别会话与麦克风均就绪后才显示“正在听”。联网模式使用 `qwen3-asr-flash-realtime`。识别模式直接读取当前终端模式，云会话和 QSM 麦克风并行准备，不在按键关键路径重复执行完整 SIM/AT 探测。语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 
@@ -223,7 +223,9 @@ sh scripts/adb_forward.sh
 QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 sh scripts/start_backend.sh
 ```
 
-默认真实开柜联动：`DISPENSE_DRY_RUN=false` 且 `ENABLE_REAL_DISPENSE=1`。取药确认仍必须勾选安全确认，后端会核对药品、仓位和库存，然后调用外设网关 `/api/dispense`。如需限制测试仓位，可设置 `REAL_DISPENSE_TEST_SLOT=1`；如需演示 dry-run，可临时设置 `DISPENSE_DRY_RUN=true`。
+默认真实开柜联动：`DISPENSE_DRY_RUN=false` 且 `ENABLE_REAL_DISPENSE=1`。用户必须在取药弹窗中主动发起指纹或面部确认；识别成功后界面先显示确认到的使用人，用户明确点击“确认取药并开柜”后才调用外设网关 `/api/dispense`。如需限制测试仓位，可设置 `REAL_DISPENSE_TEST_SLOT=1`；如需演示 dry-run，可临时设置 `DISPENSE_DRY_RUN=true`。
+
+AS608 原始指纹模板只保存在模块内部，人脸特征由 QSM 本地识别组件保存。主机 SQLite 仅保存模板/主体与服务对象的映射、确认次数、最近确认时间及“谁在何时取走什么药”的记录，不保存原始指纹图像或摄像头视频。
 
 ## 演示前检查
 

@@ -16,6 +16,9 @@ class FingerprintService:
         db.init_db()
         with db.connect() as conn:
             bound_users = int(conn.execute("SELECT COUNT(*) AS count FROM fingerprint_identities").fetchone()["count"])
+            total_matches = int(
+                conn.execute("SELECT COALESCE(SUM(match_count), 0) AS count FROM fingerprint_identities").fetchone()["count"]
+            )
         return FingerprintStatusResponse(
             ok=bool(result.get("ok")),
             status=str(result.get("status") or ("available" if result.get("ok") else "unavailable")),
@@ -23,6 +26,7 @@ class FingerprintService:
             count=int(result.get("count") or 0),
             capacity=int(result.get("capacity") or 300),
             bound_users=bound_users,
+            total_matches=total_matches,
             reserved_templates=max(0, settings.qsm_fingerprint_template_start),
             error_message=str(result.get("error_message")) if result.get("error_message") else None,
         )
@@ -52,17 +56,24 @@ class FingerprintService:
                 message="识别到未绑定的板端指纹，请由管理员重新录入。",
                 error_message="识别到未绑定的板端指纹。",
             )
+        now = db.now_text()
         with db.connect() as conn:
             conn.execute(
-                "UPDATE fingerprint_identities SET score=?, last_seen_at=? WHERE template_id=?",
-                (score, db.now_text(), template_id),
+                "UPDATE fingerprint_identities SET score=?, match_count=match_count+1, last_seen_at=? WHERE template_id=?",
+                (score, now, template_id),
             )
+            usage = conn.execute(
+                "SELECT match_count, last_seen_at FROM fingerprint_identities WHERE template_id=?",
+                (template_id,),
+            ).fetchone()
         return FingerprintActionResponse(
             ok=True,
             status="matched",
             user=user,
             template_id=template_id,
             score=score,
+            match_count=int(usage["match_count"]) if usage else 1,
+            last_seen_at=str(usage["last_seen_at"]) if usage else now,
             message=f"指纹已确认：{user.name}",
         )
 
@@ -89,7 +100,7 @@ class FingerprintService:
         with db.connect() as conn:
             conn.execute("DELETE FROM fingerprint_identities WHERE template_id=? OR service_user_id=?", (template_id, user_id))
             conn.execute(
-                "INSERT INTO fingerprint_identities(template_id, service_user_id, score, enrolled_at, last_seen_at) VALUES (?, ?, NULL, ?, ?)",
+                "INSERT INTO fingerprint_identities(template_id, service_user_id, score, match_count, enrolled_at, last_seen_at) VALUES (?, ?, NULL, 0, ?, ?)",
                 (template_id, user_id, now, now),
             )
         return FingerprintActionResponse(ok=True, status="enrolled", user=user, template_id=template_id, message=f"{user.name}的指纹已录入。")
@@ -138,8 +149,19 @@ class FingerprintService:
 
     @staticmethod
     def _failure(result: dict, fallback: str, **values) -> FingerprintActionResponse:
-        message = str(result.get("error_message") or result.get("error") or fallback)
-        return FingerprintActionResponse(ok=False, status=str(result.get("status") or "error"), message=message, error_message=message, **values)
+        code = str(result.get("error_message") or result.get("error") or "").strip()
+        messages = {
+            "finger_wait_timeout": "未检测到手指，请完整覆盖指纹窗口后重试。",
+            "two_captures_not_match": "两次采集不是同一根手指，请重新录入。",
+            "image_too_messy": "指纹图像不清晰，请擦拭手指和识别窗口后重试。",
+            "feature_too_few": "采集到的指纹特征不足，请完整按住识别窗口。",
+            "not_found": "未匹配到已录入指纹，可改用面部确认。",
+        }
+        message = messages.get(code, code or fallback)
+        status = str(result.get("status") or "error")
+        if code == "finger_wait_timeout":
+            status = "timeout"
+        return FingerprintActionResponse(ok=False, status=status, message=message, error_message=message, **values)
 
     @staticmethod
     def _int(value: object) -> int | None:

@@ -246,7 +246,7 @@ Streams actual provider tokens as server-sent `meta`, `delta`, optional `replace
 
 ### `GET /api/settings/basic`
 
-Returns the persisted user-adjustable settings together with current Wi-Fi, SIM and microphone availability.
+Returns the persisted user-adjustable settings together with current Wi-Fi, data-network and microphone availability. Data-network fields include `sim_operator`, `sim_operator_code` and `sim_phone_number` when the EC200A provides them.
 
 ### `PATCH /api/settings/basic`
 
@@ -263,7 +263,8 @@ Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mod
 - `POST|DELETE /api/admin/users/{id}/face`
 - `POST|DELETE /api/admin/users/{id}/fingerprint`
 - `GET|PATCH /api/admin/medicines...`
+- `GET|POST|PATCH|DELETE /api/admin/today-plans...`
 - `POST /api/admin/cabinet/{slot}/open`
 - `POST /api/admin/system/action`
 
-The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. Destructive actions require a matching confirmation string and create an `admin_audit_records` entry. Log output is limited to an allowlist and redacts API keys, bearer tokens and secrets.
+The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. The UI uses a normal yes/no confirmation while the server still validates an internal operation token; every protected action creates an `admin_audit_records` entry. Log output is limited to an allowlist, updates only while the log page is mounted, and redacts API keys, bearer tokens and secrets.

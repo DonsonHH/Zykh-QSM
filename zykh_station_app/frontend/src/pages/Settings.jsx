@@ -1,12 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bug,
   Clock3,
+  LoaderCircle,
   Mic2,
   RadioTower,
-  RefreshCw,
-  Save,
   SunMedium,
   Volume2,
   Wifi
@@ -25,8 +24,23 @@ const DEFAULT_SETTINGS = {
   idle_timeout_seconds: 90,
   wifi_ssid: "",
   sim_connected: false,
+  sim_operator: "",
+  sim_operator_code: "",
+  sim_phone_number: "",
   microphone_available: false
 };
+
+const EDITABLE_KEYS = [
+  "wifi_enabled",
+  "sim_enabled",
+  "network_mode",
+  "speaker_volume",
+  "microphone_volume",
+  "display_brightness",
+  "idle_timeout_seconds"
+];
+const STATUS_KEYS = ["wifi_ssid", "sim_connected", "sim_operator", "sim_operator_code", "sim_phone_number", "microphone_available"];
+const AUTOSAVE_DELAY_MS = 900;
 
 function SettingsSwitch({ checked, onChange, label }) {
   return (
@@ -58,11 +72,14 @@ function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange }) {
 
 export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const [values, setValues] = useState(DEFAULT_SETTINGS);
-  const [savedValues, setSavedValues] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState("loading");
   const [testing, setTesting] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const valuesRef = useRef(DEFAULT_SETTINGS);
+  const savedValuesRef = useRef(DEFAULT_SETTINGS);
+  const saveQueueRef = useRef(Promise.resolve());
+  const saveTimerRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const networkDescription = useMemo(() => {
     if (values.network_mode === "local" || values.network_mode === "offline") {
@@ -72,57 +89,109 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
       return `已连接 ${values.wifi_ssid}`;
     }
     if (values.sim_enabled && values.sim_connected) {
-      return "Wi-Fi 不可用时可使用 SIM 备用链路。";
+      return "Wi-Fi 不可用时可使用数据网络。";
     }
     return "当前未检测到可用联网链路。";
   }, [values]);
 
-  function refresh() {
-    setLoading(true);
+  useEffect(() => {
+    mountedRef.current = true;
     loadBasicSettings()
       .then((data) => {
-        const next = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+        const next = {
+          ...DEFAULT_SETTINGS,
+          ...(data.settings || {}),
+          sim_operator: data.settings?.sim_operator || "",
+          sim_operator_code: data.settings?.sim_operator_code || "",
+          sim_phone_number: data.settings?.sim_phone_number || ""
+        };
+        valuesRef.current = next;
+        savedValuesRef.current = next;
         setValues(next);
-        setSavedValues(next);
-        setDirty(false);
+        setSaveState("saved");
       })
       .catch((error) => notify(error.message || "设置读取失败"))
       .finally(() => setLoading(false));
-  }
 
-  useEffect(refresh, []);
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(saveTimerRef.current);
+    };
+  }, [notify]);
 
   function update(key, value) {
-    setValues((current) => ({ ...current, [key]: value }));
-    setDirty(true);
+    setValues((current) => {
+      const next = { ...current, [key]: value };
+      valuesRef.current = next;
+      return next;
+    });
   }
 
-  function save() {
-    if (saving) return;
-    setSaving(true);
-    const editableKeys = [
-      "wifi_enabled",
-      "sim_enabled",
-      "network_mode",
-      "speaker_volume",
-      "microphone_volume",
-      "display_brightness",
-      "idle_timeout_seconds"
-    ];
-    const changes = Object.fromEntries(editableKeys.filter((key) => values[key] !== savedValues[key]).map((key) => [key, values[key]]));
-    saveBasicSettings(changes)
-      .then((data) => {
-        const next = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
-        setValues(next);
-        setSavedValues(next);
-        setDirty(false);
-        window.dispatchEvent(new CustomEvent("zykh:settings-updated", { detail: data.settings }));
-        loadNetworkStatus().then((status) => onNetworkStatusChange?.(status)).catch(() => undefined);
-        notify(data.warnings?.length ? data.warnings[0] : "设置已应用");
-      })
-      .catch((error) => notify(error.message || "设置保存失败"))
-      .finally(() => setSaving(false));
+  function enqueueSave() {
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const snapshot = { ...valuesRef.current };
+        const changes = Object.fromEntries(
+          EDITABLE_KEYS
+            .filter((key) => snapshot[key] !== savedValuesRef.current[key])
+            .map((key) => [key, snapshot[key]])
+        );
+        if (!Object.keys(changes).length) {
+          if (mountedRef.current) setSaveState("saved");
+          return;
+        }
+
+        if (mountedRef.current) setSaveState("saving");
+        try {
+          const data = await saveBasicSettings(changes);
+          const serverValues = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+          const nextSaved = { ...savedValuesRef.current };
+          EDITABLE_KEYS.forEach((key) => {
+            if (Object.hasOwn(changes, key)) nextSaved[key] = serverValues[key];
+          });
+          STATUS_KEYS.forEach((key) => {
+            nextSaved[key] = serverValues[key];
+          });
+          savedValuesRef.current = nextSaved;
+
+          if (!mountedRef.current) return;
+          setValues((current) => {
+            const next = { ...current };
+            EDITABLE_KEYS.forEach((key) => {
+              if (Object.hasOwn(changes, key) && current[key] === snapshot[key]) next[key] = serverValues[key];
+            });
+            STATUS_KEYS.forEach((key) => {
+              next[key] = serverValues[key];
+            });
+            valuesRef.current = next;
+            return next;
+          });
+          setSaveState("saved");
+          window.dispatchEvent(new CustomEvent("zykh:settings-updated", { detail: data.settings }));
+          loadNetworkStatus().then((status) => onNetworkStatusChange?.(status)).catch(() => undefined);
+          if (data.warnings?.length) notify(data.warnings[0]);
+        } catch (error) {
+          if (mountedRef.current) {
+            setSaveState("error");
+            notify(error.message || "设置保存失败");
+          }
+        }
+      });
   }
+
+  useEffect(() => {
+    if (loading) return undefined;
+    const changed = EDITABLE_KEYS.some((key) => values[key] !== savedValuesRef.current[key]);
+    window.clearTimeout(saveTimerRef.current);
+    if (!changed) {
+      if (saveState === "pending") setSaveState("saved");
+      return undefined;
+    }
+    setSaveState("pending");
+    saveTimerRef.current = window.setTimeout(enqueueSave, AUTOSAVE_DELAY_MS);
+    return () => window.clearTimeout(saveTimerRef.current);
+  }, [loading, values]);
 
   function testSpeaker() {
     setTesting(true);
@@ -142,6 +211,10 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           <h2>终端设置</h2>
           <span>{loading ? "正在读取设备" : networkDescription}</span>
         </div>
+        <span className={`settings-autosave-state ${saveState}`} role="status" aria-live="polite">
+          {saveState === "saving" ? <LoaderCircle size={18} className="spin" aria-hidden="true" /> : null}
+          {saveState === "pending" ? "等待自动保存" : saveState === "saving" ? "正在自动保存" : saveState === "error" ? "自动保存失败" : "已自动保存"}
+        </span>
         <button className="admin-entry-button" type="button" onClick={() => onNavigate("admin")}>
           <Bug size={20} aria-hidden="true" />
           管理员调试
@@ -163,10 +236,11 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           </div>
           <div className="basic-setting-toggle-row">
             <div>
-              <strong>SIM 备用网络</strong>
-              <span>{values.sim_connected ? "外设网络已连接" : values.sim_enabled ? "等待外设网络" : "已关闭"}</span>
+              <strong>数据网络</strong>
+              <span>{!values.sim_enabled ? "已关闭" : values.sim_connected ? `${values.sim_operator || "移动网络"}已连接` : "等待数据网络"}</span>
+              <small>{values.sim_phone_number || "模块未提供号码"}{values.sim_operator_code ? ` · ${values.sim_operator_code}` : ""}</small>
             </div>
-            <SettingsSwitch checked={values.sim_enabled} onChange={(next) => update("sim_enabled", next)} label="切换 SIM 网络" />
+            <SettingsSwitch checked={values.sim_enabled} onChange={(next) => update("sim_enabled", next)} label="切换数据网络" />
           </div>
           <div className="network-mode-control" aria-label="问询运行模式">
             <button
@@ -246,17 +320,6 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           </label>
         </article>
       </section>
-
-      <footer className="basic-settings-footer">
-        <button type="button" className="settings-refresh-button" onClick={refresh} disabled={loading} title="重新读取设置">
-          <RefreshCw size={22} aria-hidden="true" />
-          重新读取
-        </button>
-        <button type="button" className="settings-save-button" onClick={save} disabled={!dirty || saving || loading}>
-          <Save size={22} aria-hidden="true" />
-          {saving ? "正在应用" : dirty ? "应用设置" : "设置已保存"}
-        </button>
-      </footer>
     </main>
   );
 }

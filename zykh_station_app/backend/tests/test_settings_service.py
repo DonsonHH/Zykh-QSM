@@ -38,7 +38,16 @@ class SettingsServiceTest(unittest.TestCase):
         with (
             patch.object(service, "_wifi_radio_enabled", return_value=True),
             patch.object(service, "_microphone_available", return_value=True),
-            patch("app.services.settings_service.NetworkService.status", return_value={"wifi_ssid": "Station", "sim_connected": True}),
+            patch(
+                "app.services.settings_service.NetworkService.status",
+                return_value={
+                    "wifi_ssid": "Station",
+                    "sim_connected": True,
+                    "sim_operator": "中国移动",
+                    "sim_operator_code": "46000",
+                    "sim_phone_number": "13800138000",
+                },
+            ),
         ):
             result = service.get()
 
@@ -47,6 +56,8 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(result.settings.display_brightness, 72)
         self.assertEqual(result.settings.idle_timeout_seconds, 180)
         self.assertEqual(result.settings.wifi_ssid, "Station")
+        self.assertEqual(result.settings.sim_operator, "中国移动")
+        self.assertEqual(result.settings.sim_phone_number, "13800138000")
 
     def test_update_saves_values_and_invokes_fixed_controls(self) -> None:
         service = SettingsService()

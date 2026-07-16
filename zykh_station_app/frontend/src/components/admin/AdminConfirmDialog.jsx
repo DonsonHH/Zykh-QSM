@@ -1,13 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { AlertTriangle, X } from "lucide-react";
 
 export function AdminConfirmDialog({ open, title, description, expected, confirmLabel, tone = "danger", busy, onCancel, onConfirm }) {
-  const [value, setValue] = useState("");
-
-  useEffect(() => {
-    if (open) setValue("");
-  }, [open, expected]);
-
   if (!open) return null;
 
   return (
@@ -25,17 +19,15 @@ export function AdminConfirmDialog({ open, title, description, expected, confirm
             <X size={19} aria-hidden="true" />
           </button>
         </header>
-        <label>
-          <span>输入 <code>{expected}</code> 确认</span>
-          <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} spellCheck="false" />
-        </label>
+        <div className="admin-confirm-summary">确认后将立即执行此操作，并写入管理员审计记录。</div>
         <footer>
           <button type="button" className="admin-button secondary" onClick={onCancel}>取消</button>
           <button
             type="button"
             className={`admin-button ${tone === "danger" ? "danger" : "primary"}`}
-            disabled={value !== expected || busy}
-            onClick={() => onConfirm(value)}
+            autoFocus
+            disabled={busy}
+            onClick={() => onConfirm(expected)}
           >
             {busy ? "正在执行" : confirmLabel}
           </button>

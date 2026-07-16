@@ -57,7 +57,7 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
         </div>
       </section>
       <section className="admin-system-actions">
-        <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要输入确认文本并写入审计日志</p></div></header>
+        <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要二次确认并写入审计日志</p></div></header>
         <div>
           {actions.map(({ icon: Icon, ...action }) => (
             <button key={action.id} type="button" className={`admin-system-action ${action.tone}`} onClick={() => setPending(action)}>

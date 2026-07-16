@@ -11,8 +11,15 @@ import {
   updateAdminUser
 } from "../../api/admin.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
+import { AdminBiometricDialog } from "./AdminBiometricDialog.jsx";
 
 const EMPTY_USER = { name: "", age: 0, profile: "", allergies: "", status: "家庭成员", note: "" };
+
+function formatLastSeen(value) {
+  if (!value) return "尚未用于确认";
+  const [, month = "", day = "", time = ""] = value.match(/^\d{4}-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/) || [];
+  return month ? `${month}-${day} ${time}` : value;
+}
 
 export function AdminUsers({ notify, onSessionExpired }) {
   const [data, setData] = useState({ users: [], biometrics: {} });
@@ -21,6 +28,7 @@ export function AdminUsers({ notify, onSessionExpired }) {
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(null);
+  const [biometricMode, setBiometricMode] = useState("");
   const selected = useMemo(() => data.users.find((user) => user.id === selectedId) || null, [data.users, selectedId]);
   const biometric = selected ? data.biometrics?.[selected.id] || {} : {};
 
@@ -55,15 +63,6 @@ export function AdminUsers({ notify, onSessionExpired }) {
         setCreating(false);
         notify("服务对象信息已保存");
       })
-      .catch(handleError)
-      .finally(() => setBusy(false));
-  }
-
-  function runBiometric(action, successText) {
-    if (!selected) return;
-    setBusy(true);
-    action(selected.id)
-      .then((result) => { notify(result.message || successText); return refresh(selected.id); })
       .catch(handleError)
       .finally(() => setBusy(false));
   }
@@ -120,15 +119,23 @@ export function AdminUsers({ notify, onSessionExpired }) {
                 <label className="span-two"><span>备注</span><textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
               </div>
               {!creating && (
-                <div className="admin-biometric-row">
-                  <button type="button" className={biometric.face_enrolled ? "bound" : ""} onClick={() => runBiometric(enrollAdminFace, "人脸录入完成")} disabled={busy}>
-                    <ScanFace size={18} aria-hidden="true" /><span>人脸</span><strong>{biometric.face_enrolled ? "已绑定" : "录入"}</strong>
-                  </button>
-                  {biometric.face_enrolled && <button type="button" className="admin-biometric-remove" onClick={() => setConfirm({ title: "解除人脸绑定", expected: "REMOVE FACE", description: "仅解除本机服务对象绑定，板端样本保留供维护。", action: (value) => removeAdminFace(selected.id, value), success: "人脸绑定已解除" })} aria-label="解除人脸绑定"><XCircle size={18} /></button>}
-                  <button type="button" className={biometric.fingerprint_enrolled ? "bound" : ""} onClick={() => runBiometric(enrollAdminFingerprint, "指纹录入完成")} disabled={busy}>
-                    <Fingerprint size={18} aria-hidden="true" /><span>指纹</span><strong>{biometric.fingerprint_enrolled ? `模板 ${biometric.fingerprint_template_id}` : "录入"}</strong>
-                  </button>
-                  {biometric.fingerprint_enrolled && <button type="button" className="admin-biometric-remove" onClick={() => setConfirm({ title: "删除指纹", expected: "REMOVE FINGERPRINT", description: "该操作会同时删除外设模板和本机绑定。", action: (value) => removeAdminFingerprint(selected.id, value), success: "指纹已删除" })} aria-label="删除指纹"><XCircle size={18} /></button>}
+                <div className="admin-biometric-block">
+                  <div className="admin-biometric-row">
+                    <button type="button" className={biometric.face_enrolled ? "bound" : ""} onClick={() => setBiometricMode("face")} disabled={busy}>
+                      <ScanFace size={18} aria-hidden="true" /><span>人脸</span><strong>{biometric.face_enrolled ? "已绑定" : "录入"}</strong>
+                    </button>
+                    {biometric.face_enrolled && <button type="button" className="admin-biometric-remove" onClick={() => setConfirm({ title: "解除人脸绑定", expected: "REMOVE FACE", description: "仅解除本机服务对象绑定，板端样本保留供维护。", action: (value) => removeAdminFace(selected.id, value), success: "人脸绑定已解除" })} aria-label="解除人脸绑定"><XCircle size={18} /></button>}
+                    <button type="button" className={biometric.fingerprint_enrolled ? "bound" : ""} onClick={() => setBiometricMode("fingerprint")} disabled={busy}>
+                      <Fingerprint size={18} aria-hidden="true" /><span>指纹</span><strong>{biometric.fingerprint_enrolled ? `模板 ${biometric.fingerprint_template_id}` : "录入"}</strong>
+                    </button>
+                    {biometric.fingerprint_enrolled && <button type="button" className="admin-biometric-remove" onClick={() => setConfirm({ title: "删除指纹", expected: "REMOVE FINGERPRINT", description: "该操作会同时删除外设模板和本机绑定。", action: (value) => removeAdminFingerprint(selected.id, value), success: "指纹已删除" })} aria-label="删除指纹"><XCircle size={18} /></button>}
+                  </div>
+                  {(biometric.face_enrolled || biometric.fingerprint_enrolled) && (
+                    <div className="admin-biometric-stats" aria-label="生物识别使用统计">
+                      {biometric.face_enrolled && <span>面部确认 {biometric.face_match_count || 0} 次 · {formatLastSeen(biometric.face_last_seen_at)}</span>}
+                      {biometric.fingerprint_enrolled && <span>指纹确认 {biometric.fingerprint_match_count || 0} 次 · {formatLastSeen(biometric.fingerprint_last_seen_at)}</span>}
+                    </div>
+                  )}
                 </div>
               )}
               <footer className="admin-editor-actions">
@@ -141,6 +148,24 @@ export function AdminUsers({ notify, onSessionExpired }) {
         </section>
       </div>
       <AdminConfirmDialog open={Boolean(confirm)} title={confirm?.title} description={confirm?.description} expected={confirm?.expected || ""} confirmLabel="确认执行" busy={busy} onCancel={() => setConfirm(null)} onConfirm={submitConfirm} />
+      <AdminBiometricDialog
+        open={Boolean(biometricMode)}
+        mode={biometricMode}
+        user={selected}
+        onEnroll={async (userId) => {
+          try {
+            return await (biometricMode === "face" ? enrollAdminFace(userId) : enrollAdminFingerprint(userId));
+          } catch (error) {
+            if (/会话/.test(error.message || "")) onSessionExpired();
+            throw error;
+          }
+        }}
+        onClose={() => setBiometricMode("")}
+        onComplete={(result) => {
+          notify(result?.message || `${biometricMode === "face" ? "人脸" : "指纹"}录入完成`);
+          refresh(selected?.id);
+        }}
+      />
     </div>
   );
 }

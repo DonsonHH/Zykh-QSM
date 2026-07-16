@@ -25,7 +25,7 @@ function readStoredIdentity() {
   }
 }
 
-export function useFaceIdentity({ auto = true } = {}) {
+export function useFaceIdentity({ auto = true, activateOnMatch = true } = {}) {
   const [identity, setIdentity] = useState(() => readStoredIdentity());
   const [status, setStatus] = useState(identity ? "matched" : "idle");
   const [message, setMessage] = useState(identity ? `已确认使用人：${identity.name}` : "等待确认使用人");
@@ -56,7 +56,9 @@ export function useFaceIdentity({ auto = true } = {}) {
           setIdentity(result.user);
           setStatus(result.status || "matched");
           setMessage(result.message || `已确认使用人：${result.user.name}`);
-          activateIdentity(result.user);
+          if (activateOnMatch) {
+            activateIdentity(result.user);
+          }
           return result;
         }
         setStatus(result.status || "unavailable");
@@ -78,7 +80,7 @@ export function useFaceIdentity({ auto = true } = {}) {
         identifyPromiseRef.current = null;
       }
     }
-  }, []);
+  }, [activateOnMatch]);
 
   const clear = useCallback(() => {
     identityGenerationRef.current += 1;

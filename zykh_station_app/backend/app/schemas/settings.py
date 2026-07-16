@@ -13,6 +13,9 @@ class BasicSettings(BaseModel):
     idle_timeout_seconds: int = Field(ge=0, le=3600)
     wifi_ssid: str = ""
     sim_connected: bool = False
+    sim_operator: str = ""
+    sim_operator_code: str = ""
+    sim_phone_number: str = ""
     microphone_available: bool = False
 
 

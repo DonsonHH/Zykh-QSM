@@ -23,10 +23,15 @@ export function IdleScreen({ now, networkStatus, onWake }) {
           <span>{formatDay(now)}</span>
         </div>
         <button type="button" className="idle-wake-button">
-          <span className="idle-wake-glyph" aria-hidden="true">
-            <HeartHandshake className="idle-wake-glyph-ghost" size={150} strokeWidth={1.9} />
-            <StrokeDrawIcon icon={HeartHandshake} size={150} strokeWidth={1.9} mode="yoyo" pace="idle" active />
-          </span>
+          <StrokeDrawIcon
+            icon={HeartHandshake}
+            size={160}
+            strokeWidth={1.9}
+            className="idle-wake-glyph"
+            mode="yoyo"
+            pace="idle"
+            active
+          />
         </button>
         <h1>轻触屏幕开始使用</h1>
       </section>

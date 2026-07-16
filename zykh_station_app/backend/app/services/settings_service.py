@@ -28,6 +28,9 @@ class SettingsService:
             idle_timeout_seconds=self._int_setting("idle_timeout_seconds", 90, 0, 3600),
             wifi_ssid=str(network.get("wifi_ssid") or ""),
             sim_connected=bool(network.get("sim_connected")),
+            sim_operator=str(network.get("sim_operator") or ""),
+            sim_operator_code=str(network.get("sim_operator_code") or ""),
+            sim_phone_number=str(network.get("sim_phone_number") or ""),
             microphone_available=self._microphone_available(),
         )
         return BasicSettingsResponse(settings=values)
@@ -130,7 +133,11 @@ class SettingsService:
             "route del default dev usb0 2>/dev/null; "
             "ifconfig usb0 down 2>/dev/null"
         )
-        result = self._run(["adb", "shell", "sh", "-c", command], timeout=8)
+        adb = ["adb"]
+        serial = os.environ.get("ADB_SERIAL", "").strip()
+        if serial:
+            adb.extend(["-s", serial])
+        result = self._run([*adb, "shell", command], timeout=8)
         if result and result.returncode == 0:
             return ""
         return "SIM 开关状态已保存，但外设网络接口未能关闭。"

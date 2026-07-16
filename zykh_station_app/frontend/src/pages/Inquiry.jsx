@@ -15,8 +15,9 @@ import { evaluateInquiry } from "../api/inquiry.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
+import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
-import { useFaceIdentity } from "../hooks/useFaceIdentity.js";
+import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 
 const initialForm = {
   symptoms_text: "",
@@ -55,28 +56,35 @@ function normalizeUser(user) {
 
 export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus }) {
   const initialDraft = readDraft();
-  const [step, setStep] = useState(initialDraft?.step || "start");
+  const restoredIdentityConfirmed = Boolean(initialDraft?.identityConfirmed && initialDraft?.selectedUserId);
+  const [step, setStep] = useState(restoredIdentityConfirmed ? initialDraft?.step || "start" : "start");
   const [form, setForm] = useState(initialDraft?.form || initialForm);
   const [result, setResult] = useState(null);
   const [blockedReason, setBlockedReason] = useState("");
   const [serviceUsers, setServiceUsers] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState(initialDraft?.selectedUserId || "");
+  const [selectedUserId, setSelectedUserId] = useState(restoredIdentityConfirmed ? initialDraft.selectedUserId : "");
+  const [identityConfirmed, setIdentityConfirmed] = useState(restoredIdentityConfirmed);
   const [chatSessionId, setChatSessionId] = useState(0);
   const [pendingCabinetAction, setPendingCabinetAction] = useState(null);
   const [cabinetCountdown, setCabinetCountdown] = useState(0);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
+    message: faceIdentityMessage,
     identify: identifyFace,
     clear: clearFaceIdentity
-  } = useFaceIdentity();
+  } = useFaceIdentity({ auto: false, activateOnMatch: false });
 
   const selectedUser = useMemo(
-    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)),
-    [selectedUserId, serviceUsers]
+    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)) || (identityConfirmed ? normalizeUser(faceIdentity) : null),
+    [faceIdentity, identityConfirmed, selectedUserId, serviceUsers]
   );
+  const candidateUser = identityConfirmed ? null : normalizeUser(faceIdentity);
+  const displayedUser = selectedUser || candidateUser;
   const identityPresentation = selectedUser
     ? { icon: BadgeCheck, tone: "matched", label: `已确认使用人：${selectedUser.name}` }
+    : candidateUser
+      ? { icon: BadgeCheck, tone: "candidate", label: `识别到使用人：${candidateUser.name}，等待确认` }
     : faceIdentityStatus === "identifying"
       ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
       : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
@@ -84,23 +92,37 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
 
   useEffect(() => {
     refreshUsers();
+    if (!identityConfirmed) {
+      clearFaceIdentity();
+      window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
+    }
   }, []);
 
   useEffect(() => {
+    try {
+      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, selectedUserId, identityConfirmed }));
+    } catch {
+      // Draft storage is optional.
+    }
+  }, [step, form, selectedUserId, identityConfirmed]);
+
+  function confirmIdentity() {
     if (!faceIdentity?.id) {
       return;
     }
     setSelectedUserId(faceIdentity.id);
+    setIdentityConfirmed(true);
+    activateIdentity(faceIdentity);
     refreshUsers();
-  }, [faceIdentity?.id]);
+    notify(`已确认使用人：${faceIdentity.name}`);
+  }
 
-  useEffect(() => {
-    try {
-      window.sessionStorage.setItem(draftKey, JSON.stringify({ step, form, selectedUserId }));
-    } catch {
-      // Draft storage is optional.
-    }
-  }, [step, form, selectedUserId]);
+  function retryIdentity() {
+    setSelectedUserId("");
+    setIdentityConfirmed(false);
+    clearFaceIdentity();
+    window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
+  }
 
   useEffect(() => {
     if (!pendingCabinetAction || cabinetCountdown <= 0) {
@@ -250,6 +272,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     setPendingCabinetAction(null);
     setCabinetCountdown(0);
     setSelectedUserId("");
+    setIdentityConfirmed(false);
     setChatSessionId((value) => value + 1);
     clearFaceIdentity();
     try {
@@ -270,7 +293,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
             <UserRound size={26} aria-hidden="true" />
             <div className="user-context-copy">
               <span>使用人</span>
-              <h2>{selectedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
+              <h2>{displayedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
             </div>
             <span
               className={`identity-confirmation-icon ${identityPresentation.tone}`}
@@ -285,32 +308,40 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
           <div className="user-profile-grid">
             <article aria-label="年龄">
               <CakeSlice size={22} aria-hidden="true" />
-              <strong>{selectedUser?.age ? `${selectedUser.age}岁` : "待补充"}</strong>
+              <strong>{displayedUser?.age ? `${displayedUser.age}岁` : "待补充"}</strong>
             </article>
             <article aria-label="家庭身份">
               <House size={22} aria-hidden="true" />
-              <strong>{selectedUser?.role || "待确认"}</strong>
+              <strong>{displayedUser?.role || "待确认"}</strong>
             </article>
           </div>
           <div className="user-health-facts">
             <article aria-label="基础病信息">
               <HeartPulse size={23} aria-hidden="true" />
-              <strong>{selectedUser?.conditions || "基础病待补充"}</strong>
+              <strong>{displayedUser?.conditions || "基础病待补充"}</strong>
             </article>
             <article aria-label="过敏和禁忌信息">
               <ShieldAlert size={23} aria-hidden="true" />
-              <strong>{selectedUser?.allergies || "过敏禁忌待补充"}</strong>
+              <strong>{displayedUser?.allergies || "过敏禁忌待补充"}</strong>
             </article>
             <article aria-label="病例备注">
               <NotebookText size={23} aria-hidden="true" />
-              <strong>{selectedUser?.note || "通过语音继续补充"}</strong>
+              <strong>{displayedUser?.note || "通过语音继续补充"}</strong>
             </article>
           </div>
         </section>
       </aside>
 
       <section className="inquiry-flow-card chat-only" aria-label="AI 应急问询流程">
-        {step === "start" ? (
+        {step === "start" && !identityConfirmed ? (
+          <InquiryIdentityGate
+            candidate={candidateUser}
+            status={faceIdentityStatus}
+            message={faceIdentityMessage}
+            onConfirm={confirmIdentity}
+            onRetry={retryIdentity}
+          />
+        ) : step === "start" ? (
           <InquiryChatStep
             key={`new-${chatSessionId}`}
             notify={notify}

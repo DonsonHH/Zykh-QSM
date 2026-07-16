@@ -16,6 +16,9 @@ from ..schemas.admin import (
     AdminSessionRequest,
     AdminSessionResponse,
     AdminSystemActionRequest,
+    AdminTodayPlanCreateRequest,
+    AdminTodayPlansResponse,
+    AdminTodayPlanUpdateRequest,
     AdminUserCreateRequest,
     AdminUsersResponse,
     AdminUserUpdateRequest,
@@ -167,6 +170,46 @@ def admin_update_medicine(medicine_id: str, payload: AdminMedicineUpdateRequest,
     except AdminServiceError as exc:
         raise _service_error(exc) from exc
     return AdminMedicinesResponse(medicines=service.list_medicines())
+
+
+def _today_plan_response(service: AdminService) -> AdminTodayPlansResponse:
+    plans, users, medicines = service.list_today_plans()
+    return AdminTodayPlansResponse(plans=plans, users=users, medicines=medicines)
+
+
+@router.get("/today-plans", response_model=AdminTodayPlansResponse)
+def admin_today_plans(_: str = Depends(require_admin)) -> AdminTodayPlansResponse:
+    return _today_plan_response(AdminService())
+
+
+@router.post("/today-plans", response_model=AdminTodayPlansResponse)
+def admin_create_today_plan(payload: AdminTodayPlanCreateRequest, _: str = Depends(require_admin)) -> AdminTodayPlansResponse:
+    service = AdminService()
+    try:
+        service.create_today_plan(payload)
+    except AdminServiceError as exc:
+        raise _service_error(exc) from exc
+    return _today_plan_response(service)
+
+
+@router.patch("/today-plans/{plan_id}", response_model=AdminTodayPlansResponse)
+def admin_update_today_plan(plan_id: str, payload: AdminTodayPlanUpdateRequest, _: str = Depends(require_admin)) -> AdminTodayPlansResponse:
+    service = AdminService()
+    try:
+        service.update_today_plan(plan_id, payload)
+    except AdminServiceError as exc:
+        raise _service_error(exc) from exc
+    return _today_plan_response(service)
+
+
+@router.delete("/today-plans/{plan_id}", response_model=AdminTodayPlansResponse)
+def admin_delete_today_plan(plan_id: str, payload: AdminConfirmationRequest, _: str = Depends(require_admin)) -> AdminTodayPlansResponse:
+    service = AdminService()
+    try:
+        service.delete_today_plan(plan_id, payload.confirmation)
+    except AdminServiceError as exc:
+        raise _service_error(exc) from exc
+    return _today_plan_response(service)
 
 
 @router.post("/cabinet/{slot}/open", response_model=DispenseOpenResponse)

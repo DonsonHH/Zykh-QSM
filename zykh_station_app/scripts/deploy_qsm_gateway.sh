@@ -24,6 +24,7 @@ LOCAL_AUDIO_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_audio_capture_g
 LOCAL_FINGERPRINT_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/fingerprint_gateway.pl"
 LOCAL_FINGERPRINT_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_fingerprint_gateway.sh"
 FACE_BUNDLE="${QSM_FACE_BUNDLE:-}"
+FINGERPRINT_BUNDLE="${QSM_FINGERPRINT_BUNDLE:-}"
 TEMP_DIR=""
 
 log() {
@@ -100,8 +101,30 @@ $ADB_PREFIX shell "chmod +x '$QSM_AUDIO_HOME/audio_capture_gateway.pl' '$QSM_AUD
 
 log "部署 QSM AS608 指纹识别适配"
 $ADB_PREFIX shell "mkdir -p '$QSM_FINGERPRINT_HOME/logs'" >/dev/null || fail "创建板端指纹目录失败"
-$ADB_PREFIX shell "test -f '$QSM_HOME/scripts/as608.pl' -a -x '$QSM_HOME/scripts/init_fingerprint.sh'" >/dev/null 2>&1 \
-  || fail "板端缺少 AS608 驱动；请先安装 QSM368ZP-AS608 离线部署包。"
+if ! $ADB_PREFIX shell "test -f '$QSM_HOME/scripts/as608.pl' -a -x '$QSM_HOME/scripts/init_fingerprint.sh' -a -x '$QSM_HOME/bin/ch340_init'" >/dev/null 2>&1; then
+  if [ -z "$FINGERPRINT_BUNDLE" ] && [ -f "$REPO_ROOT/QSM368ZP-AS608-offline-deploy(1).zip" ]; then
+    FINGERPRINT_BUNDLE="$REPO_ROOT/QSM368ZP-AS608-offline-deploy(1).zip"
+  fi
+  [ -n "$FINGERPRINT_BUNDLE" ] && [ -f "$FINGERPRINT_BUNDLE" ] \
+    || fail "板端缺少 AS608 驱动；请设置 QSM_FINGERPRINT_BUNDLE 指向离线部署包。"
+  command -v unzip >/dev/null 2>&1 || fail "未找到 unzip，无法解包 AS608 离线部署包。"
+  TEMP_DIR="$(mktemp -d)" || fail "无法创建 AS608 临时部署目录。"
+  unzip -q "$FINGERPRINT_BUNDLE" -d "$TEMP_DIR" || fail "解包 AS608 离线部署包失败。"
+  FINGERPRINT_PAYLOAD="$(find "$TEMP_DIR" -type f -path '*/payload/as608.pl' -print | head -n 1)"
+  [ -n "$FINGERPRINT_PAYLOAD" ] || fail "AS608 离线部署包结构不正确，缺少 payload/as608.pl。"
+  FINGERPRINT_PAYLOAD_DIR="$(dirname "$FINGERPRINT_PAYLOAD")"
+  [ -f "$FINGERPRINT_PAYLOAD_DIR/init_fingerprint.sh" ] -a -f "$FINGERPRINT_PAYLOAD_DIR/ch340_init" \
+    || fail "AS608 离线部署包缺少初始化脚本或 CH340 程序。"
+  $ADB_PREFIX shell "mkdir -p '$QSM_HOME/bin' '$QSM_HOME/scripts'" >/dev/null || fail "创建 AS608 板端目录失败"
+  $ADB_PREFIX push "$FINGERPRINT_PAYLOAD_DIR/as608.pl" "$FINGERPRINT_PAYLOAD_DIR/init_fingerprint.sh" "$QSM_HOME/scripts/" >/dev/null \
+    || fail "推送 AS608 Perl 驱动失败"
+  $ADB_PREFIX push "$FINGERPRINT_PAYLOAD_DIR/ch340_init" "$QSM_HOME/bin/ch340_init" >/dev/null \
+    || fail "推送 CH340 初始化程序失败"
+  $ADB_PREFIX shell "chmod 755 '$QSM_HOME/bin/ch340_init' '$QSM_HOME/scripts/as608.pl' '$QSM_HOME/scripts/init_fingerprint.sh'; sh '$QSM_HOME/scripts/init_fingerprint.sh' restart" >/dev/null \
+    || fail "AS608 USB 初始化失败，请检查 3.3V 供电和 TX/RX 接线。"
+  rm -rf "$TEMP_DIR"
+  TEMP_DIR=""
+fi
 $ADB_PREFIX push "$LOCAL_FINGERPRINT_GATEWAY" "$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl" >/dev/null || fail "推送指纹识别网关失败"
 $ADB_PREFIX push "$LOCAL_FINGERPRINT_START" "$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh" >/dev/null || fail "推送指纹启动脚本失败"
 $ADB_PREFIX shell "chmod +x '$QSM_FINGERPRINT_HOME/fingerprint_gateway.pl' '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'; QSM_FINGERPRINT_HOME='$QSM_FINGERPRINT_HOME' QSM_FINGERPRINT_PORT='$FINGERPRINT_DEVICE_PORT' sh '$QSM_FINGERPRINT_HOME/start_fingerprint_gateway.sh'" >/dev/null \

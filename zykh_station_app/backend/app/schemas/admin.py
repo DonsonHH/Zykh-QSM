@@ -3,7 +3,14 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from .medicine import Medicine, MedicineUpdateRequest
-from .records import ServiceUser, ServiceUserCreateRequest, ServiceUserUpdateRequest
+from .records import (
+    ServiceUser,
+    ServiceUserCreateRequest,
+    ServiceUserUpdateRequest,
+    TodayPlan,
+    TodayPlanCreateRequest,
+    TodayPlanUpdateRequest,
+)
 
 
 class AdminSessionRequest(BaseModel):
@@ -86,6 +93,21 @@ class AdminMedicinesResponse(BaseModel):
 
 
 class AdminMedicineUpdateRequest(MedicineUpdateRequest):
+    pass
+
+
+class AdminTodayPlansResponse(BaseModel):
+    ok: bool = True
+    plans: list[TodayPlan]
+    users: list[ServiceUser]
+    medicines: list[Medicine]
+
+
+class AdminTodayPlanCreateRequest(TodayPlanCreateRequest):
+    pass
+
+
+class AdminTodayPlanUpdateRequest(TodayPlanUpdateRequest):
     pass
 
 

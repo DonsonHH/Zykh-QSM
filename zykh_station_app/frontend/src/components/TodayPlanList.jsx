@@ -15,8 +15,8 @@ export function TodayPlanList({ plans = [] }) {
             <article key={plan.id} className={done ? "done" : ""}>
               <time>{plan.time}</time>
               <div>
-                <strong>{plan.medicine}</strong>
-                <span>{plan.status}</span>
+                <strong>{plan.target_user} · {plan.medicine}</strong>
+                <span>{plan.dose || "按说明"} · {plan.status}</span>
               </div>
               <Icon size={22} aria-hidden="true" />
             </article>

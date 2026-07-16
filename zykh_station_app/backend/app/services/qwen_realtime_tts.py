@@ -43,10 +43,23 @@ def audio_delta(event: dict[str, Any]) -> bytes:
 
 
 class QwenRealtimeTts:
+    _speak_lock = asyncio.Lock()
+
     def __init__(self, qsm_client: QsmClient | None = None) -> None:
         self.qsm_client = qsm_client or QsmClient()
 
     async def speak(
+        self,
+        text: str,
+        api_key: str,
+        *,
+        volume: int | None = None,
+        speed: float | None = None,
+    ) -> dict[str, Any]:
+        async with self._speak_lock:
+            return await self._speak_once(text, api_key, volume=volume, speed=speed)
+
+    async def _speak_once(
         self,
         text: str,
         api_key: str,
@@ -81,6 +94,7 @@ class QwenRealtimeTts:
         first_audio_at: float | None = None
         audio_bytes = 0
         session_id = ""
+        playback_completed = False
         model = settings.qwen_realtime_tts_model
         url = f"{settings.qwen_realtime_tts_url}?model={model}"
         try:
@@ -133,6 +147,7 @@ class QwenRealtimeTts:
                     receive_audio(),
                     timeout=settings.qwen_realtime_tts_timeout_seconds,
                 )
+            playback_completed = audio_bytes > 0
             return {
                 "ok": audio_bytes > 0,
                 "mode": "qwen-realtime-pcm",
@@ -159,7 +174,21 @@ class QwenRealtimeTts:
             if writer is not None:
                 writer.close()
                 await writer.wait_closed()
+            if playback_completed:
+                drain_seconds = self.playback_drain_seconds(audio_bytes, first_audio_at)
+                if drain_seconds > 0:
+                    await asyncio.sleep(drain_seconds)
             await asyncio.to_thread(self.qsm_client.audio_stream_stop)
+
+    @staticmethod
+    def playback_drain_seconds(audio_bytes: int, first_audio_at: float | None, *, now: float | None = None) -> float:
+        if audio_bytes <= 0 or first_audio_at is None:
+            return 0.0
+        pcm_duration = audio_bytes / (24000 * 2)
+        elapsed = max(0.0, (time.monotonic() if now is None else now) - first_audio_at)
+        # The QSM endpoint starts aplay with a small socket buffer. Keep the
+        # stream alive until generated PCM plus that tail has reached the DAC.
+        return round(max(0.35, min(8.0, pcm_duration - elapsed + 0.45)), 3)
 
     @staticmethod
     async def _open_qsm_output() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:

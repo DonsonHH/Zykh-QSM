@@ -54,13 +54,19 @@ class AdminServiceTest(unittest.TestCase):
     def test_overview_collects_all_device_statuses_and_network(self) -> None:
         service = AdminService()
         with (
-            patch.object(service, "_json_status", side_effect=lambda url: {"ok": True, "status": url.rsplit("/", 1)[-1]}) as status,
+            patch.object(
+                service,
+                "_json_status",
+                side_effect=lambda url: {"ok": True, "status": url.rsplit("/", 1)[-1], "camera_available": True},
+            ) as status,
+            patch.object(service, "_tcp_status", return_value={"ok": True, "status": "available"}) as gateway,
             patch("app.services.admin_service.NetworkService.status", return_value={"mode": "wifi"}),
             patch.object(service, "_host_metrics", return_value={"hostname": "station"}),
         ):
             result = service.overview()
 
-        self.assertEqual(status.call_count, 4)
+        self.assertEqual(status.call_count, 3)
+        gateway.assert_called_once()
         self.assertTrue(result["devices"]["gateway"]["ok"])
         self.assertTrue(result["devices"]["camera"]["ok"])
         self.assertEqual(result["network"]["mode"], "wifi")

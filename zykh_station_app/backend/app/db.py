@@ -176,35 +176,48 @@ def init_db() -> None:
               subject TEXT PRIMARY KEY,
               service_user_id TEXT NOT NULL UNIQUE,
               confidence REAL,
+              match_count INTEGER NOT NULL DEFAULT 0,
               enrolled_at TEXT NOT NULL,
               last_seen_at TEXT NOT NULL,
               FOREIGN KEY(service_user_id) REFERENCES service_users(id)
             )
             """
         )
+        _ensure_column(conn, "face_identities", "match_count", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS fingerprint_identities (
               template_id INTEGER PRIMARY KEY,
               service_user_id TEXT NOT NULL UNIQUE,
               score REAL,
+              match_count INTEGER NOT NULL DEFAULT 0,
               enrolled_at TEXT NOT NULL,
               last_seen_at TEXT NOT NULL,
               FOREIGN KEY(service_user_id) REFERENCES service_users(id)
             )
             """
         )
+        _ensure_column(conn, "fingerprint_identities", "match_count", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS today_plans (
               id TEXT PRIMARY KEY,
               time TEXT NOT NULL,
-              medicine TEXT NOT NULL,
+              medicine_id TEXT NOT NULL DEFAULT '',
+              service_user_id TEXT NOT NULL DEFAULT '',
+              dose TEXT NOT NULL DEFAULT '按说明',
               status TEXT NOT NULL,
-              target_user TEXT NOT NULL
+              medicine TEXT NOT NULL DEFAULT '',
+              target_user TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        _ensure_column(conn, "today_plans", "medicine_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "service_user_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "dose", "TEXT NOT NULL DEFAULT '按说明'")
+        _ensure_column(conn, "today_plans", "updated_at", "TEXT NOT NULL DEFAULT ''")
+        _migrate_today_plans(conn)
         _seed_service_data(conn)
 
 
@@ -212,6 +225,39 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_today_plans(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE today_plans
+        SET service_user_id=COALESCE(
+          (SELECT service_users.id FROM service_users WHERE service_users.name=today_plans.target_user LIMIT 1),
+          ''
+        )
+        WHERE service_user_id=''
+        """
+    )
+    conn.execute(
+        """
+        UPDATE today_plans
+        SET medicine_id=COALESCE(
+          (SELECT medicines.id FROM medicines WHERE medicines.name=today_plans.medicine LIMIT 1),
+          ''
+        )
+        WHERE medicine_id=''
+        """
+    )
+    conn.execute("DELETE FROM today_plans WHERE service_user_id='' OR medicine_id=''")
+    conn.execute(
+        """
+        UPDATE today_plans
+        SET target_user=(SELECT name FROM service_users WHERE id=today_plans.service_user_id),
+            medicine=(SELECT name FROM medicines WHERE id=today_plans.medicine_id),
+            updated_at=CASE WHEN updated_at='' THEN ? ELSE updated_at END
+        """,
+        (now_text(),),
+    )
 
 
 def health_check() -> dict[str, object]:
@@ -267,16 +313,4 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
                 note=CASE WHEN note='' OR note='今日有计划' THEN '今日演示对象' ELSE note END
             WHERE name='张三'
             """
-        )
-    if conn.execute("SELECT COUNT(*) AS count FROM today_plans").fetchone()["count"] == 0:
-        conn.executemany(
-            """
-            INSERT INTO today_plans(id, time, medicine, status, target_user)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                ("plan-0800", "08:00", "阿司匹林肠溶片", "已执行", "张三"),
-                ("plan-1830", "18:30", "硝苯地平控释片", "待执行", "张三"),
-                ("plan-2000", "20:00", "蒙脱石散", "待执行", "王五"),
-            ],
         )

@@ -108,7 +108,7 @@ class Settings:
         "yes",
         "on",
     }
-    admin_debug_pin: str = _env("ADMIN_DEBUG_PIN", "2468")
+    admin_debug_pin: str = _env("ADMIN_DEBUG_PIN", "1145")
     admin_session_minutes: int = int(_env("ADMIN_SESSION_MINUTES", "30"))
     admin_allow_system_actions: bool = _env("ADMIN_ALLOW_SYSTEM_ACTIONS", "true").strip().lower() in {
         "1",

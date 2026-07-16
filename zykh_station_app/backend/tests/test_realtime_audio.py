@@ -15,6 +15,7 @@ from app.services.local_asr_client import (  # noqa: E402
     sherpa_transcript,
 )
 from app.services.qwen_realtime_tts import (  # noqa: E402
+    QwenRealtimeTts,
     audio_delta,
     session_update_event,
 )
@@ -62,6 +63,13 @@ class RealtimeAudioTest(unittest.TestCase):
 
         self.assertEqual(audio_delta(event), b"\x01\x02\x03\x04")
         self.assertEqual(audio_delta({"type": "response.done"}), b"")
+
+    def test_qwen_tts_waits_for_unplayed_pcm_tail(self) -> None:
+        audio_bytes = 24000 * 2 * 8
+
+        self.assertEqual(QwenRealtimeTts.playback_drain_seconds(audio_bytes, 10.0, now=15.0), 3.45)
+        self.assertEqual(QwenRealtimeTts.playback_drain_seconds(audio_bytes, 10.0, now=20.0), 0.35)
+        self.assertEqual(QwenRealtimeTts.playback_drain_seconds(0, 10.0, now=10.0), 0.0)
 
 
 class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):

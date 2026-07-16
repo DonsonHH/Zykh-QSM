@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import threading
@@ -15,6 +16,10 @@ class NetworkService:
     _sim_signal_lock = threading.Lock()
     _sim_signal_cache: tuple[float, dict[str, object]] | None = None
     _sim_signal_ttl_seconds = 45.0
+    _sim_identity_lock = threading.Lock()
+    _qsm_network_lock = threading.Lock()
+    _qsm_network_cache: tuple[float, dict[str, object]] | None = None
+    _qsm_network_ttl_seconds = 8.0
 
     def status(self) -> dict[str, object]:
         preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() or "sim"
@@ -24,7 +29,7 @@ class NetworkService:
         wifi = self._wifi_status(default_iface)
         sim_route = default_iface == interface
         reachable = self._ping_target("223.5.5.5") if sim_ip else False
-        qsm_network = QsmClient().get_network_status()
+        qsm_network = self._qsm_network_status()
         qsm_at = qsm_network.get("at") if isinstance(qsm_network.get("at"), dict) else {}
         qsm_sim_present = bool(qsm_network.get("sim_present") or qsm_network.get("connected"))
         qsm_connected = bool(qsm_network.get("connected"))
@@ -47,6 +52,8 @@ class NetworkService:
         local_label = "离线模型" if local_ai_ready else "离线问询"
         local_ai_mode = "local_llm" if local_ai_ready else "rules_fallback"
         local_warnings = [] if local_ai_ready else ["离线模型未就绪，当前仅保留安全规则。"]
+        sim_enabled = self._bool_setting("sim_enabled", True)
+        sim_identity = self._sim_identity(qsm_network, qsm_at)
 
         if preferred in {"local", "offline"}:
             return {
@@ -65,6 +72,8 @@ class NetworkService:
                 "sim_present": sim_present,
                 "sim_connected": sim_connected,
                 "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
+                "sim_enabled": sim_enabled,
+                **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "warnings": ["当前手动切换到离线模式。", *local_warnings],
@@ -87,6 +96,8 @@ class NetworkService:
                 "sim_present": sim_present,
                 "sim_connected": sim_connected,
                 "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
+                "sim_enabled": sim_enabled,
+                **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "source": "host",
@@ -110,6 +121,8 @@ class NetworkService:
                 "sim_present": sim_present,
                 "sim_connected": True,
                 "sim_signal": str(qsm_network.get("signal") or "good"),
+                "sim_enabled": sim_enabled,
+                **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "source": "qsm",
@@ -134,6 +147,8 @@ class NetworkService:
                 "sim_present": True,
                 "sim_connected": False,
                 "sim_signal": str(qsm_network.get("signal") or "weak"),
+                "sim_enabled": sim_enabled,
+                **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "source": "qsm",
@@ -157,6 +172,8 @@ class NetworkService:
                 "sim_present": True,
                 "sim_connected": True,
                 "sim_signal": "good",
+                "sim_enabled": sim_enabled,
+                **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "warnings": [] if sim_route else ["SIM接口已获取地址，但默认出口未走 SIM。"],
@@ -178,6 +195,8 @@ class NetworkService:
             "sim_present": sim_present,
             "sim_connected": False,
             "sim_signal": "none",
+            "sim_enabled": sim_enabled,
+            **sim_identity,
             **sim_signal_data,
             "simulated": False,
             "warnings": ["未检测到可用 SIM 出口。", *local_warnings],
@@ -190,9 +209,101 @@ class NetworkService:
         db.set_setting("network_mode", normalized)
         return self.status()
 
+    @classmethod
+    def _qsm_network_status(cls) -> dict[str, object]:
+        now = time.monotonic()
+        cached = cls._qsm_network_cache
+        if cached and now - cached[0] <= cls._qsm_network_ttl_seconds:
+            return dict(cached[1])
+        with cls._qsm_network_lock:
+            now = time.monotonic()
+            cached = cls._qsm_network_cache
+            if cached and now - cached[0] <= cls._qsm_network_ttl_seconds:
+                return dict(cached[1])
+            result = QsmClient().get_network_status()
+            cls._qsm_network_cache = (now, dict(result))
+            return result
+
+    @staticmethod
+    def _bool_setting(key: str, default: bool) -> bool:
+        value = db.get_setting(key, "true" if default else "false").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _sim_identity(cls, qsm_network: dict[str, object], qsm_at: dict[str, object]) -> dict[str, str]:
+        live_operator_code = str(
+            qsm_network.get("operator_code")
+            or qsm_network.get("operator")
+            or qsm_at.get("operator")
+            or ""
+        ).strip()
+        if live_operator_code and db.get_setting("sim_operator_code", "") != live_operator_code:
+            db.set_setting("sim_operator_code", live_operator_code)
+        operator_code = live_operator_code or db.get_setting("sim_operator_code", "").strip()
+        operator_map = {
+            "46000": "中国移动",
+            "46002": "中国移动",
+            "46004": "中国移动",
+            "46007": "中国移动",
+            "46008": "中国移动",
+            "46001": "中国联通",
+            "46006": "中国联通",
+            "46009": "中国联通",
+            "46003": "中国电信",
+            "46005": "中国电信",
+            "46011": "中国电信",
+        }
+        live_operator = str(qsm_network.get("operator_name") or "").strip()
+        operator = live_operator or operator_map.get(operator_code, "") or db.get_setting("sim_operator", "").strip()
+        if operator and db.get_setting("sim_operator", "") != operator:
+            db.set_setting("sim_operator", operator)
+        phone_number = str(
+            qsm_network.get("phone_number")
+            or qsm_network.get("sim_phone_number")
+            or qsm_at.get("phone_number")
+            or db.get_setting("sim_phone_number", "")
+            or ""
+        ).strip()
+        if not phone_number and bool(qsm_network.get("sim_present") or qsm_network.get("connected")):
+            phone_number = cls._read_qsm_sim_phone_number()
+        return {
+            "sim_operator": operator,
+            "sim_operator_code": operator_code,
+            "sim_phone_number": phone_number,
+        }
+
+    @classmethod
+    def _read_qsm_sim_phone_number(cls) -> str:
+        with cls._sim_identity_lock:
+            cached = db.get_setting("sim_phone_number", "").strip()
+            if cached:
+                return cached
+            command = (
+                "PORT=/dev/ttyUSB2; OUT=/tmp/zykh_sim_cnum.txt; "
+                "stty -F \"$PORT\" 115200 raw -echo 2>/dev/null; rm -f \"$OUT\"; "
+                "timeout 4 cat \"$PORT\" > \"$OUT\" 2>/dev/null & reader=$!; sleep 0.3; "
+                "printf 'AT+CNUM\\r\\n' > \"$PORT\"; sleep 1; "
+                "kill \"$reader\" 2>/dev/null; wait \"$reader\" 2>/dev/null; cat \"$OUT\" 2>/dev/null"
+            )
+            adb = ["adb"]
+            serial = os.environ.get("ADB_SERIAL", "").strip()
+            if serial:
+                adb.extend(["-s", serial])
+            adb.extend(["shell", command])
+            try:
+                result = subprocess.run(adb, capture_output=True, text=True, timeout=6, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                return ""
+            match = re.search(r'\+CNUM:\s*"[^"]*","([+\d]{6,20})"', result.stdout or "")
+            phone_number = match.group(1) if match else ""
+            if phone_number:
+                db.set_setting("sim_phone_number", phone_number)
+            return phone_number
+
     def start_4g(self) -> dict[str, object]:
         db.set_setting("network_mode", "sim")
         result = QsmClient().start_4g_network()
+        self.__class__._qsm_network_cache = None
         status = self.status()
         return {
             "ok": bool(result.get("ok")) and bool(status.get("signal") == "good"),

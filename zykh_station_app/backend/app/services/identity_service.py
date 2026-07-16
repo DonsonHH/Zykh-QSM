@@ -34,13 +34,15 @@ class IdentityService:
                     message=message,
                     error_message=message,
                 )
-            self._touch(subject, confidence)
+            match_count, last_seen_at = self._touch(subject, confidence)
             return IdentityResponse(
                 ok=True,
                 status="matched",
                 user=user,
                 subject=subject,
                 confidence=confidence,
+                match_count=match_count,
+                last_seen_at=last_seen_at,
                 message=f"已确认使用人：{user.name}",
             )
 
@@ -210,19 +212,25 @@ class IdentityService:
             conn.execute("DELETE FROM face_identities WHERE subject=? OR service_user_id=?", (subject, user_id))
             conn.execute(
                 """
-                INSERT INTO face_identities(subject, service_user_id, confidence, enrolled_at, last_seen_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO face_identities(subject, service_user_id, confidence, match_count, enrolled_at, last_seen_at)
+                VALUES (?, ?, ?, 0, ?, ?)
                 """,
                 (subject, user_id, confidence, now, now),
             )
 
     @staticmethod
-    def _touch(subject: str, confidence: float | None) -> None:
+    def _touch(subject: str, confidence: float | None) -> tuple[int, str]:
+        now = db.now_text()
         with db.connect() as conn:
             conn.execute(
-                "UPDATE face_identities SET confidence=?, last_seen_at=? WHERE subject=?",
-                (confidence, db.now_text(), subject),
+                "UPDATE face_identities SET confidence=?, match_count=match_count+1, last_seen_at=? WHERE subject=?",
+                (confidence, now, subject),
             )
+            row = conn.execute(
+                "SELECT match_count, last_seen_at FROM face_identities WHERE subject=?",
+                (subject,),
+            ).fetchone()
+        return (int(row["match_count"]) if row else 1, str(row["last_seen_at"]) if row else now)
 
     @staticmethod
     def _confidence(value: object) -> float | None:

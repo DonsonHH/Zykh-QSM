@@ -1,10 +1,11 @@
 import React from "react";
-import { Activity, Boxes, ClipboardList, LayoutDashboard, LogOut, Settings2, UsersRound, X } from "lucide-react";
+import { Activity, Boxes, CalendarClock, ClipboardList, LayoutDashboard, LogOut, Settings2, UsersRound, X } from "lucide-react";
 import { BrandLogoImage } from "../BrandLogoImage.jsx";
 
 const sections = [
   { id: "overview", label: "运行概览", icon: LayoutDashboard },
   { id: "users", label: "服务对象", icon: UsersRound },
+  { id: "plans", label: "今日用药", icon: CalendarClock },
   { id: "cabinet", label: "药柜维护", icon: Boxes },
   { id: "devices", label: "设备控制", icon: Activity },
   { id: "logs", label: "运行日志", icon: ClipboardList }

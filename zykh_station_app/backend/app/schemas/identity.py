@@ -11,6 +11,8 @@ class IdentityResponse(BaseModel):
     user: ServiceUser | None = None
     subject: str | None = None
     confidence: float | None = None
+    match_count: int = 0
+    last_seen_at: str | None = None
     message: str
     error_message: str | None = None
     new_guest: bool = False

@@ -105,6 +105,25 @@ export function updateAdminMedicine(medicineId, payload) {
   return adminRequest(`/api/admin/medicines/${encodeURIComponent(medicineId)}`, { method: "PATCH", payload });
 }
 
+export function loadAdminTodayPlans() {
+  return adminRequest("/api/admin/today-plans");
+}
+
+export function createAdminTodayPlan(payload) {
+  return adminRequest("/api/admin/today-plans", { method: "POST", payload });
+}
+
+export function updateAdminTodayPlan(planId, payload) {
+  return adminRequest(`/api/admin/today-plans/${encodeURIComponent(planId)}`, { method: "PATCH", payload });
+}
+
+export function deleteAdminTodayPlan(planId) {
+  return adminRequest(`/api/admin/today-plans/${encodeURIComponent(planId)}`, {
+    method: "DELETE",
+    payload: { confirmation: "DELETE PLAN" }
+  });
+}
+
 export function openAdminCabinet(slot, confirmation, reason = "管理员调试开柜") {
   return adminRequest(`/api/admin/cabinet/${slot}/open`, {
     method: "POST",

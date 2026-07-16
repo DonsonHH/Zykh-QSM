@@ -21,7 +21,7 @@ export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
   }
 
   return (
-    <div className={`network-icons ${variant}`} role="group" aria-label="网络状态">
+    <div className={`network-icons ${variant} ${sim.enabled ? "" : "single-link"}`} role="group" aria-label="网络状态">
       <NetworkLink
         kind="wifi"
         connected={wifi.connected}
@@ -31,15 +31,17 @@ export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
         active={transport === "wifi"}
         activity={activity}
       />
-      <NetworkLink
-        kind="sim"
-        connected={sim.connected}
-        bars={sim.bars}
-        tone={sim.tone}
-        label={sim.label}
-        active={transport === "sim"}
-        activity={activity}
-      />
+      {sim.enabled ? (
+        <NetworkLink
+          kind="sim"
+          connected={sim.connected}
+          bars={sim.bars}
+          tone={sim.tone}
+          label={sim.label}
+          active={transport === "sim"}
+          activity={activity}
+        />
+      ) : null}
     </div>
   );
 }

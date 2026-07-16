@@ -37,9 +37,9 @@ class StaticMedicineService:
 
 class StaticRecordsService:
     plans = [
-        TodayPlan(id="plan-0800", time="08:00", medicine="阿司匹林肠溶片", status="已执行", target_user="张三"),
-        TodayPlan(id="plan-1830", time="18:30", medicine="硝苯地平控释片", status="待执行", target_user="张三"),
-        TodayPlan(id="plan-2000", time="20:00", medicine="蒙脱石散", status="待执行", target_user="王五"),
+        TodayPlan(id="plan-0800", time="08:00", medicine_id="medicine-a", medicine="阿司匹林肠溶片", service_user_id="zhangsan", status="已执行", target_user="张三"),
+        TodayPlan(id="plan-1830", time="18:30", medicine_id="medicine-b", medicine="硝苯地平控释片", service_user_id="zhangsan", status="待执行", target_user="张三"),
+        TodayPlan(id="plan-2000", time="20:00", medicine_id="medicine-c", medicine="蒙脱石散", service_user_id="wangwu", status="待执行", target_user="王五"),
     ]
 
     def list_today_plans(self) -> list[TodayPlan]:

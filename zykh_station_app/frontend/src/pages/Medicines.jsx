@@ -6,7 +6,6 @@ import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
-import { useFaceIdentity } from "../hooks/useFaceIdentity.js";
 
 export function Medicines({ notify, focus, onNavigate }) {
   const initialMedicineView =
@@ -20,7 +19,6 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [viewMode, setViewMode] = useState(initialMedicineView);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const { identity } = useFaceIdentity();
 
   useEffect(() => {
     setLoading(true);
@@ -168,7 +166,6 @@ export function Medicines({ notify, focus, onNavigate }) {
         submitting={submitting}
         result={modalResult}
         error={modalError}
-        identity={identity}
         onCancel={() => setModalOpen(false)}
         onSubmit={handleConfirm}
       />

@@ -20,9 +20,11 @@ export function getNetworkIndicators(networkStatus) {
   const rawWifiConnected = Boolean(networkStatus?.wifi_connected || networkStatus?.wifi?.connected);
   const rawSimConnected = Boolean(networkStatus?.sim_connected || networkStatus?.sim?.connected);
   const rawSimPresent = Boolean(networkStatus?.sim_present || networkStatus?.sim?.present || rawSimConnected);
+  const rawSimEnabled = networkStatus?.sim_enabled ?? networkStatus?.sim?.enabled ?? true;
   const wifiConnected = explicitLocalMode ? false : rawWifiConnected;
-  const simConnected = explicitLocalMode ? false : rawSimConnected;
-  const simPresent = explicitLocalMode ? false : rawSimPresent;
+  const simEnabled = !explicitLocalMode && Boolean(rawSimEnabled);
+  const simConnected = simEnabled && rawSimConnected;
+  const simPresent = simEnabled && rawSimPresent;
   const wifiSignal = explicitLocalMode
     ? "none"
     : networkStatus?.wifi_signal || networkStatus?.wifi?.signal || (wifiConnected ? "good" : "none");
@@ -43,7 +45,7 @@ export function getNetworkIndicators(networkStatus) {
   const simPercent = normalizePercent(networkStatus?.sim_signal_percent ?? networkStatus?.sim?.percent);
 
   return {
-    localMode: explicitLocalMode || (!wifiConnected && !simConnected),
+    localMode: explicitLocalMode || (!wifiConnected && !simConnected && !simEnabled),
     wifi: {
       connected: wifiConnected,
       tone: wifiTone,
@@ -53,6 +55,7 @@ export function getNetworkIndicators(networkStatus) {
       label: signalLabel("WiFi", wifiConnected, wifiBars, wifiDbm, wifiPercent)
     },
     sim: {
+      enabled: simEnabled,
       connected: simConnected,
       present: simPresent,
       tone: simTone,

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -11,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -19,7 +21,7 @@ from ..config import APP_ROOT, settings
 from ..schemas.admin import AdminAuditRecord
 from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
-from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest
+from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlanCreateRequest, TodayPlanUpdateRequest
 from .dispense_service import DispenseService
 from .fingerprint_service import FingerprintService
 from .identity_service import IdentityService
@@ -53,27 +55,30 @@ class AdminService:
                 "dispense_records": int(conn.execute("SELECT COUNT(*) AS count FROM dispense_records").fetchone()["count"]),
                 "pending_sync": int(conn.execute("SELECT pending_count FROM sync_state WHERE id=1").fetchone()["pending_count"]),
             }
+        gateway_url = f"{settings.qsm_api_base}{settings.qsm_status_path}"
         status_urls = {
-            "gateway": f"{settings.qsm_api_base}{settings.qsm_status_path}",
             "face": f"{settings.qsm_face_api_base}{settings.qsm_face_status_path}",
             "fingerprint": f"{settings.qsm_fingerprint_api_base}{settings.qsm_fingerprint_status_path}",
             "microphone": f"{settings.qsm_mic_api_base}{settings.qsm_mic_status_path}",
         }
-        with ThreadPoolExecutor(max_workers=len(status_urls) + 1, thread_name_prefix="admin-status") as executor:
+        with ThreadPoolExecutor(max_workers=len(status_urls) + 2, thread_name_prefix="admin-status") as executor:
             status_jobs = {name: executor.submit(self._json_status, url) for name, url in status_urls.items()}
+            gateway_job = executor.submit(self._tcp_status, gateway_url)
             network_job = executor.submit(NetworkService().status)
             status_results = {name: job.result() for name, job in status_jobs.items()}
+            gateway = gateway_job.result()
             network = network_job.result()
 
-        gateway = status_results["gateway"]
+        face = status_results["face"]
+        camera_available = bool(face.get("ok") and face.get("camera_available"))
         devices = {
             "gateway": gateway,
             "camera": {
-                "ok": bool(gateway.get("ok")),
-                "status": "available" if gateway.get("ok") else "unavailable",
-                "error_message": gateway.get("error_message"),
+                "ok": camera_available,
+                "status": "available" if camera_available else "unavailable",
+                "error_message": "" if camera_available else face.get("error_message") or "摄像头未被识别服务检测到。",
             },
-            "face": status_results["face"],
+            "face": face,
             "fingerprint": status_results["fingerprint"],
             "microphone": status_results["microphone"],
         }
@@ -92,19 +97,27 @@ class AdminService:
         db.init_db()
         with db.connect() as conn:
             faces = {
-                str(row["service_user_id"]): str(row["subject"])
-                for row in conn.execute("SELECT service_user_id, subject FROM face_identities")
+                str(row["service_user_id"]): dict(row)
+                for row in conn.execute(
+                    "SELECT service_user_id, subject, match_count, last_seen_at FROM face_identities"
+                )
             }
             fingerprints = {
-                str(row["service_user_id"]): int(row["template_id"])
-                for row in conn.execute("SELECT service_user_id, template_id FROM fingerprint_identities")
+                str(row["service_user_id"]): dict(row)
+                for row in conn.execute(
+                    "SELECT service_user_id, template_id, match_count, last_seen_at FROM fingerprint_identities"
+                )
             }
         biometrics = {
             user.id: {
                 "face_enrolled": user.id in faces,
-                "face_subject": faces.get(user.id, ""),
+                "face_subject": faces.get(user.id, {}).get("subject", ""),
+                "face_match_count": int(faces.get(user.id, {}).get("match_count", 0)),
+                "face_last_seen_at": faces.get(user.id, {}).get("last_seen_at", ""),
                 "fingerprint_enrolled": user.id in fingerprints,
-                "fingerprint_template_id": fingerprints.get(user.id),
+                "fingerprint_template_id": fingerprints.get(user.id, {}).get("template_id"),
+                "fingerprint_match_count": int(fingerprints.get(user.id, {}).get("match_count", 0)),
+                "fingerprint_last_seen_at": fingerprints.get(user.id, {}).get("last_seen_at", ""),
             }
             for user in users
         }
@@ -127,7 +140,7 @@ class AdminService:
         if user is None:
             raise AdminServiceError("服务对象不存在。", 404)
         if confirmation.strip() != f"DELETE {user.name}":
-            raise AdminServiceError(f"请输入 DELETE {user.name} 确认删除。")
+            raise AdminServiceError("删除服务对象的二次确认校验失败。")
         fingerprint_result = FingerprintService().delete_user(user_id)
         try:
             RecordsService().delete_service_user(user_id)
@@ -145,7 +158,7 @@ class AdminService:
 
     def unbind_face(self, user_id: str, confirmation: str) -> str:
         if confirmation.strip() != "REMOVE FACE":
-            raise AdminServiceError("请输入 REMOVE FACE 确认解除本机绑定。")
+            raise AdminServiceError("解除人脸绑定的二次确认校验失败。")
         with db.connect() as conn:
             row = conn.execute("SELECT subject FROM face_identities WHERE service_user_id=?", (user_id,)).fetchone()
             conn.execute("DELETE FROM face_identities WHERE service_user_id=?", (user_id,))
@@ -160,7 +173,7 @@ class AdminService:
 
     def delete_fingerprint(self, user_id: str, confirmation: str) -> object:
         if confirmation.strip() != "REMOVE FINGERPRINT":
-            raise AdminServiceError("请输入 REMOVE FINGERPRINT 确认删除指纹。")
+            raise AdminServiceError("删除指纹的二次确认校验失败。")
         result = FingerprintService().delete_user(user_id)
         self.audit("fingerprint.delete", user_id, "success" if result.ok else "failed", result.message)
         return result
@@ -175,9 +188,39 @@ class AdminService:
         self.audit("medicine.update", medicine_id, "success", result.medicine.name)
         return result.medicine
 
+    def list_today_plans(self) -> tuple[list, list, list]:
+        records = RecordsService()
+        return records.list_today_plans(), records.list_service_users(), self.list_medicines()
+
+    def create_today_plan(self, request: TodayPlanCreateRequest) -> object:
+        try:
+            plan = RecordsService().create_today_plan(request)
+        except ValueError as exc:
+            raise AdminServiceError(str(exc)) from exc
+        self.audit("today-plan.create", plan.id, "success", f"{plan.target_user} {plan.time} {plan.medicine}")
+        return plan
+
+    def update_today_plan(self, plan_id: str, request: TodayPlanUpdateRequest) -> object:
+        try:
+            plan = RecordsService().update_today_plan(plan_id, request)
+        except ValueError as exc:
+            raise AdminServiceError(str(exc), 404 if "不存在" in str(exc) else 400) from exc
+        self.audit("today-plan.update", plan.id, "success", f"{plan.target_user} {plan.time} {plan.medicine}")
+        return plan
+
+    def delete_today_plan(self, plan_id: str, confirmation: str) -> None:
+        if confirmation.strip() != "DELETE PLAN":
+            raise AdminServiceError("删除计划的二次确认校验失败。")
+        try:
+            plan = RecordsService().get_today_plan(plan_id)
+            RecordsService().delete_today_plan(plan_id)
+        except ValueError as exc:
+            raise AdminServiceError(str(exc), 404) from exc
+        self.audit("today-plan.delete", plan_id, "success", f"{plan.target_user} {plan.time} {plan.medicine}")
+
     def open_cabinet(self, slot: int, confirmation: str, reason: str) -> object:
         if confirmation.strip() != f"OPEN {slot}":
-            raise AdminServiceError(f"请输入 OPEN {slot} 确认开柜。")
+            raise AdminServiceError("开柜操作的二次确认校验失败。")
         result = DispenseService().open_cabinet(
             DispenseOpenRequest(slot=slot, quantity=1, reason=reason, confirmed_open=True)
         )
@@ -197,7 +240,7 @@ class AdminService:
         if normalized not in confirmations:
             raise AdminServiceError("不支持该系统操作。")
         if confirmation.strip() != confirmations[normalized]:
-            raise AdminServiceError(f"请输入 {confirmations[normalized]} 确认操作。")
+            raise AdminServiceError("系统操作的二次确认校验失败。")
 
         if normalized in {"screen_on", "screen_off"}:
             result = self._screen_power(normalized == "screen_on")
@@ -266,6 +309,17 @@ class AdminService:
             return {"ok": False, "status": "invalid"}
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             return {"ok": False, "status": "unavailable", "error_message": str(exc)}
+
+    @staticmethod
+    def _tcp_status(url: str) -> dict[str, object]:
+        parsed = urlsplit(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            with socket.create_connection((host, port), timeout=0.8):
+                return {"ok": True, "status": "available", "host": host, "port": port}
+        except OSError as exc:
+            return {"ok": False, "status": "unavailable", "error_message": str(exc), "host": host, "port": port}
 
     @staticmethod
     def _host_metrics() -> dict[str, object]:

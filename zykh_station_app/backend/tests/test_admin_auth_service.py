@@ -18,7 +18,7 @@ class AdminAuthServiceTest(unittest.TestCase):
         AdminAuthService.reset_for_tests()
         self.settings_patch = patch(
             "app.services.admin_auth_service.settings",
-            SimpleNamespace(admin_debug_pin="2468", admin_session_minutes=30),
+            SimpleNamespace(admin_debug_pin="1145", admin_session_minutes=30),
         )
         self.settings_patch.start()
 
@@ -28,7 +28,7 @@ class AdminAuthServiceTest(unittest.TestCase):
 
     def test_correct_pin_creates_verifiable_session(self) -> None:
         service = AdminAuthService()
-        session = service.create_session("2468", "local-test")
+        session = service.create_session("1145", "local-test")
 
         service.verify(session.token)
         service.revoke(session.token)
@@ -48,7 +48,7 @@ class AdminAuthServiceTest(unittest.TestCase):
                 service.create_session("0000", "limited-client")
 
         with self.assertRaises(AdminAuthError) as context:
-            service.create_session("2468", "limited-client")
+            service.create_session("1145", "limited-client")
         self.assertEqual(context.exception.status_code, 429)
 
 

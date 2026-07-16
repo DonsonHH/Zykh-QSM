@@ -6,6 +6,7 @@ import { AdminCabinet } from "../components/admin/AdminCabinet.jsx";
 import { AdminDevices } from "../components/admin/AdminDevices.jsx";
 import { AdminLogs } from "../components/admin/AdminLogs.jsx";
 import { AdminOverview } from "../components/admin/AdminOverview.jsx";
+import { AdminPlans } from "../components/admin/AdminPlans.jsx";
 import { AdminSidebar } from "../components/admin/AdminSidebar.jsx";
 import { AdminUsers } from "../components/admin/AdminUsers.jsx";
 
@@ -102,6 +103,7 @@ export function AdminConsole({ onExit }) {
       <section className="admin-workspace">
         {section === "overview" && <AdminOverview data={overview} loading={loadingOverview} onRefresh={() => refreshOverview().catch((error) => notify(error.message))} />}
         {section === "users" && <AdminUsers notify={notify} onSessionExpired={expireSession} />}
+        {section === "plans" && <AdminPlans notify={notify} onSessionExpired={expireSession} />}
         {section === "cabinet" && <AdminCabinet notify={notify} onSessionExpired={expireSession} />}
         {section === "devices" && <AdminDevices overview={overview} loading={loadingOverview} onRefresh={() => refreshOverview().catch((error) => notify(error.message))} notify={notify} onSessionExpired={expireSession} />}
         {section === "logs" && <AdminLogs notify={notify} onSessionExpired={expireSession} />}

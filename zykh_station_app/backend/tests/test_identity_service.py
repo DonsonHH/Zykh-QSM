@@ -73,6 +73,11 @@ class IdentityServiceTest(unittest.TestCase):
         self.assertEqual(result.user.id, "zhangsan")
         self.assertEqual(result.user.name, "张三")
         self.assertAlmostEqual(result.confidence, 0.82)
+        self.assertEqual(result.match_count, 1)
+        self.assertIsNotNone(result.last_seen_at)
+
+        repeated = IdentityService(face_client=matched_face).resolve()
+        self.assertEqual(repeated.match_count, 2)
 
     def test_matched_unbound_subject_requires_admin_reenrollment(self) -> None:
         face = FakeFaceClient(

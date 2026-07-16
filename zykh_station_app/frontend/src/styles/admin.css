@@ -407,6 +407,7 @@
 }
 
 .users-split-view { grid-template-columns: 390px minmax(0, 1fr); }
+.plans-split-view { grid-template-columns: 470px minmax(0, 1fr); }
 .cabinet-split-view { grid-template-columns: 1.1fr 0.9fr; }
 
 .admin-list-panel,
@@ -513,7 +514,8 @@
 }
 
 .admin-form-grid input,
-.admin-form-grid textarea {
+.admin-form-grid textarea,
+.admin-form-grid select {
   width: 100%;
   border: 1px solid #cfd9e4;
   border-radius: 8px;
@@ -525,12 +527,54 @@
 }
 
 .admin-form-grid input { height: 36px; }
+.admin-form-grid select { height: 36px; }
 .admin-form-grid textarea { height: 52px; resize: none; padding-top: 8px; }
 
 .admin-form-grid input:focus,
-.admin-form-grid textarea:focus {
+.admin-form-grid textarea:focus,
+.admin-form-grid select:focus {
   border-color: #70a0ed;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.admin-plan-list-header {
+  height: 38px;
+  display: grid;
+  grid-template-columns: 56px 76px minmax(0, 1fr) 54px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #e5ebf1;
+  padding: 0 12px;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-plan-list-scroll { height: calc(100% - 38px); overflow: auto; padding: 5px; }
+.admin-plan-list-scroll > button {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 56px 76px minmax(0, 1fr) 54px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  background: transparent;
+  padding: 0 7px;
+  text-align: left;
+}
+.admin-plan-list-scroll > button:hover { background: #f5f7fa; }
+.admin-plan-list-scroll > button.active { background: #eaf2ff; color: #1e5fc7; }
+.admin-plan-list-scroll time { color: #2563eb; font-weight: 850; }
+.admin-plan-list-scroll strong { font-size: 12px; }
+.admin-plan-list-scroll span, .admin-plan-list-scroll small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-plan-list-scroll span { color: #475467; font-size: 11px; }
+.admin-plan-list-scroll small { color: #667085; font-size: 10px; }
+
+.admin-biometric-block {
+  margin-top: 12px;
+  border-top: 1px solid #e8edf3;
+  padding-top: 10px;
 }
 
 .admin-biometric-row {
@@ -538,9 +582,6 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-top: 12px;
-  border-top: 1px solid #e8edf3;
-  padding-top: 10px;
 }
 
 .admin-biometric-row > button:not(.admin-biometric-remove) {
@@ -566,6 +607,16 @@
   border-radius: 7px;
   background: #fff1f0;
   color: #b42318;
+}
+
+.admin-biometric-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 700;
 }
 
 .admin-editor-actions {
@@ -753,6 +804,9 @@
 .admin-log-viewer > header span { color: #98a2b3; font-size: 10px; }
 .admin-log-viewer pre { min-width: 0; min-height: 0; margin: 0; overflow: auto; padding: 13px 15px; font: 11px/1.55 "JetBrains Mono", "Noto Sans Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.admin-live-log-state { display: inline-flex; align-items: center; gap: 7px; color: #087a61; font-size: 12px; font-weight: 800; }
+.admin-live-log-state > span { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.12); }
+
 .admin-dialog-backdrop {
   position: absolute;
   inset: 0;
@@ -785,11 +839,33 @@
 .admin-confirm-dialog h3 { margin: 0; font-size: 17px; }
 .admin-confirm-dialog p { margin: 5px 0 0; color: #667085; font-size: 12px; line-height: 1.4; }
 .admin-icon-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; background: #f3f5f7; }
-.admin-confirm-dialog > label { display: grid; gap: 6px; margin-top: 16px; }
-.admin-confirm-dialog > label span { color: #475467; font-size: 12px; }
-.admin-confirm-dialog code { border-radius: 4px; background: #f2f4f7; padding: 2px 5px; color: #344054; }
-.admin-confirm-dialog input { height: 40px; border: 1px solid #cbd6e2; border-radius: 8px; padding: 0 10px; font: 14px "JetBrains Mono", monospace; }
+.admin-confirm-summary { margin-top: 16px; border-radius: 9px; background: #f6f8fb; padding: 11px 12px; color: #475467; font-size: 12px; line-height: 1.45; }
 .admin-confirm-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.admin-dialog-backdrop.biometric { z-index: 125; }
+.admin-biometric-dialog { width: min(620px, calc(100vw - 48px)); max-height: calc(100vh - 44px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; border: 1px solid #d9e4f0; border-radius: 16px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 35, 70, 0.2); }
+.admin-biometric-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.admin-biometric-dialog > header span { color: #2563eb; font-size: 11px; font-weight: 850; }
+.admin-biometric-dialog > header h3 { margin: 3px 0 0; font-size: 19px; }
+.admin-biometric-dialog > footer { display: flex; justify-content: flex-end; gap: 9px; }
+.admin-biometric-stage { min-height: 310px; display: grid; place-items: center; overflow: hidden; border: 1px solid #dce7f2; border-radius: 14px; background: #f6f9fc; }
+.admin-face-enroll-preview { position: relative; width: 100%; height: 100%; min-height: 310px; overflow: hidden; background: #e8eef5; }
+.admin-face-enroll-preview img { width: 100%; height: 100%; min-height: 310px; display: block; object-fit: cover; }
+.admin-face-enroll-preview > button { width: 100%; height: 100%; min-height: 310px; display: grid; place-items: center; align-content: center; gap: 7px; background: transparent; color: #536174; }
+.admin-face-enroll-preview > button strong { font-size: 17px; }
+.admin-face-enroll-preview > button span { font-size: 12px; }
+.admin-face-guide { position: absolute; inset: 30px 33%; border: 3px solid rgba(255,255,255,0.95); border-radius: 46% 46% 42% 42%; box-shadow: 0 0 0 999px rgba(15, 35, 70, 0.16), 0 0 0 1px rgba(37,99,235,0.35); pointer-events: none; }
+.admin-fingerprint-guide { max-width: 410px; display: grid; place-items: center; gap: 10px; padding: 28px; text-align: center; }
+.admin-fingerprint-guide .fingerprint-rings { width: 138px; height: 138px; display: grid; place-items: center; border-radius: 50%; background: #eaf3ff; color: #2563eb; box-shadow: 0 0 0 12px rgba(37,99,235,0.06), 0 0 0 24px rgba(37,99,235,0.025); }
+.admin-fingerprint-guide strong { margin-top: 14px; font-size: 20px; }
+.admin-fingerprint-guide p { margin: 0; color: #667085; font-size: 14px; line-height: 1.5; }
+.admin-biometric-progress, .admin-biometric-result { max-width: 420px; display: grid; place-items: center; gap: 10px; padding: 28px; text-align: center; }
+.admin-biometric-progress > span { width: 120px; height: 120px; display: grid; place-items: center; border-radius: 50%; background: #eaf3ff; color: #2563eb; animation: admin-biometric-pulse 1.8s ease-in-out infinite; }
+.admin-biometric-progress strong, .admin-biometric-result strong { font-size: 20px; }
+.admin-biometric-progress p, .admin-biometric-result p { margin: 0; color: #667085; font-size: 14px; line-height: 1.5; }
+.admin-biometric-result.success { color: #087a61; }
+.admin-biometric-result.error { color: #b42318; }
+@keyframes admin-biometric-pulse { 50% { box-shadow: 0 0 0 18px rgba(37,99,235,0.07); transform: scale(1.03); } }
 
 .admin-notice {
   position: absolute;

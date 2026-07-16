@@ -4,7 +4,7 @@
 
 `zykh_station_app` is the local master application. It owns the UI, station workflow, local persistence, safety rules, inquiry records, dispense records, local sync queue, medicine recognition and service-user identity mapping. QSM368ZP-WF remains an external gateway for camera/face processing, vitals, audio, cabinet control and the offline language model, and is accessed only through the backend service boundary.
 
-SQLite is initialized with the local operational tables needed by the terminal: medicines, dispense records, device actions, inquiry records, vitals records, service users, today plans and sync state.
+SQLite is initialized with the local operational tables needed by the terminal: medicines, dispense records, device actions, inquiry records, vitals records, service users, today plans and sync state. `today_plans` stores service-user and medicine IDs, while display names remain snapshots; invalid legacy name-only rows are removed during migration instead of appearing as valid plans.
 
 ## Backend layers
 
@@ -25,9 +25,9 @@ The gateway adapter supports:
 - `QSM_MODE=real`: HTTP calls to the main gateway at `QSM_BASE_URL` (`18080`), the face gateway at `QSM_FACE_BASE_URL` (`18081`), and the FF Camera microphone gateway at `QSM_MIC_BASE_URL` (`18082`).
 - the QSM llama.cpp service listens on board port `8083` and is forwarded to `LOCAL_AI_BASE_URL` (`18083`).
 - the QSM sherpa-onnx streaming ASR service listens on board port `8084` and is forwarded to `18084`.
-- online TTS sends incremental 24 kHz PCM to the QSM speaker stream on `19001`; offline TTS uses a resident board-local model service on `19002`.
+- online TTS sends incremental 24 kHz PCM to the QSM speaker stream on `19001`, serializes concurrent speech, and drains the calculated PCM tail before stopping playback; offline TTS uses a resident board-local model service on `19002`.
 - structured failure responses when the gateway is unavailable.
-- `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1` as the real-device default, with a safety checkbox, optional `REAL_DISPENSE_TEST_SLOT`, and local audit record for every cabinet action.
+- `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1` as the real-device default, with explicit identity confirmation after biometric matching, optional `REAL_DISPENSE_TEST_SLOT`, and local audit record for every cabinet action.
 
 Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Failed real calls are not replaced by fake success data.
 
@@ -73,7 +73,7 @@ Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.
 
 The terminal is designed around a 1280x720 landscape canvas for an 11-inch touch display.
 
-The root terminal opens on a wake screen. After a configurable idle period (`VITE_IDLE_TIMEOUT_SECONDS`, default 90), the app clears the active identity and returns to that screen. A wake interaction starts a new QSM face check; until a user is confirmed, the dashboard requests the explicit unconfirmed view and does not expose another household member's medication plan.
+The root terminal opens on a wake screen. After a configurable idle period (`VITE_IDLE_TIMEOUT_SECONDS`, default 90), the app clears the active identity and returns to that screen. Face recognition is not run globally: inquiry and dispense start their own identification flow, show the matched person, and require an explicit user confirmation before continuing.
 
 ## Safety boundary
 

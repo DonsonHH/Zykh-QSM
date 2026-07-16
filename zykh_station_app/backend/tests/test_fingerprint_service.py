@@ -36,6 +36,11 @@ class FakeFingerprintClient:
         return {"ok": True, "status": "deleted", "id": template_id}
 
 
+class TimeoutFingerprintClient(FakeFingerprintClient):
+    def identify(self, timeout: int = 45) -> dict[str, object]:
+        return {"ok": False, "status": "error", "error_message": "finger_wait_timeout"}
+
+
 class FingerprintServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -68,6 +73,22 @@ class FingerprintServiceTest(unittest.TestCase):
         self.assertTrue(identified.ok)
         self.assertEqual(identified.user.id, "zhangsan")
         self.assertEqual(identified.score, 126)
+        self.assertEqual(identified.match_count, 1)
+        self.assertIsNotNone(identified.last_seen_at)
+
+        identified_again = service.identify()
+        status = service.status()
+
+        self.assertEqual(identified_again.match_count, 2)
+        self.assertEqual(status.total_matches, 2)
+
+    def test_driver_timeout_is_translated_for_terminal_user(self) -> None:
+        result = FingerprintService(client=TimeoutFingerprintClient()).identify(timeout=5)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "timeout")
+        self.assertNotIn("finger_wait_timeout", result.message)
+        self.assertIn("未检测到手指", result.message)
 
 
 if __name__ == "__main__":
