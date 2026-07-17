@@ -20,6 +20,7 @@ export function QuickActions({ actions, onSelect }) {
             </span>
             <span className="quick-copy">
               <strong>{action.title}</strong>
+              {action.subtitle ? <small>{action.subtitle}</small> : null}
             </span>
             <button
               className="quick-action-cta"

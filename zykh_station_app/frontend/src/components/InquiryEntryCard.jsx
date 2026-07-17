@@ -7,8 +7,17 @@ export function InquiryEntryCard({ inquiry, onStart }) {
     <section className="card task-card inquiry-entry-card">
       <div className="inquiry-assistant-stage">
         <div className="inquiry-assistant-portrait" aria-hidden="true">
+          <span className="inquiry-assistant-orbit orbit-one" />
+          <span className="inquiry-assistant-orbit orbit-two" />
           <StrokeDrawIcon icon={Bot} size={82} strokeWidth={1.75} mode="once" />
-          <span className="inquiry-assistant-mic"><Mic2 size={24} /></span>
+          <span className="inquiry-assistant-mic">
+            <Mic2 size={24} />
+            <span className="inquiry-voice-wave">
+              <i />
+              <i />
+              <i />
+            </span>
+          </span>
         </div>
         <div className="inquiry-assistant-content">
           <p>{inquiry.title || "AI应急问询"}</p>
