@@ -414,6 +414,9 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
   const retryOnlyFaceFailure = method === "face" && phase === "face_retry";
   const failedGuestConfirmation = phase === "guest_confirm" && guestTrigger === "recognition_failed";
   const previewAttempt = verificationAttemptRef.current;
+  const planScheduleNote = plan
+    ? [...new Set([plan.time, plan.timing_label, plan.frequency_label].filter(Boolean))].join(" · ")
+    : "";
 
   return (
     <div className="modal-layer" role="presentation">
@@ -452,7 +455,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
             <div className="modal-usage-guidance">
               <strong>本次用法</strong>
               <span>{plan?.dose || medicine.safety_note || "请按药品说明使用"}</span>
-              {plan?.frequency_label ? <small>{plan.frequency_label} · {plan.time}</small> : null}
+              {planScheduleNote ? <small>{planScheduleNote}</small> : null}
             </div>
 
             <label className="quantity-control" htmlFor="dispense-quantity">

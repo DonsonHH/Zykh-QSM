@@ -153,6 +153,7 @@ const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmMo
 assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
 assert.match(dispenseModal, /verifyDispenseIdentity/, "dispense confirmation is missing face verification");
 assert.match(dispenseModal, /plan \? "fingerprint" : "face"/, "today-plan dispense does not default to fingerprint verification");
+assert.match(dispenseModal, /plan\.time[\s\S]*plan\.timing_label[\s\S]*plan\.frequency_label/, "dispense confirmation does not preserve clock time, meal timing and frequency together");
 assert.ok(
   dispenseModal.indexOf('selectMethod("fingerprint")') < dispenseModal.indexOf('selectMethod("face")'),
   "fingerprint verification is not presented before face verification"

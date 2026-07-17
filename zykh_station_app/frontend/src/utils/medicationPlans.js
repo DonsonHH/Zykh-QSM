@@ -5,7 +5,7 @@ function clockMinutes(value) {
 }
 
 export function medicationPlanTimeLabel(plan) {
-  return plan.timing_label || plan.schedule_label || plan.time || "不限时";
+  return plan.time || plan.timing_label || plan.schedule_label || "不限时";
 }
 
 function proximityScore(plan, reference, originalIndex) {
