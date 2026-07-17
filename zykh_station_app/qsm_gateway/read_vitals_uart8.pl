@@ -117,6 +117,7 @@ sub read_fixture_frames {
         last if $count == 0;
         $buffer .= $chunk;
         extract_frames(\$buffer, \@frames);
+        last if measurement_window_ready(\@frames, $options);
     }
     close $fh;
     return (\@frames, '');
@@ -197,11 +198,9 @@ sub frame_has_measurement {
 sub measurement_window_ready {
     my ($frames, $options) = @_;
     my @measured = grep { frame_has_measurement($_) } @{$frames};
-    return 0 if @measured < $options->{stable_frames};
-    my @pressure = grep { $_->[5] > 0 && $_->[6] > 0 } @measured;
-    my @hrv = grep { $_->[10] > 0 || $_->[11] > 0 } @measured;
-    return @pressure >= $options->{reference_frames}
-        && @hrv >= $options->{reference_frames};
+    # Blood pressure and HRV are optional reference fields. Waiting for them
+    # kept an otherwise stable heart-rate/SpO2 result open until timeout.
+    return @measured >= $options->{stable_frames};
 }
 
 sub build_payload {

@@ -9,7 +9,7 @@ from ..schemas.medicine import Medicine
 
 
 MEDICINE_SEED_VERSION = "home-real-cabinet-v4-no-decrement"
-MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v2-separated-safety"
+MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v3-unified-sections"
 
 DEFAULT_MEDICINES = [
     {

@@ -80,12 +80,6 @@ export function Medicines({ notify, focus, onNavigate }) {
       .then((data) => {
         setModalResult(data.message);
         notify(data.message);
-        if (data.ok) {
-          window.setTimeout(() => {
-            setModalOpen(false);
-            setModalResult("");
-          }, 650);
-        }
         return data;
       })
       .catch((error) => {

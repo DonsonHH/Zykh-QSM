@@ -95,6 +95,10 @@ assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does
 assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
 assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating vitals loader is still present");
 
+const vitalsPage = await readFile(`${sourceRoot}/pages/Vitals.jsx`, "utf8");
+assert.match(vitalsPage, /vitals-back-button/, "vitals page is missing its top-left back button");
+assert.match(appStyles, /\.vitals-back-button[\s\S]*width:\s*56px[\s\S]*height:\s*56px/, "vitals back button is too small for touch use");
+
 const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");
 assert.match(app, /document\.startViewTransition/, "same-document page transitions are not enabled");
 assert.match(app, /flushSync\(update\)/, "React page updates are not committed inside the view transition callback");
@@ -108,7 +112,7 @@ assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearInquirySession\(\)[\s\S
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
 assert.match(home, /plan\.status === "待执行"/, "home medication list includes completed plans");
-assert.match(home, /orderMedicationPlans\(plans, now\)\.slice\(0, 3\)/, "home does not limit its nearest pending task list to three items");
+assert.match(home, /orderMedicationPlans\(pendingPlans, now\)\.slice\(0, 3\)/, "home does not limit its nearest pending task list to three items");
 assert.match(home, /home-medication-list/, "home medication tasks are not rendered as a list");
 assert.doesNotMatch(home, /metric-grid/, "home medication card still renders the removed summary metrics");
 assert.match(home, /home-plan-picker-trigger/, "home medication list has no scalable overflow picker");
@@ -140,6 +144,9 @@ assert.match(appStyles, /\.quick-action-cta[\s\S]*min-height:\s*58px/, "body mea
 
 const medicationTaskPicker = await readFile(`${sourceRoot}/components/MedicationTaskPicker.jsx`, "utf8");
 assert.match(medicationTaskPicker, /role="dialog"/, "medication task picker is not an accessible dialog");
+assert.match(medicationTaskPicker, /orderMedicationTaskPickerPlans/, "full medication task list is not ordered chronologically");
+assert.match(medicationTaskPicker, /isMedicationPlanCompleted/, "completed medication tasks are not handled separately");
+assert.match(medicationTaskPicker, /已取出/, "completed medication tasks do not show the taken label");
 assert.match(medicationTaskPicker, /plan\.target_user/, "task picker does not distinguish people sharing the same time");
 assert.match(medicationTaskPicker, /plan\.medicine/, "task picker does not identify the selected medicine");
 assert.match(medicationTaskPicker, /plan\.dose/, "task picker does not show the dose for repeated user tasks");
@@ -160,6 +167,8 @@ assert.ok(
 );
 assert.match(dispenseModal, /useState\(false\)[\s\S]*previewRetry/, "face preview starts before the user confirms identity");
 assert.match(dispenseModal, /facePreviewVisible && previewActive/, "face preview is not available before verification begins");
+assert.match(dispenseModal, /resumeFacePreview/, "face preview is not resumed after identity verification");
+assert.match(dispenseModal, /facePreviewVisible \? null/, "face confirmation text can still cover the live preview");
 assert.match(dispenseModal, /setPreviewActive\(false\)[\s\S]*verifyDispenseIdentity/, "face preview is left frozen while recognition owns the camera");
 assert.match(dispenseModal, /DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15/, "dispense fingerprint timeout is still too long");
 assert.match(dispenseModal, /await nextPaint\(\)[\s\S]*setPreviewActive\(true\)[\s\S]*await nextPaint\(\)/, "face preview is not remounted safely before retry");

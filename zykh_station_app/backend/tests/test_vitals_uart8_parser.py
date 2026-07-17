@@ -253,6 +253,54 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertEqual(payload["ambient_temperature_c"], 26.09)
         self.assertTrue(payload["reference_ready"])
 
+    def test_core_readings_finish_without_waiting_for_optional_reference_metrics(self) -> None:
+        core = frame(
+            heart_rate=73,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+            hrv_sdnn=0,
+            hrv_rmssd=0,
+        )
+        trailing = frame(
+            heart_rate=75,
+            spo2=99,
+            systolic=120,
+            diastolic=79,
+            respiratory_rate=16,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            fixture = temp / "uart.bin"
+            output = temp / "vitals.json"
+            fixture.write_bytes(core + core + core + trailing + trailing)
+            completed = subprocess.run(
+                [
+                    "perl",
+                    str(PARSER),
+                    "--input-file",
+                    str(fixture),
+                    "--chunk-size",
+                    "24",
+                    "--stable-frames",
+                    "3",
+                    "--output",
+                    str(output),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(payload["valid_frame_count"], 3)
+        self.assertEqual(payload["heart_rate_bpm"], 73)
+        self.assertEqual(payload["spo2_percent"], 98)
+        self.assertFalse(payload["reference_ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

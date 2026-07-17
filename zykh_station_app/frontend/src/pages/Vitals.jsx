@@ -14,7 +14,7 @@ import {
   Waves,
   Wind
 } from "lucide-react";
-import { loadQsmVitals } from "../api/qsm.js";
+import { loadQsmVitals, prepareQsmVitals } from "../api/qsm.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const measurementSeconds = 18;
@@ -30,6 +30,12 @@ export function Vitals({ onNavigate, returnPage = "home" }) {
   const auxiliaryMetrics = useMemo(() => buildAuxiliaryMetrics(result), [result]);
   const hasFingerTemperature = hasReading(result?.body_temperature);
   const coreComplete = hasCoreVitals(result);
+
+  useEffect(() => {
+    void prepareQsmVitals().catch(() => {
+      // Measurement remains available even when background preparation fails.
+    });
+  }, []);
 
   useEffect(() => {
     if (phase !== "measuring") {
@@ -105,7 +111,9 @@ export function Vitals({ onNavigate, returnPage = "home" }) {
 
   const actionLabel =
     phase === "measuring"
-      ? `取消测量 · ${countdown}秒`
+      ? countdown > 0
+        ? `取消测量 · ${countdown}秒`
+        : "取消测量 · 正在整理结果"
       : phase === "done" && coreComplete
         ? returnPage === "inquiry"
           ? "返回问询"
@@ -118,6 +126,9 @@ export function Vitals({ onNavigate, returnPage = "home" }) {
     <main className="vitals-page" id="main-content">
       <section className="vitals-guide-panel">
         <div className="vitals-page-heading">
+          <button className="vitals-back-button" type="button" onClick={handleBack} aria-label="返回上一页" title="返回">
+            <ArrowLeft size={25} aria-hidden="true" />
+          </button>
           <h2>{phase === "measuring" ? "正在测量" : result ? "测量结果" : "身体状态测量"}</h2>
         </div>
 
@@ -255,7 +266,9 @@ export function Vitals({ onNavigate, returnPage = "home" }) {
 
 function ResultPlaceholder({ phase, countdown }) {
   const measuring = phase === "measuring";
-  const progress = Math.min(1, Math.max(0, (measurementSeconds - countdown) / measurementSeconds));
+  const progress = countdown > 0
+    ? Math.min(0.94, Math.max(0, (measurementSeconds - countdown) / measurementSeconds))
+    : 0.98;
 
   return (
     <div

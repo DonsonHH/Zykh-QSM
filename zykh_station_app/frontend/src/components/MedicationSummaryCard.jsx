@@ -20,8 +20,9 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
             }
           ]
         : [];
-    return availablePlans.filter((plan) => plan.status === "待执行");
+    return availablePlans;
   }, [medication.featured_medicine, medication.featured_subject, medication.next_time, medication.plans]);
+  const pendingPlans = useMemo(() => plans.filter((plan) => plan.status === "待执行"), [plans]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -33,7 +34,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
     onQuickDispense?.(plan);
   }
 
-  const visiblePlans = useMemo(() => orderMedicationPlans(plans, now).slice(0, 3), [now, plans]);
+  const visiblePlans = useMemo(() => orderMedicationPlans(pendingPlans, now).slice(0, 3), [now, pendingPlans]);
 
   return (
     <section className="card task-card medication-summary-card">
@@ -48,7 +49,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
           <button type="button" className="home-plan-picker-trigger" onClick={() => setTaskPickerOpen(true)}>
             <ListChecks size={21} aria-hidden="true" />
             全部待办
-            <strong>{plans.length}</strong>
+            <strong>{pendingPlans.length}</strong>
           </button>
         ) : null}
       </div>

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -46,6 +48,44 @@ class QsmCameraServiceTest(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(mocked_open.call_count, 2)
         mocked_sleep.assert_called_once()
+
+    def test_concurrent_streams_save_latest_frame_without_sharing_a_temp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            latest = Path(temp_dir) / "qsm-live-latest.jpg"
+            services = [QsmCameraService(), QsmCameraService()]
+            for service in services:
+                service.capture_dir = Path(temp_dir)
+                service.latest_path = latest
+
+            barrier = threading.Barrier(2)
+            original_write_bytes = Path.write_bytes
+
+            def synchronized_write(path: Path, data: bytes) -> int:
+                written = original_write_bytes(path, data)
+                if path.suffix == ".tmp":
+                    barrier.wait(timeout=2)
+                return written
+
+            errors: list[Exception] = []
+
+            def save(service: QsmCameraService, image: bytes) -> None:
+                try:
+                    service._save_frame(image)
+                except Exception as exc:  # pragma: no cover - assertion captures the race
+                    errors.append(exc)
+
+            with patch.object(Path, "write_bytes", new=synchronized_write):
+                threads = [
+                    threading.Thread(target=save, args=(services[0], b"first-frame")),
+                    threading.Thread(target=save, args=(services[1], b"second-frame")),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=3)
+
+            self.assertEqual(errors, [])
+            self.assertIn(latest.read_bytes(), {b"first-frame", b"second-frame"})
 
 
 if __name__ == "__main__":

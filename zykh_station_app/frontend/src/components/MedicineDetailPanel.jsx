@@ -50,7 +50,7 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
             <ShieldAlert size={20} aria-hidden="true" />
             禁忌提醒
           </h3>
-          <ul>
+          <ul className="detail-copy detail-contraindications">
             {medicine.contraindications.map((item) => (
               <li key={item}>{item}</li>
             ))}

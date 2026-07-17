@@ -76,6 +76,19 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertNotIn("勿与同类感冒药重复使用", cold_granules.dosage)
         self.assertTrue(any("重复使用" in item for item in cold_granules.contraindications))
 
+    def test_cold_granules_keep_guidance_sections_separate(self) -> None:
+        medicine = self.service.get_medicine("slot-01-fufang-ganmaoling")
+
+        self.assertEqual(
+            medicine.indications,
+            "辛凉解表，清热解毒。用于风热感冒之发热，微恶风寒，头身痛，口干而渴，鼻塞涕浊，咽喉红肿疼痛，咳嗽，痰黄粘稠。",
+        )
+        self.assertEqual(medicine.dosage, "开水冲服，一次14克，一日3次；2天为一疗程。")
+        self.assertEqual(
+            medicine.contraindications,
+            ["严重肝肾功能不全禁用", "避免与同类解热镇痛药重复使用"],
+        )
+
     def test_guidance_version_migrates_fixed_reference_without_resetting_inventory(self) -> None:
         self.service.list_medicines()
         with db.connect() as conn:

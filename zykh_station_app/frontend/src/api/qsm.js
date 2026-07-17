@@ -8,6 +8,10 @@ export function loadQsmVitals() {
   return apiPost("/api/vitals/read-all", {});
 }
 
+export function prepareQsmVitals() {
+  return apiPost("/api/vitals/prepare", {});
+}
+
 export function captureQsmCamera() {
   return apiPost("/api/camera/capture", {});
 }

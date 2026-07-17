@@ -122,16 +122,16 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     message = "",
     trigger = "manual"
   ) {
-    verificationAttemptRef.current += 1;
+    const attempt = verificationAttemptRef.current + 1;
+    verificationAttemptRef.current = attempt;
     window.clearTimeout(previewRetryTimerRef.current);
     settlePreviewReadiness(false);
     setMethod("face");
-    setPreviewActive(false);
-    setPreviewReady(false);
     setVerifiedIdentity(identity);
     setVerificationError(message);
     setGuestTrigger(trigger);
     setPhase("guest_confirm");
+    resumeFacePreview(attempt);
   }
 
   function requestFaceRetryOnly(message = "人脸识别暂未完成，请重新识别。") {
@@ -147,11 +147,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     setVerificationError(message);
     setGuestTrigger("technical_failure");
     setPhase("face_retry");
-    previewRetryTimerRef.current = window.setTimeout(() => {
-      if (attempt === verificationAttemptRef.current) {
-        setPreviewActive(true);
-      }
-    }, 180);
+    resumeFacePreview(attempt);
   }
 
   function resetFaceVerification() {
@@ -164,14 +160,19 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
   }
 
   function retryPreview(attempt) {
+    resumeFacePreview(attempt, 360);
+  }
+
+  function resumeFacePreview(attempt, delay = 220) {
     setPreviewReady(false);
     setPreviewActive(false);
+    setPreviewRetry((current) => current + 1);
     window.clearTimeout(previewRetryTimerRef.current);
     previewRetryTimerRef.current = window.setTimeout(() => {
-      if (attempt !== verificationAttemptRef.current) return;
-      setPreviewRetry((current) => current + 1);
-      setPreviewActive(true);
-    }, 360);
+      if (attempt === verificationAttemptRef.current) {
+        setPreviewActive(true);
+      }
+    }, delay);
   }
 
   function waitForPreviewFrame(attempt) {
@@ -319,15 +320,18 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     if (plan?.service_user_id && verification.user.id !== plan.service_user_id) {
       setPhase("idle");
       setVerificationError(`该计划属于${plan.target_user}，请由本人完成身份确认`);
-      setPreviewReady(false);
-      setPreviewRetry((current) => current + 1);
-      setPreviewActive(selectedMethod === "face");
+      if (selectedMethod === "face") {
+        resumeFacePreview(attempt);
+      }
       return;
     }
 
     setVerifiedIdentity(verification.user);
     activateIdentity(verification.user);
     setPhase("recognized");
+    if (selectedMethod === "face") {
+      resumeFacePreview(attempt);
+    }
     await wait(520);
     if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) {
       return;
@@ -338,7 +342,9 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
       if (session === sessionRef.current && attempt === verificationAttemptRef.current) {
         setPhase("idle");
         setVerificationError(requestError.message || "柜门未能打开");
-        setPreviewActive(false);
+        if (selectedMethod === "face") {
+          resumeFacePreview(attempt);
+        }
       }
     }
   }
@@ -410,7 +416,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
             ? "确认身份并开柜"
             : "确认身份并开柜";
   const faceVerificationActive = method === "face" && phase === "verifying";
-  const facePreviewVisible = method === "face" && ["idle", "face_retry"].includes(phase);
+  const facePreviewVisible = method === "face" && previewActive;
   const retryOnlyFaceFailure = method === "face" && phase === "face_retry";
   const failedGuestConfirmation = phase === "guest_confirm" && guestTrigger === "recognition_failed";
   const previewAttempt = verificationAttemptRef.current;
@@ -527,7 +533,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
                   active={phase !== "idle"}
                 />
               )}
-              {!faceVerificationActive ? (
+              {facePreviewVisible ? null : !faceVerificationActive ? (
                 <>
                   <div className="biometric-stage-title-row">
                     <strong>{stageTitle}</strong>

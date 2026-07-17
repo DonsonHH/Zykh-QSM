@@ -17,6 +17,8 @@ class MedicationPlanItem(BaseModel):
     service_user_id: str = ""
     dose: str = "按说明"
     frequency_label: str = "每天"
+    due_today: bool = True
+    next_due_date: str = ""
 
 
 class MedicationSummary(BaseModel):

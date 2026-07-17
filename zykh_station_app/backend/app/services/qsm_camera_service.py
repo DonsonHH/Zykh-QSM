@@ -8,6 +8,7 @@ from typing import BinaryIO, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from ..config import DATA_DIR, settings
 from ..db import now_text
@@ -148,9 +149,14 @@ class QsmCameraService:
 
     def _save_frame(self, image: bytes) -> None:
         self.capture_dir.mkdir(parents=True, exist_ok=True)
-        temporary = self.latest_path.with_suffix(".tmp")
-        temporary.write_bytes(image)
-        temporary.replace(self.latest_path)
+        temporary = self.latest_path.with_name(
+            f".{self.latest_path.name}.{uuid4().hex}.tmp"
+        )
+        try:
+            temporary.write_bytes(image)
+            temporary.replace(self.latest_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _unavailable(self, message: str) -> dict[str, object]:
         return {

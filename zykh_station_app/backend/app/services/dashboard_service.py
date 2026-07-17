@@ -88,6 +88,8 @@ class DashboardService:
                         service_user_id=plan.service_user_id,
                         dose=plan.dose,
                         frequency_label=plan.frequency_label,
+                        due_today=plan.due_today,
+                        next_due_date=plan.next_due_date,
                     )
                     for plan in plans
                 ],

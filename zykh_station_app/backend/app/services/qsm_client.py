@@ -78,11 +78,38 @@ class _VitalsMeasurementCoordinator:
             result = reader()
             return result
         finally:
-            with self._condition:
-                self._last_result = deepcopy(result) if result is not None else None
-                self._in_flight = False
-                self._generation += 1
-                self._condition.notify_all()
+            self._finish(result)
+
+    def start(self, reader: Callable[[], dict[str, Any]]) -> bool:
+        with self._condition:
+            if self._in_flight:
+                return False
+            self._in_flight = True
+
+        def measure() -> None:
+            result: dict[str, Any] | None = None
+            try:
+                result = reader()
+            except Exception as exc:  # pragma: no cover - defensive hardware boundary
+                result = {
+                    "temperature_c": None,
+                    "heart_rate": None,
+                    "spo2": None,
+                    "source": "unavailable",
+                    "error_message": f"体征预热失败：{exc}",
+                }
+            finally:
+                self._finish(result)
+
+        threading.Thread(target=measure, name="qsm-vitals-prepare", daemon=True).start()
+        return True
+
+    def _finish(self, result: dict[str, Any] | None) -> None:
+        with self._condition:
+            self._last_result = deepcopy(result) if result is not None else None
+            self._in_flight = False
+            self._generation += 1
+            self._condition.notify_all()
 
 
 _VITALS_MEASUREMENT = _VitalsMeasurementCoordinator()
@@ -160,6 +187,17 @@ class QsmClient:
                 "message": "mock full vitals",
             }
         return self._coordinated_full_vitals()
+
+    def prepare_vitals(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {"ok": True, "mode": self.mode, "status": "ready", "started": False}
+        started = _VITALS_MEASUREMENT.start(self._read_full_vitals)
+        return {
+            "ok": True,
+            "mode": "real",
+            "status": "preparing" if started else "in_progress",
+            "started": started,
+        }
 
     def _coordinated_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
         timeout = (

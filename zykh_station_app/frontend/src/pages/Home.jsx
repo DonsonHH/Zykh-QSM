@@ -50,11 +50,7 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
         setModalResult(response.message);
         notify(response.message);
         if (response.ok) {
-          window.setTimeout(() => {
-            setQuickDispense(null);
-            setModalResult("");
-            onDashboardRefresh?.();
-          }, 700);
+          onDashboardRefresh?.();
         }
         return response;
       })
