@@ -65,6 +65,17 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertTrue(all(item.guidance_source == "label_reference" for item in medicines))
         self.assertFalse(any("按当前包装说明书" in item.dosage for item in medicines))
 
+    def test_contraindications_are_not_mixed_into_dosage_instructions(self) -> None:
+        medicines = {item.id: item for item in self.service.list_medicines().medicines}
+        cough_syrup = medicines["slot-05-nin-jiom-pei-pa-koa"]
+        cold_granules = medicines["slot-01-fufang-ganmaoling"]
+
+        self.assertEqual(cough_syrup.dosage, "口服，成人每日3次，每次1汤匙（15毫升）；儿童酌减。")
+        self.assertIn("糖尿病患者禁用", cough_syrup.contraindications)
+        self.assertNotIn("禁用", cough_syrup.dosage)
+        self.assertNotIn("勿与同类感冒药重复使用", cold_granules.dosage)
+        self.assertTrue(any("重复使用" in item for item in cold_granules.contraindications))
+
     def test_guidance_version_migrates_fixed_reference_without_resetting_inventory(self) -> None:
         self.service.list_medicines()
         with db.connect() as conn:

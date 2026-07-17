@@ -40,6 +40,8 @@ QSM_MIC_RECORD_PATH=/api/audio/capture/record
 QSM_MIC_VOLUME_PATH=/api/audio/capture/volume
 QSM_FINGERPRINT_BASE_URL=http://127.0.0.1:18086
 QSM_FINGERPRINT_TEMPLATE_START=16
+QSM_VITALS_RETRY_ATTEMPTS=2
+QSM_VITALS_RETRY_DELAY_SECONDS=0.7
 QSM_VITALS_PREFER_FULL=false
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
@@ -68,6 +70,7 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_STATUS_PATH` for external gateway status.
 - `QSM_TEMP_PATH` for the default quick temperature read.
 - `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
+- `QSM_VITALS_RETRY_ATTEMPTS` and `QSM_VITALS_RETRY_DELAY_SECONDS` for one automatic stabilization retry when temperature, heart rate or blood oxygen is incomplete. Concurrent UI requests share the same physical measurement instead of competing for UART.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_STATUS_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
 - `QSM_CAMERA_CAPTURE_PATH` and `QSM_CAMERA_STREAM_PATH` for QSM camera frames.
@@ -225,6 +228,8 @@ The offline model is a real board-side process, not mock data. See [`offline-ai.
 ## QSM face identity
 
 `scripts/deploy_qsm_gateway.sh` starts the main gateway on board port `8080`, the face gateway on `8081`, and the FF Camera microphone gateway on `8082`. The face runtime reads `/dev/video23`, performs feature extraction/matching on QSM and stores its template database under `/userdata/qsm-face/data`. The host stores only the opaque face subject to service-user mapping.
+
+The deploy script also installs `patch_station_gateway.pl` before restarting the main gateway. The guarded patch makes an empty client request exit its forked child and makes an MJPEG child exit after the shared camera producer stops. This prevents stale preview workers from retaining the camera when the UI switches from live preview to face matching.
 
 Matched users are attached to inquiry and dispense records. Identity resolution uses multiple-frame voting instead of accepting one highest-scoring frame. Normal wake-time recognition never creates a person automatically. In the dispense modal, the user can explicitly choose face confirmation; if no existing subject matches, the app creates a clearly labelled local visitor and enrolls that face so later取药 records can identify the same person. Administrators can rename or complete that visitor in Settings. After terminal inactivity, the wake screen clears the previous identity; tapping the screen starts a fresh recognition before personal tasks are loaded.
 

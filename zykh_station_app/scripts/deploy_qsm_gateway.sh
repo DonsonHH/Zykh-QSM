@@ -16,6 +16,7 @@ QSM_FINGERPRINT_HOME="${QSM_FINGERPRINT_HOME:-/userdata/qsm-fingerprint}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
 LOCAL_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
+LOCAL_STATION_PATCH="$REPO_ROOT/zykh_station_app/qsm_gateway/patch_station_gateway.pl"
 LOCAL_VITALS_UART="$REPO_ROOT/zykh_station_app/qsm_gateway/read_vitals_uart8.pl"
 LOCAL_FACE_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/face_gateway.pl"
 LOCAL_FACE_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_face_gateway.sh"
@@ -38,6 +39,7 @@ fail() {
 }
 
 [ -f "$LOCAL_START" ] || fail "找不到外设网关启动脚本：$LOCAL_START"
+[ -f "$LOCAL_STATION_PATCH" ] || fail "找不到外设网关稳定性补丁：$LOCAL_STATION_PATCH"
 [ -f "$LOCAL_VITALS_UART" ] || fail "找不到 UART8 体征读取器：$LOCAL_VITALS_UART"
 [ -f "$LOCAL_FACE_GATEWAY" ] || fail "找不到人脸识别网关：$LOCAL_FACE_GATEWAY"
 [ -f "$LOCAL_FACE_START" ] || fail "找不到人脸识别启动脚本：$LOCAL_FACE_START"
@@ -65,8 +67,9 @@ $ADB_PREFIX shell "mkdir -p '$QSM_HOME/scripts' '$QSM_HOME/data'" >/dev/null || 
 $ADB_PREFIX shell "test -f '$QSM_HOME/server.pl'" >/dev/null 2>&1 \
   || fail "板端缺少 $QSM_HOME/server.pl；请先部署外设网关，再安装 UART8 适配。"
 $ADB_PREFIX push "$LOCAL_START" "$QSM_HOME/scripts/start_station_gateway.sh" >/dev/null || fail "推送外设网关启动脚本失败"
+$ADB_PREFIX push "$LOCAL_STATION_PATCH" "$QSM_HOME/scripts/patch_station_gateway.pl" >/dev/null || fail "推送外设网关稳定性补丁失败"
 $ADB_PREFIX push "$LOCAL_VITALS_UART" "$QSM_HOME/scripts/read_vitals_uart8.pl" >/dev/null || fail "推送 UART8 体征读取器失败"
-$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_station_gateway.sh' '$QSM_HOME/scripts/read_vitals_uart8.pl'; QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_HOME/scripts/start_station_gateway.sh'" >/dev/null \
+$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_station_gateway.sh' '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/scripts/read_vitals_uart8.pl'; perl '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/server.pl'; QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_HOME/scripts/start_station_gateway.sh'" >/dev/null \
   || fail "重启板端网关失败"
 
 log "部署 QSM 人脸识别 HTTP 适配"
@@ -171,7 +174,7 @@ esac
 FINGERPRINT_STATUS="$(curl -fsS --max-time 10 "http://127.0.0.1:${FINGERPRINT_HOST_PORT}/api/fingerprint/status" 2>/dev/null)" \
   || fail "指纹识别网关已部署，但状态接口不可访问。"
 case "$FINGERPRINT_STATUS" in
-  *'"ok":true'*) log "AS608 指纹识别模块已就绪。" ;;
+  *'"ok":true'*|*'"ok":1'*) log "AS608 指纹识别模块已就绪。" ;;
   *) fail "指纹识别状态未就绪：$FINGERPRINT_STATUS" ;;
 esac
 

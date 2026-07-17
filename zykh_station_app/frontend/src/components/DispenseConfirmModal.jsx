@@ -46,7 +46,7 @@ function faceFailureOutcome(verification = {}) {
 
 export function DispenseConfirmModal({ medicine, plan = null, open, submitting, result, error, onCancel, onSubmit }) {
   const [quantity, setQuantity] = useState(1);
-  const [method, setMethod] = useState("face");
+  const [method, setMethod] = useState(plan ? "fingerprint" : "face");
   const [phase, setPhase] = useState("idle");
   const [verificationError, setVerificationError] = useState("");
   const [verifiedIdentity, setVerifiedIdentity] = useState(null);
@@ -63,15 +63,16 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
 
   useEffect(() => {
     if (open) {
+      const initialMethod = plan ? "fingerprint" : "face";
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
       setQuantity(1);
-      setMethod("face");
+      setMethod(initialMethod);
       setPhase("idle");
       setVerificationError("");
       setVerifiedIdentity(null);
       setGuestTrigger("");
-      setPreviewActive(false);
+      setPreviewActive(initialMethod === "face");
       setPreviewRetry(0);
       setPreviewReady(false);
     } else {
@@ -80,7 +81,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     }
     window.clearTimeout(previewRetryTimerRef.current);
     settlePreviewReadiness(false);
-  }, [medicine?.id, open]);
+  }, [medicine?.id, open, plan?.id]);
 
   useEffect(() => {
     return () => {
@@ -108,8 +109,11 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     setVerificationError("");
     setVerifiedIdentity(null);
     setGuestTrigger("");
-    setPreviewActive(false);
+    setPreviewActive(nextMethod === "face");
     setPreviewReady(false);
+    if (nextMethod === "face") {
+      setPreviewRetry((current) => current + 1);
+    }
     window.clearTimeout(previewRetryTimerRef.current);
   }
 
@@ -132,19 +136,27 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
 
   function requestFaceRetryOnly(message = "人脸识别暂未完成，请重新识别。") {
     verificationAttemptRef.current += 1;
+    const attempt = verificationAttemptRef.current;
     window.clearTimeout(previewRetryTimerRef.current);
     settlePreviewReadiness(false);
     setMethod("face");
     setPreviewActive(false);
     setPreviewReady(false);
+    setPreviewRetry((current) => current + 1);
     setVerifiedIdentity(null);
     setVerificationError(message);
     setGuestTrigger("technical_failure");
     setPhase("face_retry");
+    previewRetryTimerRef.current = window.setTimeout(() => {
+      if (attempt === verificationAttemptRef.current) {
+        setPreviewActive(true);
+      }
+    }, 180);
   }
 
   function resetFaceVerification() {
     setMethod("face");
+    setPhase("idle");
     setVerifiedIdentity(null);
     setVerificationError("");
     setGuestTrigger("");
@@ -191,6 +203,21 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     settlePreviewReadiness(true, attempt);
   }
 
+  async function ensureFacePreviewReady(session, attempt) {
+    if (previewActive && previewReady) {
+      return true;
+    }
+    const previewFrame = waitForPreviewFrame(attempt);
+    setPreviewActive(false);
+    setPreviewReady(false);
+    setPreviewRetry((current) => current + 1);
+    await nextPaint();
+    if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return false;
+    setPreviewActive(true);
+    await nextPaint();
+    return previewFrame;
+  }
+
   async function submitDispense(identity, verificationMethod, score, session) {
     setVerificationError("");
     setPhase("opening");
@@ -227,28 +254,26 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     verificationAttemptRef.current = attempt;
     setVerificationError("");
     setGuestTrigger("");
-    setPhase("verifying");
     let verification;
     try {
       if (selectedMethod === "fingerprint") {
+        setPhase("verifying");
         setPreviewActive(false);
         verification = await identifyFingerprint(DISPENSE_FINGERPRINT_TIMEOUT_SECONDS);
       } else {
         window.clearTimeout(previewRetryTimerRef.current);
-        setPreviewActive(false);
-        setPreviewReady(false);
-        setPreviewRetry((current) => current + 1);
-        const previewFrame = waitForPreviewFrame(attempt);
-        await nextPaint();
-        if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
-        setPreviewActive(true);
-        await nextPaint();
-        const previewIsReady = await previewFrame;
+        setPhase("idle");
+        const previewIsReady = await ensureFacePreviewReady(session, attempt);
         if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
         if (!previewIsReady) {
           requestFaceRetryOnly("摄像头画面尚未就绪，请重新识别。");
           return;
         }
+        setPhase("verifying");
+        setPreviewActive(false);
+        setPreviewReady(false);
+        settlePreviewReadiness(false);
+        await nextPaint();
         verification = await verifyDispenseIdentity(18);
       }
     } catch (requestError) {
@@ -294,7 +319,9 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     if (plan?.service_user_id && verification.user.id !== plan.service_user_id) {
       setPhase("idle");
       setVerificationError(`该计划属于${plan.target_user}，请由本人完成身份确认`);
-      setPreviewActive(false);
+      setPreviewReady(false);
+      setPreviewRetry((current) => current + 1);
+      setPreviewActive(selectedMethod === "face");
       return;
     }
 
@@ -383,6 +410,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
             ? "确认身份并开柜"
             : "确认身份并开柜";
   const faceVerificationActive = method === "face" && phase === "verifying";
+  const facePreviewVisible = method === "face" && ["idle", "face_retry"].includes(phase);
   const retryOnlyFaceFailure = method === "face" && phase === "face_retry";
   const failedGuestConfirmation = phase === "guest_confirm" && guestTrigger === "recognition_failed";
   const previewAttempt = verificationAttemptRef.current;
@@ -456,18 +484,18 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
 
           <div className="biometric-confirm-column">
             <div className="biometric-method-toggle" aria-label="身份确认方式">
-              <button type="button" className={method === "face" ? "active" : ""} onClick={() => selectMethod("face")} disabled={busy || phase === "guest_confirm"}>
-                <ScanFace size={22} aria-hidden="true" />
-                面部
-              </button>
               <button type="button" className={method === "fingerprint" ? "active" : ""} onClick={() => selectMethod("fingerprint")} disabled={busy || phase === "guest_confirm"}>
                 <Fingerprint size={22} aria-hidden="true" />
                 指纹
               </button>
+              <button type="button" className={method === "face" ? "active" : ""} onClick={() => selectMethod("face")} disabled={busy || phase === "guest_confirm"}>
+                <ScanFace size={22} aria-hidden="true" />
+                面部
+              </button>
             </div>
 
             <div className={`biometric-stage ${method} ${phase} ${phase !== "idle" ? "is-active" : ""}`}>
-              {faceVerificationActive && previewActive ? (
+              {facePreviewVisible && previewActive ? (
                 <>
                   <img
                     key={`${previewAttempt}-${previewRetry}`}

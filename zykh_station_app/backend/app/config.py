@@ -47,6 +47,8 @@ class Settings:
     qsm_api_base: str = _env("QSM_BASE_URL", _env("QSM_API_BASE", "http://127.0.0.1:18080")).rstrip("/")
     qsm_timeout_seconds: float = float(_env("QSM_TIMEOUT_SECONDS", "5"))
     qsm_vitals_timeout_seconds: float = float(_env("QSM_VITALS_TIMEOUT_SECONDS", "30"))
+    qsm_vitals_retry_attempts: int = max(1, int(_env("QSM_VITALS_RETRY_ATTEMPTS", "2")))
+    qsm_vitals_retry_delay_seconds: float = max(0.0, float(_env("QSM_VITALS_RETRY_DELAY_SECONDS", "0.7")))
     qsm_audio_timeout_seconds: float = float(_env("QSM_AUDIO_TIMEOUT_SECONDS", "120"))
     qsm_mic_api_base: str = _env("QSM_MIC_BASE_URL", "http://127.0.0.1:18082").rstrip("/")
     qsm_mic_timeout_seconds: float = float(_env("QSM_MIC_TIMEOUT_SECONDS", "5"))

@@ -72,6 +72,88 @@ class TodayPlanServiceTest(unittest.TestCase):
             self.service.delete_today_plan(plan.id)
         self.assertEqual(self.service.list_today_plans(), [])
 
+    def test_seed_upgrade_preserves_existing_plans_and_completion_state(self) -> None:
+        default_plans = self.service.list_today_plans()
+        completed_plan = default_plans[0]
+        self.service.complete_today_plan(
+            completed_plan.id,
+            completed_plan.medicine_id,
+            completed_plan.service_user_id,
+        )
+        custom = self.service.create_today_plan(
+            TodayPlanCreateRequest(
+                time="16:20",
+                timing_label="下午",
+                medicine_id="slot-08-huoxiang-zhengqi",
+                service_user_id="zhangsan",
+                dose="1丸",
+                status="待执行",
+            )
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='legacy-family-seed', updated_at=?
+                WHERE key='today_plan_seed_version'
+                """,
+                (db.now_text(),),
+            )
+
+        plans = {plan.id: plan for plan in self.service.list_today_plans()}
+
+        self.assertIn(custom.id, plans)
+        self.assertEqual(plans[completed_plan.id].status, "已执行")
+        self.assertEqual(plans[custom.id].medicine, "藿香正气丸")
+
+    def test_v2_empty_table_is_repaired_once_without_future_reseeding(self) -> None:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM today_plans")
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('today_plan_seed_version', 'family-demo-v2', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (db.now_text(),),
+            )
+
+        repaired = self.service.list_today_plans()
+        self.assertEqual(len(repaired), 6)
+
+        for plan in repaired:
+            self.service.delete_today_plan(plan.id)
+        self.assertEqual(self.service.list_today_plans(), [])
+
+    def test_default_plans_bind_to_existing_people_when_canonical_ids_changed(self) -> None:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM today_plans")
+            conn.execute("DELETE FROM service_users")
+            conn.executemany(
+                """
+                INSERT INTO service_users(id, name, age, profile, allergies, note, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    ("user-dynamic-zhangsan", "张三", 65, "高血压", "头孢过敏", "", "重点关注"),
+                    ("user-dynamic-zuoyue", "左越", 61, "家庭成员", "", "", "已登记"),
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('today_plan_seed_version', 'family-demo-v3-nondestructive', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (db.now_text(),),
+            )
+
+        plans = self.service.list_today_plans()
+
+        self.assertEqual(len(plans), 6)
+        self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "左越": 3})
+        self.assertTrue(all(plan.service_user_id.startswith("user-dynamic-") for plan in plans))
+
     def test_invalid_user_or_medicine_is_rejected(self) -> None:
         self.service.list_today_plans()
         with self.assertRaisesRegex(ValueError, "药品不存在"):

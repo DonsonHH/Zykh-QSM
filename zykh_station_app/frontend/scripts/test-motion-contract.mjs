@@ -129,10 +129,13 @@ assert.ok(
 const inquiryEntry = await readFile(`${sourceRoot}/components/InquiryEntryCard.jsx`, "utf8");
 assert.match(inquiryEntry, /StrokeDrawIcon[^>]*icon=\{Bot\}[^>]*mode="once"/, "home inquiry assistant is missing its one-shot draw motion");
 assert.doesNotMatch(inquiryEntry, /mode="yoyo"/, "home inquiry assistant animation should settle into a complete static icon");
+assert.doesNotMatch(inquiryEntry, /inquiry-assistant-scan/, "home inquiry icon did not return to the previous uncluttered version");
+assert.doesNotMatch(inquiryEntry, /inquiry-capability-icon/, "home inquiry capabilities still use the overlapping animated wrappers");
 
 const quickActions = await readFile(`${sourceRoot}/components/QuickActions.jsx`, "utf8");
 assert.match(quickActions, /quick-action-cta/, "body measurement card has no explicit action button");
 assert.match(quickActions, /开始测量/, "body measurement action is not clearly labeled");
+assert.doesNotMatch(quickActions, /点击开始测量/, "body measurement action still contains the redundant tap instruction");
 assert.match(appStyles, /\.quick-action-cta[\s\S]*min-height:\s*58px/, "body measurement action is too small for touch use");
 
 const medicationTaskPicker = await readFile(`${sourceRoot}/components/MedicationTaskPicker.jsx`, "utf8");
@@ -149,13 +152,22 @@ assert.doesNotMatch(medicines, /useFaceIdentity/, "opening the medicines page st
 const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmModal.jsx`, "utf8");
 assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
 assert.match(dispenseModal, /verifyDispenseIdentity/, "dispense confirmation is missing face verification");
-assert.match(dispenseModal, /useState\("face"\)/, "dispense confirmation does not default to face verification");
+assert.match(dispenseModal, /plan \? "fingerprint" : "face"/, "today-plan dispense does not default to fingerprint verification");
+assert.ok(
+  dispenseModal.indexOf('selectMethod("fingerprint")') < dispenseModal.indexOf('selectMethod("face")'),
+  "fingerprint verification is not presented before face verification"
+);
 assert.match(dispenseModal, /useState\(false\)[\s\S]*previewRetry/, "face preview starts before the user confirms identity");
-assert.match(dispenseModal, /faceVerificationActive && previewActive/, "face preview is not preserved while verification runs");
+assert.match(dispenseModal, /facePreviewVisible && previewActive/, "face preview is not available before verification begins");
+assert.match(dispenseModal, /setPreviewActive\(false\)[\s\S]*verifyDispenseIdentity/, "face preview is left frozen while recognition owns the camera");
 assert.match(dispenseModal, /DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15/, "dispense fingerprint timeout is still too long");
 assert.match(dispenseModal, /await nextPaint\(\)[\s\S]*setPreviewActive\(true\)[\s\S]*await nextPaint\(\)/, "face preview is not remounted safely before retry");
 assert.match(dispenseModal, /key=\{`\$\{previewAttempt\}-\$\{previewRetry\}`\}/, "face preview retry reuses the stale image element");
-assert.match(dispenseModal, /waitForPreviewFrame\(attempt\)[\s\S]*await previewFrame[\s\S]*verifyDispenseIdentity/, "face verification starts before the preview has produced its first frame");
+assert.match(
+  dispenseModal,
+  /await ensureFacePreviewReady\(session, attempt\)[\s\S]*if \(!previewIsReady\)[\s\S]*verifyDispenseIdentity/,
+  "face verification starts before the preview has produced its first frame"
+);
 assert.doesNotMatch(dispenseModal, /await wait\(240\)/, "face verification still relies on a fixed mount delay");
 assert.match(dispenseModal, /setPhase\("face_retry"\)/, "technical face failures do not have a retry-only state");
 assert.match(dispenseModal, /retryOnlyFaceFailure[\s\S]*重新识别[\s\S]*failedGuestConfirmation/, "retry-only face failure is not separated from visitor confirmation");

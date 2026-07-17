@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -151,6 +152,53 @@ class QsmVitalsIntegrationTest(unittest.TestCase):
         self.assertTrue(result["partial"])
         self.assertEqual(result["quality"], "error")
         self.assertIn("No valid 24-byte frame received", result["error_message"])
+
+    def test_full_vitals_retries_once_when_primary_values_are_not_stable(self) -> None:
+        client = QsmClient(mode="real")
+        with patch.object(
+            client,
+            "_request_json",
+            side_effect=[
+                (QSM_PARTIAL_RESPONSE, None),
+                (QSM_RESPONSE, None),
+            ],
+        ) as request:
+            result = client.read_full_vitals()
+
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["temperature_c"], 36.4)
+        self.assertEqual(result["heart_rate"], 74)
+        self.assertEqual(result["spo2"], 98)
+
+    def test_concurrent_full_vitals_requests_share_one_sensor_measurement(self) -> None:
+        client = QsmClient(mode="real")
+        started = threading.Event()
+        release = threading.Event()
+        calls = 0
+
+        def measure() -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            started.set()
+            release.wait(timeout=2)
+            return client._parse_vitals(QSM_RESPONSE)
+
+        client._read_full_vitals = measure
+        results: list[dict[str, object]] = []
+        first = threading.Thread(target=lambda: results.append(client.read_full_vitals()))
+        second = threading.Thread(target=lambda: results.append(client.read_full_vitals()))
+
+        first.start()
+        self.assertTrue(started.wait(timeout=1))
+        second.start()
+        time.sleep(0.05)
+        release.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(item["heart_rate"] == 74 for item in results))
 
     def test_top_level_failure_is_not_reported_as_real_measurement(self) -> None:
         result = self.read_vitals(QSM_FAILED_RESPONSE)

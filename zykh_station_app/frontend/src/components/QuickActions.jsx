@@ -28,7 +28,7 @@ export function QuickActions({ actions, onSelect }) {
               onClick={() => onSelect(action)}
               aria-label={`开始${action.title}`}
             >
-              <span>{action.id === "vitals" ? "点击开始测量" : "立即进入"}</span>
+              <span>{action.id === "vitals" ? "开始测量" : "立即进入"}</span>
               <ArrowRight size={22} aria-hidden="true" />
             </button>
           </article>

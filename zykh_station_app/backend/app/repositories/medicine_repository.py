@@ -9,7 +9,7 @@ from ..schemas.medicine import Medicine
 
 
 MEDICINE_SEED_VERSION = "home-real-cabinet-v4-no-decrement"
-MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v1"
+MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v2-separated-safety"
 
 DEFAULT_MEDICINES = [
     {
@@ -431,11 +431,11 @@ DEFAULT_MEDICINES = [
 DEFAULT_MEDICINE_GUIDANCE = {
     "slot-01-fufang-ganmaoling": {
         "indications": "辛凉解表，清热解毒。用于风热感冒之发热，微恶风寒，头身痛，口干而渴，鼻塞涕浊，咽喉红肿疼痛，咳嗽，痰黄粘稠。",
-        "dosage": "开水冲服，一次14克，一日3次；2天为一疗程。含对乙酰氨基酚，勿与同类感冒药重复使用。",
+        "dosage": "开水冲服，一次14克，一日3次；2天为一疗程。",
     },
     "slot-02-centrum": {
         "indications": "用于预防和治疗因维生素与矿物质缺乏所引起的各种疾病。",
-        "dosage": "口服，成人一日1片。严格按规定剂量服用，不与其他高剂量维生素、矿物质制剂重复使用。",
+        "dosage": "口服，成人一日1片。",
     },
     "slot-03-ganmao-qingre": {
         "indications": "疏风散寒，解表清热。用于风寒感冒，头痛发热，恶寒身痛，鼻流清涕，咳嗽咽干。",
@@ -447,7 +447,7 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-05-nin-jiom-pei-pa-koa": {
         "indications": "润肺化痰、止咳平喘、护喉利咽、生津补气、调心降火。用于伤风咳嗽、痰稠、痰多气喘、咽喉干痒及声音嘶哑。",
-        "dosage": "口服，成人每日3次，每次1汤匙（15毫升）；儿童酌减。糖尿病患者禁用。",
+        "dosage": "口服，成人每日3次，每次1汤匙（15毫升）；儿童酌减。",
     },
     "slot-06-lactulose": {
         "indications": "用于慢性或习惯性便秘，调节结肠的生理节律；也可在医生指导下用于肝性脑病。",
@@ -463,7 +463,7 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-09-bifid-triple": {
         "indications": "用于肠道菌群失调引起的急慢性腹泻、便秘，也可用于轻中型急性腹泻、慢性腹泻及消化不良。",
-        "dosage": "口服，成人一次2至4粒，一日2次。与抗菌药分开服用，并按2至10℃冷藏要求保存。",
+        "dosage": "口服，成人一次2至4粒，一日2次。",
     },
     "slot-10-gauze": {
         "indications": "供医疗机构或家庭护理中清洁后的浅表伤口覆盖、吸收渗液、隔离保护和辅助包扎使用。",
@@ -471,7 +471,7 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-11-guilin-xiguashuang": {
         "indications": "清热解毒，消肿止痛。用于风热上攻、肺胃热盛所致的咽喉肿痛、喉核肿大、口舌生疮、牙龈肿痛或出血，以及相应的咽炎、扁桃体炎、口腔炎和口腔溃疡。",
-        "dosage": "外用，喷、吹或敷于患处，一次适量，一日数次。口腔内使用时不要呼吸，用后半小时内不进食、不饮水。",
+        "dosage": "外用，喷、吹或敷于患处，一次适量，一日数次。",
     },
     "slot-12-hydrotalcite": {
         "indications": "用于慢性胃炎，以及与胃酸有关的胃部不适症状，如胃痛、胃灼热感（烧心）、酸性嗳气、饱胀等。",
@@ -479,11 +479,11 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-13-sodium-hyaluronate-eye": {
         "indications": "用于伴随干燥综合征、斯约二氏综合征等内因性疾患，或手术、药物、外伤、佩戴隐形眼镜等外因性疾患所致的角结膜上皮损伤。",
-        "dosage": "滴眼，一次1滴，一日3次；可根据症状适当增减。单支开启后一次使用，瓶口勿接触眼睛或皮肤。",
+        "dosage": "滴眼，一次1滴，一日3次；可根据症状适当增减。",
     },
     "slot-14-oseltamivir": {
         "indications": "用于成人和1岁及1岁以上儿童的甲型和乙型流感治疗，也可在医生指导下用于流感预防。",
-        "dosage": "治疗成人及13岁以上青少年流感时，口服一次75毫克，一日2次，共5天。儿童、肾功能异常或预防用药须按医嘱调整。",
+        "dosage": "治疗成人及13岁以上青少年流感时，口服一次75毫克，一日2次，共5天。",
     },
     "slot-15-mupirocin": {
         "indications": "局部外用抗生素，用于革兰阳性球菌引起的脓疱病、疖肿、毛囊炎等原发性皮肤感染，以及湿疹或小面积浅表创伤合并的继发性皮肤感染。",
@@ -503,7 +503,7 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-19-ketoprofen-gel": {
         "indications": "用于各种骨骼肌损伤、急性软组织损伤，以及由外伤、扭伤、挫伤、劳损等引起的局部疼痛和炎症。",
-        "dosage": "外用，按疼痛部位大小取适量轻轻揉搓，一日1至2次。用药期间及停药后两周避免患处日晒和紫外线。",
+        "dosage": "外用，按疼痛部位大小取适量轻轻揉搓，一日1至2次。",
     },
     "slot-20-bandage": {
         "indications": "用于浅表性小创口、擦伤等清洁止血后的覆盖、隔离和日常保护。",
@@ -511,11 +511,11 @@ DEFAULT_MEDICINE_GUIDANCE = {
     },
     "slot-21-amlodipine": {
         "indications": "用于高血压，可单独使用或与其他降压药合用；也用于慢性稳定性心绞痛及血管痉挛性心绞痛。",
-        "dosage": "成人治疗高血压通常起始剂量为5毫克，一日1次，最大剂量10毫克，一日1次。仅按既往处方服用，不因单次血压自行调量。",
+        "dosage": "成人治疗高血压通常起始剂量为5毫克，一日1次，最大剂量10毫克，一日1次。",
     },
     "slot-22-cotton-swab": {
         "indications": "用于皮肤、浅表创面清洁或消毒时蘸取和涂抹外用液体。",
-        "dosage": "一次性外用，每根仅使用一次。包装破损或棉头污染时不得使用，不深入耳道、鼻腔或深部伤口。",
+        "dosage": "一次性外用，每根仅使用一次。",
     },
     "slot-23-desloratadine": {
         "indications": "用于快速缓解过敏性鼻炎相关的喷嚏、流涕、鼻痒、鼻塞、眼痒流泪等症状，也用于缓解慢性特发性荨麻疹的瘙痒并减少风团。",

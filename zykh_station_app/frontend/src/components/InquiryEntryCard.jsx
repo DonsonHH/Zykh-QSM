@@ -9,7 +9,6 @@ export function InquiryEntryCard({ inquiry, onStart }) {
         <div className="inquiry-assistant-portrait" aria-hidden="true">
           <span className="inquiry-assistant-orbit orbit-one" />
           <span className="inquiry-assistant-orbit orbit-two" />
-          <span className="inquiry-assistant-scan" />
           <StrokeDrawIcon icon={Bot} size={82} strokeWidth={1.75} mode="once" />
           <span className="inquiry-assistant-mic">
             <Mic2 size={24} />
@@ -25,15 +24,15 @@ export function InquiryEntryCard({ inquiry, onStart }) {
           <strong>说出不适，我来逐步问询</strong>
           <div className="inquiry-capability-strip" aria-label="问询流程">
             <article>
-              <span className="inquiry-capability-icon"><MessageCircle size={25} aria-hidden="true" /></span>
+              <MessageCircle size={25} aria-hidden="true" />
               <span>描述不适</span>
             </article>
             <article>
-              <span className="inquiry-capability-icon"><HeartPulse size={25} aria-hidden="true" /></span>
+              <HeartPulse size={25} aria-hidden="true" />
               <span>读取体征</span>
             </article>
             <article>
-              <span className="inquiry-capability-icon"><ShieldCheck size={25} aria-hidden="true" /></span>
+              <ShieldCheck size={25} aria-hidden="true" />
               <span>安全核验</span>
             </article>
           </div>

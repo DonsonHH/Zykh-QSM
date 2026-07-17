@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
+import time
+from copy import deepcopy
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
@@ -36,6 +40,52 @@ CABINET_CONTROL_CODE_BY_SLOT: dict[int, int] = {
     22: 21,
     23: 20,
 }
+
+
+class _VitalsMeasurementCoordinator:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._in_flight = False
+        self._generation = 0
+        self._last_result: dict[str, Any] | None = None
+
+    def run(
+        self,
+        reader: Callable[[], dict[str, Any]],
+        *,
+        timeout: float,
+    ) -> dict[str, Any]:
+        with self._condition:
+            if self._in_flight:
+                generation = self._generation
+                completed = self._condition.wait_for(
+                    lambda: not self._in_flight and self._generation > generation,
+                    timeout=timeout,
+                )
+                if completed and self._last_result is not None:
+                    return deepcopy(self._last_result)
+                return {
+                    "temperature_c": None,
+                    "heart_rate": None,
+                    "spo2": None,
+                    "source": "unavailable",
+                    "error_message": "上一轮体征测量仍在进行，请稍后重试。",
+                }
+            self._in_flight = True
+
+        result: dict[str, Any] | None = None
+        try:
+            result = reader()
+            return result
+        finally:
+            with self._condition:
+                self._last_result = deepcopy(result) if result is not None else None
+                self._in_flight = False
+                self._generation += 1
+                self._condition.notify_all()
+
+
+_VITALS_MEASUREMENT = _VitalsMeasurementCoordinator()
 
 
 class QsmClient:
@@ -94,9 +144,9 @@ class QsmClient:
             temperature = self.read_temperature()
             if temperature.get("source") == "real":
                 return temperature
-            return self._read_full_vitals(fallback_error=str(temperature.get("error_message", "")))
+            return self._coordinated_full_vitals(fallback_error=str(temperature.get("error_message", "")))
 
-        return self._read_full_vitals()
+        return self.read_full_vitals()
 
     def read_full_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
@@ -109,7 +159,20 @@ class QsmClient:
                 "quality": "mock",
                 "message": "mock full vitals",
             }
-        return self._read_full_vitals()
+        return self._coordinated_full_vitals()
+
+    def _coordinated_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
+        timeout = (
+            settings.qsm_vitals_timeout_seconds * settings.qsm_vitals_retry_attempts
+            + settings.qsm_vitals_retry_delay_seconds
+            + 5
+        )
+        if fallback_error:
+            return _VITALS_MEASUREMENT.run(
+                lambda: self._read_full_vitals(fallback_error=fallback_error),
+                timeout=timeout,
+            )
+        return _VITALS_MEASUREMENT.run(self._read_full_vitals, timeout=timeout)
 
     def _read_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
         last_error = ""
@@ -119,15 +182,25 @@ class QsmClient:
             (settings.qsm_temp_path, True),
         ):
             for method in ("POST", "GET"):
-                payload, error = self._request_json(
-                    path,
-                    method=method,
-                    body_format="auto",
-                    timeout=settings.qsm_vitals_timeout_seconds,
+                attempts = (
+                    settings.qsm_vitals_retry_attempts
+                    if path == settings.qsm_vitals_all_path and method == "POST"
+                    else 1
                 )
-                if not error:
-                    return self._parse_vitals(payload, partial=partial)
-                last_error = error
+                for attempt in range(attempts):
+                    payload, error = self._request_json(
+                        path,
+                        method=method,
+                        body_format="auto",
+                        timeout=settings.qsm_vitals_timeout_seconds,
+                    )
+                    if error:
+                        last_error = error
+                        break
+                    parsed = self._parse_vitals(payload, partial=partial)
+                    if self._core_vitals_complete(parsed) or attempt == attempts - 1:
+                        return parsed
+                    time.sleep(settings.qsm_vitals_retry_delay_seconds)
         return self._unavailable_vitals(last_error or fallback_error)
 
     def read_temperature(self) -> dict[str, Any]:
@@ -534,6 +607,10 @@ class QsmClient:
             return float(value) == 0
         except (TypeError, ValueError):
             return False
+
+    @staticmethod
+    def _core_vitals_complete(vitals: dict[str, Any]) -> bool:
+        return all(vitals.get(field) is not None for field in ("temperature_c", "heart_rate", "spo2"))
 
     def _real_unavailable(self, error_message: str) -> QsmStatus:
         devices = self.get_device_status()

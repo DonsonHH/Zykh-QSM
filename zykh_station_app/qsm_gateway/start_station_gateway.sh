@@ -18,6 +18,10 @@ CAMERA_STREAM_FPS="${CAMERA_STREAM_FPS:-30}"
 cd "$QSM_HOME" || exit 1
 mkdir -p "$QSM_HOME/data" "$QSM_HOME/scripts"
 
+if [ -f "$QSM_HOME/scripts/patch_station_gateway.pl" ]; then
+  perl "$QSM_HOME/scripts/patch_station_gateway.pl" "$QSM_HOME/server.pl" || exit 1
+fi
+
 if [ -x "$QSM_HOME/scripts/start_local_tts_server.sh" ]; then
   sh "$QSM_HOME/scripts/start_local_tts_server.sh" >/dev/null 2>&1 || \
     printf 'Warning: persistent offline TTS did not start; script fallback remains available.\n' >&2
@@ -38,7 +42,21 @@ gateway_pids() {
 for pid in $(gateway_pids); do
   kill "$pid" 2>/dev/null || true
 done
-sleep 1
+
+stop_count=0
+while [ -n "$(gateway_pids)" ] && [ "$stop_count" -lt 20 ]; do
+  stop_count=$((stop_count + 1))
+  sleep 0.2
+done
+for pid in $(gateway_pids); do
+  kill -9 "$pid" 2>/dev/null || true
+done
+sleep 0.3
+
+if [ -n "$(gateway_pids)" ]; then
+  printf 'Cannot stop the previous station gateway processes\n' >&2
+  exit 1
+fi
 
 TZ="${TZ:-CST-8}" \
 PORT="$PORT" \

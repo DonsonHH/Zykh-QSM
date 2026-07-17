@@ -413,7 +413,7 @@ class RecordsService:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
-        seed_version = "family-demo-v2"
+        seed_version = "family-demo-v4-resolved-users"
         demo_plans = (
             ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "1片"),
             ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", "zhangsan", "1片"),
@@ -426,14 +426,26 @@ class RecordsService:
             seed = conn.execute("SELECT value FROM app_settings WHERE key='today_plan_seed_version'").fetchone()
             if seed and seed["value"] == seed_version:
                 return
-            # This one-time migration replaces the old single demo row with the
-            # six-task family scenario requested for the kiosk home screen.
-            conn.execute("DELETE FROM today_plans")
+            users = conn.execute("SELECT id, name FROM service_users ORDER BY name, id").fetchall()
+
+            def resolve_user(preferred_id: str, preferred_name: str, excluded_ids: set[str]) -> object | None:
+                for user in users:
+                    if user["id"] == preferred_id and user["id"] not in excluded_ids:
+                        return user
+                for user in users:
+                    if user["name"] == preferred_name and user["id"] not in excluded_ids:
+                        return user
+                return next((user for user in users if user["id"] not in excluded_ids), None)
+
+            primary_user = resolve_user("zhangsan", "张三", set())
+            primary_ids = {str(primary_user["id"])} if primary_user else set()
+            secondary_user = resolve_user("lisi", "李四", primary_ids)
+            demo_users = {
+                "zhangsan": primary_user,
+                "lisi": secondary_user,
+            }
             for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
-                user = conn.execute(
-                    "SELECT id, name FROM service_users WHERE id=? LIMIT 1",
-                    (user_id,),
-                ).fetchone()
+                user = demo_users.get(user_id)
                 medicine = conn.execute(
                     "SELECT id, name FROM medicines WHERE id=? LIMIT 1",
                     (medicine_id,),
@@ -447,6 +459,7 @@ class RecordsService:
                       medicine, target_user, updated_at, schedule_type,
                       interval_days, weekdays_json, start_date, last_action_date
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO NOTHING
                     """,
                     (
                         plan_id,
