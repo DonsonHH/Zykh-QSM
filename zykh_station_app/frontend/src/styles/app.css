@@ -1681,13 +1681,30 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  overflow: auto;
+  overflow: hidden;
   padding: 16px;
 }
 
 .medicine-detail-panel.empty {
   justify-content: center;
   text-align: center;
+}
+
+.medicine-detail-scroll {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-color: #bfd2ea transparent;
+  scrollbar-width: thin;
+}
+
+.medicine-detail-scroll > * {
+  flex: 0 0 auto;
 }
 
 .detail-heading,
@@ -1880,12 +1897,8 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .detail-action {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
   flex: 0 0 auto;
-  margin-top: auto;
-  box-shadow: 0 -8px 22px rgba(255, 255, 255, 0.96), 0 10px 20px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
 }
 
 .modal-layer {

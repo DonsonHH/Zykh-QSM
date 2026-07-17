@@ -9,6 +9,7 @@ from ..schemas.medicine import Medicine
 
 
 MEDICINE_SEED_VERSION = "home-real-cabinet-v4-no-decrement"
+MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v1"
 
 DEFAULT_MEDICINES = [
     {
@@ -92,7 +93,7 @@ DEFAULT_MEDICINES = [
         "name": "蜜炼川贝枇杷膏",
         "category": "咳嗽咽喉",
         "tags": ["咳嗽痰多", "咽喉不适"],
-        "contraindications": ["对成分过敏禁用", "糖尿病患者慎用"],
+        "contraindications": ["对成分过敏禁用", "糖尿病患者禁用"],
         "stock": 1,
         "unit": "瓶",
         "expire_date": "2028-06",
@@ -429,96 +430,96 @@ DEFAULT_MEDICINES = [
 
 DEFAULT_MEDICINE_GUIDANCE = {
     "slot-01-fufang-ganmaoling": {
-        "indications": "辛凉解表、清热解毒，用于风热感冒引起的发热、头痛、咽痛、鼻塞流浊涕及咳嗽。",
-        "dosage": "开水冲服；成人每次用量和每日次数按当前包装说明书，避免与其他含对乙酰氨基酚药品同用。",
+        "indications": "辛凉解表，清热解毒。用于风热感冒之发热，微恶风寒，头身痛，口干而渴，鼻塞涕浊，咽喉红肿疼痛，咳嗽，痰黄粘稠。",
+        "dosage": "开水冲服，一次14克，一日3次；2天为一疗程。含对乙酰氨基酚，勿与同类感冒药重复使用。",
     },
     "slot-02-centrum": {
-        "indications": "用于成人因维生素和矿物质摄入不足所致的营养补充。",
-        "dosage": "成人通常每日1片，饭后服用；儿童、孕期或慢病患者按说明书或医嘱。",
+        "indications": "用于预防和治疗因维生素与矿物质缺乏所引起的各种疾病。",
+        "dosage": "口服，成人一日1片。严格按规定剂量服用，不与其他高剂量维生素、矿物质制剂重复使用。",
     },
     "slot-03-ganmao-qingre": {
-        "indications": "疏风散寒、解表清热，用于风寒感冒引起的头痛发热、恶寒身痛、鼻流清涕和咳嗽咽干。",
-        "dosage": "开水冲服，通常每日2次；每袋规格可能不同，单次用量以当前包装说明书为准。",
+        "indications": "疏风散寒，解表清热。用于风寒感冒，头痛发热，恶寒身痛，鼻流清涕，咳嗽咽干。",
+        "dosage": "开水冲服，一次1袋（12克），一日2次。",
     },
     "slot-04-amoxicillin": {
-        "indications": "用于对阿莫西林敏感细菌所致的感染，仅在医生判断并已有处方或医嘱时使用。",
-        "dosage": "处方药；按感染类型、年龄、体重及肾功能由医生确定剂量和疗程，不自行加量或停药。",
+        "indications": "用于敏感菌所致的上、下呼吸道感染，泌尿生殖道感染，皮肤软组织感染等。仅在医生判断为细菌感染并已有处方或医嘱时使用。",
+        "dosage": "口服，成人一次0.5克，每6至8小时1次，一日剂量不超过4克。本品为0.5克规格时每次1粒；具体疗程遵医嘱。",
     },
     "slot-05-nin-jiom-pei-pa-koa": {
-        "indications": "润肺化痰、止咳平喘、护喉利咽，用于咳嗽、痰多、咽喉干痒及声音嘶哑等不适。",
-        "dosage": "口服，按瓶身量杯和当前包装说明书取用；儿童、糖尿病患者及孕期人员先咨询医生。",
+        "indications": "润肺化痰、止咳平喘、护喉利咽、生津补气、调心降火。用于伤风咳嗽、痰稠、痰多气喘、咽喉干痒及声音嘶哑。",
+        "dosage": "口服，成人每日3次，每次1汤匙（15毫升）；儿童酌减。糖尿病患者禁用。",
     },
     "slot-06-lactulose": {
-        "indications": "用于慢性或功能性便秘，通过调节结肠生理节律帮助排便。",
-        "dosage": "口服，可随餐服用并根据排便情况调整；起始量和维持量按包装说明书或医嘱。",
+        "indications": "用于慢性或习惯性便秘，调节结肠的生理节律；也可在医生指导下用于肝性脑病。",
+        "dosage": "治疗成人便秘时，起始剂量每日30毫升，维持剂量每日10至25毫升，宜在早餐时一次服用并按排便情况调整。",
     },
     "slot-07-yinhuang": {
-        "indications": "清热疏风、利咽解毒，用于外感风热或上呼吸道不适引起的咽干、咽痛。",
-        "dosage": "开水冲服；单次剂量和每日次数按当前包装说明书，连续使用后无改善应联系医生。",
+        "indications": "清热疏风，利咽解毒。用于外感风热、肺胃热盛所致的咽干、咽痛、喉核肿大、口渴、发热；急慢性扁桃体炎、急慢性咽炎、上呼吸道感染见上述证候者。",
+        "dosage": "开水冲服，一次1至2袋，一日2次。",
     },
     "slot-08-huoxiang-zhengqi": {
-        "indications": "解表化湿、理气和中，用于暑湿感冒、头痛身重胸闷、脘腹胀痛、呕吐泄泻。",
-        "dosage": "口服，当前大蜜丸规格通常每次1丸、每日2次；取用前仍需核对实物包装说明书。",
+        "indications": "解表化湿，理气和中。用于暑湿感冒，头痛身重胸闷，或恶寒发热，脘腹胀痛，呕吐泄泻。",
+        "dosage": "口服，一次1丸，一日2次。",
     },
     "slot-09-bifid-triple": {
-        "indications": "用于肠道菌群失调引起的腹泻、便秘、腹胀等消化道不适。",
-        "dosage": "饭后口服，用量按年龄和当前包装说明书；与抗菌药至少错开2小时并按要求冷藏。",
+        "indications": "用于肠道菌群失调引起的急慢性腹泻、便秘，也可用于轻中型急性腹泻、慢性腹泻及消化不良。",
+        "dosage": "口服，成人一次2至4粒，一日2次。与抗菌药分开服用，并按2至10℃冷藏要求保存。",
     },
     "slot-10-gauze": {
-        "indications": "用于清洁后的浅表伤口覆盖、吸收渗液和辅助包扎。",
-        "dosage": "一次性外用；按伤口范围选择合适尺寸，污染、浸湿或松脱后及时更换。",
+        "indications": "供医疗机构或家庭护理中清洁后的浅表伤口覆盖、吸收渗液、隔离保护和辅助包扎使用。",
+        "dosage": "一次性外用。清洁伤口后按创面选择合适尺寸覆盖；敷料受潮、污染或松脱时立即更换。",
     },
     "slot-11-guilin-xiguashuang": {
-        "indications": "清热解毒、消肿止痛，用于咽喉肿痛、口舌生疮及牙龈肿痛等口咽不适。",
-        "dosage": "外用喷敷患处，次数按当前包装说明书；操作时屏住呼吸，避免粉末吸入气道。",
+        "indications": "清热解毒，消肿止痛。用于风热上攻、肺胃热盛所致的咽喉肿痛、喉核肿大、口舌生疮、牙龈肿痛或出血，以及相应的咽炎、扁桃体炎、口腔炎和口腔溃疡。",
+        "dosage": "外用，喷、吹或敷于患处，一次适量，一日数次。口腔内使用时不要呼吸，用后半小时内不进食、不饮水。",
     },
     "slot-12-hydrotalcite": {
-        "indications": "用于胃酸相关的胃痛、胃灼热、酸性嗳气、饱胀等症状，以及相关胃黏膜保护。",
-        "dosage": "咀嚼后服用，通常在餐后1至2小时、睡前或症状出现时使用；剂量以包装说明书为准。",
+        "indications": "用于慢性胃炎，以及与胃酸有关的胃部不适症状，如胃痛、胃灼热感（烧心）、酸性嗳气、饱胀等。",
+        "dosage": "口服，咀嚼后吞服。一次1至2片，一日3次，通常在餐后1至2小时、睡前或胃部不适时服用。",
     },
     "slot-13-sodium-hyaluronate-eye": {
-        "indications": "用于干眼、眼表刺激或角结膜上皮损伤相关的干涩、异物感等不适。",
-        "dosage": "滴入结膜囊，每次1滴；每日次数按说明书或医嘱，瓶口不要接触眼睛和皮肤。",
+        "indications": "用于伴随干燥综合征、斯约二氏综合征等内因性疾患，或手术、药物、外伤、佩戴隐形眼镜等外因性疾患所致的角结膜上皮损伤。",
+        "dosage": "滴眼，一次1滴，一日3次；可根据症状适当增减。单支开启后一次使用，瓶口勿接触眼睛或皮肤。",
     },
     "slot-14-oseltamivir": {
-        "indications": "用于甲型和乙型流感的治疗或预防，适用时机需结合发病时间并由医生核验。",
-        "dosage": "处方药；按年龄、体重、肾功能和用途由医生确定剂量及疗程，不用于普通感冒自行服用。",
+        "indications": "用于成人和1岁及1岁以上儿童的甲型和乙型流感治疗，也可在医生指导下用于流感预防。",
+        "dosage": "治疗成人及13岁以上青少年流感时，口服一次75毫克，一日2次，共5天。儿童、肾功能异常或预防用药须按医嘱调整。",
     },
     "slot-15-mupirocin": {
-        "indications": "用于脓疱病、毛囊炎、疖肿等原发性皮肤感染，以及小面积继发性细菌感染。",
-        "dosage": "局部外用，薄涂患处；每日次数和疗程按说明书或医嘱，连续使用无改善需复诊。",
+        "indications": "局部外用抗生素，用于革兰阳性球菌引起的脓疱病、疖肿、毛囊炎等原发性皮肤感染，以及湿疹或小面积浅表创伤合并的继发性皮肤感染。",
+        "dosage": "局部外用，涂于患处，一日3次，5天为一疗程；必要时可用敷料包扎或敷盖。",
     },
     "slot-16-ketoconazole": {
-        "indications": "用于手足癣、体股癣、花斑癣及皮肤念珠菌病等浅表真菌感染。",
-        "dosage": "清洁并擦干患处后薄涂，通常每日1至2次；疗程按感染部位和包装说明书执行。",
+        "indications": "用于手癣、足癣、体癣、股癣、花斑癣及皮肤念珠菌病等浅表真菌感染。",
+        "dosage": "局部外用，取适量均匀涂于患处，一日2至3次。症状消失后按说明书继续使用，避免过早停药。",
     },
     "slot-17-iodophor": {
-        "indications": "用于完整皮肤消毒及清洁浅表小伤口周围皮肤。",
-        "dosage": "仅限外用，用无菌棉签或纱布蘸取后涂擦；使用浓度、作用时间以瓶身说明为准。",
+        "indications": "用于完整皮肤、浅表创面及伤口周围皮肤的清洁与消毒。",
+        "dosage": "仅限外用。用无菌棉签或纱布蘸取原液涂擦消毒部位；具体作用时间和使用范围以瓶身标签为准。",
     },
     "slot-18-budesonide-nasal": {
-        "indications": "用于季节性或常年性过敏性鼻炎引起的鼻塞、流涕、喷嚏和鼻痒。",
-        "dosage": "仅鼻腔喷用，先清洁鼻腔并按说明书完成预喷；使用最低有效剂量，具体喷数按医嘱。",
+        "indications": "治疗季节性和常年性过敏性鼻炎，以及常年性非过敏性鼻炎。",
+        "dosage": "成人及6岁以上儿童推荐起始剂量一日256微克：早晨每个鼻孔2喷；或早晚各1次、每次每个鼻孔1喷。症状控制后减至最低有效剂量。",
     },
     "slot-19-ketoprofen-gel": {
-        "indications": "用于扭伤、挫伤、肌腱或关节周围软组织损伤引起的局部疼痛和炎症。",
-        "dosage": "仅完整皮肤外用，取适量轻揉患处；每日次数按说明书，使用部位避免日晒和紫外线。",
+        "indications": "用于各种骨骼肌损伤、急性软组织损伤，以及由外伤、扭伤、挫伤、劳损等引起的局部疼痛和炎症。",
+        "dosage": "外用，按疼痛部位大小取适量轻轻揉搓，一日1至2次。用药期间及停药后两周避免患处日晒和紫外线。",
     },
     "slot-20-bandage": {
-        "indications": "用于清洁、干燥的浅表小伤口止血后覆盖和日常保护。",
-        "dosage": "一次性外用；伤口清洁干燥后贴敷，受潮、污染或每日检查时及时更换。",
+        "indications": "用于浅表性小创口、擦伤等清洁止血后的覆盖、隔离和日常保护。",
+        "dosage": "一次性外用。清洁并擦干伤口后选择合适尺寸贴敷；受潮、污染、松脱或至少每日检查时更换。",
     },
     "slot-21-amlodipine": {
-        "indications": "用于高血压及部分心绞痛患者的长期管理，仅供已有治疗计划的家庭成员按医嘱取用。",
-        "dosage": "处方药，通常每日固定时间服用；具体剂量只按既往处方，不因单次血压变化自行调整。",
+        "indications": "用于高血压，可单独使用或与其他降压药合用；也用于慢性稳定性心绞痛及血管痉挛性心绞痛。",
+        "dosage": "成人治疗高血压通常起始剂量为5毫克，一日1次，最大剂量10毫克，一日1次。仅按既往处方服用，不因单次血压自行调量。",
     },
     "slot-22-cotton-swab": {
-        "indications": "用于皮肤或浅表伤口清洁、消毒时辅助蘸取外用液体。",
-        "dosage": "一次性外用；每根仅使用一次，避免深入耳道、鼻腔或接触深部伤口。",
+        "indications": "用于皮肤、浅表创面清洁或消毒时蘸取和涂抹外用液体。",
+        "dosage": "一次性外用，每根仅使用一次。包装破损或棉头污染时不得使用，不深入耳道、鼻腔或深部伤口。",
     },
     "slot-23-desloratadine": {
-        "indications": "用于缓解过敏性鼻炎相关鼻痒、喷嚏、流涕，以及慢性荨麻疹相关瘙痒和风团。",
-        "dosage": "处方药，通常每日服用一次；具体规格和剂量按既往医嘱及当前包装说明书。",
+        "indications": "用于快速缓解过敏性鼻炎相关的喷嚏、流涕、鼻痒、鼻塞、眼痒流泪等症状，也用于缓解慢性特发性荨麻疹的瘙痒并减少风团。",
+        "dosage": "成人及12岁以上青少年口服，每日1次，每次1粒。",
     },
 }
 
@@ -527,7 +528,7 @@ for _medicine in DEFAULT_MEDICINES:
     _medicine.update(
         indications=_guidance["indications"],
         dosage=_guidance["dosage"],
-        guidance_source="seed_reference",
+        guidance_source="label_reference",
         guidance_review_required=True,
     )
 
@@ -842,6 +843,14 @@ class MedicineRepository:
             """,
             (MEDICINE_SEED_VERSION, db.now_text()),
         )
+        conn.execute(
+            """
+            INSERT INTO app_settings(key, value, updated_at)
+            VALUES ('medicine_guidance_version', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (MEDICINE_GUIDANCE_VERSION, db.now_text()),
+        )
 
     @staticmethod
     def _row_to_medicine(row: object) -> Medicine:
@@ -871,6 +880,45 @@ class MedicineRepository:
 
     @staticmethod
     def _sync_default_guidance(conn) -> None:
+        version_row = conn.execute(
+            "SELECT value FROM app_settings WHERE key='medicine_guidance_version'"
+        ).fetchone()
+        if not version_row or version_row["value"] != MEDICINE_GUIDANCE_VERSION:
+            for item in DEFAULT_MEDICINES:
+                conn.execute(
+                    """
+                    UPDATE medicines
+                    SET indications=?,
+                        dosage=?,
+                        contraindications_json=?,
+                        safety_note=?,
+                        guidance_source=?,
+                        guidance_review_required=?,
+                        guidance_updated_at=?
+                    WHERE id=? AND name=?
+                    """,
+                    (
+                        item["indications"],
+                        item["dosage"],
+                        json.dumps(item["contraindications"], ensure_ascii=False),
+                        item["safety_note"],
+                        item["guidance_source"],
+                        1 if item["guidance_review_required"] else 0,
+                        db.now_text(),
+                        item["id"],
+                        item["name"],
+                    ),
+                )
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('medicine_guidance_version', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (MEDICINE_GUIDANCE_VERSION, db.now_text()),
+            )
+            return
+
         for item in DEFAULT_MEDICINES:
             conn.execute(
                 """

@@ -8,8 +8,9 @@ import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
 export function Medicines({ notify, focus, onNavigate }) {
-  const initialMedicineView =
-    new URLSearchParams(window.location.search).get("medicineView") === "cabinet" ? "cabinet" : "list";
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialMedicineView = initialParams.get("medicineView") === "cabinet" ? "cabinet" : "list";
+  const initialMedicineId = initialParams.get("medicineId");
   const [medicines, setMedicines] = useState([]);
   const [selectedMedicine, setSelectedMedicine] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -25,8 +26,11 @@ export function Medicines({ notify, focus, onNavigate }) {
     setLoadError("");
     loadMedicines()
       .then((data) => {
-        setMedicines(data.medicines || []);
-        setSelectedMedicine((data.medicines || [])[0] || null);
+        const loadedMedicines = data.medicines || [];
+        setMedicines(loadedMedicines);
+        setSelectedMedicine(
+          loadedMedicines.find((medicine) => medicine.id === initialMedicineId) || loadedMedicines[0] || null
+        );
       })
       .catch((error) => {
         const message = error.message || "药品列表加载失败";

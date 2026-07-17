@@ -224,6 +224,14 @@ backend_ready() {
   curl -fsS --max-time 1 "$BACKEND_URL/api/health" >/dev/null 2>&1
 }
 
+backend_schema_current() {
+  response="$(curl -fsS --max-time 2 "$BACKEND_URL/api/medicines/slot-08-huoxiang-zhengqi" 2>/dev/null || true)"
+  [ -n "$response" ] || return 1
+  printf '%s' "$response" | grep -q '"indications"' || return 1
+  printf '%s' "$response" | grep -q '"dosage"' || return 1
+  printf '%s' "$response" | grep -q '"guidance_source"' || return 1
+}
+
 backend_port() {
   port="$(printf '%s' "$BACKEND_URL" | sed -n 's#.*:\([0-9][0-9]*\).*#\1#p')"
   printf '%s\n' "${port:-8000}"
@@ -255,21 +263,40 @@ stop_backend_if_managed() {
 
 stop_project_backend_processes() {
   port="$(backend_port)"
-  if ! command -v pgrep >/dev/null 2>&1; then
-    return 0
+  stopped=0
+  candidates=""
+  if command -v pgrep >/dev/null 2>&1; then
+    candidates="$(pgrep -f "uvicorn app.main.*--port $port" 2>/dev/null || true)"
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    listeners="$(lsof -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    candidates="$(printf '%s\n%s\n' "$candidates" "$listeners")"
   fi
 
-  stopped=0
-  for pid in $(pgrep -f "uvicorn app.main.*--port $port" 2>/dev/null || true); do
+  for pid in $(printf '%s\n' "$candidates" | awk 'NF && !seen[$0]++'); do
     case "$pid" in
       ''|*[!0-9]*) continue ;;
     esac
     cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$cmdline" in
+      *uvicorn*app.main:app*) ;;
+      *) continue ;;
+    esac
     case "$cwd" in
       "$ROOT_DIR/backend"|"$ROOT_DIR/backend/"*)
         log "停止旧后端进程 PID $pid，以加载最新配置..."
         kill "$pid" >/dev/null 2>&1 || true
         stopped=1
+        ;;
+      *)
+        case "$cmdline" in
+          *"$ROOT_DIR/backend"*)
+            log "停止旧后端进程 PID $pid，以加载最新配置..."
+            kill "$pid" >/dev/null 2>&1 || true
+            stopped=1
+            ;;
+        esac
         ;;
     esac
   done
@@ -343,7 +370,7 @@ stop_project_frontend_processes() {
 wait_for_backend() {
   count=0
   while [ "$count" -lt 30 ]; do
-    if backend_ready; then
+    if backend_ready && backend_schema_current; then
       return 0
     fi
     count=$((count + 1))
@@ -370,12 +397,15 @@ start_backend_if_needed() {
     stop_project_backend_processes
   fi
 
-  if backend_ready; then
+  if backend_ready && backend_schema_current; then
     log "后端已运行：$BACKEND_URL"
-    if [ "$KIOSK_RESTART_BACKEND" = "1" ]; then
-      warn "检测到 8000 端口仍有外部后端进程；如需加载最新配置，请先停止该进程后重新运行脚本。"
-    fi
     return 0
+  fi
+
+  if backend_ready; then
+    warn "端口 $(backend_port) 上的后端接口版本过旧，且启动器未能安全停止该进程。"
+    warn "请停止占用该端口的旧 FastAPI 进程后重新运行 scripts/launch_kiosk.sh。"
+    return 1
   fi
 
   log "启动后端服务..."

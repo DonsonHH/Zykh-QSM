@@ -12,7 +12,10 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
-from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
+from app.repositories.medicine_repository import (  # noqa: E402
+    MEDICINE_GUIDANCE_VERSION,
+    MedicineRepository,
+)
 from app.schemas.medicine import MedicineUpdateRequest  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
 
@@ -59,6 +62,54 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertTrue(all(item.indications for item in medicines))
         self.assertTrue(all(item.dosage for item in medicines))
         self.assertTrue(all(item.contraindications for item in medicines))
+        self.assertTrue(all(item.guidance_source == "label_reference" for item in medicines))
+        self.assertFalse(any("按当前包装说明书" in item.dosage for item in medicines))
+
+    def test_guidance_version_migrates_fixed_reference_without_resetting_inventory(self) -> None:
+        self.service.list_medicines()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=7, indications='暑湿不适、腹胀呕吐', dosage='请按包装说明书使用'
+                WHERE id='slot-08-huoxiang-zhengqi'
+                """
+            )
+            conn.execute("DELETE FROM app_settings WHERE key='medicine_guidance_version'")
+
+        medicine = self.service.get_medicine("slot-08-huoxiang-zhengqi")
+
+        self.assertEqual(medicine.stock, 7)
+        self.assertEqual(
+            medicine.indications,
+            "解表化湿，理气和中。用于暑湿感冒，头痛身重胸闷，或恶寒发热，脘腹胀痛，呕吐泄泻。",
+        )
+        self.assertEqual(medicine.dosage, "口服，一次1丸，一日2次。")
+        self.assertEqual(medicine.guidance_source, "label_reference")
+        with db.connect() as conn:
+            version = conn.execute(
+                "SELECT value FROM app_settings WHERE key='medicine_guidance_version'"
+            ).fetchone()
+        self.assertEqual(version["value"], MEDICINE_GUIDANCE_VERSION)
+
+    def test_guidance_migration_does_not_overwrite_renamed_admin_medicine(self) -> None:
+        self.service.list_medicines()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET name='家庭自备藿香正气丸', indications='管理员确认的适用说明',
+                    dosage='管理员确认的用量'
+                WHERE id='slot-08-huoxiang-zhengqi'
+                """
+            )
+            conn.execute("DELETE FROM app_settings WHERE key='medicine_guidance_version'")
+
+        medicine = self.service.get_medicine("slot-08-huoxiang-zhengqi")
+
+        self.assertEqual(medicine.name, "家庭自备藿香正气丸")
+        self.assertEqual(medicine.indications, "管理员确认的适用说明")
+        self.assertEqual(medicine.dosage, "管理员确认的用量")
 
     def test_base_information_change_refreshes_guidance(self) -> None:
         medicine = self.service.get_medicine("slot-08-huoxiang-zhengqi")
