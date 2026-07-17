@@ -12,6 +12,8 @@ class Medicine(BaseModel):
     name: str
     category: str
     tags: list[str]
+    indications: str = ""
+    dosage: str = ""
     contraindications: list[str]
     stock: int
     unit: str
@@ -20,6 +22,9 @@ class Medicine(BaseModel):
     is_otc: bool
     is_emergency: bool
     safety_note: str
+    guidance_source: str = "pending"
+    guidance_review_required: bool = True
+    guidance_updated_at: str = ""
 
 
 class MedicineListResponse(BaseModel):
@@ -41,6 +46,8 @@ class MedicineUpdateRequest(BaseModel):
     barcode: str | None = None
     category: str | None = None
     tags: list[str] | None = None
+    indications: str | None = None
+    dosage: str | None = None
     contraindications: list[str] | None = None
     stock: int | None = None
     unit: str | None = None
@@ -85,6 +92,7 @@ class MedicineScanResult(BaseModel):
 
 class MedicineScanRegisterRequest(BaseModel):
     barcode: str | None = None
+    manufacturer: str | None = None
     name: str | None = None
     spec: str | None = None
     expire_date: str | None = None
@@ -92,6 +100,8 @@ class MedicineScanRegisterRequest(BaseModel):
     stock: int = 1
     unit: str = "盒"
     category: str = "扫码录入"
+    indications: str | None = None
+    dosage: str | None = None
     safety_note: str | None = None
 
 

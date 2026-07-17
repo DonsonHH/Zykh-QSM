@@ -209,7 +209,8 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
       target_user_name: identity?.name || anonymousGuest.name,
       verification_method: verificationMethod,
       verification_score: score ?? null,
-      today_plan_id: guest ? "" : plan?.id || ""
+      today_plan_id: guest ? "" : plan?.id || "",
+      archive_identity_snapshot: guest && verificationMethod === "face_guest_confirmed"
     });
     if (dispense && dispense.ok === false) {
       throw new Error(dispense.message || "柜门未能打开");

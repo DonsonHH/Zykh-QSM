@@ -23,6 +23,15 @@ class SuccessfulQsmClient:
         return {"ok": True, "detail": f"slot={slot} quantity={quantity} dry_run={dry_run}"}
 
 
+class RecordingArchiveService:
+    def __init__(self) -> None:
+        self.records = []
+
+    def capture_for_record(self, record) -> dict[str, object]:
+        self.records.append(record)
+        return {"ok": True, "status": "captured"}
+
+
 class DispenseIdentityRecordsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -32,7 +41,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         db.init_db()
         MedicineService().list_medicines()
         self.records = RecordsService()
-        self.service = DispenseService(qsm_client=SuccessfulQsmClient())
+        self.archive = RecordingArchiveService()
+        self.service = DispenseService(qsm_client=SuccessfulQsmClient(), archive_service=self.archive)
 
     def tearDown(self) -> None:
         self.db_patch.stop()
@@ -118,6 +128,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 target_user_id="",
                 target_user_name="游客（未识别人脸）",
                 verification_method="face_guest_confirmed",
+                archive_identity_snapshot=True,
             ),
             force_dry_run=False,
         )
@@ -125,6 +136,30 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         recent = self.records.get_recent_records()[0]
         self.assertEqual(recent.target_user, "游客（未识别人脸）")
         self.assertEqual(recent.target_user_type, "guest")
+        self.assertEqual(len(self.archive.records), 1)
+        self.assertEqual(self.archive.records[0].target_user_name, "游客（未识别人脸）")
+
+    def test_registered_dispense_does_not_archive_identity_snapshot(self) -> None:
+        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
+        self.assertIsNotNone(medicine)
+
+        self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="登记成员取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="zhangsan",
+                target_user_name="张三",
+                verification_method="face",
+                archive_identity_snapshot=True,
+            ),
+            force_dry_run=False,
+        )
+
+        self.assertEqual(self.archive.records, [])
 
     def test_user_records_hide_dry_run_entries(self) -> None:
         medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")

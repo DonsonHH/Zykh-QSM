@@ -1,5 +1,5 @@
 import React from "react";
-import { Boxes, CircleUserRound, Clock3, Database, HardDrive, RefreshCw, Router, Wifi } from "lucide-react";
+import { Boxes, Camera, CameraOff, CircleUserRound, Clock3, Database, HardDrive, RefreshCw, Router, Wifi } from "lucide-react";
 
 function formatBytes(value) {
   if (!value) return "--";
@@ -90,6 +90,31 @@ export function AdminOverview({ data, loading, onRefresh }) {
               <time>{item.created_at}</time><code>{item.action}</code><span>{item.target}</span><strong className={item.result === "success" ? "ok" : ""}>{item.result}</strong>
             </div>
           )) : <p className="admin-empty-state">暂无管理员操作记录</p>}
+        </div>
+      </section>
+
+      <section className="admin-identity-archive-panel">
+        <header>
+          <div><Camera size={19} aria-hidden="true" /><h3>访客取药留档</h3></div>
+          <span>{counts.identity_archives ?? 0} 张已保存</span>
+        </header>
+        <div className="admin-identity-archive-grid">
+          {(data?.recent_dispense_archives || []).length ? data.recent_dispense_archives.map((item) => (
+            <article key={item.id}>
+              <div className="admin-archive-image">
+                {item.thumbnail_data_url ? (
+                  <img src={item.thumbnail_data_url} alt={`${item.target_user_name}取药留档`} />
+                ) : (
+                  <span><CameraOff size={26} aria-hidden="true" />画面未保存</span>
+                )}
+              </div>
+              <div>
+                <strong>{item.target_user_name}</strong>
+                <span>{item.medicine_name}</span>
+                <time>{item.captured_at}</time>
+              </div>
+            </article>
+          )) : <p className="admin-empty-state">暂无访客取药照片</p>}
         </div>
       </section>
     </div>

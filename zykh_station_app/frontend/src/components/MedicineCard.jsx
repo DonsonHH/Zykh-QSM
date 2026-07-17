@@ -12,7 +12,10 @@ export function MedicineCard({ medicine, selected, onSelect }) {
       <MedicineIcon medicine={medicine} size={30} className="medicine-box" />
       <span className="medicine-card-copy">
         <strong>{medicine.name}</strong>
-        <small>{medicine.manufacturer ? `${medicine.manufacturer} · ${medicine.category}` : medicine.category}</small>
+        <span className="medicine-card-context">
+          {medicine.manufacturer ? <small className="medicine-manufacturer">{medicine.manufacturer}</small> : null}
+          <small className="medicine-efficacy">{medicine.category}</small>
+        </span>
       </span>
       <span className="medicine-card-meta">
         <em>

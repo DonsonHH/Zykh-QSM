@@ -1,17 +1,41 @@
 import React from "react";
 import {
+  Activity,
   Bandage,
+  BicepsFlexed,
   CircleDot,
   CupSoda,
   Droplets,
   Eye,
   GlassWater,
+  Hand,
+  HeartPulse,
   PackageOpen,
   Pill,
+  ShieldPlus,
+  Soup,
   SprayCan,
+  Sparkles,
   Tablets,
-  TestTube2
+  TestTube2,
+  Thermometer,
+  Wind
 } from "lucide-react";
+
+const efficacyTypes = [
+  { pattern: /感冒发热/, icon: Thermometer, tone: "orange" },
+  { pattern: /营养补充/, icon: Sparkles, tone: "teal" },
+  { pattern: /抗菌药/, icon: ShieldPlus, tone: "rose" },
+  { pattern: /咳嗽咽喉|咽喉口腔/, icon: Wind, tone: "cyan" },
+  { pattern: /肠胃/, icon: Soup, tone: "teal" },
+  { pattern: /外伤护理/, icon: Bandage, tone: "rose" },
+  { pattern: /眼部护理/, icon: Eye, tone: "cyan" },
+  { pattern: /外用皮肤/, icon: Hand, tone: "purple" },
+  { pattern: /鼻炎过敏/, icon: Wind, tone: "purple" },
+  { pattern: /外用止痛/, icon: BicepsFlexed, tone: "orange" },
+  { pattern: /慢病常用/, icon: HeartPulse, tone: "blue" },
+  { pattern: /扫码录入/, icon: Activity, tone: "blue" }
+];
 
 const medicineTypes = [
   { pattern: /滴眼|眼液/, icon: Eye, tone: "cyan" },
@@ -28,7 +52,9 @@ const medicineTypes = [
 
 export function getMedicineIconDescriptor(medicine) {
   const text = `${medicine?.name || ""} ${medicine?.category || ""}`;
-  return medicineTypes.find(({ pattern }) => pattern.test(text)) || { icon: PackageOpen, tone: "blue" };
+  return efficacyTypes.find(({ pattern }) => pattern.test(medicine?.category || ""))
+    || medicineTypes.find(({ pattern }) => pattern.test(text))
+    || { icon: PackageOpen, tone: "blue" };
 }
 
 export function MedicineIcon({ medicine, size = 30, className = "" }) {

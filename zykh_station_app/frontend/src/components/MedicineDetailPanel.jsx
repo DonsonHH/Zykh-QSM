@@ -1,5 +1,5 @@
 import React from "react";
-import { CalendarDays, PackageOpen, ShieldAlert, Tags } from "lucide-react";
+import { CalendarDays, ClipboardList, PackageOpen, ShieldAlert, Stethoscope } from "lucide-react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
 
 export function MedicineDetailPanel({ medicine, onConfirm }) {
@@ -16,29 +16,30 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
     <aside className="medicine-detail-panel">
       <div className="detail-heading">
         <MedicineIcon medicine={medicine} size={34} className="detail-icon" />
-        <div>
+        <div className="detail-heading-copy">
           <h2>{medicine.name}</h2>
+          <p>
+            {medicine.manufacturer ? <span className="detail-manufacturer">{medicine.manufacturer}</span> : null}
+            <span className="detail-category">{medicine.category}</span>
+            <span className="detail-slot">{medicine.hardware_slot || medicine.slot}号仓</span>
+          </p>
         </div>
-      </div>
-
-      <div className="detail-pill-row">
-        <span>{medicine.hardware_slot || medicine.slot}号仓</span>
-        {medicine.manufacturer && <span>{medicine.manufacturer}</span>}
-        <span>{medicine.category}</span>
-        <span>{medicine.is_otc ? "常备药" : "需核验"}</span>
-        {medicine.is_emergency && <span>应急可用</span>}
       </div>
 
       <section className="detail-section">
         <h3>
-          <Tags size={20} aria-hidden="true" />
-          适用标签
+          <Stethoscope size={20} aria-hidden="true" />
+          适用症状
         </h3>
-        <div className="tag-list">
-          {medicine.tags.map((tag) => (
-            <span key={tag}>{tag}</span>
-          ))}
-        </div>
+        <p className="detail-copy">{medicine.indications || medicine.tags.join("、") || "请核对药品包装说明。"}</p>
+      </section>
+
+      <section className="detail-section dosage-section">
+        <h3>
+          <ClipboardList size={20} aria-hidden="true" />
+          用法用量
+        </h3>
+        <p className="detail-copy">{medicine.dosage || "请按实物包装说明书或既往医嘱使用。"}</p>
       </section>
 
       <section className="detail-section">
@@ -69,8 +70,13 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
         </article>
       </div>
 
+      <p className={`detail-guidance-source ${medicine.guidance_review_required ? "review" : ""}`}>
+        {medicine.guidance_source === "cloud_ai" ? "云端资料已补全" : medicine.guidance_source === "pending" ? "资料待补全" : "本机参考资料"}
+        {medicine.guidance_review_required ? " · 使用前请核对实物包装说明书" : ""}
+      </p>
+
       <button className="primary-action detail-action" type="button" onClick={onConfirm}>
-        进入取药确认
+        取药
       </button>
     </aside>
   );

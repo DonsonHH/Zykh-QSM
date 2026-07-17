@@ -62,7 +62,12 @@ The endpoint always returns HTTP 200 for expected missing-device cases so the te
 
 ### GET /api/medicines
 
-Returns the home cabinet medicine list and available categories.
+Returns the home medicine list and available categories. Each medicine includes
+`indications`, `dosage`, `contraindications`, `guidance_source` and
+`guidance_review_required`. When an administrator changes a medicine name,
+manufacturer, barcode or category, the backend attempts a structured cloud
+guidance refresh. Generated guidance remains review-required and must be checked
+against the physical package leaflet.
 
 ### GET /api/medicines/{medicine_id}
 
@@ -71,6 +76,12 @@ Returns a single medicine detail.
 ### POST /api/dispense/confirm
 
 Requires the safety notice confirmation flag and writes a local 取药确认 record. By default it calls the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is optional; when configured, only the matching slot can open.
+
+For an unregistered or unidentified face, the frontend sends
+`archive_identity_snapshot=true` after explicit guest confirmation. A successful
+real dispense then retains a small preview frame for the protected administrator
+overview. Registered users and dry-run actions do not create this photo archive;
+photo conversion failure never blocks an already confirmed cabinet action.
 
 ### GET /api/dispense/records
 

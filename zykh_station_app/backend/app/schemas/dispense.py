@@ -15,6 +15,7 @@ class DispenseConfirmRequest(BaseModel):
     verification_method: str = "manual"
     verification_score: float | None = None
     today_plan_id: str = ""
+    archive_identity_snapshot: bool = False
 
 
 class DispenseOpenRequest(BaseModel):

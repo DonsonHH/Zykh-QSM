@@ -34,6 +34,17 @@ class AdminAuditRecord(BaseModel):
     detail: str
 
 
+class AdminDispenseArchive(BaseModel):
+    id: str
+    dispense_record_id: str
+    target_user_name: str
+    medicine_name: str
+    captured_at: str
+    status: str
+    thumbnail_data_url: str = ""
+    error_message: str = ""
+
+
 class AdminOverviewResponse(BaseModel):
     ok: bool = True
     generated_at: str
@@ -42,6 +53,7 @@ class AdminOverviewResponse(BaseModel):
     devices: dict[str, object]
     network: dict[str, object]
     recent_audit: list[AdminAuditRecord]
+    recent_dispense_archives: list[AdminDispenseArchive] = Field(default_factory=list)
 
 
 class AdminLogSource(BaseModel):

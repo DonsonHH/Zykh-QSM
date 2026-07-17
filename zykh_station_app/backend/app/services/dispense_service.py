@@ -16,6 +16,7 @@ from ..schemas.dispense import (
     DispenseRecord,
 )
 from .qsm_client import QsmClient
+from .dispense_archive_service import DispenseArchiveService
 
 
 class DispenseError(Exception):
@@ -33,10 +34,12 @@ class DispenseService:
         medicine_repository: MedicineRepository | None = None,
         dispense_repository: DispenseRepository | None = None,
         qsm_client: QsmClient | None = None,
+        archive_service: DispenseArchiveService | None = None,
     ) -> None:
         self.medicine_repository = medicine_repository or MedicineRepository()
         self.dispense_repository = dispense_repository or DispenseRepository()
         self.qsm_client = qsm_client or QsmClient()
+        self.archive_service = archive_service or DispenseArchiveService()
 
     def confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
         if request.today_plan_id:
@@ -81,6 +84,7 @@ class DispenseService:
                 target_user_type=target_user_type,
             )
             self.dispense_repository.append(record)
+            self._archive_identity_if_requested(request, record, target_user_type)
             return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
 
         message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
@@ -94,6 +98,7 @@ class DispenseService:
             target_user_type=target_user_type,
         )
         self.dispense_repository.append(record)
+        self._archive_identity_if_requested(request, record, target_user_type)
         if request.today_plan_id and not dry_run:
             from .records_service import RecordsService
 
@@ -103,6 +108,20 @@ class DispenseService:
                 request.target_user_id,
             )
         return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
+
+    def _archive_identity_if_requested(
+        self,
+        request: DispenseConfirmRequest,
+        record: DispenseRecord,
+        target_user_type: str,
+    ) -> None:
+        if not request.archive_identity_snapshot or target_user_type != "guest" or record.dry_run:
+            return
+        try:
+            self.archive_service.capture_for_record(record)
+        except Exception:
+            # Photo retention is supplemental evidence and must never block a confirmed cabinet action.
+            return
 
     def open_cabinet(self, request: DispenseOpenRequest) -> DispenseOpenResponse:
         if request.confirmed_open is not True:

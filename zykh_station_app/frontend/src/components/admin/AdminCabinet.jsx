@@ -3,7 +3,19 @@ import { DoorOpen, Package, RefreshCw, Save } from "lucide-react";
 import { loadAdminMedicines, openAdminCabinet, updateAdminMedicine } from "../../api/admin.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
 
-const EMPTY_MEDICINE = { name: "", manufacturer: "", barcode: "", stock: 0, unit: "盒", expire_date: "", category: "", safety_note: "" };
+const EMPTY_MEDICINE = {
+  name: "",
+  manufacturer: "",
+  barcode: "",
+  stock: 0,
+  unit: "盒",
+  expire_date: "",
+  category: "",
+  indications: "",
+  dosage: "",
+  contraindications: "",
+  safety_note: ""
+};
 
 export function AdminCabinet({ notify, onSessionExpired }) {
   const [medicines, setMedicines] = useState([]);
@@ -34,6 +46,9 @@ export function AdminCabinet({ notify, onSessionExpired }) {
       unit: selected.unit || "盒",
       expire_date: selected.expire_date || "",
       category: selected.category || "",
+      indications: selected.indications || "",
+      dosage: selected.dosage || "",
+      contraindications: (selected.contraindications || []).join("\n"),
       safety_note: selected.safety_note || ""
     } : EMPTY_MEDICINE);
   }, [selected?.id, selectedSlot]);
@@ -41,7 +56,14 @@ export function AdminCabinet({ notify, onSessionExpired }) {
   function save() {
     if (!selected) return;
     setBusy(true);
-    updateAdminMedicine(selected.id, { ...form, stock: Number(form.stock) || 0 })
+    updateAdminMedicine(selected.id, {
+      ...form,
+      stock: Number(form.stock) || 0,
+      contraindications: form.contraindications
+        .split(/[\n；;]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    })
       .then((data) => { setMedicines(data.medicines || []); notify("药品与库存信息已保存"); })
       .catch(handleError)
       .finally(() => setBusy(false));
@@ -93,6 +115,9 @@ export function AdminCabinet({ notify, onSessionExpired }) {
                 <label><span>单位</span><input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label>
                 <label><span>保质期</span><input value={form.expire_date} onChange={(event) => setForm({ ...form, expire_date: event.target.value })} /></label>
                 <label><span>类别</span><input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label>
+                <label className="span-two"><span>适用症状</span><textarea value={form.indications} onChange={(event) => setForm({ ...form, indications: event.target.value })} /></label>
+                <label className="span-two"><span>用法用量</span><textarea value={form.dosage} onChange={(event) => setForm({ ...form, dosage: event.target.value })} /></label>
+                <label className="span-two"><span>禁忌提醒（每行一条）</span><textarea value={form.contraindications} onChange={(event) => setForm({ ...form, contraindications: event.target.value })} /></label>
                 <label className="span-two"><span>安全备注</span><textarea value={form.safety_note} onChange={(event) => setForm({ ...form, safety_note: event.target.value })} /></label>
               </div>
               <footer className="admin-editor-actions">

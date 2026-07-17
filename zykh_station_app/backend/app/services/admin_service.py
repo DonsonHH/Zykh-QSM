@@ -23,6 +23,7 @@ from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlanCreateRequest, TodayPlanUpdateRequest
 from .dispense_service import DispenseService
+from .dispense_archive_service import DispenseArchiveService
 from .fingerprint_service import FingerprintService
 from .identity_service import IdentityService
 from .medicine_service import MedicineService
@@ -53,6 +54,9 @@ class AdminService:
                 "users": int(conn.execute("SELECT COUNT(*) AS count FROM service_users").fetchone()["count"]),
                 "medicines": int(conn.execute("SELECT COUNT(*) AS count FROM medicines WHERE stock > 0").fetchone()["count"]),
                 "dispense_records": int(conn.execute("SELECT COUNT(*) AS count FROM dispense_records").fetchone()["count"]),
+                "identity_archives": int(
+                    conn.execute("SELECT COUNT(*) AS count FROM dispense_identity_archives WHERE status='captured'").fetchone()["count"]
+                ),
                 "pending_sync": int(conn.execute("SELECT pending_count FROM sync_state WHERE id=1").fetchone()["pending_count"]),
             }
         gateway_url = f"{settings.qsm_api_base}{settings.qsm_status_path}"
@@ -90,6 +94,7 @@ class AdminService:
             "devices": devices,
             "network": network,
             "recent_audit": self.recent_audit(8),
+            "recent_dispense_archives": DispenseArchiveService().list_recent(6),
         }
 
     def list_users(self) -> tuple[list, dict[str, dict[str, object]]]:

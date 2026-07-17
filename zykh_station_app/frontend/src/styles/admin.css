@@ -371,6 +371,112 @@
   padding: 13px 14px;
 }
 
+.admin-identity-archive-panel {
+  min-height: 132px;
+  border: 1px solid #dce4ed;
+  border-radius: 10px;
+  background: #fff;
+  padding: 13px 14px;
+}
+
+.admin-identity-archive-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-identity-archive-panel > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-identity-archive-panel h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.admin-identity-archive-panel > header > span {
+  color: #667085;
+  font-size: 11px;
+}
+
+.admin-identity-archive-grid {
+  min-height: 82px;
+  display: grid;
+  grid-auto-columns: minmax(220px, 1fr);
+  grid-auto-flow: column;
+  gap: 10px;
+  margin-top: 9px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.admin-identity-archive-grid > article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e3e9f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 7px;
+}
+
+.admin-archive-image {
+  width: 96px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 7px;
+  background: #e9eef5;
+}
+
+.admin-archive-image img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.admin-archive-image > span {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  color: #667085;
+  font-size: 10px;
+  text-align: center;
+}
+
+.admin-identity-archive-grid article > div:last-child {
+  min-width: 0;
+}
+
+.admin-identity-archive-grid strong,
+.admin-identity-archive-grid span,
+.admin-identity-archive-grid time {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-identity-archive-grid strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.admin-identity-archive-grid span,
+.admin-identity-archive-grid time {
+  margin-top: 4px;
+  color: #667085;
+  font-size: 11px;
+}
+
 .admin-audit-panel > header {
   display: flex;
   align-items: center;

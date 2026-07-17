@@ -262,6 +262,73 @@ class AiService:
         parsed["message"] = "云通道已完成结构化分析。"
         return parsed
 
+    def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
+        """Generate structured reference text without presenting it as verified prescribing data."""
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return {"ok": False, "error_message": "当前为本地模式，未调用云端药品资料补全。"}
+        if not key:
+            return {"ok": False, "error_message": "未配置云端密钥，药品资料保持待核对状态。"}
+        if not self._cloud_reachable():
+            return {"ok": False, "error_message": "云端网络暂不可用，药品资料保持待核对状态。"}
+
+        system_prompt = "\n".join(
+            [
+                "你是家庭用药终端的药品说明资料整理助手。",
+                "只整理公开药品说明中的适用症状、用法用量、禁忌提醒和安全提示，不诊断、不下处方。",
+                "给定信息不足以确认剂型、规格或人群剂量时，不得猜测；用法用量必须写明以实物包装说明书或既往医嘱为准。",
+                "不要声称已经联网检索、已经核验或来源于某份说明书，因为当前请求没有提供可验证的外部检索结果。",
+                "只输出合法 json 对象，不要 Markdown。",
+                "JSON 格式：{\"indications\":\"适用症状或用途\",\"dosage\":\"用法用量\",\"contraindications\":[\"禁忌1\",\"禁忌2\"],\"safety_note\":\"简短安全提示\"}",
+            ]
+        )
+        user_prompt = json.dumps(
+            {
+                "instruction": "请根据基础信息生成简洁中文 json；每个文本字段不超过120字，禁忌2至5条。",
+                "medicine": {
+                    "name": str(medicine.get("name") or ""),
+                    "manufacturer": str(medicine.get("manufacturer") or ""),
+                    "barcode": str(medicine.get("barcode") or ""),
+                    "category": str(medicine.get("category") or ""),
+                },
+            },
+            ensure_ascii=False,
+        )
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 700,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            return {"ok": False, "error_message": f"云端药品资料补全 HTTP {exc.code}。"}
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error_message": f"云端药品资料补全失败：{exc}。"}
+
+        parsed = self._parse_json_content(self._extract_message_text(data))
+        if not isinstance(parsed, dict):
+            return {"ok": False, "error_message": "云端未返回可解析的药品资料。"}
+        return {"ok": True, "source": "cloud_ai", "guidance": parsed}
+
     def stream_chunks(self, message: str) -> list[str]:
         reply = self.chat(message)["reply"]
         return [reply[index : index + 18] for index in range(0, len(reply), 18)] or [""]

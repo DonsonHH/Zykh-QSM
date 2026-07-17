@@ -95,7 +95,7 @@ export function Medicines({ notify, focus, onNavigate }) {
     <main className="medicines-page" id="main-content">
       <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""}`}>
         <div className="medicines-heading">
-          <h2>家庭药柜</h2>
+          <h2>家用药品</h2>
           <div className="medicines-heading-actions">
             <span className="medicines-stock-summary">{loading ? "读取中" : `${stockedCount}/23 仓`}</span>
             <div className="medicine-view-toggle" aria-label="药品显示方式">
@@ -128,7 +128,7 @@ export function Medicines({ notify, focus, onNavigate }) {
         {loading ? (
           <div className="medicine-loading-state" role="status">
             <ScanLine size={36} aria-hidden="true" />
-            <strong>正在读取家庭药柜</strong>
+            <strong>正在读取家用药品</strong>
             <small>请稍候</small>
           </div>
         ) : loadError ? (

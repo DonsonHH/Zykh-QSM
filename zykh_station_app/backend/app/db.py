@@ -74,6 +74,11 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "medicines", "manufacturer", "TEXT DEFAULT ''")
+        _ensure_column(conn, "medicines", "indications", "TEXT DEFAULT ''")
+        _ensure_column(conn, "medicines", "dosage", "TEXT DEFAULT ''")
+        _ensure_column(conn, "medicines", "guidance_source", "TEXT DEFAULT 'pending'")
+        _ensure_column(conn, "medicines", "guidance_review_required", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "medicines", "guidance_updated_at", "TEXT DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dispense_records (
@@ -99,6 +104,20 @@ def init_db() -> None:
         _ensure_column(conn, "dispense_records", "verification_score", "REAL")
         _ensure_column(conn, "dispense_records", "target_user_type", "TEXT NOT NULL DEFAULT 'registered'")
         _ensure_column(conn, "dispense_records", "today_plan_id", "TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dispense_identity_archives (
+              id TEXT PRIMARY KEY,
+              dispense_record_id TEXT NOT NULL UNIQUE,
+              target_user_name TEXT NOT NULL,
+              medicine_name TEXT NOT NULL,
+              captured_at TEXT NOT NULL,
+              image_path TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL,
+              error_message TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS device_action_records (
