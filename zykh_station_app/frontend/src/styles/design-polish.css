@@ -1,0 +1,214 @@
+/* surface system */
+:root {
+  --surface-edge: rgba(42, 67, 98, 0.07);
+  --surface-edge-strong: rgba(42, 67, 98, 0.105);
+  --surface-contact: rgba(15, 35, 70, 0.04);
+  --surface-ambient: rgba(15, 35, 70, 0.06);
+  --surface-shadow:
+    inset 0 0 0 1px var(--surface-edge),
+    0 1px 2px var(--surface-contact),
+    0 9px 26px var(--surface-ambient),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --surface-shadow-quiet:
+    inset 0 0 0 1px rgba(42, 67, 98, 0.06),
+    0 1px 2px rgba(15, 35, 70, 0.03),
+    0 5px 15px rgba(15, 35, 70, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  --surface-shadow-item:
+    inset 0 0 0 1px rgba(42, 67, 98, 0.065),
+    0 1px 2px rgba(15, 35, 70, 0.025),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --surface-shadow-raised:
+    inset 0 0 0 1px rgba(42, 67, 98, 0.085),
+    0 2px 5px rgba(15, 35, 70, 0.055),
+    0 22px 58px rgba(15, 35, 70, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  --focus-ring: rgba(37, 99, 235, 0.24);
+  --surface-radius: 22px;
+  --control-radius: 16px;
+}
+
+body {
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+/* Primary surfaces use a shadow hairline instead of a solid gray frame. */
+.card,
+.medicines-main-panel,
+.medicine-detail-panel,
+.inquiry-user-card,
+.inquiry-flow-card,
+.inquiry-side-note,
+.record-summary-card,
+.records-panel,
+.sync-status-card,
+.scan-capture-panel,
+.scan-result-panel,
+.vitals-guide-panel,
+.vitals-result-panel,
+.basic-settings-panel,
+.coming-panel {
+  border: 1px solid transparent;
+  box-shadow: var(--surface-shadow);
+}
+
+.quick-action,
+.network-icons,
+.system-check-button,
+.bottom-nav,
+.stat-strip,
+.toast {
+  border: 1px solid transparent;
+  box-shadow: var(--surface-shadow-quiet);
+}
+
+/* Repeated rows stay crisp without looking like a stack of floating cards. */
+.medicine-card,
+.service-user-card,
+.home-medication-row,
+.today-plan-list article,
+.recent-record-row,
+.basic-setting-toggle-row,
+.scan-meta-grid article,
+.vitals-metric,
+.vitals-reference-metric {
+  border-color: transparent;
+  box-shadow: var(--surface-shadow-item);
+}
+
+.medicine-card.selected,
+.medicine-card.active,
+.today-plan-list article.done,
+.vitals-metric.primary,
+.vitals-metric.oxygen,
+.vitals-result-panel.good .vitals-status-card,
+.vitals-result-panel.warn .vitals-status-card,
+.vitals-result-panel.active .vitals-status-card {
+  box-shadow: none;
+}
+
+.dispense-modal,
+.system-check-modal,
+.home-task-picker,
+.admin-confirm-dialog,
+.admin-biometric-dialog {
+  border: 1px solid transparent;
+  box-shadow: var(--surface-shadow-raised);
+}
+
+.brand-logo-image {
+  display: block;
+  object-fit: contain;
+}
+
+.clock-block strong,
+.home-medication-time,
+.record-summary-card strong,
+.vitals-metric strong,
+.match-card strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.modal-layer,
+.system-check-layer,
+.admin-dialog-backdrop {
+  background: rgba(15, 28, 46, 0.42);
+  backdrop-filter: blur(4px);
+}
+
+/* Dense detail content should not compete with the fixed primary action. */
+.medicine-detail-panel .detail-guidance-source {
+  display: none;
+}
+
+.medicine-detail-scroll {
+  gap: 8px;
+  scrollbar-color: rgba(112, 139, 174, 0.42) transparent;
+}
+
+.medicine-detail-scroll::-webkit-scrollbar,
+.records-panel ::-webkit-scrollbar,
+.inquiry-history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.medicine-detail-scroll::-webkit-scrollbar-thumb,
+.records-panel ::-webkit-scrollbar-thumb,
+.inquiry-history-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(112, 139, 174, 0.38);
+}
+
+.primary-action,
+.inquiry-entry-action,
+.quick-action-cta {
+  box-shadow:
+    0 0 0 1px rgba(23, 79, 214, 0.08),
+    0 1px 2px rgba(20, 48, 100, 0.12),
+    0 7px 16px rgba(37, 99, 235, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.quick-action-cta.vitals-cta {
+  gap: 7px;
+  padding-inline: 12px;
+}
+
+.home-side-stack .quick-action-cta.vitals-cta::after {
+  inset: 2px;
+  border-width: 1px;
+  border-radius: 15px;
+}
+
+.bottom-nav button.active {
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .system-check-button:hover,
+  .home-plan-picker-trigger:hover,
+  .icon-action:hover,
+  .modal-close:hover {
+    box-shadow: var(--surface-shadow-quiet);
+  }
+}
+
+@media (forced-colors: active) {
+  .card,
+  .medicines-main-panel,
+  .medicine-detail-panel,
+  .inquiry-user-card,
+  .inquiry-flow-card,
+  .record-summary-card,
+  .records-panel,
+  .sync-status-card,
+  .scan-capture-panel,
+  .scan-result-panel,
+  .vitals-guide-panel,
+  .vitals-result-panel,
+  .basic-settings-panel,
+  .bottom-nav {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+}

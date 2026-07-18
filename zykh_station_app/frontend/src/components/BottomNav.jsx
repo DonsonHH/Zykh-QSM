@@ -1,6 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
 import { ClipboardList, Home, MessageCircleHeart, Pill } from "lucide-react";
-import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 const items = [
   { id: "home", label: "首页", icon: Home },
@@ -10,13 +9,6 @@ const items = [
 ];
 
 export function BottomNav({ page, onChange }) {
-  const [animation, setAnimation] = useState({ id: "", token: 0 });
-
-  function selectItem(id) {
-    setAnimation((current) => ({ id, token: current.token + 1 }));
-    onChange(id);
-  }
-
   return (
     <nav className="bottom-nav" aria-label="主导航">
       {items.map((item) => {
@@ -26,11 +18,11 @@ export function BottomNav({ page, onChange }) {
             key={item.id}
             type="button"
             className={page === item.id ? "active" : ""}
-            onClick={() => selectItem(item.id)}
+            onClick={() => onChange(item.id)}
             aria-current={page === item.id ? "page" : undefined}
           >
-            <span className="bottom-nav-icon" key={animation.id === item.id ? `${item.id}-${animation.token}` : item.id}>
-              <StrokeDrawIcon icon={Icon} size={27} strokeWidth={2.1} mode="once" active={animation.id === item.id} />
+            <span className="bottom-nav-icon" aria-hidden="true">
+              <Icon size={27} strokeWidth={2.1} />
             </span>
             <span>{item.label}</span>
           </button>

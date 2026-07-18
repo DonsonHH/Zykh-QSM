@@ -7,19 +7,25 @@ FACE_HOST_PORT="${QSM_FACE_FORWARD_HOST_PORT:-18081}"
 FACE_DEVICE_PORT="${QSM_FACE_FORWARD_DEVICE_PORT:-8081}"
 AUDIO_HOST_PORT="${QSM_AUDIO_CAPTURE_FORWARD_HOST_PORT:-18082}"
 AUDIO_DEVICE_PORT="${QSM_AUDIO_CAPTURE_FORWARD_DEVICE_PORT:-8082}"
+VITALS_HOST_PORT="${QSM_VITALS_FORWARD_HOST_PORT:-18085}"
+VITALS_DEVICE_PORT="${QSM_VITALS_FORWARD_DEVICE_PORT:-8085}"
 FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
 FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 QSM_FACE_HOME="${QSM_FACE_HOME:-/userdata/qsm-face}"
 QSM_AUDIO_HOME="${QSM_AUDIO_HOME:-/userdata/qsm-audio}"
+QSM_VITALS_HOME="${QSM_VITALS_HOME:-/userdata/qsm-vitals}"
 QSM_FINGERPRINT_HOME="${QSM_FINGERPRINT_HOME:-/userdata/qsm-fingerprint}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
 LOCAL_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
 LOCAL_STATION_PATCH="$REPO_ROOT/zykh_station_app/qsm_gateway/patch_station_gateway.pl"
 LOCAL_VITALS_UART="$REPO_ROOT/zykh_station_app/qsm_gateway/read_vitals_uart8.pl"
+LOCAL_VITALS_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/vitals_gateway.pl"
+LOCAL_VITALS_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_vitals_gateway.sh"
 LOCAL_FACE_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/face_gateway.pl"
 LOCAL_FACE_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_face_gateway.sh"
+LOCAL_FACE_BUILD="$REPO_ROOT/zykh_station_app/scripts/build_qsm_face.sh"
 LOCAL_AUDIO_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/audio_capture_gateway.pl"
 LOCAL_AUDIO_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_audio_capture_gateway.sh"
 LOCAL_FINGERPRINT_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/fingerprint_gateway.pl"
@@ -41,8 +47,11 @@ fail() {
 [ -f "$LOCAL_START" ] || fail "找不到外设网关启动脚本：$LOCAL_START"
 [ -f "$LOCAL_STATION_PATCH" ] || fail "找不到外设网关稳定性补丁：$LOCAL_STATION_PATCH"
 [ -f "$LOCAL_VITALS_UART" ] || fail "找不到 UART8 体征读取器：$LOCAL_VITALS_UART"
+[ -f "$LOCAL_VITALS_GATEWAY" ] || fail "找不到体征会话网关：$LOCAL_VITALS_GATEWAY"
+[ -f "$LOCAL_VITALS_START" ] || fail "找不到体征会话启动脚本：$LOCAL_VITALS_START"
 [ -f "$LOCAL_FACE_GATEWAY" ] || fail "找不到人脸识别网关：$LOCAL_FACE_GATEWAY"
 [ -f "$LOCAL_FACE_START" ] || fail "找不到人脸识别启动脚本：$LOCAL_FACE_START"
+[ -f "$LOCAL_FACE_BUILD" ] || fail "找不到人脸识别构建脚本：$LOCAL_FACE_BUILD"
 [ -f "$LOCAL_AUDIO_GATEWAY" ] || fail "找不到麦克风采集网关：$LOCAL_AUDIO_GATEWAY"
 [ -f "$LOCAL_AUDIO_START" ] || fail "找不到麦克风采集启动脚本：$LOCAL_AUDIO_START"
 [ -f "$LOCAL_FINGERPRINT_GATEWAY" ] || fail "找不到指纹识别网关：$LOCAL_FINGERPRINT_GATEWAY"
@@ -72,15 +81,23 @@ $ADB_PREFIX push "$LOCAL_VITALS_UART" "$QSM_HOME/scripts/read_vitals_uart8.pl" >
 $ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_station_gateway.sh' '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/scripts/read_vitals_uart8.pl'; perl '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/server.pl'; QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_HOME/scripts/start_station_gateway.sh'" >/dev/null \
   || fail "重启板端网关失败"
 
+log "部署独立体征测量会话网关"
+$ADB_PREFIX shell "mkdir -p '$QSM_VITALS_HOME/data' '$QSM_VITALS_HOME/logs'" >/dev/null || fail "创建板端体征目录失败"
+$ADB_PREFIX push "$LOCAL_VITALS_GATEWAY" "$QSM_VITALS_HOME/vitals_gateway.pl" >/dev/null || fail "推送体征会话网关失败"
+$ADB_PREFIX push "$LOCAL_VITALS_START" "$QSM_VITALS_HOME/start_vitals_gateway.sh" >/dev/null || fail "推送体征启动脚本失败"
+$ADB_PREFIX shell "chmod +x '$QSM_VITALS_HOME/vitals_gateway.pl' '$QSM_VITALS_HOME/start_vitals_gateway.sh'; QSM_VITALS_HOME='$QSM_VITALS_HOME' QSM_VITALS_PORT='$VITALS_DEVICE_PORT' sh '$QSM_VITALS_HOME/start_vitals_gateway.sh'" >/dev/null \
+  || fail "启动板端体征会话网关失败"
+
 log "部署 QSM 人脸识别 HTTP 适配"
 $ADB_PREFIX shell "mkdir -p '$QSM_FACE_HOME/data' '$QSM_FACE_HOME/logs' '$QSM_FACE_HOME/lib'" >/dev/null || fail "创建板端人脸目录失败"
 $ADB_PREFIX push "$LOCAL_FACE_GATEWAY" "$QSM_FACE_HOME/face_gateway.pl" >/dev/null || fail "推送人脸识别网关失败"
 $ADB_PREFIX push "$LOCAL_FACE_START" "$QSM_FACE_HOME/start_face_gateway.sh" >/dev/null || fail "推送人脸识别启动脚本失败"
 
+if [ -z "$FACE_BUNDLE" ] && [ -f "/home/jetson/QSM368ZP-board-face-recognition(1).zip" ]; then
+  FACE_BUNDLE="/home/jetson/QSM368ZP-board-face-recognition(1).zip"
+fi
+
 if ! $ADB_PREFIX shell "test -x '$QSM_FACE_HOME/qsm_face' -a -s '$QSM_FACE_HOME/Gundam_RK356X' -a -s '$QSM_FACE_HOME/lib/libInspireFace.so'" >/dev/null 2>&1; then
-  if [ -z "$FACE_BUNDLE" ] && [ -f "/home/jetson/QSM368ZP-board-face-recognition(1).zip" ]; then
-    FACE_BUNDLE="/home/jetson/QSM368ZP-board-face-recognition(1).zip"
-  fi
   [ -n "$FACE_BUNDLE" ] && [ -f "$FACE_BUNDLE" ] || fail "板端缺少人脸运行包；请设置 QSM_FACE_BUNDLE 指向用户提供的 zip。"
   command -v unzip >/dev/null 2>&1 || fail "未找到 unzip，无法解包人脸运行包。"
   TEMP_DIR="$(mktemp -d)" || fail "无法创建临时目录。"
@@ -93,6 +110,17 @@ if ! $ADB_PREFIX shell "test -x '$QSM_FACE_HOME/qsm_face' -a -s '$QSM_FACE_HOME/
   rm -rf "$TEMP_DIR"
   TEMP_DIR=""
 fi
+
+[ -n "$FACE_BUNDLE" ] && [ -f "$FACE_BUNDLE" ] \
+  || fail "构建实时人脸预览需要原始运行包；请设置 QSM_FACE_BUNDLE。"
+TEMP_DIR="$(mktemp -d)" || fail "无法创建人脸程序构建目录。"
+sh "$LOCAL_FACE_BUILD" "$FACE_BUNDLE" "$TEMP_DIR/qsm_face" >/dev/null \
+  || fail "编译带实时预览的人脸识别程序失败。"
+$ADB_PREFIX shell "pkill -f '$QSM_FACE_HOME/qsm_face' 2>/dev/null || true" >/dev/null 2>&1 || true
+$ADB_PREFIX push "$TEMP_DIR/qsm_face" "$QSM_FACE_HOME/qsm_face" >/dev/null \
+  || fail "推送带实时预览的人脸识别程序失败。"
+rm -rf "$TEMP_DIR"
+TEMP_DIR=""
 
 $ADB_PREFIX shell "chmod +x '$QSM_FACE_HOME/qsm_face' '$QSM_FACE_HOME/face.sh' '$QSM_FACE_HOME/stop.sh' '$QSM_FACE_HOME/start_face_gateway.sh'; QSM_FACE_HOME='$QSM_FACE_HOME' QSM_FACE_GATEWAY_PORT='$FACE_DEVICE_PORT' sh '$QSM_FACE_HOME/start_face_gateway.sh'" >/dev/null \
   || fail "启动板端人脸识别网关失败"
@@ -142,6 +170,8 @@ log "建立人脸接口转发：127.0.0.1:$FACE_HOST_PORT -> tcp:$FACE_DEVICE_PO
 $ADB_PREFIX forward "tcp:${FACE_HOST_PORT}" "tcp:${FACE_DEVICE_PORT}" >/dev/null 2>&1 || fail "人脸接口端口转发失败"
 log "建立麦克风接口转发：127.0.0.1:$AUDIO_HOST_PORT -> tcp:$AUDIO_DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${AUDIO_HOST_PORT}" "tcp:${AUDIO_DEVICE_PORT}" >/dev/null 2>&1 || fail "麦克风接口端口转发失败"
+log "建立体征接口转发：127.0.0.1:$VITALS_HOST_PORT -> tcp:$VITALS_DEVICE_PORT"
+$ADB_PREFIX forward "tcp:${VITALS_HOST_PORT}" "tcp:${VITALS_DEVICE_PORT}" >/dev/null 2>&1 || fail "体征接口端口转发失败"
 log "建立指纹接口转发：127.0.0.1:$FINGERPRINT_HOST_PORT -> tcp:$FINGERPRINT_DEVICE_PORT"
 $ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1 || fail "指纹接口端口转发失败"
 

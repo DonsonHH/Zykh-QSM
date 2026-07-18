@@ -31,7 +31,6 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
   const finishedRef = useRef(false);
   const voicePhaseRef = useRef(VoicePhase.IDLE);
   const bottomRef = useRef(null);
-  const previousReplyRef = useRef("");
 
   const preparingVoice = voicePhase === VoicePhase.PREPARING;
   const listening = voicePhase === VoicePhase.LISTENING;
@@ -47,8 +46,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
 
   useEffect(() => {
     const reply = session.reply || "";
-    if (!reply || reply === previousReplyRef.current) return undefined;
-    previousReplyRef.current = reply;
+    if (!reply) return undefined;
     setStreaming(true);
     setStreamedReply("");
     let index = 0;

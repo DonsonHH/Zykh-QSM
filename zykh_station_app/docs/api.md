@@ -211,7 +211,7 @@ The response keeps the original fields and adds optional UART8 integrated-sensor
 }
 ```
 
-Unavailable or zero placeholder values are returned as `null`. `body_temperature` is the UART module fingertip-temperature reference; `temperature` remains the GY-614 forehead temperature. Three valid heart-rate/SpO2 frames complete the core measurement; optional blood-pressure and HRV reference frames no longer keep the sensor session open. `reference_ready` only becomes true after those optional reference samples are present. Fewer than three valid heart-rate/SpO2 frames return `quality: "poor_signal"`. These auxiliary values are not diagnostic results and are never synthesized by the adapter.
+Unavailable or zero placeholder values are returned as `null`. `body_temperature` is the UART module fingertip-temperature reference; `temperature` remains the GY-614 forehead temperature. Two non-zero heart-rate/SpO2 frames complete the core measurement early. When contact is present but SpO2 is still zero, the session remains active for the module's adaptive stabilization window instead of failing at the no-finger timeout. Optional blood-pressure and HRV reference frames never keep the sensor session open. `reference_ready` only becomes true after those optional reference samples are present. Auxiliary values are not diagnostic results and are never synthesized by the adapter.
 
 ### POST /api/camera/capture
 

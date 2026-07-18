@@ -13,6 +13,8 @@ my $PORT = int($ENV{QSM_FACE_GATEWAY_PORT} || 8081);
 my $FACE_HOME = $ENV{QSM_FACE_HOME} || '/userdata/qsm-face';
 my $MAIN_GATEWAY = $ENV{QSM_MAIN_GATEWAY_URL} || 'http://127.0.0.1:8080';
 my $LOCK_DIR = '/tmp/zykh-face-camera.lock';
+my $PREVIEW_FILE = $ENV{QSM_FACE_PREVIEW_FILE} || '/tmp/zykh-face-preview.bmp';
+my $PREVIEW_INTERVAL_MS = int($ENV{QSM_FACE_PREVIEW_INTERVAL_MS} || 250);
 my $LOG_DIR = "$FACE_HOME/logs";
 my $SEARCH_THRESHOLD = number_env('QSM_FACE_SEARCH_THRESHOLD', 0.38);
 my $ACCEPT_THRESHOLD = number_env('QSM_FACE_ACCEPT_THRESHOLD', 0.41);
@@ -63,6 +65,9 @@ sub route_request {
     if ($method eq 'GET' && $path eq '/api/face/list') {
         return send_json($client, 200, list_faces());
     }
+    if ($method eq 'GET' && $path eq '/api/face/frame') {
+        return send_face_frame($client);
+    }
     if ($method eq 'POST' && $path eq '/api/face/identify') {
         return send_json($client, 200, identify_face($request->{params}));
     }
@@ -88,6 +93,7 @@ sub face_status {
         search_threshold => $SEARCH_THRESHOLD + 0,
         accept_threshold => $ACCEPT_THRESHOLD + 0,
         min_match_votes => $MIN_MATCH_VOTES,
+        preview_available => preview_is_fresh() ? JSON::PP::true : JSON::PP::false,
         error_message => $available ? undef : '人脸识别运行库、模型或摄像头不可用。',
     };
 }
@@ -99,6 +105,7 @@ sub identify_face {
     $frames = 120 if $frames > 120;
     return busy_response() unless acquire_lock();
     release_camera();
+    unlink $PREVIEW_FILE if -e $PREVIEW_FILE;
     my $log = "$LOG_DIR/identify-last.log";
     my ($exit, $output) = run_face("recognize $frames", $log, 20);
     release_lock();
@@ -170,6 +177,7 @@ sub enroll_face {
     $samples = 30 if $samples > 30;
     return busy_response() unless acquire_lock();
     release_camera();
+    unlink $PREVIEW_FILE if -e $PREVIEW_FILE;
     my $log = "$LOG_DIR/enroll-last.log";
     my ($exit, $output) = run_face('enroll ' . shell_quote($subject) . " $samples", $log, 45);
     release_lock();
@@ -271,7 +279,10 @@ sub best_match {
 sub run_face {
     my ($arguments, $log, $timeout) = @_;
     my $command = 'cd ' . shell_quote($FACE_HOME) .
-        ' && QSM_FACE_THRESHOLD=' . shell_quote($SEARCH_THRESHOLD) . ' ./face.sh ' . $arguments;
+        ' && QSM_FACE_THRESHOLD=' . shell_quote($SEARCH_THRESHOLD) .
+        ' QSM_FACE_PREVIEW_BMP=' . shell_quote($PREVIEW_FILE) .
+        ' QSM_FACE_PREVIEW_INTERVAL_MS=' . shell_quote($PREVIEW_INTERVAL_MS) .
+        ' ./face.sh ' . $arguments;
     my $rc;
     {
         local $SIG{CHLD} = 'DEFAULT';
@@ -301,6 +312,32 @@ sub release_lock {
 
 sub busy_response {
     return { ok => JSON::PP::false, status => 'busy', error_message => '摄像头正在执行另一项任务，请稍后重试。' };
+}
+
+sub preview_is_fresh {
+    return 0 unless -s $PREVIEW_FILE;
+    my $modified = (stat($PREVIEW_FILE))[9] || 0;
+    return time - $modified <= 3;
+}
+
+sub send_face_frame {
+    my ($client) = @_;
+    return send_json($client, 404, {
+        ok => JSON::PP::false,
+        status => 'waiting',
+        error_message => '人脸识别画面正在准备。',
+    }) unless preview_is_fresh();
+
+    open my $file, '<:raw', $PREVIEW_FILE
+        or return send_json($client, 500, {
+            ok => JSON::PP::false,
+            status => 'unavailable',
+            error_message => '无法读取人脸识别画面。',
+        });
+    local $/;
+    my $body = <$file>;
+    close $file;
+    return send_binary($client, 200, 'image/bmp', $body);
 }
 
 sub read_request {
@@ -360,6 +397,19 @@ sub send_json {
     print {$client} "Access-Control-Allow-Origin: *\r\n";
     print {$client} "Connection: close\r\n";
     print {$client} 'Content-Length: ' . length($body) . "\r\n\r\n";
+    print {$client} $body;
+}
+
+sub send_binary {
+    my ($client, $status, $content_type, $body) = @_;
+    my $reason = $status == 200 ? 'OK' : $status == 404 ? 'Not Found' : 'Internal Server Error';
+    print {$client} "HTTP/1.1 $status $reason\r\n";
+    print {$client} "Content-Type: $content_type\r\n";
+    print {$client} "Cache-Control: no-store, no-cache, must-revalidate\r\n";
+    print {$client} "Access-Control-Allow-Origin: *\r\n";
+    print {$client} "Connection: close\r\n";
+    print {$client} 'Content-Length: ' . length($body) . "\r\n\r\n";
+    binmode $client, ':raw';
     print {$client} $body;
 }
 

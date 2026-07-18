@@ -1,0 +1,191 @@
+/* interaction motion */
+:root {
+  --ease-fluid: cubic-bezier(0.2, 0.82, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.2);
+  --motion-feedback: 90ms;
+  --motion-press: 110ms;
+  --motion-control: 180ms;
+  --motion-page-enter: 260ms;
+  --motion-page-exit: 140ms;
+  --motion-modal-enter: 240ms;
+  --motion-modal-exit: 150ms;
+}
+
+button:not(:disabled) {
+  scale: 1;
+  filter: none;
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--motion-control);
+  transition-timing-function: var(--ease-fluid);
+  transform-origin: center;
+}
+
+button:not(:disabled):active {
+  scale: 1;
+  filter: none;
+  transform: scale(0.975);
+  transition-duration: var(--motion-press);
+}
+
+.icon-action:not(:disabled):active,
+.modal-close:not(:disabled):active,
+.system-check-button:not(:disabled):active {
+  scale: 1;
+  transform: scale(0.92);
+}
+
+.bottom-nav button:not(:disabled):active {
+  transform: scale(0.985);
+}
+
+.bottom-nav-icon svg {
+  transform: scale(1);
+  transition: transform var(--motion-control) var(--ease-fluid);
+}
+
+.bottom-nav button.active .bottom-nav-icon svg {
+  transform: scale(1.055);
+}
+
+::view-transition-group(kiosk-page),
+::view-transition-group(kiosk-idle) {
+  animation-duration: var(--motion-page-enter);
+  animation-timing-function: var(--ease-fluid);
+}
+
+html[data-page-transition="forward"]::view-transition-old(kiosk-page),
+html[data-page-transition="backward"]::view-transition-old(kiosk-page) {
+  animation-duration: var(--motion-page-exit);
+  animation-timing-function: var(--ease-exit);
+}
+
+html[data-page-transition="forward"]::view-transition-new(kiosk-page),
+html[data-page-transition="backward"]::view-transition-new(kiosk-page) {
+  animation-duration: var(--motion-page-enter);
+  animation-timing-function: var(--ease-fluid);
+}
+
+html[data-page-transition="forward"]::view-transition-old(kiosk-page) {
+  animation-name: polish-page-out-left;
+}
+
+html[data-page-transition="forward"]::view-transition-new(kiosk-page) {
+  animation-name: polish-page-in-right;
+}
+
+html[data-page-transition="backward"]::view-transition-old(kiosk-page) {
+  animation-name: polish-page-out-right;
+}
+
+html[data-page-transition="backward"]::view-transition-new(kiosk-page) {
+  animation-name: polish-page-in-left;
+}
+
+@keyframes polish-page-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.996);
+  }
+}
+
+@keyframes polish-page-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.996);
+  }
+}
+
+@keyframes polish-page-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(10px) scale(0.996);
+  }
+}
+
+@keyframes polish-page-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-12px) scale(0.996);
+  }
+}
+
+.modal-layer {
+  animation-duration: var(--motion-control);
+  animation-timing-function: var(--ease-fluid);
+}
+
+.modal-layer > [role="dialog"],
+.system-check-layer > [role="dialog"] {
+  animation-duration: var(--motion-modal-enter);
+  animation-timing-function: var(--ease-fluid);
+}
+
+@keyframes modal-backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Keep one calm, finite ambient cue on the home inquiry card. */
+.inquiry-assistant-orbit {
+  animation-duration: var(--motion-ambient-phase-duration);
+  animation-timing-function: var(--ease-fluid);
+  animation-iteration-count: 2;
+}
+
+.inquiry-assistant-orbit.orbit-two,
+.inquiry-assistant-mic {
+  animation: none;
+}
+
+.inquiry-assistant-orbit.orbit-two {
+  opacity: 0.58;
+  transform: scale(1);
+}
+
+.inquiry-voice-wave i {
+  animation-duration: var(--motion-ambient-phase-duration);
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: 2;
+}
+
+.quick-action-cta.vitals-cta::after {
+  animation-iteration-count: 2;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bottom-nav button:not(.active):hover,
+  .medicine-card:hover,
+  .quick-action:hover {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01ms !important;
+  }
+
+  .bottom-nav-icon svg,
+  .bottom-nav button.active .bottom-nav-icon svg {
+    transform: none;
+    transition: none;
+  }
+
+  .quick-action-cta.vitals-cta::after,
+  .inquiry-assistant-orbit,
+  .inquiry-voice-wave i {
+    animation: none !important;
+  }
+}

@@ -131,7 +131,7 @@ sub run_measurement {
     my $uart_cmd = join(' ',
         'perl', shell_quote($UART_READER),
         '--timeout', $MEASURE_TIMEOUT,
-        '--stable-frames', 3,
+        '--stable-frames', 2,
         '--output', shell_quote($uart_output),
         '--state-file', shell_quote($state_file),
         '--cancel-file', shell_quote($cancel_file),
@@ -160,11 +160,17 @@ sub run_measurement {
     my $status = $cancelled ? 'cancelled' : $complete ? 'complete' : 'failed';
     my $error = '';
     if (!$complete && !$cancelled) {
-        my @missing;
-        push @missing, 'heart_rate' unless defined($heart_rate) && $heart_rate > 0;
-        push @missing, 'spo2' unless defined($spo2) && $spo2 > 0;
-        push @missing, 'temperature' unless defined($temperature) && $temperature > 0;
-        $error = 'Required vitals not stable: ' . join(',', @missing);
+        if ((!defined($heart_rate) || $heart_rate <= 0) && (!defined($spo2) || $spo2 <= 0)) {
+            $error = $uart->{finger_detected}
+                ? '已检测到手指，心率与血氧仍未稳定，请保持不动后重试。'
+                : '未检测到稳定的手指信号，请用指腹完整覆盖传感器后重试。';
+        } elsif (!defined($spo2) || $spo2 <= 0) {
+            $error = '已读取到心率，血氧仍未稳定，请保持手指不动后重试。';
+        } elsif (!defined($heart_rate) || $heart_rate <= 0) {
+            $error = '已读取到血氧，心率仍未稳定，请保持手指不动后重试。';
+        } elsif (!defined($temperature) || $temperature <= 0) {
+            $error = '心率与血氧已完成，额温未读取，请对准额温传感器后重试。';
+        }
     }
     my $state = {
         ok => $complete ? JSON::PP::true : JSON::PP::false,
@@ -191,6 +197,10 @@ sub run_measurement {
         quality => $uart->{quality} || undef,
         message => $uart->{message} || undef,
         sample_count => int($uart->{sample_count} || 0),
+        valid_frame_count => int($uart->{valid_frame_count} || 0),
+        contact_frame_count => int($uart->{contact_frame_count} || 0),
+        heart_rate_frame_count => int($uart->{heart_rate_frame_count} || 0),
+        spo2_frame_count => int($uart->{spo2_frame_count} || 0),
         source => 'UART8-vitals-24B+GY-614',
         started_at => $started_at,
         updated_at => now_text(),

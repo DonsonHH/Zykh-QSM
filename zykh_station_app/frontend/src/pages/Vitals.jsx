@@ -18,7 +18,8 @@ import { cancelVitalsSession, loadVitalsSession, startVitalsSession } from "../a
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const activePhases = new Set(["starting", "waiting_finger", "stabilizing"]);
-const targetMeasurementSeconds = 10;
+const baseMeasurementSeconds = 10;
+const extendedMeasurementSeconds = 20;
 
 export function Vitals({ onNavigate, returnPage = "home", notify }) {
   const [phase, setPhase] = useState("idle");
@@ -139,7 +140,7 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
           <button className="vitals-back-button" type="button" onClick={handleBack} aria-label="返回上一页" title="返回">
             <ArrowLeft size={25} aria-hidden="true" />
           </button>
-          <h2>{measuring ? stageTitle(phase) : phase === "complete" ? "测量结果" : "身体状态测量"}</h2>
+          <h2>{measuring ? status.title : phase === "complete" ? "测量结果" : "身体状态测量"}</h2>
         </div>
 
         <div className={`vitals-visual-guide ${measuring ? "measuring" : phase}`}>
@@ -202,16 +203,20 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
             </div>
           </>
         ) : (
-          <ResultPlaceholder phase={phase} elapsedSeconds={elapsedSeconds} />
+          <ResultPlaceholder
+            phase={phase}
+            elapsedSeconds={elapsedSeconds}
+            targetSeconds={result?.stabilization_extended ? extendedMeasurementSeconds : baseMeasurementSeconds}
+          />
         )}
       </section>
     </main>
   );
 }
 
-function ResultPlaceholder({ phase, elapsedSeconds }) {
+function ResultPlaceholder({ phase, elapsedSeconds, targetSeconds }) {
   const measuring = activePhases.has(phase);
-  const progress = Math.min(0.96, Math.max(0.04, elapsedSeconds / targetMeasurementSeconds));
+  const progress = Math.min(0.96, Math.max(0.04, elapsedSeconds / targetSeconds));
   return (
     <div className={`vitals-result-placeholder ${measuring ? "measuring" : "idle"}`} role="status" aria-label={measuring ? stageTitle(phase) : "等待开始体征测量"}>
       <div className={`vitals-result-visual ${measuring ? "is-measuring" : ""}`} aria-hidden="true">
@@ -248,15 +253,44 @@ function buildAuxiliaryMetrics(result) {
 
 function describeVitals(result, errorMessage, phase) {
   if (activePhases.has(phase)) {
+    if (Number(result?.heart_rate_frame_count || 0) > 0 && Number(result?.spo2_frame_count || 0) === 0) {
+      return { tone: "active", title: "血氧正在稳定", summary: "心率信号已读取，请保持手指不动", detail: "" };
+    }
+    if (Number(result?.spo2_frame_count || 0) > 0 && Number(result?.heart_rate_frame_count || 0) === 0) {
+      return { tone: "active", title: "心率正在稳定", summary: "血氧信号已读取，请保持手指不动", detail: "" };
+    }
+    if (phase === "waiting_finger") {
+      return { tone: "active", title: "等待手指信号", summary: "请用指腹完整覆盖传感器", detail: "" };
+    }
     return { tone: "active", title: stageTitle(phase), summary: "核心体征采集中", detail: "" };
   }
   if (errorMessage || phase === "failed" || result?.ok === false) {
-    return { tone: "warn", title: "本次未完成", summary: "请调整姿势后重试", detail: errorMessage || result?.error_message || "体征设备暂不可用" };
+    return describeVitalsFailure(result, errorMessage);
   }
   if (hasCoreVitals(result)) {
     return { tone: "good", title: "测量完成", summary: "心率、血氧与额温已记录", detail: "" };
   }
   return { tone: "idle", title: "结果预览", summary: "准备测量", detail: "" };
+}
+
+function describeVitalsFailure(result, errorMessage) {
+  const detail = errorMessage || result?.error_message || "体征设备暂不可用";
+  if (result?.hardware_started === false) {
+    return { tone: "warn", title: "设备未启动", summary: "请检查体征设备", detail };
+  }
+  if (!hasReading(result?.heart_rate) && !hasReading(result?.spo2)) {
+    return { tone: "warn", title: "手指信号未稳定", summary: "请用指腹完整覆盖传感器", detail };
+  }
+  if (!hasReading(result?.spo2)) {
+    return { tone: "warn", title: "血氧仍在稳定", summary: "请保持手指不动后重试", detail };
+  }
+  if (!hasReading(result?.heart_rate)) {
+    return { tone: "warn", title: "心率仍在稳定", summary: "请保持手指不动后重试", detail };
+  }
+  if (!hasReading(result?.temperature)) {
+    return { tone: "warn", title: "额温未读取", summary: "请重新对准额温传感器", detail };
+  }
+  return { tone: "warn", title: "本次未完成", summary: "请重新测量", detail };
 }
 
 function stageTitle(phase) {

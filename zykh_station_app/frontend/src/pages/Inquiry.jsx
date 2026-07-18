@@ -65,6 +65,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const [openingTreatment, setOpeningTreatment] = useState(false);
   const [treatmentAction, setTreatmentAction] = useState(null);
   const creatingRef = useRef(false);
+  const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
   const {
     identity: faceIdentity,
@@ -96,6 +97,13 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
         : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
   const IdentityIcon = identityPresentation.icon;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     refreshUsers();
@@ -130,30 +138,27 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
 
   useEffect(() => {
     if (!identityConfirmed || sessionId || creatingRef.current) return;
-    let cancelled = false;
-    creatingRef.current = true;
+    const creationToken = Symbol("inquiry-session-creation");
+    creatingRef.current = creationToken;
     createInquirySession({
       service_user_id: selectedUserId,
       guest_name: guestUser?.name || "访客"
     })
       .then((data) => {
-        if (cancelled) return;
+        if (!mountedRef.current || creatingRef.current !== creationToken) return;
         setSession(data);
         setSessionId(data.session_id);
         window.sessionStorage.setItem(INQUIRY_BACKEND_SESSION_KEY, data.session_id);
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (!mountedRef.current || creatingRef.current !== creationToken) return;
         notify(error.message || "问询会话创建失败，请重试");
         setIdentityConfirmed(false);
         window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
       })
       .finally(() => {
-        creatingRef.current = false;
+        if (creatingRef.current === creationToken) creatingRef.current = false;
       });
-    return () => {
-      cancelled = true;
-    };
   }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
 
   useEffect(() => {
@@ -256,6 +261,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   }, [notify, sessionId]);
 
   function resetFlow() {
+    creatingRef.current = false;
     clearInquirySession();
     setSession(null);
     setSessionId("");

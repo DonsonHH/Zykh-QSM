@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import pty
+import select
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 import fcntl
 from pathlib import Path
@@ -59,6 +63,192 @@ def frame(
 
 
 class VitalsUart8ParserTest(unittest.TestCase):
+    def test_valid_waiting_frames_do_not_restart_sensor_before_spo2_stabilizes(self) -> None:
+        no_finger = frame(
+            heart_rate=0,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+        )
+        measured = frame(
+            heart_rate=74,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=16,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            commands: list[int] = []
+            stopped = threading.Event()
+
+            def emulate_sensor() -> None:
+                measurement_started_at: float | None = None
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 7
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            command_bytes = os.read(master_fd, 128)
+                        except OSError:
+                            break
+                        for command in command_bytes:
+                            commands.append(command)
+                            if command == 0x24:
+                                measurement_started_at = time.monotonic()
+                    now = time.monotonic()
+                    if measurement_started_at is None or now - last_frame_at < 0.15:
+                        continue
+                    payload = measured if now - measurement_started_at >= 2.4 else no_finger
+                    try:
+                        os.write(master_fd, payload)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_sensor, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "4",
+                        "--stable-frames",
+                        "2",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=8,
+                )
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(commands.count(0x24), 1, "valid protocol frames must not trigger a sensor restart")
+        self.assertEqual(payload["heart_rate_bpm"], 74)
+        self.assertEqual(payload["spo2_percent"], 98)
+        self.assertTrue(payload["finger_detected"])
+
+    def test_extends_only_after_contact_when_spo2_needs_more_time(self) -> None:
+        no_finger = frame(
+            heart_rate=0,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+        )
+        heart_rate_only = frame(
+            heart_rate=76,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            body_temperature=(36, 42),
+        )
+        measured = frame(
+            heart_rate=76,
+            spo2=97,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            body_temperature=(36, 45),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            stopped = threading.Event()
+            os.write(master_fd, measured)
+
+            def emulate_sensor() -> None:
+                measurement_started_at: float | None = None
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 5
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            command_bytes = os.read(master_fd, 128)
+                        except OSError:
+                            break
+                        if 0x24 in command_bytes:
+                            measurement_started_at = time.monotonic()
+                    now = time.monotonic()
+                    if measurement_started_at is None or now - last_frame_at < 0.12:
+                        continue
+                    elapsed = now - measurement_started_at
+                    payload = measured if elapsed >= 1.75 else heart_rate_only if elapsed >= 1.25 else no_finger
+                    try:
+                        os.write(master_fd, payload)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_sensor, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "1.5",
+                        "--stabilization-grace",
+                        "1",
+                        "--stable-frames",
+                        "2",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=6,
+                )
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(payload["heart_rate_bpm"], 76)
+        self.assertEqual(payload["spo2_percent"], 97)
+        self.assertGreater(payload["first_heart_rate_frame"], 1, "stale pre-session input must be flushed")
+        self.assertGreater(payload["first_spo2_frame"], payload["first_heart_rate_frame"])
+
     def test_recovers_a_valid_measurement_from_fragmented_uart_data(self) -> None:
         no_finger = frame(
             heart_rate=0,
@@ -111,6 +301,62 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertEqual(payload["quality"], "poor_signal")
         self.assertEqual(payload["body_temperature_raw"], {"integer": 36, "decimal": 55})
         self.assertEqual(payload["valid_frame_count"], 2)
+
+    def test_aggregates_heart_rate_and_spo2_that_stabilize_in_separate_frames(self) -> None:
+        heart_rate_only = frame(
+            heart_rate=72,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            body_temperature=(36, 28),
+        )
+        spo2_only = frame(
+            heart_rate=0,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            body_temperature=(36, 31),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            fixture = temp / "uart.bin"
+            output = temp / "vitals.json"
+            fixture.write_bytes(heart_rate_only * 3 + spo2_only * 3)
+            completed = subprocess.run(
+                [
+                    "perl",
+                    str(PARSER),
+                    "--input-file",
+                    str(fixture),
+                    "--chunk-size",
+                    "24",
+                    "--stable-frames",
+                    "3",
+                    "--output",
+                    str(output),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["finger_detected"])
+        self.assertEqual(payload["quality"], "stable")
+        self.assertEqual(payload["heart_rate_bpm"], 72)
+        self.assertEqual(payload["spo2_percent"], 98)
+        self.assertEqual(payload["heart_rate_frame_count"], 3)
+        self.assertEqual(payload["spo2_frame_count"], 3)
+        self.assertEqual(payload["first_contact_frame"], 1)
+        self.assertEqual(payload["first_heart_rate_frame"], 1)
+        self.assertEqual(payload["first_spo2_frame"], 4)
+        self.assertEqual([item["frame"] for item in payload["signal_trace"]], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([item["spo2"] for item in payload["signal_trace"]], [0, 0, 0, 98, 98, 98])
 
     def test_preserves_nonzero_abnormal_readings(self) -> None:
         abnormal = frame(

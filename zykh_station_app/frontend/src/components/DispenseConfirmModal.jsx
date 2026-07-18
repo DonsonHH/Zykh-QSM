@@ -11,6 +11,8 @@ const nextPaint = () => new Promise((resolve) => {
 });
 const DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15;
 const FACE_PREVIEW_READY_TIMEOUT_MS = 4500;
+const FACE_VERIFICATION_FRAME_INTERVAL_MS = 250;
+const DISPENSE_AUTO_CLOSE_MS = 2000;
 const anonymousGuest = {
   id: "",
   name: "访客",
@@ -54,12 +56,20 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
   const [previewActive, setPreviewActive] = useState(false);
   const [previewRetry, setPreviewRetry] = useState(0);
   const [previewReady, setPreviewReady] = useState(false);
+  const [verificationFrameVersion, setVerificationFrameVersion] = useState(0);
+  const [verificationFrameReady, setVerificationFrameReady] = useState(false);
   const sessionRef = useRef(0);
   const verificationAttemptRef = useRef(0);
   const previewRetryTimerRef = useRef(null);
   const previewReadyTimerRef = useRef(null);
   const previewReadyWaiterRef = useRef(null);
+  const autoCloseTimerRef = useRef(null);
+  const onCancelRef = useRef(onCancel);
   const busy = ["verifying", "recognized", "opening"].includes(phase) || submitting;
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (open) {
@@ -75,20 +85,49 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
       setPreviewActive(initialMethod === "face");
       setPreviewRetry(0);
       setPreviewReady(false);
+      setVerificationFrameVersion(0);
+      setVerificationFrameReady(false);
     } else {
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
     }
     window.clearTimeout(previewRetryTimerRef.current);
+    window.clearTimeout(autoCloseTimerRef.current);
     settlePreviewReadiness(false);
   }, [medicine?.id, open, plan?.id]);
 
   useEffect(() => {
     return () => {
       window.clearTimeout(previewRetryTimerRef.current);
+      window.clearTimeout(autoCloseTimerRef.current);
       settlePreviewReadiness(false);
     };
   }, []);
+
+  useEffect(() => {
+    if (!open || method !== "face" || phase !== "verifying") {
+      setVerificationFrameReady(false);
+      return undefined;
+    }
+    setVerificationFrameVersion(Date.now());
+    const interval = window.setInterval(() => {
+      setVerificationFrameVersion(Date.now());
+    }, FACE_VERIFICATION_FRAME_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [method, open, phase]);
+
+  useEffect(() => {
+    if (open && phase === "complete") {
+      autoCloseTimerRef.current = window.setTimeout(() => {
+        sessionRef.current += 1;
+        verificationAttemptRef.current += 1;
+        setPreviewActive(false);
+        onCancelRef.current();
+      }, DISPENSE_AUTO_CLOSE_MS);
+      return () => window.clearTimeout(autoCloseTimerRef.current);
+    }
+    return undefined;
+  }, [open, phase]);
 
   if (!open || !medicine) {
     return null;
@@ -204,6 +243,13 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     settlePreviewReadiness(true, attempt);
   }
 
+  function handlePreviewError(attempt) {
+    if (phase === "verifying") {
+      return;
+    }
+    retryPreview(attempt);
+  }
+
   async function ensureFacePreviewReady(session, attempt) {
     if (previewActive && previewReady) {
       return true;
@@ -271,10 +317,6 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
           return;
         }
         setPhase("verifying");
-        setPreviewActive(false);
-        setPreviewReady(false);
-        settlePreviewReadiness(false);
-        await nextPaint();
         verification = await verifyDispenseIdentity(18);
       }
     } catch (requestError) {
@@ -372,6 +414,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     sessionRef.current += 1;
     verificationAttemptRef.current += 1;
     window.clearTimeout(previewRetryTimerRef.current);
+    window.clearTimeout(autoCloseTimerRef.current);
     settlePreviewReadiness(false);
     setPreviewActive(false);
     onCancel();
@@ -512,8 +555,16 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
                     src={`/api/camera/stream?identity=${previewRetry}`}
                     alt=""
                     onLoad={() => handlePreviewReady(previewAttempt)}
-                    onError={() => retryPreview(previewAttempt)}
+                    onError={() => handlePreviewError(previewAttempt)}
                   />
+                  {faceVerificationActive ? (
+                    <img
+                      className={`face-verification-preview ${verificationFrameReady ? "ready" : "loading"}`}
+                      src={`/api/identity/frame?t=${verificationFrameVersion}`}
+                      alt=""
+                      onLoad={() => setVerificationFrameReady(true)}
+                    />
+                  ) : null}
                   {!previewReady && <StrokeDrawIcon icon={ScanFace} size={82} strokeWidth={1.8} mode="yoyo" active />}
                 </>
               ) : phase === "guest_confirm" ? (

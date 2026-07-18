@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
-  "components/BottomNav.jsx",
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
   "components/InquiryEntryCard.jsx",
@@ -71,8 +70,8 @@ assert.match(idleScreen, /pace="idle"/, "idle screen icon does not use the slowe
 assert.doesNotMatch(idleScreen, /HandwrittenHello|<HandwrittenHello/, "idle screen still renders the Hello animation");
 
 const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
-assert.match(bottomNav, /mode="once"/, "bottom navigation icon motion is not single-shot");
-assert.match(bottomNav, /token:\s*current\.token \+ 1/, "repeated taps cannot replay bottom navigation motion");
+assert.doesNotMatch(bottomNav, /StrokeDrawIcon|useState/, "frequent bottom navigation actions should use stable static icons");
+assert.match(bottomNav, /<Icon size=\{27\} strokeWidth=\{2\.1\}/, "bottom navigation lost its consistent icon geometry");
 
 for (const file of allowedDrawFiles) {
   const content = await readFile(`${sourceRoot}/${file}`, "utf8");
@@ -122,6 +121,20 @@ assert.doesNotMatch(wakeHandler, /identify|capture|verify/, "waking the home scr
 assert.doesNotMatch(wakeHandler, /clearIdentity\(\)/, "waking the home screen still changes identity state");
 assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearIdentity\(\)/, "entering idle mode no longer clears the prior user session");
 assert.match(app, /commitViewChange\("sleep"[\s\S]*?clearInquirySession\(\)[\s\S]*?clearIdentity\(\)/, "entering idle mode does not reset the inquiry identity flow");
+
+const entry = await readFile(`${sourceRoot}/main.jsx`, "utf8");
+assert.match(entry, /design-polish\.css[\s\S]*motion-system\.css/, "design and motion polish layers are missing or loaded in the wrong order");
+
+const designPolish = await readFile(`${sourceRoot}/styles/design-polish.css`, "utf8");
+assert.match(designPolish, /--surface-shadow:[\s\S]*0 0 0 1px var\(--surface-edge\)/, "primary surfaces lost their shadow hairline");
+assert.match(designPolish, /--surface-shadow-item:/, "repeated rows do not have a quiet elevation level");
+assert.match(designPolish, /\.card,[\s\S]*border:\s*1px solid transparent;[\s\S]*box-shadow:\s*var\(--surface-shadow\)/, "primary surfaces still combine a gray border with elevation shadow");
+assert.match(designPolish, /focus-visible[\s\S]*outline:\s*3px solid var\(--focus-ring\)/, "polished controls have no visible focus treatment");
+
+const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "utf8");
+assert.match(motionSystem, /--motion-control:\s*180ms/, "control feedback no longer shares the standard motion token");
+assert.match(motionSystem, /\.inquiry-assistant-orbit[\s\S]*animation-iteration-count:\s*2/, "home decorative motion runs forever");
+assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*::view-transition-old/, "polished view transitions ignore reduced motion");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
 assert.match(home, /plan\.status === "待执行"/, "home medication list includes completed plans");
@@ -182,7 +195,26 @@ assert.match(dispenseModal, /useState\(false\)[\s\S]*previewRetry/, "face previe
 assert.match(dispenseModal, /facePreviewVisible && previewActive/, "face preview is not available before verification begins");
 assert.match(dispenseModal, /resumeFacePreview/, "face preview is not resumed after identity verification");
 assert.match(dispenseModal, /facePreviewVisible \? null/, "face confirmation text can still cover the live preview");
-assert.match(dispenseModal, /setPreviewActive\(false\)[\s\S]*verifyDispenseIdentity/, "face preview is left frozen while recognition owns the camera");
+assert.doesNotMatch(
+  dispenseModal,
+  /setPhase\("verifying"\)[\s\S]{0,240}setPreviewActive\(false\)[\s\S]{0,240}verifyDispenseIdentity/,
+  "face preview is removed while the confirmation button says it is identifying"
+);
+assert.match(dispenseModal, /FACE_VERIFICATION_FRAME_INTERVAL_MS\s*=\s*250/, "face verification preview refresh is not bounded");
+assert.match(dispenseModal, /\/api\/identity\/frame\?t=/, "face verification does not use the recognition-owned live frame source");
+assert.match(dispenseModal, /DISPENSE_AUTO_CLOSE_MS\s*=\s*2000/, "successful dispense does not use the requested two-second close delay");
+assert.match(
+  dispenseModal,
+  /phase === "complete"[\s\S]*window\.setTimeout\([\s\S]*onCancel[\s\S]*DISPENSE_AUTO_CLOSE_MS/,
+  "successful dispense does not close the confirmation modal automatically"
+);
+assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "auto-close callback is not stable across parent clock renders");
+assert.match(dispenseModal, /onCancelRef\.current\(\)/, "auto-close timer does not call the latest close callback");
+assert.match(
+  dispenseModal,
+  /if \(open && phase === "complete"\)[\s\S]*?\}, \[open, phase\]\);/,
+  "auto-close timer can still restart whenever a parent recreates the close callback"
+);
 assert.match(dispenseModal, /DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15/, "dispense fingerprint timeout is still too long");
 assert.match(dispenseModal, /await nextPaint\(\)[\s\S]*setPreviewActive\(true\)[\s\S]*await nextPaint\(\)/, "face preview is not remounted safely before retry");
 assert.match(dispenseModal, /key=\{`\$\{previewAttempt\}-\$\{previewRetry\}`\}/, "face preview retry reuses the stale image element");

@@ -2111,6 +2111,10 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   opacity: 1;
 }
 
+.biometric-stage img.face-verification-preview {
+  z-index: 2;
+}
+
 .biometric-stage-title-row {
   max-width: calc(100% - 24px);
   display: flex;

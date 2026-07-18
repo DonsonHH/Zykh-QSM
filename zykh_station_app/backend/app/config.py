@@ -84,6 +84,7 @@ class Settings:
     qsm_face_identify_path: str = _env("QSM_FACE_IDENTIFY_PATH", "/api/face/identify")
     qsm_face_enroll_path: str = _env("QSM_FACE_ENROLL_PATH", "/api/face/enroll")
     qsm_face_list_path: str = _env("QSM_FACE_LIST_PATH", "/api/face/list")
+    qsm_face_preview_path: str = _env("QSM_FACE_PREVIEW_PATH", "/api/face/frame")
     qsm_fingerprint_api_base: str = _env("QSM_FINGERPRINT_BASE_URL", "http://127.0.0.1:18086").rstrip("/")
     qsm_fingerprint_timeout_seconds: float = float(_env("QSM_FINGERPRINT_TIMEOUT_SECONDS", "70"))
     qsm_fingerprint_status_path: str = _env("QSM_FINGERPRINT_STATUS_PATH", "/api/fingerprint/status")

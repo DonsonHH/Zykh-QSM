@@ -31,6 +31,27 @@ class QsmFaceClient:
             timeout=max(settings.qsm_face_timeout_seconds, 45),
         )
 
+    def read_preview_frame(self) -> tuple[bytes | None, str | None]:
+        request = Request(f"{self.base_url}{settings.qsm_face_preview_path}", method="GET")
+        try:
+            with urlopen(request, timeout=3) as response:
+                frame = response.read(1_000_001)
+            if len(frame) > 1_000_000:
+                return None, "人脸识别画面数据过大。"
+            if len(frame) < 54 or not frame.startswith(b"BM"):
+                return None, "人脸识别画面格式不可识别。"
+            return frame, None
+        except HTTPError as exc:
+            if exc.code == 404:
+                return None, "waiting"
+            return None, f"人脸识别画面 HTTP {exc.code}"
+        except URLError as exc:
+            return None, f"人脸识别画面连接失败：{exc.reason}"
+        except (TimeoutError, socket.timeout):
+            return None, "人脸识别画面连接超时。"
+        except OSError as exc:
+            return None, f"人脸识别画面暂不可用：{exc}"
+
     def _request(
         self,
         path: str,
