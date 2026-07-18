@@ -226,6 +226,10 @@ class AiService:
             "只提取用户原话直接支持的信息，并只输出 JSON。"
             "symptom_dimensions 只能从给定枚举中选择；dimension_evidence 必须逐字引用本轮用户原话。"
             "信息没有明确表达时返回空字符串，不得猜测。每次最多给一个 follow_up_question。"
+            "action_intent 只能是 ask、measure_vitals、analyze：信息不足选 ask；"
+            "只有体温、心率或血氧会实质影响安全核验时才选 measure_vitals；信息足够时选 analyze。"
+            "reasoning_summary 只概括已获得的证据，不输出诊断推理；action_reason 简述动作理由。"
+            "不得输出药品编号、仓位、药名或任何硬件动作。"
         )
         user_prompt = json.dumps(
             {
@@ -240,6 +244,9 @@ class AiService:
                     "used_medicines": "",
                     "allergy_or_contraindication": "",
                     "follow_up_question": "",
+                    "reasoning_summary": "",
+                    "action_intent": "ask",
+                    "action_reason": "",
                     "confidence": 0.0,
                 },
             },
@@ -260,7 +267,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.0,
-            "max_tokens": 420,
+            "max_tokens": 520,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
@@ -292,7 +299,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=360,
+            max_tokens=460,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):

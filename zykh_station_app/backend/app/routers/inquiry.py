@@ -9,11 +9,14 @@ from ..schemas.inquiry import (
     InquiryResult,
     InquirySessionCreateRequest,
     InquirySessionResponse,
+    InquiryTreatmentConfirmRequest,
+    InquiryTreatmentConfirmResponse,
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
 from ..services.inquiry_orchestrator import InquiryOrchestrator
 from ..services.inquiry_service import InquiryService
+from ..services.dispense_service import DispenseError
 
 router = APIRouter(prefix="/api/inquiry", tags=["inquiry"])
 
@@ -48,6 +51,22 @@ def process_inquiry_turn(session_id: str, request: InquiryTurnRequest) -> Inquir
 def attach_inquiry_vitals(session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
     try:
         return InquiryOrchestrator().attach_vitals(session_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/sessions/{session_id}/treatment/confirm",
+    response_model=InquiryTreatmentConfirmResponse,
+)
+def confirm_inquiry_treatment(
+    session_id: str,
+    request: InquiryTreatmentConfirmRequest,
+) -> InquiryTreatmentConfirmResponse:
+    try:
+        return InquiryOrchestrator().confirm_treatment(session_id, request)
+    except DispenseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

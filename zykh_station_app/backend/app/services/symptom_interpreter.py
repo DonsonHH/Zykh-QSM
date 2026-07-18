@@ -25,6 +25,9 @@ ALLOWED_DIMENSIONS = {
     "营养补充",
 }
 
+ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze"}
+VITALS_SENSITIVE_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
+
 
 DIMENSION_KEYWORDS = {
     "恶心暑湿": ("中暑", "暑湿", "恶心", "头晕", "胸闷腹胀"),
@@ -53,6 +56,9 @@ class SymptomInterpretation:
     used_medicines: str = ""
     allergy_or_contraindication: str = ""
     follow_up_question: str = ""
+    reasoning_summary: str = ""
+    action_intent: str = "ask"
+    action_reason: str = ""
     confidence: float = 0.0
     source: str = "rules_fallback"
 
@@ -100,6 +106,9 @@ class SymptomInterpreter:
             confidence = max(0.0, min(float(payload.get("confidence") or 0), 1.0))
         except (TypeError, ValueError):
             confidence = 0.0
+        action_intent = str(payload.get("action_intent") or "ask").strip()
+        if action_intent not in ALLOWED_ACTION_INTENTS:
+            action_intent = "ask"
         return SymptomInterpretation(
             symptom_dimensions=list(dict.fromkeys(dimensions)),
             dimension_evidence=clean_evidence,
@@ -110,6 +119,9 @@ class SymptomInterpreter:
                 or self._verbatim_value(payload.get("allergy_or_contraindication"), transcript)
             ),
             follow_up_question=str(payload.get("follow_up_question") or "").strip(),
+            reasoning_summary=self._short_text(payload.get("reasoning_summary"), 180),
+            action_intent=action_intent,
+            action_reason=self._short_text(payload.get("action_reason"), 120),
             confidence=confidence,
             source=str(payload.get("source") or "cloud"),
         )
@@ -136,12 +148,24 @@ class SymptomInterpreter:
             allergy = "无"
         elif "过敏" in transcript or "禁忌" in transcript:
             allergy = transcript[:120]
+        if VITALS_SENSITIVE_DIMENSIONS.intersection(dimensions):
+            action_intent = "measure_vitals"
+            action_reason = "核心体征会影响本次风险核验"
+        elif dimensions:
+            action_intent = "analyze"
+            action_reason = "已识别到可由本地安全规则核验的症状维度"
+        else:
+            action_intent = "ask"
+            action_reason = "仍需补充明确的症状信息"
         return SymptomInterpretation(
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
             duration=duration,
             used_medicines=used,
             allergy_or_contraindication=allergy,
+            reasoning_summary="已按用户原话整理症状证据。" if dimensions else "本轮未提取到明确症状证据。",
+            action_intent=action_intent,
+            action_reason=action_reason,
             confidence=0.7 if dimensions else 0.2,
             source="rules_fallback",
         )
@@ -154,6 +178,10 @@ class SymptomInterpreter:
     def _verbatim_value(value: object, transcript: str) -> str:
         normalized = str(value or "").strip()
         return normalized if normalized and normalized in transcript else ""
+
+    @staticmethod
+    def _short_text(value: object, limit: int) -> str:
+        return str(value or "").strip()[:limit]
 
     @staticmethod
     def _has_unnegated_term(text: str, term: str) -> bool:

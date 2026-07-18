@@ -27,3 +27,10 @@ export function sendInquiryTurn(sessionId, transcript) {
 export function attachInquiryVitals(sessionId, payload) {
   return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/vitals`, payload);
 }
+
+export function confirmInquiryTreatment(sessionId, optionId) {
+  return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/treatment/confirm`, {
+    option_id: optionId,
+    confirmed_safety_notice: true
+  });
+}

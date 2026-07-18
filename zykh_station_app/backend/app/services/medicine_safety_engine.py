@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from ..config import settings
-from ..schemas.inquiry import CandidateMedicine, InquiryExtractedInformation, RiskLevel
+from ..schemas.inquiry import CandidateMedicine, InquiryExtractedInformation, RiskLevel, TreatmentOption
 from .medicine_knowledge_repository import MedicineKnowledgeRepository
 
 
@@ -19,6 +19,7 @@ class SafetyDecision:
     risk_reasons: list[str]
     primary_candidate: CandidateMedicine | None
     alternative_candidate: CandidateMedicine | None
+    treatment_options: list[TreatmentOption]
 
 
 class MedicineSafetyEngine:
@@ -29,6 +30,7 @@ class MedicineSafetyEngine:
         self,
         extracted: InquiryExtractedInformation,
         vitals: dict[str, Any] | None,
+        profile_context: str = "",
     ) -> SafetyDecision:
         text = extracted.symptoms_text
         level: RiskLevel = "low"
@@ -71,15 +73,39 @@ class MedicineSafetyEngine:
             reasons.append("未发现明确高危信号")
 
         if level in {"high", "emergency"}:
-            return SafetyDecision(level, reasons, None, None)
-        candidates = self.knowledge.candidates(
-            extracted.symptom_dimensions,
-            extracted.allergy_or_contraindication,
+            return SafetyDecision(level, reasons, None, None, [])
+        context_text = "；".join(
+            value for value in (profile_context.strip(), extracted.allergy_or_contraindication.strip()) if value
         )
-        primary = candidates[0] if candidates else None
-        ambiguous = extracted.confidence < 0.7 or len(extracted.symptom_dimensions) > 1
-        alternative = candidates[1] if ambiguous and len(candidates) > 1 else None
-        return SafetyDecision(level, reasons, primary, alternative)
+        options = self.knowledge.treatment_options(
+            extracted.symptom_dimensions,
+            context_text,
+        )
+        primary = self._candidate(options[0].medicines[0]) if options and options[0].medicines else None
+        alternative = None
+        if len(options) > 1:
+            alternative = next(
+                (
+                    self._candidate(medicine)
+                    for medicine in options[1].medicines
+                    if primary is None or medicine.id != primary.id
+                ),
+                None,
+            )
+        return SafetyDecision(level, reasons, primary, alternative, options)
+
+    @staticmethod
+    def _candidate(value) -> CandidateMedicine:
+        return CandidateMedicine(
+            id=value.id,
+            name=value.name,
+            category=value.category,
+            slot=value.slot,
+            stock=value.stock,
+            unit=value.unit,
+            safety_note=value.safety_note,
+            match_reason=value.match_reason,
+        )
 
     @staticmethod
     def _long_duration(duration: str) -> bool:

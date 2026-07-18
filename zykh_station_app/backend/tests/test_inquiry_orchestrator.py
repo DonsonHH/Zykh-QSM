@@ -14,9 +14,12 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app import db  # noqa: E402
 from app.schemas.inquiry import (  # noqa: E402
     InquirySessionCreateRequest,
+    InquiryTreatmentConfirmRequest,
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
+from app.schemas.dispense import DispenseConfirmResponse  # noqa: E402
+from app.services.dispense_service import DispenseError  # noqa: E402
 from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 from app.services.symptom_interpreter import SymptomInterpretation  # noqa: E402
@@ -32,6 +35,28 @@ class FakeInterpreter:
         return SymptomInterpretation(source="rules_fallback")
 
 
+class FakeDispenseService:
+    def __init__(self, fail_at: int | None = None) -> None:
+        self.requests = []
+        self.fail_at = fail_at
+
+    def confirm(self, request):
+        self.requests.append(request)
+        if self.fail_at == len(self.requests):
+            return DispenseConfirmResponse(
+                ok=False,
+                dry_run=False,
+                message="外设开柜失败",
+                record_id=f"record-{len(self.requests)}",
+            )
+        return DispenseConfirmResponse(
+            ok=True,
+            dry_run=False,
+            message=f"{request.slot}号柜门已打开。",
+            record_id=f"record-{len(self.requests)}",
+        )
+
+
 class InquiryOrchestratorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -44,8 +69,15 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.db_patch.stop()
         self.temp_dir.cleanup()
 
-    def create_session(self, interpreter: FakeInterpreter | None = None):
-        service = InquiryOrchestrator(interpreter=interpreter or FakeInterpreter([]))
+    def create_session(
+        self,
+        interpreter: FakeInterpreter | None = None,
+        dispense_service: FakeDispenseService | None = None,
+    ):
+        service = InquiryOrchestrator(
+            interpreter=interpreter or FakeInterpreter([]),
+            dispense_service=dispense_service,
+        )
         session = service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
         return service, session
 
@@ -224,6 +256,194 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIsNotNone(result.primary_candidate)
         self.assertIsNotNone(result.alternative_candidate)
         self.assertNotEqual(result.primary_candidate.id, result.alternative_candidate.id)
+        self.assertLessEqual(len(result.treatment_options), 2)
+
+    def test_model_action_intent_can_request_vitals_for_a_non_default_dimension(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["轻微外伤"],
+                    dimension_evidence={"轻微外伤": "擦伤"},
+                    duration="刚开始",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    reasoning_summary="需要用核心体征排除全身异常。",
+                    action_intent="measure_vitals",
+                    action_reason="用户同时描述了明显乏力",
+                    confidence=0.84,
+                    source="cloud",
+                )
+            ]
+        )
+        service, session = self.create_session(interpreter)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="刚开始有轻微擦伤，还没用药，没有过敏"),
+        )
+
+        self.assertEqual(result.next_action, "measure_vitals")
+        self.assertEqual(result.model_action_intent, "measure_vitals")
+        self.assertEqual(result.reasoning_summary, "需要用核心体征排除全身异常。")
+
+    def test_selected_treatment_option_only_opens_its_medicines_once(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["咳嗽咳痰", "咽喉口腔不适"],
+                    dimension_evidence={"咳嗽咳痰": "咳嗽", "咽喉口腔不适": "喉咙痛"},
+                    duration="一天",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="头孢过敏",
+                    action_intent="measure_vitals",
+                    action_reason="核心体征会影响呼吸道症状的安全核验",
+                    confidence=0.82,
+                    source="cloud",
+                )
+            ]
+        )
+        dispense = FakeDispenseService()
+        service, session = self.create_session(interpreter, dispense)
+        pending = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="咳嗽并且喉咙痛一天了，还没用药，头孢过敏"),
+        )
+        result = service.attach_vitals(
+            pending.session_id,
+            InquiryVitalsRequest(temperature=36.7, heart_rate=78, spo2=98),
+        )
+
+        self.assertGreaterEqual(len(result.treatment_options), 2)
+        selected = result.treatment_options[1]
+        selected_ids = [medicine.id for medicine in selected.medicines]
+        self.assertGreaterEqual(len(selected_ids), 2)
+
+        confirmed = service.confirm_treatment(
+            result.session_id,
+            InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+        )
+
+        self.assertTrue(confirmed.ok)
+        self.assertEqual(confirmed.status, "complete")
+        self.assertEqual([request.medicine_id for request in dispense.requests], selected_ids)
+        self.assertTrue(all(request.confirm_real_dispense for request in dispense.requests))
+        with self.assertRaises(DispenseError):
+            service.confirm_treatment(
+                result.session_id,
+                InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+            )
+
+    def test_treatment_requires_explicit_confirmation(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["便秘"],
+                    dimension_evidence={"便秘": "便秘"},
+                    duration="一天",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    action_intent="analyze",
+                    confidence=0.9,
+                    source="cloud",
+                )
+            ]
+        )
+        service, session = self.create_session(interpreter, FakeDispenseService())
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="便秘一天了，没有用药，没有过敏"),
+        )
+
+        self.assertEqual(result.action_status, "ready")
+        with self.assertRaises(DispenseError):
+            service.confirm_treatment(
+                result.session_id,
+                InquiryTreatmentConfirmRequest(
+                    option_id=result.treatment_options[0].option_id,
+                    confirmed_safety_notice=False,
+                ),
+            )
+
+    def test_inventory_change_invalidates_displayed_option_before_opening(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["感冒鼻部症状"],
+                    dimension_evidence={"感冒鼻部症状": "鼻塞"},
+                    duration="刚开始",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    action_intent="analyze",
+                    confidence=0.9,
+                    source="cloud",
+                )
+            ]
+        )
+        dispense = FakeDispenseService()
+        service, session = self.create_session(interpreter, dispense)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="刚开始鼻塞，没有用药，没有过敏"),
+        )
+        selected = result.treatment_options[0]
+        with db.connect() as conn:
+            conn.execute("UPDATE medicines SET stock=0 WHERE id=?", (selected.medicines[0].id,))
+
+        with self.assertRaises(DispenseError):
+            service.confirm_treatment(
+                result.session_id,
+                InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+            )
+
+        self.assertEqual(dispense.requests, [])
+        refreshed = service.get_session(result.session_id)
+        self.assertEqual(refreshed.action_status, "ready")
+        self.assertNotEqual(
+            [medicine.id for medicine in selected.medicines],
+            [medicine.id for medicine in refreshed.treatment_options[0].medicines],
+        )
+
+    def test_partial_open_is_terminal_and_does_not_repeat_opened_cabinet(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["咳嗽咳痰", "咽喉口腔不适"],
+                    dimension_evidence={"咳嗽咳痰": "咳嗽", "咽喉口腔不适": "咽痛"},
+                    duration="一天",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    action_intent="measure_vitals",
+                    confidence=0.85,
+                    source="cloud",
+                )
+            ]
+        )
+        dispense = FakeDispenseService(fail_at=2)
+        service, session = self.create_session(interpreter, dispense)
+        pending = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="咳嗽咽痛一天，没有用药，没有过敏"),
+        )
+        result = service.attach_vitals(
+            pending.session_id,
+            InquiryVitalsRequest(temperature=36.7, heart_rate=78, spo2=98),
+        )
+        selected = result.treatment_options[0]
+
+        confirmed = service.confirm_treatment(
+            result.session_id,
+            InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+        )
+
+        self.assertFalse(confirmed.ok)
+        self.assertEqual(confirmed.status, "partial")
+        self.assertEqual(len(dispense.requests), 2)
+        with self.assertRaises(DispenseError):
+            service.confirm_treatment(
+                result.session_id,
+                InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+            )
+        self.assertEqual(len(dispense.requests), 2)
 
 
 if __name__ == "__main__":

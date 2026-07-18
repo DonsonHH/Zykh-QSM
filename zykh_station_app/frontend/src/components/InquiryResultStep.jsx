@@ -1,7 +1,17 @@
-import React from "react";
-import { AlertTriangle, Home, PackageSearch, RotateCcw, ShieldCheck } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  CircleCheckBig,
+  DoorOpen,
+  Home,
+  LoaderCircle,
+  Pill,
+  RotateCcw,
+  ShieldCheck,
+  X
+} from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
-import { SafetyNotice } from "./SafetyNotice.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
 
 const riskLabels = {
@@ -11,85 +21,156 @@ const riskLabels = {
   emergency: "紧急风险"
 };
 
-export function InquiryResultStep({ result, onViewCandidates, onRestart, onHome }) {
-  const canProceed = Boolean(result?.can_view_medicines && result?.primary_candidate);
-  const candidates = [
-    result?.primary_candidate ? { ...result.primary_candidate, optionLabel: "主候选" } : null,
-    result?.alternative_candidate ? { ...result.alternative_candidate, optionLabel: "备选" } : null
-  ].filter(Boolean);
-  const summary = symptomSummary(result?.extracted_information);
-  const categories = [...new Set(candidates.map((candidate) => candidate.category))];
-  const warnings = contraindicationWarnings(result);
-  const channelLabel = aiSourceLabel(result?.source);
+const terminalStatuses = new Set(["complete", "partial", "failed"]);
+
+export function InquiryResultStep({
+  result,
+  opening,
+  actionResult,
+  onConfirmTreatment,
+  onRestart,
+  onHome
+}) {
+  const options = result?.treatment_options || [];
+  const [selectedOptionId, setSelectedOptionId] = useState(result?.selected_option_id || options[0]?.option_id || "");
+  const [confirmed, setConfirmed] = useState(false);
+  const [countdown, setCountdown] = useState(null);
   const highRisk = ["high", "emergency"].includes(result?.risk_level);
+  const actionStatus = actionResult?.status || result?.action_status || "idle";
+  const actionMessage = actionResult?.message || result?.action_message || "";
+  const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
+  const actionFinished = terminalStatuses.has(actionStatus);
+  const actionInProgress = opening || actionStatus === "opening";
+  const selectedOption = useMemo(
+    () => options.find((option) => option.option_id === selectedOptionId) || options[0],
+    [options, selectedOptionId]
+  );
+
+  useEffect(() => {
+    if (!options.some((option) => option.option_id === selectedOptionId)) {
+      setSelectedOptionId(options[0]?.option_id || "");
+    }
+  }, [options, selectedOptionId]);
+
+  useEffect(() => {
+    if (countdown === null) return undefined;
+    if (countdown <= 0) {
+      setCountdown(null);
+      onConfirmTreatment(selectedOptionId);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setCountdown((value) => value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [countdown, onConfirmTreatment, selectedOptionId]);
+
+  function beginConfirmation() {
+    if (!confirmed || !selectedOptionId || actionInProgress || actionFinished) return;
+    setCountdown(3);
+  }
 
   return (
-    <section className="inquiry-result-step">
-      <div className="result-flow-head">
-        <span className={`result-risk-motion ${result?.risk_level === "low" ? "low" : "warn"}`} role="img" aria-label={riskLabels[result?.risk_level] || "风险提示"}>
-          {result?.risk_level === "low" ? <ShieldCheck size={42} /> : <AlertTriangle size={42} />}
+    <section className="inquiry-treatment-result">
+      <header className="treatment-result-header">
+        <span className={`treatment-risk-icon ${result?.risk_level === "low" ? "low" : "warn"}`} aria-hidden="true">
+          {result?.risk_level === "low" ? <ShieldCheck size={38} /> : <AlertTriangle size={38} />}
         </span>
-        <div className="inquiry-flow-heading compact">
+        <div>
           <p>问询结果</p>
-          <h2>用药安全核验</h2>
-          <span>{summary}</span>
-          <small className="result-ai-channel">{channelLabel}</small>
+          <h2>{highRisk ? "请优先联系专业人员" : "请选择一个方案"}</h2>
+          <span>{symptomSummary(result?.extracted_information)}</span>
         </div>
-        <RiskBadge level={result.risk_level} label={riskLabels[result.risk_level] || "待核验"} />
-      </div>
-
-      <div className="result-flow-grid">
-        <section className="flow-result-block">
-          <h3>候选类别</h3>
-          <div className="result-chip-row large">
-            {categories.length ? categories.map((category) => <span key={category}>{category}</span>) : <span>本次不展示候选</span>}
-          </div>
-        </section>
-
-        <section className="flow-result-block">
-          <h3>候选药品</h3>
-          {candidates.length ? (
-            <div className="flow-candidate-list">
-              {candidates.map((medicine) => (
-                <article key={medicine.id}>
-                  <PackageSearch size={21} aria-hidden="true" />
-                  <strong><em>{medicine.optionLabel}</em>{medicine.name}</strong>
-                  <span>{medicine.slot}号仓</span>
-                </article>
-              ))}
-            </div>
-          ) : <p className="muted-line">高风险、紧急风险或无合格库存时不展示候选。</p>}
-        </section>
-
-        <section className={`flow-result-block warning ${warnings.length ? "show" : ""}`}>
-          <h3><AlertTriangle size={20} aria-hidden="true" />禁忌核验</h3>
-          {warnings.length ? <ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p>取药前仍需核对实物说明和个人禁忌。</p>}
-        </section>
-
-        <section className="flow-result-block">
-          <h3>核验结论</h3>
-          <div className="flow-next-list">
-            {(result.risk_reasons || []).slice(0, 2).map((reason) => <span key={reason}>{reason}</span>)}
-          </div>
-        </section>
-      </div>
-
-      <SafetyNotice tone={canProceed ? "green" : "orange"}>
-        {highRisk
-          ? "本次不提供候选药品，请联系医生、家人或现场协助人员。"
-          : "主候选与备选是二选一的信息参考，不表示联合使用；后续仍需完成原有取药确认。"}
-      </SafetyNotice>
+        <div className="treatment-result-meta">
+          <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
+          <small>{aiSourceLabel(result?.source)}</small>
+        </div>
+      </header>
 
       {canProceed ? (
-        <button className="primary-action result-flow-action" type="button" onClick={onViewCandidates}>查看主候选药品</button>
+        <div className={`treatment-option-grid count-${Math.min(options.length, 3)}`} role="radiogroup" aria-label="互斥用药方案">
+          {options.map((option) => {
+            const selected = option.option_id === selectedOptionId;
+            return (
+              <label className={`treatment-option-card ${selected ? "selected" : ""}`} key={option.option_id}>
+                <input
+                  type="radio"
+                  name="treatment-option"
+                  value={option.option_id}
+                  checked={selected}
+                  disabled={actionInProgress || countdown !== null || actionFinished}
+                  onChange={() => {
+                    setSelectedOptionId(option.option_id);
+                    setConfirmed(false);
+                  }}
+                />
+                <span className="option-choice-mark">{selected ? <Check size={18} /> : option.option_id}</span>
+                <span className="option-heading"><strong>{option.label}</strong><small>{option.when}</small></span>
+                <span className="option-medicine-list">
+                  {option.medicines.map((medicine) => (
+                    <span className="option-medicine-row" key={medicine.id}>
+                      <Pill size={18} aria-hidden="true" />
+                      <span><strong>{medicine.name}</strong><small>{medicine.role}</small></span>
+                      <em>{medicine.slot}号柜</em>
+                    </span>
+                  ))}
+                </span>
+              </label>
+            );
+          })}
+        </div>
       ) : (
-        <div className="blocked-action result-flow-blocked">建议联系医生、家人或现场协助人员</div>
+        <div className="treatment-escalation-panel">
+          <AlertTriangle size={50} aria-hidden="true" />
+          <strong>{result?.reply || "本次不展示候选方案"}</strong>
+          <span>请联系医生、家人或现场协助人员，不要自行新增用药。</span>
+        </div>
       )}
 
-      <div className="result-bottom-actions">
-        <button className="secondary-action" type="button" onClick={onRestart}><RotateCcw size={21} aria-hidden="true" />重新问询</button>
-        <button className="secondary-action" type="button" onClick={onHome}><Home size={21} aria-hidden="true" />返回首页</button>
-      </div>
+      {!highRisk ? (
+        <div className="treatment-evidence-line"><ShieldCheck size={18} />{evidenceSummary(result)}</div>
+      ) : null}
+
+      {canProceed && !actionFinished ? (
+        <div className="treatment-confirm-bar">
+          <label className="treatment-safety-check">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              disabled={actionInProgress || countdown !== null}
+              onChange={(event) => setConfirmed(event.target.checked)}
+            />
+            <span><ShieldCheck size={20} />我已核对所选方案、个人禁忌和药品安全提示</span>
+          </label>
+          {countdown !== null ? (
+            <div className="treatment-countdown" role="status">
+              <strong>{countdown}</strong>
+              <span>秒后打开 {selectedOption?.medicines.length || 0} 个对应药柜</span>
+              <button type="button" onClick={() => setCountdown(null)} aria-label="取消开柜倒计时"><X size={20} /></button>
+            </div>
+          ) : (
+            <button
+              className="treatment-open-button"
+              type="button"
+              disabled={!confirmed || actionInProgress}
+              onClick={beginConfirmation}
+            >
+              {actionInProgress ? <LoaderCircle className="spin" size={23} /> : <DoorOpen size={23} />}
+              {actionInProgress ? "正在打开对应药柜" : "确认方案并打开对应药柜"}
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      {actionFinished ? (
+        <div className={`treatment-action-result ${actionStatus}`} role="status">
+          {actionStatus === "complete" ? <CircleCheckBig size={26} /> : <AlertTriangle size={26} />}
+          <strong>{actionMessage}</strong>
+        </div>
+      ) : null}
+
+      <footer className="treatment-result-actions">
+        <button className="secondary-action" type="button" onClick={onRestart}><RotateCcw size={20} />重新问询</button>
+        <button className="secondary-action" type="button" onClick={onHome}><Home size={20} />返回首页</button>
+      </footer>
     </section>
   );
 }
@@ -100,8 +181,10 @@ function symptomSummary(extracted = {}) {
   return parts.join("，") || "已完成本次信息整理";
 }
 
-function contraindicationWarnings(result) {
+function evidenceSummary(result = {}) {
   const allergy = String(result?.extracted_information?.allergy_or_contraindication || "").trim();
-  if (!allergy || ["无", "没有", "不确定"].includes(allergy)) return [];
-  return [`已记录：${allergy}`, "候选已排除明显禁忌冲突项，取药前仍需再次核对。"];
+  const allergyText = allergy && !["无", "没有", "不确定"].includes(allergy)
+    ? `已按“${allergy}”排除明显冲突项。`
+    : "未记录明确过敏冲突。";
+  return `${result.reasoning_summary || "已按用户原话整理症状证据。"}${allergyText}`;
 }

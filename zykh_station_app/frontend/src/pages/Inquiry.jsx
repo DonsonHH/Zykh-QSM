@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   CakeSlice,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   attachInquiryVitals,
+  confirmInquiryTreatment,
   createInquirySession,
   loadInquirySession,
   sendInquiryTurn
@@ -27,6 +28,7 @@ import {
   INQUIRY_DRAFT_KEY,
   INQUIRY_VITALS_AWAITING_KEY
 } from "../utils/inquirySession.js";
+import "../styles/inquiry-actions.css";
 
 function readJson(key) {
   try {
@@ -50,7 +52,7 @@ function normalizeUser(user) {
   };
 }
 
-export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus }) {
+export function Inquiry({ notify, onNavigate, networkStatus }) {
   const draft = readJson(INQUIRY_DRAFT_KEY);
   const restoredSessionId = window.sessionStorage.getItem(INQUIRY_BACKEND_SESSION_KEY) || "";
   const [serviceUsers, setServiceUsers] = useState([]);
@@ -60,7 +62,10 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
   const [session, setSession] = useState(null);
   const [sessionId, setSessionId] = useState(restoredSessionId);
   const [sending, setSending] = useState(false);
+  const [openingTreatment, setOpeningTreatment] = useState(false);
+  const [treatmentAction, setTreatmentAction] = useState(null);
   const creatingRef = useRef(false);
+  const openingTreatmentRef = useRef(false);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
@@ -225,11 +230,30 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     }
   }
 
-  function handleViewCandidates() {
-    const candidate = session?.primary_candidate;
-    if (!session?.can_view_medicines || !candidate) return;
-    onViewCandidates({ category: candidate.category || "全部", medicineId: candidate.id });
-  }
+  const handleTreatmentConfirm = useCallback(async (optionId) => {
+    if (!sessionId || openingTreatmentRef.current) return;
+    openingTreatmentRef.current = true;
+    setOpeningTreatment(true);
+    setTreatmentAction(null);
+    try {
+      const data = await confirmInquiryTreatment(sessionId, optionId);
+      setTreatmentAction(data);
+      setSession(data.session);
+      notify(data.message || "方案对应药柜已处理");
+    } catch (error) {
+      setTreatmentAction({ status: "failed", message: error.message || "开柜未完成，请联系现场协助人员" });
+      notify(error.message || "开柜未完成，请联系现场协助人员");
+      loadInquirySession(sessionId)
+        .then((latest) => {
+          setSession(latest);
+          if (latest.action_status === "ready") setTreatmentAction(null);
+        })
+        .catch(() => null);
+    } finally {
+      openingTreatmentRef.current = false;
+      setOpeningTreatment(false);
+    }
+  }, [notify, sessionId]);
 
   function resetFlow() {
     clearInquirySession();
@@ -238,6 +262,9 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     setSelectedUserId("");
     setIdentityConfirmed(false);
     setGuestUser(null);
+    setOpeningTreatment(false);
+    openingTreatmentRef.current = false;
+    setTreatmentAction(null);
     clearFaceIdentity();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
   }
@@ -271,7 +298,14 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
         {!identityConfirmed ? (
           <InquiryIdentityGate candidate={candidateUser} status={faceIdentityStatus} onConfirm={confirmIdentity} onRetry={retryIdentity} onRequestGuest={confirmGuestInquiry} />
         ) : showResult ? (
-          <InquiryResultStep result={session} onViewCandidates={handleViewCandidates} onRestart={resetFlow} onHome={() => onNavigate("home")} />
+          <InquiryResultStep
+            result={session}
+            opening={openingTreatment}
+            actionResult={treatmentAction}
+            onConfirmTreatment={handleTreatmentConfirm}
+            onRestart={resetFlow}
+            onHome={() => onNavigate("home")}
+          />
         ) : session ? (
           <InquiryChatStep session={session} sending={sending} notify={notify} onSend={handleTurn} onReset={resetFlow} networkStatus={networkStatus} />
         ) : (

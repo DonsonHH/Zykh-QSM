@@ -183,6 +183,13 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS inquiry_messages_session_idx ON inquiry_messages(session_id, created_at, id)"
         )
+        _ensure_column(conn, "inquiry_sessions", "reasoning_summary", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "inquiry_sessions", "model_action_intent", "TEXT NOT NULL DEFAULT 'ask'")
+        _ensure_column(conn, "inquiry_sessions", "action_reason", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "inquiry_sessions", "treatment_options_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "inquiry_sessions", "selected_option_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "inquiry_sessions", "action_status", "TEXT NOT NULL DEFAULT 'idle'")
+        _ensure_column(conn, "inquiry_sessions", "action_message", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vitals_records (

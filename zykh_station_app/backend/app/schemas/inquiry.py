@@ -28,6 +28,18 @@ class CandidateMedicine(BaseModel):
     match_reason: str = ""
 
 
+class TreatmentMedicine(CandidateMedicine):
+    role: str = "主要对症"
+    covered_symptoms: list[str] = Field(default_factory=list)
+
+
+class TreatmentOption(BaseModel):
+    option_id: str
+    label: str
+    when: str
+    medicines: list[TreatmentMedicine] = Field(default_factory=list)
+
+
 class InquiryResult(BaseModel):
     inquiry_id: str
     risk_level: RiskLevel
@@ -55,8 +67,10 @@ class InquiryRecordsResponse(BaseModel):
 
 
 InquiryStage = Literal["symptoms", "duration", "used_medicines", "allergies", "vitals", "result", "escalated"]
-InquiryNextAction = Literal["ask", "measure_vitals", "show_recommendation", "escalate"]
+InquiryNextAction = Literal["ask", "measure_vitals", "show_recommendation", "escalate", "complete"]
 InquiryMessageRole = Literal["assistant", "user", "system"]
+InquiryModelAction = Literal["ask", "measure_vitals", "analyze"]
+InquiryActionStatus = Literal["idle", "ready", "opening", "complete", "partial", "failed"]
 
 
 class InquirySessionCreateRequest(BaseModel):
@@ -108,6 +122,9 @@ class InquirySessionResponse(BaseModel):
     stage: InquiryStage
     reply: str
     source: str = "rules_fallback"
+    reasoning_summary: str = ""
+    model_action_intent: InquiryModelAction = "ask"
+    action_reason: str = ""
     extracted_information: InquiryExtractedInformation = Field(default_factory=InquiryExtractedInformation)
     vitals: dict[str, Any] | None = None
     risk_level: RiskLevel | None = None
@@ -115,8 +132,36 @@ class InquirySessionResponse(BaseModel):
     next_action: InquiryNextAction
     primary_candidate: CandidateMedicine | None = None
     alternative_candidate: CandidateMedicine | None = None
+    treatment_options: list[TreatmentOption] = Field(default_factory=list)
     can_view_medicines: bool = False
+    selected_option_id: str = ""
+    action_status: InquiryActionStatus = "idle"
+    action_message: str = ""
     messages: list[InquiryMessage] = Field(default_factory=list)
     title: str = "新问询"
     created_at: str
     updated_at: str
+
+
+class InquiryTreatmentConfirmRequest(BaseModel):
+    option_id: str = Field(min_length=1, max_length=12)
+    confirmed_safety_notice: bool
+
+
+class InquiryTreatmentDispenseItem(BaseModel):
+    medicine_id: str
+    medicine_name: str
+    slot: str
+    ok: bool
+    dry_run: bool
+    message: str
+    record_id: str | None = None
+
+
+class InquiryTreatmentConfirmResponse(BaseModel):
+    ok: bool
+    status: InquiryActionStatus
+    option_id: str
+    message: str
+    items: list[InquiryTreatmentDispenseItem] = Field(default_factory=list)
+    session: InquirySessionResponse

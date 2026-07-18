@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import threading
 from uuid import uuid4
 
 from .. import db
 from ..repositories.inquiry_repository import InquiryRepository
+from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.inquiry import (
     InquiryExtractedInformation,
     InquirySessionCreateRequest,
     InquirySessionResponse,
+    InquiryTreatmentConfirmRequest,
+    InquiryTreatmentConfirmResponse,
+    InquiryTreatmentDispenseItem,
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
+from .dispense_service import DispenseError, DispenseService
 from .medicine_safety_engine import MedicineSafetyEngine
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
 
@@ -19,15 +25,19 @@ VITALS_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
 
 
 class InquiryOrchestrator:
+    _treatment_action_lock = threading.Lock()
+
     def __init__(
         self,
         repository: InquiryRepository | None = None,
         interpreter: SymptomInterpreter | None = None,
         safety_engine: MedicineSafetyEngine | None = None,
+        dispense_service: DispenseService | None = None,
     ) -> None:
         self.repository = repository or InquiryRepository()
         self.interpreter = interpreter or SymptomInterpreter()
         self.safety_engine = safety_engine or MedicineSafetyEngine()
+        self.dispense_service = dispense_service or DispenseService()
 
     def create_session(self, request: InquirySessionCreateRequest) -> InquirySessionResponse:
         user = self._load_user(request.service_user_id)
@@ -70,7 +80,11 @@ class InquiryOrchestrator:
 
         emergency_extracted = session.extracted_information.model_copy(deep=True)
         emergency_extracted.symptoms_text = self._append_text(emergency_extracted.symptoms_text, transcript)
-        emergency = self.safety_engine.assess(emergency_extracted, session.vitals)
+        emergency = self.safety_engine.assess(
+            emergency_extracted,
+            session.vitals,
+            self._profile_context(session),
+        )
         if emergency.risk_level == "emergency":
             session.extracted_information = emergency_extracted
             return self._finish(session, emergency_extracted, source="safety_rules")
@@ -88,6 +102,9 @@ class InquiryOrchestrator:
         extracted = self._merge_interpretation(session, transcript, interpretation)
         session.extracted_information = extracted
         session.source = interpretation.source
+        session.reasoning_summary = interpretation.reasoning_summary
+        session.model_action_intent = interpretation.action_intent
+        session.action_reason = interpretation.action_reason
 
         missing = self._missing_field(extracted)
         if missing:
@@ -99,10 +116,14 @@ class InquiryOrchestrator:
             session.risk_reasons = []
             session.primary_candidate = None
             session.alternative_candidate = None
+            session.treatment_options = []
             session.can_view_medicines = False
+            session.selected_option_id = ""
+            session.action_status = "idle"
+            session.action_message = ""
             return self._commit(session)
 
-        if self._requires_vitals(extracted) and not session.vitals:
+        if self._requires_vitals(extracted, interpretation) and not session.vitals:
             session.stage = "vitals"
             session.next_action = "measure_vitals"
             session.reply = "关键信息已整理。请完成心率、血氧和额温测量，确认后我会继续进行安全核验。"
@@ -115,6 +136,140 @@ class InquiryOrchestrator:
         session.vitals = request.model_dump(exclude_none=True)
         return self._finish(session, session.extracted_information, source=session.source)
 
+    def confirm_treatment(
+        self,
+        session_id: str,
+        request: InquiryTreatmentConfirmRequest,
+    ) -> InquiryTreatmentConfirmResponse:
+        if request.confirmed_safety_notice is not True:
+            raise DispenseError("请先核对并确认本次方案和安全提示。")
+
+        with self._treatment_action_lock:
+            session = self._required_session(session_id)
+            if session.action_status != "ready":
+                raise DispenseError("本次方案已经处理或当前不可执行，请重新开始问询。", status_code=409)
+            if session.risk_level not in {"low", "medium"} or not session.can_view_medicines:
+                raise DispenseError("当前风险等级不允许执行开柜操作。", status_code=409)
+
+            displayed_option = self._option(session.treatment_options, request.option_id)
+            if displayed_option is None:
+                raise DispenseError("未找到所选方案，请重新选择。")
+
+            decision = self.safety_engine.assess(
+                session.extracted_information,
+                session.vitals,
+                self._profile_context(session),
+            )
+            if decision.risk_level not in {"low", "medium"}:
+                self._replace_with_fresh_decision(session, decision)
+                self._commit(session)
+                raise DispenseError("安全状态已经变化，本次不再执行开柜。", status_code=409)
+
+            fresh_option = self._option(decision.treatment_options, request.option_id)
+            if fresh_option is None or self._option_medicine_ids(fresh_option) != self._option_medicine_ids(displayed_option):
+                self._replace_with_fresh_decision(session, decision)
+                self._commit(session)
+                raise DispenseError("库存或安全信息已经变化，请重新核对方案。", status_code=409)
+
+            session.selected_option_id = request.option_id
+            session.action_status = "opening"
+            session.action_message = "方案已确认，正在依次打开对应药柜。"
+            session.reply = session.action_message
+            self._commit(session)
+
+            items: list[InquiryTreatmentDispenseItem] = []
+            for treatment_medicine in fresh_option.medicines:
+                medicine = self.safety_engine.knowledge.medicine_repository.get_by_id(treatment_medicine.id)
+                if medicine is None:
+                    items.append(
+                        InquiryTreatmentDispenseItem(
+                            medicine_id=treatment_medicine.id,
+                            medicine_name=treatment_medicine.name,
+                            slot=treatment_medicine.slot,
+                            ok=False,
+                            dry_run=False,
+                            message="药品库存记录已经变化。",
+                        )
+                    )
+                    break
+                try:
+                    result = self.dispense_service.confirm(
+                        DispenseConfirmRequest(
+                            medicine_id=medicine.id,
+                            slot=medicine.slot,
+                            quantity=1,
+                            reason=f"AI应急问询 {session.session_id} 方案 {request.option_id}",
+                            confirmed_safety_notice=True,
+                            confirm_real_dispense=True,
+                            target_user_id=session.user_id,
+                            target_user_name=session.user_name,
+                            verification_method="inquiry_confirmed",
+                        )
+                    )
+                except DispenseError as exc:
+                    items.append(
+                        InquiryTreatmentDispenseItem(
+                            medicine_id=medicine.id,
+                            medicine_name=medicine.name,
+                            slot=medicine.slot,
+                            ok=False,
+                            dry_run=False,
+                            message=exc.message,
+                        )
+                    )
+                    break
+                items.append(
+                    InquiryTreatmentDispenseItem(
+                        medicine_id=medicine.id,
+                        medicine_name=medicine.name,
+                        slot=medicine.slot,
+                        ok=result.ok,
+                        dry_run=result.dry_run,
+                        message=result.message,
+                        record_id=result.record_id,
+                    )
+                )
+                if not result.ok:
+                    break
+
+            succeeded = sum(1 for item in items if item.ok)
+            opened = sum(1 for item in items if item.ok and not item.dry_run)
+            expected = len(fresh_option.medicines)
+            if succeeded == expected:
+                status = "complete"
+                message = (
+                    f"方案 {request.option_id} 已确认，{opened} 个对应药柜已完成开柜。"
+                    if opened
+                    else f"方案 {request.option_id} 已完成本地测试记录，未打开柜门。"
+                )
+                ok = True
+            elif succeeded:
+                status = "partial"
+                message = (
+                    f"已打开 {opened} 个药柜，后续药柜未完成，请联系现场协助人员。"
+                    if opened
+                    else "部分本地测试记录已保存，后续操作未完成，请联系现场协助人员。"
+                )
+                ok = False
+            else:
+                status = "failed"
+                message = items[-1].message if items else "开柜操作未完成，请联系现场协助人员。"
+                ok = False
+
+            session.action_status = status
+            session.action_message = message
+            session.reply = message
+            session.next_action = "complete"
+            committed = self._commit(session)
+            return InquiryTreatmentConfirmResponse(
+                ok=ok,
+                status=status,
+                option_id=request.option_id,
+                message=message,
+                items=items,
+                session=committed,
+            )
+
     def _finish(
         self,
         session: InquirySessionResponse,
@@ -122,16 +277,20 @@ class InquiryOrchestrator:
         *,
         source: str,
     ) -> InquirySessionResponse:
-        decision = self.safety_engine.assess(extracted, session.vitals)
+        decision = self.safety_engine.assess(extracted, session.vitals, self._profile_context(session))
         session.extracted_information = extracted
         session.risk_level = decision.risk_level
         session.risk_reasons = decision.risk_reasons
         session.primary_candidate = decision.primary_candidate
         session.alternative_candidate = decision.alternative_candidate
+        session.treatment_options = decision.treatment_options
         session.source = source
         session.can_view_medicines = bool(
-            decision.risk_level in {"low", "medium"} and decision.primary_candidate is not None
+            decision.risk_level in {"low", "medium"} and bool(decision.treatment_options)
         )
+        session.selected_option_id = ""
+        session.action_status = "ready" if session.can_view_medicines else "idle"
+        session.action_message = ""
         session.title = self._title(session)
         if decision.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
@@ -148,14 +307,10 @@ class InquiryOrchestrator:
         else:
             session.stage = "result"
             session.next_action = "show_recommendation"
-            alternative = (
-                f"另有备选 {decision.alternative_candidate.name}，两者是二选一的信息参考。"
-                if decision.alternative_candidate
-                else "当前信息较明确，不额外生成备选。"
-            )
+            option_count = len(decision.treatment_options)
+            option_text = f"已生成 {option_count} 个互斥方案，请只选择其中一个。" if option_count > 1 else "当前信息较明确，已生成一个优先方案。"
             session.reply = (
-                f"安全核验已完成，可查看主候选 {decision.primary_candidate.name} 的说明与安全提示。"
-                f"{alternative}后续仍需在药品页完成原有取药确认。"
+                f"安全核验已完成。{option_text}确认后系统才会打开方案对应药柜。"
             )
         return self._commit(session)
 
@@ -238,8 +393,56 @@ class InquiryOrchestrator:
         return stage, question
 
     @staticmethod
-    def _requires_vitals(extracted: InquiryExtractedInformation) -> bool:
-        return bool(VITALS_DIMENSIONS.intersection(extracted.symptom_dimensions))
+    def _requires_vitals(
+        extracted: InquiryExtractedInformation,
+        interpretation: SymptomInterpretation,
+    ) -> bool:
+        return bool(
+            VITALS_DIMENSIONS.intersection(extracted.symptom_dimensions)
+            or interpretation.action_intent == "measure_vitals"
+        )
+
+    @staticmethod
+    def _profile_context(session: InquirySessionResponse) -> str:
+        return "；".join(
+            value.strip()
+            for value in (session.user_profile, session.user_allergies)
+            if value and value.strip()
+        )
+
+    @staticmethod
+    def _option(options, option_id: str):
+        return next((option for option in options if option.option_id == option_id), None)
+
+    @staticmethod
+    def _option_medicine_ids(option) -> tuple[str, ...]:
+        return tuple(medicine.id for medicine in option.medicines)
+
+    @staticmethod
+    def _replace_with_fresh_decision(session: InquirySessionResponse, decision) -> None:
+        session.risk_level = decision.risk_level
+        session.risk_reasons = decision.risk_reasons
+        session.primary_candidate = decision.primary_candidate
+        session.alternative_candidate = decision.alternative_candidate
+        session.treatment_options = decision.treatment_options
+        session.can_view_medicines = bool(
+            decision.risk_level in {"low", "medium"} and decision.treatment_options
+        )
+        session.selected_option_id = ""
+        session.action_status = "ready" if session.can_view_medicines else "idle"
+        if decision.risk_level in {"high", "emergency"}:
+            session.stage = "escalated"
+            session.next_action = "escalate"
+            session.action_message = "安全状态已经变化，本次不再执行开柜。"
+        elif session.can_view_medicines:
+            session.stage = "result"
+            session.next_action = "show_recommendation"
+            session.action_message = "安全信息已更新，请重新核对方案。"
+        else:
+            session.stage = "result"
+            session.next_action = "escalate"
+            session.action_message = "当前没有通过即时核验的候选方案。"
+        session.reply = session.action_message
 
     @staticmethod
     def _append_text(existing: str, value: str) -> str:

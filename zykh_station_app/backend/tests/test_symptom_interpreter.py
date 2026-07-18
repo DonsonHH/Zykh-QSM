@@ -22,6 +22,9 @@ class FakeAiService:
             "used_medicines": "已使用",
             "allergy_or_contraindication": "阿司匹林过敏",
             "follow_up_question": "这种不舒服持续多久了？",
+            "reasoning_summary": "用户明确提到鼻塞。",
+            "action_intent": "measure_vitals",
+            "action_reason": "体征会影响后续安全核验",
             "confidence": 0.91,
         }
 
@@ -52,6 +55,8 @@ class SymptomInterpreterTest(unittest.TestCase):
         self.assertEqual(result.duration, "")
         self.assertEqual(result.used_medicines, "")
         self.assertEqual(result.allergy_or_contraindication, "")
+        self.assertEqual(result.action_intent, "measure_vitals")
+        self.assertEqual(result.reasoning_summary, "用户明确提到鼻塞。")
 
     def test_negated_symptoms_are_not_added_as_dimensions(self) -> None:
         result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("没有过敏，也没有头痛")

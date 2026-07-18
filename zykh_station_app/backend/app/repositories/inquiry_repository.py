@@ -45,15 +45,18 @@ class InquiryRepository:
         db.init_db()
         primary = session.primary_candidate.model_dump() if session.primary_candidate else None
         alternative = session.alternative_candidate.model_dump() if session.alternative_candidate else None
+        treatment_options = [option.model_dump() for option in session.treatment_options]
         with db.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO inquiry_sessions(
                   session_id, user_id, user_name, user_age, user_profile, user_allergies,
-                  stage, reply, source, extracted_json, vitals_json, risk_level,
+                  stage, reply, source, reasoning_summary, model_action_intent, action_reason,
+                  extracted_json, vitals_json, risk_level,
                   risk_reasons_json, next_action, primary_candidate_json,
-                  alternative_candidate_json, can_view_medicines, title, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  alternative_candidate_json, treatment_options_json, can_view_medicines,
+                  selected_option_id, action_status, action_message, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   user_id=excluded.user_id,
                   user_name=excluded.user_name,
@@ -63,6 +66,9 @@ class InquiryRepository:
                   stage=excluded.stage,
                   reply=excluded.reply,
                   source=excluded.source,
+                  reasoning_summary=excluded.reasoning_summary,
+                  model_action_intent=excluded.model_action_intent,
+                  action_reason=excluded.action_reason,
                   extracted_json=excluded.extracted_json,
                   vitals_json=excluded.vitals_json,
                   risk_level=excluded.risk_level,
@@ -70,7 +76,11 @@ class InquiryRepository:
                   next_action=excluded.next_action,
                   primary_candidate_json=excluded.primary_candidate_json,
                   alternative_candidate_json=excluded.alternative_candidate_json,
+                  treatment_options_json=excluded.treatment_options_json,
                   can_view_medicines=excluded.can_view_medicines,
+                  selected_option_id=excluded.selected_option_id,
+                  action_status=excluded.action_status,
+                  action_message=excluded.action_message,
                   title=excluded.title,
                   updated_at=excluded.updated_at
                 """,
@@ -84,6 +94,9 @@ class InquiryRepository:
                     session.stage,
                     session.reply,
                     session.source,
+                    session.reasoning_summary,
+                    session.model_action_intent,
+                    session.action_reason,
                     json.dumps(session.extracted_information.model_dump(), ensure_ascii=False),
                     json.dumps(session.vitals, ensure_ascii=False) if session.vitals else "",
                     session.risk_level or "",
@@ -91,7 +104,11 @@ class InquiryRepository:
                     session.next_action,
                     json.dumps(primary, ensure_ascii=False) if primary else "",
                     json.dumps(alternative, ensure_ascii=False) if alternative else "",
+                    json.dumps(treatment_options, ensure_ascii=False),
                     int(session.can_view_medicines),
+                    session.selected_option_id,
+                    session.action_status,
+                    session.action_message,
                     session.title,
                     session.created_at,
                     session.updated_at,
@@ -143,6 +160,9 @@ class InquiryRepository:
             stage=values["stage"],
             reply=values["reply"],
             source=values["source"],
+            reasoning_summary=values.get("reasoning_summary", ""),
+            model_action_intent=values.get("model_action_intent", "ask") or "ask",
+            action_reason=values.get("action_reason", ""),
             extracted_information=json.loads(values["extracted_json"] or "{}"),
             vitals=json.loads(values["vitals_json"]) if values["vitals_json"] else None,
             risk_level=values["risk_level"] or None,
@@ -154,7 +174,11 @@ class InquiryRepository:
             alternative_candidate=json.loads(values["alternative_candidate_json"])
             if values["alternative_candidate_json"]
             else None,
+            treatment_options=json.loads(values.get("treatment_options_json") or "[]"),
             can_view_medicines=bool(values["can_view_medicines"]),
+            selected_option_id=values.get("selected_option_id", ""),
+            action_status=values.get("action_status", "idle") or "idle",
+            action_message=values.get("action_message", ""),
             messages=[InquiryMessage(**dict(message)) for message in message_rows],
             title=values["title"],
             created_at=values["created_at"],

@@ -101,11 +101,15 @@ Restores one inquiry session with messages, identity, vitals snapshot and result
 
 ### POST /api/inquiry/sessions/{session_id}/turn
 
-Adds one speech transcript. The model can only extract evidence-backed symptom dimensions and one follow-up question; deterministic local rules own risk and candidate selection.
+Adds one speech transcript. The model can only extract evidence-backed symptom dimensions, one follow-up question and a constrained `ask|measure_vitals|analyze` action intent. Deterministic local rules can override that intent and exclusively own risk classification, inventory filtering and treatment-option construction. A `measure_vitals` response causes the terminal to open the existing vitals subpage automatically.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
 Attaches required `temperature`, `heart_rate` and `spo2` to the same inquiry session. Optional blood-pressure, respiratory-rate and HRV values do not block completion.
+
+### POST /api/inquiry/sessions/{session_id}/treatment/confirm
+
+Confirms exactly one mutually exclusive treatment option. The request contains only `option_id` and `confirmed_safety_notice`; medicine IDs and cabinet slots are never accepted from the frontend. Immediately before any cabinet action, the backend recalculates risk, contraindications, expiry, stock and current OTC eligibility. If the displayed option changed, the request is rejected with `409` and no cabinet is opened. A successful confirmation executes the selected option through the existing `DispenseService`, records each action and rejects duplicate submissions.
 
 ### GET /api/inquiry/{inquiry_id}
 
