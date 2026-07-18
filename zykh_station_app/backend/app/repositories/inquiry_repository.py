@@ -55,8 +55,10 @@ class InquiryRepository:
                   extracted_json, vitals_json, risk_level,
                   risk_reasons_json, next_action, primary_candidate_json,
                   alternative_candidate_json, treatment_options_json, can_view_medicines,
-                  selected_option_id, action_status, action_message, title, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  selected_option_id, action_status, action_message,
+                  action_progress_index, action_total_items, action_items_json,
+                  title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   user_id=excluded.user_id,
                   user_name=excluded.user_name,
@@ -81,6 +83,9 @@ class InquiryRepository:
                   selected_option_id=excluded.selected_option_id,
                   action_status=excluded.action_status,
                   action_message=excluded.action_message,
+                  action_progress_index=excluded.action_progress_index,
+                  action_total_items=excluded.action_total_items,
+                  action_items_json=excluded.action_items_json,
                   title=excluded.title,
                   updated_at=excluded.updated_at
                 """,
@@ -109,6 +114,9 @@ class InquiryRepository:
                     session.selected_option_id,
                     session.action_status,
                     session.action_message,
+                    session.action_progress_index,
+                    session.action_total_items,
+                    json.dumps(session.action_items, ensure_ascii=False),
                     session.title,
                     session.created_at,
                     session.updated_at,
@@ -179,6 +187,9 @@ class InquiryRepository:
             selected_option_id=values.get("selected_option_id", ""),
             action_status=values.get("action_status", "idle") or "idle",
             action_message=values.get("action_message", ""),
+            action_progress_index=int(values.get("action_progress_index", 0) or 0),
+            action_total_items=int(values.get("action_total_items", 0) or 0),
+            action_items=json.loads(values.get("action_items_json") or "[]"),
             messages=[InquiryMessage(**dict(message)) for message in message_rows],
             title=values["title"],
             created_at=values["created_at"],
@@ -191,5 +202,28 @@ class InquiryRepository:
             rows = conn.execute(
                 "SELECT session_id FROM inquiry_sessions ORDER BY updated_at DESC LIMIT ?",
                 (max(1, min(limit, 100)),),
+            ).fetchall()
+        return [session for row in rows if (session := self.get_session(str(row["session_id"]))) is not None]
+
+    def list_user_sessions(
+        self,
+        user_id: str,
+        *,
+        exclude_session_id: str = "",
+        limit: int = 8,
+    ) -> list[InquirySessionResponse]:
+        if not user_id:
+            return []
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id
+                FROM inquiry_sessions
+                WHERE user_id=? AND session_id<>? AND risk_level<>''
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (user_id, exclude_session_id, max(1, min(limit, 30))),
             ).fetchall()
         return [session for row in rows if (session := self.get_session(str(row["session_id"]))) is not None]

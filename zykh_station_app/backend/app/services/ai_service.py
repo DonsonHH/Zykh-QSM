@@ -222,10 +222,16 @@ class AiService:
             "皮肤真菌不适", "肌肉关节疼痛", "干眼不适", "鼻炎过敏", "营养补充",
             "慢病既往用药",
         ]
+        allowed_features = [
+            "清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏", "明显畏寒", "明显口渴", "咽喉疼痛",
+            "干咳", "有痰咳嗽", "黄痰", "口腔溃疡", "腹泻", "便秘", "反酸烧心",
+            "恶心呕吐", "皮肤瘙痒", "皮肤破损", "伤口红肿渗液", "肌肉关节疼痛", "眼干眼涩",
+        ]
         system_prompt = (
             "你是家庭康护问询的信息提取器，不诊断、不分级、不推荐药品。"
             "只提取用户原话直接支持的信息，并只输出 JSON。"
             "symptom_dimensions 只能从给定枚举中选择；dimension_evidence 必须逐字引用本轮用户原话。"
+            "symptom_features 只能从给定特征枚举选择；feature_evidence 也必须逐字引用本轮原话。"
             "信息没有明确表达时返回空字符串，不得猜测。每次最多给一个 follow_up_question。"
             "action_intent 只能是 ask、measure_vitals、analyze：信息不足选 ask；"
             "只有体温、心率或血氧会实质影响安全核验时才选 measure_vitals；信息足够时选 analyze。"
@@ -235,12 +241,15 @@ class AiService:
         user_prompt = json.dumps(
             {
                 "allowed_dimensions": allowed,
+                "allowed_features": allowed_features,
                 "transcript": transcript,
                 "existing": existing,
                 "profile": profile,
                 "output": {
                     "symptom_dimensions": [],
                     "dimension_evidence": {},
+                    "symptom_features": [],
+                    "feature_evidence": {},
                     "duration": "",
                     "used_medicines": "",
                     "allergy_or_contraindication": "",

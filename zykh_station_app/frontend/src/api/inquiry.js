@@ -28,9 +28,10 @@ export function attachInquiryVitals(sessionId, payload) {
   return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/vitals`, payload);
 }
 
-export function confirmInquiryTreatment(sessionId, optionId) {
+export function confirmInquiryTreatment(sessionId, optionId, expectedItemIndex = 0) {
   return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/treatment/confirm`, {
     option_id: optionId,
-    confirmed_safety_notice: true
+    confirmed_safety_notice: true,
+    expected_item_index: expectedItemIndex
   });
 }

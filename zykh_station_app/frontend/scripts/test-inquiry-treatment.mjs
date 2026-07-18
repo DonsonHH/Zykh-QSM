@@ -23,23 +23,28 @@ const recommendationSpeech = speech.buildRecommendationSpeech(
 const checks = [
   [api.includes("/treatment/confirm"), "missing treatment confirmation endpoint"],
   [api.includes("option_id: optionId"), "frontend must submit the selected option id"],
+  [api.includes("expected_item_index: expectedItemIndex"), "frontend must submit persisted cabinet progress"],
   [!api.match(/confirmInquiryTreatment[\s\S]*medicine_id/), "frontend must not submit medicine ids"],
   [!api.match(/confirmInquiryTreatment[\s\S]*\bslot\b/), "frontend must not submit cabinet slots"],
   [page.includes("onConfirmTreatment={handleTreatmentConfirm}"), "inquiry page does not wire treatment confirmation"],
   [page.includes("openingTreatmentRef.current"), "duplicate frontend confirmation guard is missing"],
+  [page.includes("data.status !== \"opening\"") && page.includes("1800"), "multi-cabinet flow must advance one cabinet at a time"],
   [page.includes("useCallback(async (optionId)"), "countdown callback is not stable across clock renders"],
   [!page.includes("handleViewCandidates"), "inquiry result still navigates directly to medicines"],
   [result.includes("setCountdown(3)"), "three-second cancellable countdown is missing"],
   [result.includes("confirmed_safety_notice") === false, "safety confirmation must stay in the API adapter"],
   [result.includes("treatment_options"), "result does not render backend treatment options"],
   [result.includes("取消开柜倒计时"), "countdown cancellation control is missing"],
+  [result.includes("treatment-opening-progress") && result.includes("正在逐柜处理"), "cabinet progress is not visible"],
+  [result.includes("resumePending") && result.includes("继续打开下一柜"), "interrupted cabinet sequence cannot be resumed safely"],
   [styles.includes("min-height: 58px"), "touch action height contract is missing"],
   [!result.includes("查看主候选药品"), "legacy medicine-page navigation remains visible"],
   [audioApi.includes("/api/audio/stream/stop"), "audio interruption endpoint is missing"],
   [chat.match(/async function startVoice\(\)\s*\{\s*interruptPlayback\(\)/), "voice input must interrupt TTS before microphone startup"],
   [result.includes("buildRecommendationSpeech"), "result does not announce the recommendation"],
   [recommendationSpeech.includes("藿香正气丸") && recommendationSpeech.includes("一次1丸"), "recommendation speech omits medicine or dosage"],
-  [page.includes("本次情况") && page.includes("开始时间") && page.includes("核心体征"), "live inquiry summary wording is incomplete"]
+  [page.includes("本次情况") && page.includes("开始时间") && page.includes("核心体征"), "live inquiry summary wording is incomplete"],
+  [page.includes("symptomDimensionLabel(value)"), "live complaint must use normalized symptom dimensions"]
 ];
 
 const failures = checks.filter(([ok]) => !ok).map(([, message]) => message);

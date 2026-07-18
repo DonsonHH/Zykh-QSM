@@ -190,6 +190,9 @@ def init_db() -> None:
         _ensure_column(conn, "inquiry_sessions", "selected_option_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "inquiry_sessions", "action_status", "TEXT NOT NULL DEFAULT 'idle'")
         _ensure_column(conn, "inquiry_sessions", "action_message", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "inquiry_sessions", "action_progress_index", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "inquiry_sessions", "action_total_items", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "inquiry_sessions", "action_items_json", "TEXT NOT NULL DEFAULT '[]'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vitals_records (

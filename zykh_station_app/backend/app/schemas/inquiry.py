@@ -69,7 +69,9 @@ class InquiryRecordsResponse(BaseModel):
     records: list[InquiryResult]
 
 
-InquiryStage = Literal["symptoms", "duration", "used_medicines", "allergies", "vitals", "result", "escalated"]
+InquiryStage = Literal[
+    "symptoms", "clarification", "duration", "used_medicines", "allergies", "vitals", "result", "escalated"
+]
 InquiryNextAction = Literal["ask", "measure_vitals", "show_recommendation", "escalate", "complete"]
 InquiryMessageRole = Literal["assistant", "user", "system"]
 InquiryModelAction = Literal["ask", "measure_vitals", "analyze"]
@@ -108,6 +110,11 @@ class InquiryMessage(BaseModel):
 class InquiryExtractedInformation(BaseModel):
     symptom_dimensions: list[str] = Field(default_factory=list)
     dimension_evidence: dict[str, str] = Field(default_factory=dict)
+    symptom_features: list[str] = Field(default_factory=list)
+    feature_evidence: dict[str, str] = Field(default_factory=dict)
+    clarification_answers: dict[str, str] = Field(default_factory=dict)
+    asked_clarifications: list[str] = Field(default_factory=list)
+    pending_clarification: str = ""
     symptoms_text: str = ""
     duration: str = ""
     used_medicines: str = ""
@@ -140,6 +147,9 @@ class InquirySessionResponse(BaseModel):
     selected_option_id: str = ""
     action_status: InquiryActionStatus = "idle"
     action_message: str = ""
+    action_progress_index: int = 0
+    action_total_items: int = 0
+    action_items: list[dict[str, Any]] = Field(default_factory=list)
     messages: list[InquiryMessage] = Field(default_factory=list)
     title: str = "新问询"
     created_at: str
@@ -149,6 +159,7 @@ class InquirySessionResponse(BaseModel):
 class InquiryTreatmentConfirmRequest(BaseModel):
     option_id: str = Field(min_length=1, max_length=12)
     confirmed_safety_notice: bool
+    expected_item_index: int = Field(default=0, ge=0, le=8)
 
 
 class InquiryTreatmentDispenseItem(BaseModel):
@@ -167,4 +178,7 @@ class InquiryTreatmentConfirmResponse(BaseModel):
     option_id: str
     message: str
     items: list[InquiryTreatmentDispenseItem] = Field(default_factory=list)
+    completed_count: int = 0
+    total_count: int = 0
+    next_medicine: TreatmentMedicine | None = None
     session: InquirySessionResponse

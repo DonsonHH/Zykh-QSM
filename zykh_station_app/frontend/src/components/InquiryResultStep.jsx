@@ -44,11 +44,17 @@ export function InquiryResultStep({
   const actionMessage = actionResult?.message || result?.action_message || "";
   const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
   const actionFinished = terminalStatuses.has(actionStatus);
-  const actionInProgress = opening || actionStatus === "opening";
+  const activelyOpening = opening;
+  const resumePending = !opening && actionStatus === "opening";
   const selectedOption = useMemo(
     () => options.find((option) => option.option_id === selectedOptionId) || options[0],
     [options, selectedOptionId]
   );
+  const completedCount = Number(actionResult?.completed_count ?? result?.action_progress_index ?? 0);
+  const reportedTotal = Number(actionResult?.total_count || result?.action_total_items || 0);
+  const totalCount = reportedTotal > 0 ? reportedTotal : Number(selectedOption?.medicines?.length || 0);
+  const remainingCount = Math.max(totalCount - completedCount, 1);
+  const nextMedicine = actionResult?.next_medicine || selectedOption?.medicines?.[completedCount] || null;
   const requiresExistingDirection = Boolean(
     selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
   );
@@ -95,7 +101,7 @@ export function InquiryResultStep({
   }, [countdown, onConfirmTreatment, selectedOptionId]);
 
   function beginConfirmation() {
-    if (!confirmed || !selectedOptionId || actionInProgress || actionFinished) return;
+    if (!confirmed || !selectedOptionId || activelyOpening || actionFinished) return;
     setCountdown(3);
   }
 
@@ -127,7 +133,7 @@ export function InquiryResultStep({
                   name="treatment-option"
                   value={option.option_id}
                   checked={selected}
-                  disabled={actionInProgress || countdown !== null || actionFinished}
+                  disabled={activelyOpening || resumePending || countdown !== null || actionFinished}
                   onChange={() => {
                     setSelectedOptionId(option.option_id);
                     setConfirmed(false);
@@ -162,7 +168,10 @@ export function InquiryResultStep({
       )}
 
       {!highRisk ? (
-        <div className="treatment-evidence-line"><ShieldCheck size={18} />{evidenceSummary(result)}</div>
+        <div className="treatment-evidence-line">
+          <ShieldCheck size={18} />
+          <span>{evidenceSummary(result)}</span>
+        </div>
       ) : null}
 
       {canProceed && !actionFinished ? (
@@ -171,7 +180,7 @@ export function InquiryResultStep({
             <input
               type="checkbox"
               checked={confirmed}
-              disabled={actionInProgress || countdown !== null}
+              disabled={activelyOpening || countdown !== null}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
             <span>
@@ -184,18 +193,27 @@ export function InquiryResultStep({
           {countdown !== null ? (
             <div className="treatment-countdown" role="status">
               <strong>{countdown}</strong>
-              <span>秒后打开 {selectedOption?.medicines.length || 0} 个对应药柜</span>
+              <span>秒后{resumePending ? "继续" : "开始"}打开 {resumePending ? remainingCount : totalCount} 个对应药柜</span>
               <button type="button" onClick={() => setCountdown(null)} aria-label="取消开柜倒计时"><X size={20} /></button>
+            </div>
+          ) : activelyOpening ? (
+            <div className="treatment-opening-progress" role="status" aria-live="polite">
+              <span><LoaderCircle className="spin" size={22} /></span>
+              <div>
+                <strong>正在逐柜处理 {Math.min(completedCount + 1, totalCount)}/{totalCount}</strong>
+                <small>{nextMedicine ? `当前：${nextMedicine.slot}号柜 · ${nextMedicine.name}` : "正在确认柜门状态"}</small>
+              </div>
+              <em>{completedCount}/{totalCount}</em>
             </div>
           ) : (
             <button
               className="treatment-open-button"
               type="button"
-              disabled={!confirmed || actionInProgress}
+              disabled={!confirmed || activelyOpening}
               onClick={beginConfirmation}
             >
-              {actionInProgress ? <LoaderCircle className="spin" size={23} /> : <DoorOpen size={23} />}
-              {actionInProgress ? "正在打开对应药柜" : "确认方案并打开对应药柜"}
+              <DoorOpen size={23} />
+              {resumePending ? "继续打开下一柜" : "确认方案并逐柜打开"}
             </button>
           )}
         </div>
@@ -217,8 +235,8 @@ export function InquiryResultStep({
 }
 
 function symptomSummary(extracted = {}) {
-  const evidence = Object.values(extracted.dimension_evidence || {}).filter(Boolean);
-  const parts = [evidence.join("、"), extracted.duration ? `持续${extracted.duration}` : ""].filter(Boolean);
+  const dimensions = (extracted.symptom_dimensions || []).filter(Boolean);
+  const parts = [dimensions.join("、"), extracted.duration ? `持续${extracted.duration}` : ""].filter(Boolean);
   return parts.join("，") || "已完成本次信息整理";
 }
 

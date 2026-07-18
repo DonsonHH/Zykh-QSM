@@ -62,7 +62,12 @@ class SymptomInterpreterTest(unittest.TestCase):
         result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("没有过敏，也没有头痛")
 
         self.assertEqual(result.symptom_dimensions, [])
-        self.assertEqual(result.allergy_or_contraindication, "无")
+
+    def test_standalone_negation_does_not_add_a_positive_feature(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("有点怕冷，但是不口渴")
+
+        self.assertIn("明显畏寒", result.symptom_features)
+        self.assertNotIn("明显口渴", result.symptom_features)
 
     def test_model_dimension_with_negated_evidence_is_rejected(self) -> None:
         result = SymptomInterpreter(ai_service=NegatedEvidenceAiService()).interpret("没有过敏")

@@ -29,6 +29,12 @@ ALLOWED_DIMENSIONS = {
 ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze"}
 VITALS_SENSITIVE_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
 
+ALLOWED_FEATURES = {
+    "清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏", "明显畏寒", "明显口渴", "咽喉疼痛",
+    "干咳", "有痰咳嗽", "黄痰", "口腔溃疡", "腹泻", "便秘", "反酸烧心",
+    "恶心呕吐", "皮肤瘙痒", "皮肤破损", "伤口红肿渗液", "肌肉关节疼痛", "眼干眼涩",
+}
+
 
 DIMENSION_KEYWORDS = {
     "恶心暑湿": ("中暑", "暑湿", "恶心", "头晕", "胸闷腹胀"),
@@ -49,11 +55,35 @@ DIMENSION_KEYWORDS = {
     "慢病既往用药": ("高血压", "血压高", "降压药", "慢病用药", "长期用药"),
 }
 
+FEATURE_KEYWORDS = {
+    "清稀鼻涕": ("流清鼻涕", "清鼻涕", "清水鼻涕", "鼻涕清稀"),
+    "黄稠鼻涕": ("黄鼻涕", "鼻涕黄", "黄稠鼻涕", "鼻涕黏稠"),
+    "鼻痒喷嚏": ("鼻痒", "连续打喷嚏", "一直打喷嚏"),
+    "明显畏寒": ("怕冷", "畏寒", "恶寒"),
+    "明显口渴": ("口渴", "口干想喝水"),
+    "咽喉疼痛": ("咽痛", "喉咙痛", "嗓子痛"),
+    "干咳": ("干咳", "没有痰", "无痰"),
+    "有痰咳嗽": ("有痰", "咳痰", "痰多"),
+    "黄痰": ("黄痰", "痰黄"),
+    "口腔溃疡": ("口腔溃疡", "嘴里溃疡"),
+    "腹泻": ("腹泻", "拉肚子", "水样便"),
+    "便秘": ("便秘", "排便困难"),
+    "反酸烧心": ("反酸", "烧心", "胃酸"),
+    "恶心呕吐": ("恶心", "呕吐", "想吐"),
+    "皮肤瘙痒": ("皮肤痒", "瘙痒", "发痒"),
+    "皮肤破损": ("擦伤", "擦破", "破皮", "小伤口", "划伤"),
+    "伤口红肿渗液": ("红肿", "渗液", "流脓", "化脓"),
+    "肌肉关节疼痛": ("肌肉痛", "关节痛", "扭伤"),
+    "眼干眼涩": ("眼干", "眼涩", "干眼"),
+}
+
 
 @dataclass
 class SymptomInterpretation:
     symptom_dimensions: list[str] = field(default_factory=list)
     dimension_evidence: dict[str, str] = field(default_factory=dict)
+    symptom_features: list[str] = field(default_factory=list)
+    feature_evidence: dict[str, str] = field(default_factory=dict)
     duration: str = ""
     used_medicines: str = ""
     allergy_or_contraindication: str = ""
@@ -104,6 +134,19 @@ class SymptomInterpreter:
                 continue
             dimensions.append(dimension)
             clean_evidence[dimension] = quote
+        feature_evidence = payload.get("feature_evidence")
+        feature_evidence = feature_evidence if isinstance(feature_evidence, dict) else {}
+        features = list(rules.symptom_features)
+        clean_feature_evidence = dict(rules.feature_evidence)
+        for raw_feature in payload.get("symptom_features") or []:
+            feature = str(raw_feature).strip()
+            quote = str(feature_evidence.get(feature) or "").strip()
+            if feature not in ALLOWED_FEATURES or not quote or quote not in transcript:
+                continue
+            if not any(self._has_unnegated_term(quote, keyword) for keyword in FEATURE_KEYWORDS.get(feature, ())):
+                continue
+            features.append(feature)
+            clean_feature_evidence[feature] = quote
         try:
             confidence = max(0.0, min(float(payload.get("confidence") or 0), 1.0))
         except (TypeError, ValueError):
@@ -114,6 +157,8 @@ class SymptomInterpreter:
         return SymptomInterpretation(
             symptom_dimensions=list(dict.fromkeys(dimensions)),
             dimension_evidence=clean_evidence,
+            symptom_features=list(dict.fromkeys(features)),
+            feature_evidence=clean_feature_evidence,
             duration=rules.duration or self._verbatim_value(payload.get("duration"), transcript),
             used_medicines=rules.used_medicines or self._verbatim_value(payload.get("used_medicines"), transcript),
             allergy_or_contraindication=(
@@ -136,6 +181,13 @@ class SymptomInterpreter:
             if match:
                 dimensions.append(dimension)
                 evidence[dimension] = match
+        features: list[str] = []
+        feature_evidence: dict[str, str] = {}
+        for feature, keywords in FEATURE_KEYWORDS.items():
+            match = next((keyword for keyword in keywords if self._has_unnegated_term(transcript, keyword)), "")
+            if match:
+                features.append(feature)
+                feature_evidence[feature] = match
         duration = self.duration_answer(transcript)
         used = self.used_medicine_answer(transcript)
         allergy = self.allergy_answer(transcript)
@@ -151,6 +203,8 @@ class SymptomInterpreter:
         return SymptomInterpretation(
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
+            symptom_features=features,
+            feature_evidence=feature_evidence,
             duration=duration,
             used_medicines=used,
             allergy_or_contraindication=allergy,
@@ -231,7 +285,7 @@ class SymptomInterpreter:
         for match in re.finditer(re.escape(term), text):
             prefix = text[max(0, match.start() - 8):match.start()]
             clause = re.split(r"[，。；、,;!?！？]", prefix)[-1]
-            if re.search(r"(?:没有|没|无|否认|未见|不伴|并无)\s*$", clause):
+            if re.search(r"(?:没有|没|无|否认|未见|不伴|并无|不太|不)\s*$", clause):
                 continue
             return True
         return False

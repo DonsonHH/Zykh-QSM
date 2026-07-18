@@ -46,6 +46,33 @@ WOUND_STAGE_ORDER = {
     "slot-10-gauze": 3,
 }
 
+FEATURE_MEDICINE_WEIGHTS = {
+    "清稀鼻涕": {"slot-03-ganmao-qingre": 34, "slot-01-fufang-ganmaoling": -14},
+    "黄稠鼻涕": {"slot-01-fufang-ganmaoling": 30, "slot-03-ganmao-qingre": -12},
+    "鼻痒喷嚏": {
+        "slot-18-budesonide-nasal": 34,
+        "slot-23-desloratadine": 26,
+        "slot-01-fufang-ganmaoling": -18,
+        "slot-03-ganmao-qingre": -18,
+    },
+    "明显畏寒": {"slot-03-ganmao-qingre": 28, "slot-01-fufang-ganmaoling": -8},
+    "明显口渴": {"slot-01-fufang-ganmaoling": 24, "slot-03-ganmao-qingre": -8},
+    "咽喉疼痛": {"slot-07-yinhuang": 30, "slot-11-guilin-xiguashuang": 22},
+    "干咳": {"slot-05-nin-jiom-pei-pa-koa": 26},
+    "有痰咳嗽": {"slot-05-nin-jiom-pei-pa-koa": 18, "slot-07-yinhuang": 8},
+    "黄痰": {"slot-07-yinhuang": 18},
+    "口腔溃疡": {"slot-11-guilin-xiguashuang": 34},
+    "腹泻": {"slot-09-bifid-triple": 32, "slot-08-huoxiang-zhengqi": 8},
+    "便秘": {"slot-06-lactulose": 34},
+    "反酸烧心": {"slot-12-hydrotalcite": 34},
+    "恶心呕吐": {"slot-08-huoxiang-zhengqi": 26},
+    "皮肤瘙痒": {"slot-23-desloratadine": 28},
+    "皮肤破损": {"slot-22-cotton-swab": 22, "slot-17-iodophor": 24, "slot-20-bandage": 20},
+    "伤口红肿渗液": {"slot-15-mupirocin": 30},
+    "肌肉关节疼痛": {"slot-19-ketoprofen-gel": 34},
+    "眼干眼涩": {"slot-13-sodium-hyaluronate-eye": 34},
+}
+
 
 class MedicineKnowledgeRepository:
     def __init__(self, medicine_repository: MedicineRepository | None = None) -> None:
@@ -63,9 +90,16 @@ class MedicineKnowledgeRepository:
         dimensions: list[str],
         context_text: str,
         *,
+        symptom_features: list[str] | None = None,
+        history_medicine_counts: dict[str, int] | None = None,
         limit: int = 2,
     ) -> list[TreatmentOption]:
-        ranked = self._ranked_candidates(dimensions, context_text)
+        ranked = self._ranked_candidates(
+            dimensions,
+            context_text,
+            symptom_features=symptom_features,
+            history_medicine_counts=history_medicine_counts,
+        )
         primary = self._select_combination(ranked, dimensions)
         if not primary:
             return []
@@ -85,7 +119,12 @@ class MedicineKnowledgeRepository:
         self,
         dimensions: list[str],
         context_text: str,
+        *,
+        symptom_features: list[str] | None = None,
+        history_medicine_counts: dict[str, int] | None = None,
     ) -> list[tuple[int, list[str], CandidateMedicine]]:
+        symptom_features = symptom_features or []
+        history_medicine_counts = history_medicine_counts or {}
         medicines = {medicine.id: medicine for medicine in self.medicine_repository.list_all()}
         scored: dict[str, tuple[int, str]] = {}
         for dimension_index, dimension in enumerate(dimensions):
@@ -107,6 +146,12 @@ class MedicineKnowledgeRepository:
                 score -= 18
             if medicine.category == "慢病常用":
                 score -= 12
+            score += sum(
+                FEATURE_MEDICINE_WEIGHTS.get(feature, {}).get(medicine_id, 0)
+                for feature in symptom_features
+            )
+            # History is only a tie-breaker after current symptoms, stock and contraindications pass.
+            score += min(max(int(history_medicine_counts.get(medicine_id, 0)), 0), 3) * 3
             ranked.append((score, coverage, self._candidate(medicine, dimension)))
         ranked.sort(key=lambda item: (-item[0], int(item[2].slot)))
         return ranked
@@ -208,6 +253,8 @@ class MedicineKnowledgeRepository:
     @staticmethod
     def _eligible(medicine: Medicine, context_text: str) -> bool:
         if medicine.stock <= 0:
+            return False
+        if not medicine.is_otc or medicine.category == "慢病常用":
             return False
         if MedicineKnowledgeRepository._expired(medicine.expire_date):
             return False

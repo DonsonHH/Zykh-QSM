@@ -17,11 +17,23 @@ from ..schemas.inquiry import (
     InquiryVitalsRequest,
 )
 from .dispense_service import DispenseError, DispenseService
+from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryService
 from .medicine_safety_engine import MedicineSafetyEngine
-from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
+from .symptom_interpreter import FEATURE_KEYWORDS, SymptomInterpretation, SymptomInterpreter
 
 
 VITALS_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
+
+CLARIFICATION_QUESTIONS = {
+    "history_change": "你以前有过相似情况。这次和上次相比，是更重、更轻，还是表现不一样？",
+    "nasal_discharge": "鼻部不适更接近哪一种：清稀鼻涕、黄稠鼻涕，还是鼻痒并连续打喷嚏？",
+    "systemic_pattern": "除了头痛或发热，现在更明显的是怕冷，还是口渴、咽喉疼痛？",
+    "cough_type": "这次主要是干咳，还是咳嗽时有痰？如果有痰，请说一下颜色。",
+    "throat_pattern": "口咽不适主要是咽喉疼痛，还是口腔溃疡？",
+    "summer_pattern": "头晕或暑热不适时，是否还伴有胸闷腹胀、恶心呕吐或腹泻？",
+    "wound_state": "伤口只是轻微破皮，还是已经出现红肿、渗液？",
+    "allergy_pattern": "过敏不适主要在鼻部，还是以皮肤瘙痒、皮疹为主？",
+}
 
 
 class InquiryOrchestrator:
@@ -33,11 +45,13 @@ class InquiryOrchestrator:
         interpreter: SymptomInterpreter | None = None,
         safety_engine: MedicineSafetyEngine | None = None,
         dispense_service: DispenseService | None = None,
+        history_service: InquiryHistoryService | None = None,
     ) -> None:
         self.repository = repository or InquiryRepository()
         self.interpreter = interpreter or SymptomInterpreter()
         self.safety_engine = safety_engine or MedicineSafetyEngine()
         self.dispense_service = dispense_service or DispenseService()
+        self.history_service = history_service or InquiryHistoryService(self.repository)
 
     def create_session(self, request: InquirySessionCreateRequest) -> InquirySessionResponse:
         user = self._load_user(request.service_user_id)
@@ -114,6 +128,12 @@ class InquiryOrchestrator:
             self._clear_decision(session)
             return self._commit(session)
 
+        history = self._history_context(session, extracted)
+        clarification = self._next_clarification(extracted, history)
+        if clarification:
+            self._ask_clarification(session, *clarification)
+            return self._commit(session)
+
         missing = self._missing_field(extracted)
         if missing:
             self._ask_for_missing(session, missing, interpretation.follow_up_question)
@@ -130,6 +150,19 @@ class InquiryOrchestrator:
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
         session.vitals = request.model_dump(exclude_none=True)
+        history = self._history_context(session, session.extracted_information)
+        immediate = self.safety_engine.assess(
+            session.extracted_information,
+            session.vitals,
+            self._profile_context(session),
+            history.medicine_counts,
+        )
+        if immediate.risk_level in {"high", "emergency"}:
+            return self._finish(session, session.extracted_information, source="safety_rules")
+        clarification = self._next_clarification(session.extracted_information, history)
+        if clarification:
+            self._ask_clarification(session, *clarification)
+            return self._commit(session)
         missing = self._missing_field(session.extracted_information)
         if missing:
             self._ask_for_missing(session, missing, "")
@@ -146,19 +179,24 @@ class InquiryOrchestrator:
 
         with self._treatment_action_lock:
             session = self._required_session(session_id)
-            if session.action_status != "ready":
+            if session.action_status not in {"ready", "opening"}:
                 raise DispenseError("本次方案已经处理或当前不可执行，请重新开始问询。", status_code=409)
             if session.risk_level not in {"low", "medium"} or not session.can_view_medicines:
                 raise DispenseError("当前风险等级不允许执行开柜操作。", status_code=409)
+
+            if session.action_status == "opening" and session.selected_option_id != request.option_id:
+                raise DispenseError("已有方案正在执行，不能切换到其他方案。", status_code=409)
 
             displayed_option = self._option(session.treatment_options, request.option_id)
             if displayed_option is None:
                 raise DispenseError("未找到所选方案，请重新选择。")
 
+            history = self._history_context(session, session.extracted_information)
             decision = self.safety_engine.assess(
                 session.extracted_information,
                 session.vitals,
                 self._profile_context(session),
+                history.medicine_counts,
             )
             if decision.risk_level not in {"low", "medium"}:
                 self._replace_with_fresh_decision(session, decision)
@@ -171,34 +209,51 @@ class InquiryOrchestrator:
                 self._commit(session)
                 raise DispenseError("库存或安全信息已经变化，请重新核对方案。", status_code=409)
 
-            session.selected_option_id = request.option_id
+            expected = len(fresh_option.medicines)
+            if expected <= 0:
+                raise DispenseError("所选方案没有可执行药品。", status_code=409)
+            if session.action_status == "ready":
+                if request.expected_item_index != 0:
+                    raise DispenseError("开柜进度已经失效，请重新核对方案。", status_code=409)
+                session.selected_option_id = request.option_id
+                session.action_progress_index = 0
+                session.action_total_items = expected
+                session.action_items = []
+            if request.expected_item_index != session.action_progress_index:
+                raise DispenseError("开柜进度已经更新，请刷新后继续。", status_code=409)
+            if session.action_progress_index >= expected:
+                raise DispenseError("本方案对应药柜已经全部处理。", status_code=409)
+
+            item_index = session.action_progress_index
+            treatment_medicine = fresh_option.medicines[item_index]
             session.action_status = "opening"
-            session.action_message = "方案已确认，正在依次打开对应药柜。"
+            session.action_total_items = expected
+            session.action_message = f"正在打开第 {item_index + 1}/{expected} 个药柜：{treatment_medicine.slot}号柜。"
             session.reply = session.action_message
             self._commit(session)
 
-            items: list[InquiryTreatmentDispenseItem] = []
-            for treatment_medicine in fresh_option.medicines:
-                medicine = self.safety_engine.knowledge.medicine_repository.get_by_id(treatment_medicine.id)
-                if medicine is None:
-                    items.append(
-                        InquiryTreatmentDispenseItem(
-                            medicine_id=treatment_medicine.id,
-                            medicine_name=treatment_medicine.name,
-                            slot=treatment_medicine.slot,
-                            ok=False,
-                            dry_run=False,
-                            message="药品库存记录已经变化。",
-                        )
-                    )
-                    break
+            medicine = self.safety_engine.knowledge.medicine_repository.get_by_id(treatment_medicine.id)
+            item: InquiryTreatmentDispenseItem
+            if medicine is None:
+                item = InquiryTreatmentDispenseItem(
+                    medicine_id=treatment_medicine.id,
+                    medicine_name=treatment_medicine.name,
+                    slot=treatment_medicine.slot,
+                    ok=False,
+                    dry_run=False,
+                    message="药品库存记录已经变化。",
+                )
+            else:
                 try:
                     result = self.dispense_service.confirm(
                         DispenseConfirmRequest(
                             medicine_id=medicine.id,
                             slot=medicine.slot,
                             quantity=1,
-                            reason=f"AI应急问询 {session.session_id} 方案 {request.option_id}",
+                            reason=(
+                                f"AI应急问询 {session.session_id} 方案 {request.option_id} "
+                                f"第{item_index + 1}/{expected}柜"
+                            ),
                             confirmed_safety_notice=True,
                             confirm_real_dispense=True,
                             target_user_id=session.user_id,
@@ -206,20 +261,7 @@ class InquiryOrchestrator:
                             verification_method="inquiry_confirmed",
                         )
                     )
-                except DispenseError as exc:
-                    items.append(
-                        InquiryTreatmentDispenseItem(
-                            medicine_id=medicine.id,
-                            medicine_name=medicine.name,
-                            slot=medicine.slot,
-                            ok=False,
-                            dry_run=False,
-                            message=exc.message,
-                        )
-                    )
-                    break
-                items.append(
-                    InquiryTreatmentDispenseItem(
+                    item = InquiryTreatmentDispenseItem(
                         medicine_id=medicine.id,
                         medicine_name=medicine.name,
                         slot=medicine.slot,
@@ -228,45 +270,66 @@ class InquiryOrchestrator:
                         message=result.message,
                         record_id=result.record_id,
                     )
-                )
-                if not result.ok:
-                    break
+                except DispenseError as exc:
+                    item = InquiryTreatmentDispenseItem(
+                        medicine_id=medicine.id,
+                        medicine_name=medicine.name,
+                        slot=medicine.slot,
+                        ok=False,
+                        dry_run=False,
+                        message=exc.message,
+                    )
 
-            succeeded = sum(1 for item in items if item.ok)
-            opened = sum(1 for item in items if item.ok and not item.dry_run)
-            expected = len(fresh_option.medicines)
-            if succeeded == expected:
-                status = "complete"
+            session.action_items = [*session.action_items, item.model_dump()]
+            if item.ok:
+                session.action_progress_index += 1
+
+            if not item.ok:
+                status = "partial" if session.action_progress_index > 0 else "failed"
                 message = (
-                    f"方案 {request.option_id} 已确认，{opened} 个对应药柜已完成开柜。"
+                    f"已处理 {session.action_progress_index}/{expected} 个药柜，"
+                    f"{treatment_medicine.slot}号柜未完成：{item.message}"
+                )
+                ok = False
+            elif session.action_progress_index >= expected:
+                status = "complete"
+                opened = sum(
+                    1 for value in session.action_items if value.get("ok") and not value.get("dry_run")
+                )
+                message = (
+                    f"方案 {request.option_id} 的 {opened} 个药柜已按顺序完成开柜。"
                     if opened
-                    else f"方案 {request.option_id} 已完成本地测试记录，未打开柜门。"
+                    else f"方案 {request.option_id} 的 {expected} 项本地测试记录已完成。"
                 )
                 ok = True
-            elif succeeded:
-                status = "partial"
-                message = (
-                    f"已打开 {opened} 个药柜，后续药柜未完成，请联系现场协助人员。"
-                    if opened
-                    else "部分本地测试记录已保存，后续操作未完成，请联系现场协助人员。"
-                )
-                ok = False
             else:
-                status = "failed"
-                message = items[-1].message if items else "开柜操作未完成，请联系现场协助人员。"
-                ok = False
+                status = "opening"
+                next_item = fresh_option.medicines[session.action_progress_index]
+                message = (
+                    f"已打开 {item_index + 1}/{expected}：{treatment_medicine.slot}号柜；"
+                    f"下一步打开 {next_item.slot}号柜。"
+                )
+                ok = True
 
             session.action_status = status
             session.action_message = message
             session.reply = message
-            session.next_action = "complete"
+            session.next_action = "complete" if status in {"complete", "partial", "failed"} else "show_recommendation"
             committed = self._commit(session)
+            next_medicine = (
+                fresh_option.medicines[session.action_progress_index]
+                if status == "opening" and session.action_progress_index < expected
+                else None
+            )
             return InquiryTreatmentConfirmResponse(
                 ok=ok,
                 status=status,
                 option_id=request.option_id,
                 message=message,
-                items=items,
+                items=[InquiryTreatmentDispenseItem(**value) for value in session.action_items],
+                completed_count=session.action_progress_index,
+                total_count=expected,
+                next_medicine=next_medicine,
                 session=committed,
             )
 
@@ -277,7 +340,13 @@ class InquiryOrchestrator:
         *,
         source: str,
     ) -> InquirySessionResponse:
-        decision = self.safety_engine.assess(extracted, session.vitals, self._profile_context(session))
+        history = self._history_context(session, extracted)
+        decision = self.safety_engine.assess(
+            extracted,
+            session.vitals,
+            self._profile_context(session),
+            history.medicine_counts,
+        )
         session.extracted_information = extracted
         session.risk_level = decision.risk_level
         session.risk_reasons = decision.risk_reasons
@@ -291,6 +360,14 @@ class InquiryOrchestrator:
         session.selected_option_id = ""
         session.action_status = "ready" if session.can_view_medicines else "idle"
         session.action_message = ""
+        session.action_progress_index = 0
+        session.action_total_items = 0
+        session.action_items = []
+        if history.has_similar_history:
+            history_note = f"已参考 {history.similar_session_count} 次相似历史，仅用于当前合格候选的排序。"
+            session.reasoning_summary = "".join(
+                part for part in (session.reasoning_summary, history_note) if part
+            )
         session.title = self._title(session)
         if decision.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
@@ -347,9 +424,41 @@ class InquiryOrchestrator:
         current = session.extracted_information
         dimensions = list(dict.fromkeys([*current.symptom_dimensions, *interpretation.symptom_dimensions]))
         evidence = {**current.dimension_evidence, **interpretation.dimension_evidence}
+        rule_features: list[str] = []
+        rule_feature_evidence: dict[str, str] = {}
+        for feature, keywords in FEATURE_KEYWORDS.items():
+            match = next(
+                (keyword for keyword in keywords if SymptomInterpreter._has_unnegated_term(transcript, keyword)),
+                "",
+            )
+            if match:
+                rule_features.append(feature)
+                rule_feature_evidence[feature] = match
+        features = list(
+            dict.fromkeys([*current.symptom_features, *interpretation.symptom_features, *rule_features])
+        )
+        feature_evidence = {
+            **current.feature_evidence,
+            **interpretation.feature_evidence,
+            **rule_feature_evidence,
+        }
+        clarification_answers = dict(current.clarification_answers)
+        pending_clarification = current.pending_clarification
+        if pending_clarification:
+            clarification_answers[pending_clarification] = transcript[:160]
+            contextual_features = InquiryOrchestrator._clarification_features(pending_clarification, transcript)
+            features = list(dict.fromkeys([*features, *contextual_features]))
+            for feature in contextual_features:
+                feature_evidence[feature] = transcript[:120]
+            pending_clarification = ""
         return InquiryExtractedInformation(
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
+            symptom_features=features,
+            feature_evidence=feature_evidence,
+            clarification_answers=clarification_answers,
+            asked_clarifications=list(current.asked_clarifications),
+            pending_clarification=pending_clarification,
             symptoms_text=InquiryOrchestrator._append_text(current.symptoms_text, transcript),
             duration=interpretation.duration or current.duration,
             used_medicines=interpretation.used_medicines or current.used_medicines,
@@ -426,6 +535,102 @@ class InquiryOrchestrator:
         session.reply = reply
         cls._clear_decision(session)
 
+    @classmethod
+    def _ask_clarification(cls, session: InquirySessionResponse, topic: str, question: str) -> None:
+        extracted = session.extracted_information.model_copy(deep=True)
+        extracted.pending_clarification = topic
+        extracted.asked_clarifications = list(dict.fromkeys([*extracted.asked_clarifications, topic]))
+        session.extracted_information = extracted
+        session.stage = "clarification"
+        session.next_action = "ask"
+        session.reply = question
+        cls._clear_decision(session)
+
+    @staticmethod
+    def _next_clarification(
+        extracted: InquiryExtractedInformation,
+        history: InquiryHistoryContext,
+    ) -> tuple[str, str] | None:
+        if extracted.pending_clarification:
+            return None
+        asked = set(extracted.asked_clarifications)
+        dimensions = set(extracted.symptom_dimensions)
+        features = set(extracted.symptom_features)
+        if history.has_similar_history and "history_change" not in asked:
+            return "history_change", CLARIFICATION_QUESTIONS["history_change"]
+        rules = (
+            ("nasal_discharge", "感冒鼻部症状" in dimensions, {"清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏"}),
+            (
+                "systemic_pattern",
+                "发热全身不适" in dimensions,
+                {"明显畏寒", "明显口渴", "咽喉疼痛"},
+            ),
+            ("cough_type", "咳嗽咳痰" in dimensions, {"干咳", "有痰咳嗽", "黄痰"}),
+            ("throat_pattern", "咽喉口腔不适" in dimensions, {"咽喉疼痛", "口腔溃疡"}),
+            ("summer_pattern", "恶心暑湿" in dimensions, {"恶心呕吐", "腹泻"}),
+            ("wound_state", "轻微外伤" in dimensions, {"皮肤破损", "伤口红肿渗液"}),
+            (
+                "allergy_pattern",
+                bool({"过敏瘙痒", "鼻炎过敏"}.intersection(dimensions)),
+                {"鼻痒喷嚏", "皮肤瘙痒"},
+            ),
+        )
+        for topic, applies, resolved_features in rules:
+            if applies and topic not in asked and not features.intersection(resolved_features):
+                return topic, CLARIFICATION_QUESTIONS[topic]
+        return None
+
+    @staticmethod
+    def _clarification_features(topic: str, transcript: str) -> list[str]:
+        text = transcript.strip()
+        matches: list[str] = []
+
+        def has(*terms: str) -> bool:
+            return any(SymptomInterpreter._has_unnegated_term(text, term) for term in terms)
+
+        if topic == "nasal_discharge":
+            if has("黄", "黄稠", "黏稠"):
+                matches.append("黄稠鼻涕")
+            elif has("清", "清稀", "清水", "像水"):
+                matches.append("清稀鼻涕")
+            if has("鼻痒", "打喷嚏", "喷嚏"):
+                matches.append("鼻痒喷嚏")
+        elif topic == "systemic_pattern":
+            if has("怕冷", "畏寒", "恶寒"):
+                matches.append("明显畏寒")
+            if has("口渴", "口干"):
+                matches.append("明显口渴")
+            if has("咽痛", "喉咙痛", "嗓子痛"):
+                matches.append("咽喉疼痛")
+        elif topic == "cough_type":
+            if has("黄痰", "痰黄"):
+                matches.extend(["有痰咳嗽", "黄痰"])
+            elif has("有痰", "咳痰"):
+                matches.append("有痰咳嗽")
+            elif has("干咳", "无痰", "没有痰"):
+                matches.append("干咳")
+        elif topic == "throat_pattern":
+            if has("口腔溃疡", "嘴里溃疡"):
+                matches.append("口腔溃疡")
+            if has("咽痛", "喉咙痛", "嗓子痛"):
+                matches.append("咽喉疼痛")
+        elif topic == "summer_pattern":
+            if has("恶心", "呕吐", "想吐"):
+                matches.append("恶心呕吐")
+            if has("腹泻", "拉肚子", "水样便"):
+                matches.append("腹泻")
+        elif topic == "wound_state":
+            if has("红肿", "渗液", "化脓", "流脓"):
+                matches.append("伤口红肿渗液")
+            elif has("破皮", "擦破", "小伤口"):
+                matches.append("皮肤破损")
+        elif topic == "allergy_pattern":
+            if has("鼻痒", "打喷嚏", "鼻部"):
+                matches.append("鼻痒喷嚏")
+            if has("皮肤痒", "瘙痒", "皮疹"):
+                matches.append("皮肤瘙痒")
+        return list(dict.fromkeys(matches))
+
     @staticmethod
     def _clear_decision(session: InquirySessionResponse) -> None:
         session.risk_level = None
@@ -437,6 +642,9 @@ class InquiryOrchestrator:
         session.selected_option_id = ""
         session.action_status = "idle"
         session.action_message = ""
+        session.action_progress_index = 0
+        session.action_total_items = 0
+        session.action_items = []
 
     @staticmethod
     def _apply_contextual_answer(
@@ -488,6 +696,17 @@ class InquiryOrchestrator:
             if value and value.strip()
         )
 
+    def _history_context(
+        self,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+    ) -> InquiryHistoryContext:
+        return self.history_service.context_for(
+            session.user_id,
+            session.session_id,
+            extracted.symptom_dimensions,
+        )
+
     @staticmethod
     def _option(options, option_id: str):
         return next((option for option in options if option.option_id == option_id), None)
@@ -508,6 +727,9 @@ class InquiryOrchestrator:
         )
         session.selected_option_id = ""
         session.action_status = "ready" if session.can_view_medicines else "idle"
+        session.action_progress_index = 0
+        session.action_total_items = 0
+        session.action_items = []
         if decision.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
             session.next_action = "escalate"

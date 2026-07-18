@@ -101,8 +101,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const IdentityIcon = identityPresentation.icon;
   const contextSummary = useMemo(() => {
     const extracted = session?.extracted_information || {};
-    const evidence = Object.values(extracted.dimension_evidence || {})
-      .map((value) => String(value || "").trim())
+    const dimensions = (extracted.symptom_dimensions || [])
+      .map((value) => symptomDimensionLabel(value))
       .filter(Boolean);
     const vitals = session?.vitals || {};
     const temperature = Number(vitals.temperature) > 0 ? `${Number(vitals.temperature).toFixed(1)}℃` : "待测";
@@ -110,7 +110,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     const spo2 = Number(vitals.spo2) > 0 ? `${Number(vitals.spo2)}%` : "待测";
     const allergy = extracted.allergy_or_contraindication || displayedUser?.allergies || "";
     const facts = [
-      evidence.length > 0,
+      dimensions.length > 0,
       Boolean(extracted.duration),
       Boolean(extracted.used_medicines),
       Boolean(allergy),
@@ -122,7 +122,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         ? "本次已用药"
         : extracted.used_medicines || "尚未确认";
     return {
-      complaint: evidence.join("、") || "等待描述",
+      complaint: dimensions.join("、") || "等待描述",
       duration: extracted.duration || "尚未确认",
       medicine: medicineText,
       allergy: allergy || "尚未确认",
@@ -276,10 +276,16 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setOpeningTreatment(true);
     setTreatmentAction(null);
     try {
-      const data = await confirmInquiryTreatment(sessionId, optionId);
-      setTreatmentAction(data);
-      setSession(data.session);
-      notify(data.message || "方案对应药柜已处理");
+      let expectedItemIndex = Number(session?.action_progress_index || 0);
+      while (mountedRef.current) {
+        const data = await confirmInquiryTreatment(sessionId, optionId, expectedItemIndex);
+        setTreatmentAction(data);
+        setSession(data.session);
+        notify(data.message || "方案对应药柜已处理");
+        if (data.status !== "opening") break;
+        expectedItemIndex = Number(data.completed_count || 0);
+        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+      }
     } catch (error) {
       setTreatmentAction({ status: "failed", message: error.message || "开柜未完成，请联系现场协助人员" });
       notify(error.message || "开柜未完成，请联系现场协助人员");
@@ -293,7 +299,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       openingTreatmentRef.current = false;
       setOpeningTreatment(false);
     }
-  }, [notify, sessionId]);
+  }, [notify, session?.action_progress_index, sessionId]);
 
   function resetFlow() {
     creatingRef.current = false;
@@ -377,4 +383,28 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       </section>
     </main>
   );
+}
+
+const symptomDimensionLabels = {
+  "感冒鼻部症状": "鼻塞流涕",
+  "发热全身不适": "头痛或全身不适",
+  "咳嗽咳痰": "咳嗽咳痰",
+  "咽喉口腔不适": "咽喉或口腔不适",
+  "恶心暑湿": "头晕恶心或暑热不适",
+  "腹泻肠道不适": "腹泻肠道不适",
+  "便秘": "排便困难",
+  "胃酸胃部不适": "反酸或胃部不适",
+  "过敏瘙痒": "皮肤过敏瘙痒",
+  "轻微外伤": "轻微外伤",
+  "皮肤真菌不适": "皮肤真菌不适",
+  "肌肉关节疼痛": "肌肉关节疼痛",
+  "干眼不适": "眼干眼涩",
+  "鼻炎过敏": "鼻炎过敏",
+  "营养补充": "营养补充",
+  "慢病既往用药": "慢病既往用药"
+};
+
+function symptomDimensionLabel(value) {
+  const normalized = String(value || "").trim();
+  return symptomDimensionLabels[normalized] || normalized;
 }

@@ -31,6 +31,7 @@ class MedicineSafetyEngine:
         extracted: InquiryExtractedInformation,
         vitals: dict[str, Any] | None,
         profile_context: str = "",
+        history_medicine_counts: dict[str, int] | None = None,
     ) -> SafetyDecision:
         text = extracted.symptoms_text
         level: RiskLevel = "low"
@@ -66,6 +67,7 @@ class MedicineSafetyEngine:
         elif (
             self._has_unnegated_term(text, "头晕")
             or self._long_duration(extracted.duration)
+            or "加重" in extracted.clarification_answers.get("history_change", "")
             or extracted.confidence < settings.inquiry_medium_confidence_below
         ):
             level = "medium"
@@ -86,6 +88,8 @@ class MedicineSafetyEngine:
         options = self.knowledge.treatment_options(
             extracted.symptom_dimensions,
             context_text,
+            symptom_features=extracted.symptom_features,
+            history_medicine_counts=history_medicine_counts,
         )
         primary = self._candidate(options[0].medicines[0]) if options and options[0].medicines else None
         alternative = None

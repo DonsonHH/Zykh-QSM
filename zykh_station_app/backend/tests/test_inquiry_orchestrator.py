@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.schemas.inquiry import (  # noqa: E402
+    InquiryExtractedInformation,
     InquirySessionCreateRequest,
     InquiryTreatmentConfirmRequest,
     InquiryTurnRequest,
@@ -114,9 +115,13 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点流鼻涕"))
 
-        self.assertEqual(result.stage, "duration")
-        self.assertIn("什么时候开始", result.reply)
+        self.assertEqual(result.stage, "clarification")
+        self.assertIn("清稀鼻涕", result.reply)
         self.assertNotIn("过敏", result.reply)
+
+        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="是清稀鼻涕"))
+        self.assertEqual(duration.stage, "duration")
+        self.assertIn("什么时候开始", duration.reply)
 
     def test_old_age_alone_does_not_raise_risk(self) -> None:
         interpreter = FakeInterpreter(
@@ -124,6 +129,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 SymptomInterpretation(
                     symptom_dimensions=["感冒鼻部症状"],
                     dimension_evidence={"感冒鼻部症状": "流鼻涕"},
+                    symptom_features=["清稀鼻涕"],
+                    feature_evidence={"清稀鼻涕": "流清鼻涕"},
                     duration="刚开始",
                     used_medicines="未使用",
                     allergy_or_contraindication="头孢过敏",
@@ -133,7 +140,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ]
         )
         service, session = self.create_session(interpreter)
-        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我刚开始流鼻涕，还没吃药"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我刚开始流清鼻涕，还没吃药"))
 
         self.assertEqual(result.risk_level, "low")
         self.assertEqual(result.next_action, "show_recommendation")
@@ -159,10 +166,12 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(pending.next_action, "measure_vitals")
 
-        result = service.attach_vitals(
+        clarification = service.attach_vitals(
             session.session_id,
             InquiryVitalsRequest(temperature=36.6, heart_rate=76, spo2=98, measured_at="2026-07-18 09:00:00"),
         )
+        self.assertEqual(clarification.stage, "clarification")
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="还有一点恶心想吐"))
 
         self.assertEqual(result.risk_level, "medium")
         self.assertEqual(result.next_action, "show_recommendation")
@@ -214,9 +223,13 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
 
         self.assertEqual(resumed.next_action, "ask")
-        self.assertEqual(resumed.stage, "duration")
-        self.assertIn("开始", resumed.reply)
+        self.assertEqual(resumed.stage, "clarification")
+        self.assertIn("恶心呕吐", resumed.reply)
         self.assertEqual(resumed.vitals["spo2"], 98)
+
+        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="没有恶心、呕吐或腹泻"))
+        self.assertEqual(duration.stage, "duration")
+        self.assertIn("开始", duration.reply)
 
     def test_model_can_request_vitals_before_duration_and_resume_after_measurement(self) -> None:
         interpreter = FakeInterpreter(
@@ -272,6 +285,131 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(second.stage, "duration")
         self.assertNotEqual(second.reply, first.reply)
         self.assertIn("刚开始", second.reply)
+
+    def test_nasal_clarification_changes_primary_candidate(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
+
+        clarification = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我鼻塞而且流鼻涕"),
+        )
+        self.assertEqual(clarification.stage, "clarification")
+        self.assertIn("清稀鼻涕", clarification.reply)
+
+        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="是清稀鼻涕"))
+        used = service.process_turn(session.session_id, InquiryTurnRequest(transcript="今天开始"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="这次还没吃药"))
+
+        self.assertEqual(duration.stage, "duration")
+        self.assertEqual(used.stage, "used_medicines")
+        self.assertEqual(result.primary_candidate.id, "slot-03-ganmao-qingre")
+        self.assertIn("清稀鼻涕", result.extracted_information.symptom_features)
+
+    def test_similar_history_prompts_for_change_before_reusing_history_as_tie_breaker(self) -> None:
+        service, prior = self.create_session()
+        prior.extracted_information = InquiryExtractedInformation(
+            symptom_dimensions=["感冒鼻部症状"],
+            dimension_evidence={"感冒鼻部症状": "流清鼻涕"},
+            symptom_features=["清稀鼻涕"],
+            duration="一天",
+            used_medicines="未使用",
+            allergy_or_contraindication="头孢过敏",
+            confidence=0.9,
+        )
+        prior.risk_level = "low"
+        prior.selected_option_id = "A"
+        prior.action_status = "complete"
+        prior.action_items = [{"medicine_id": "slot-03-ganmao-qingre", "ok": True}]
+        prior.title = "张三 · 鼻塞流涕"
+        service.repository.save_session(prior)
+        service.interpreter = SymptomInterpreter(ai_service=UnavailableAiService())
+
+        current = service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
+        comparison = service.process_turn(
+            current.session_id,
+            InquiryTurnRequest(transcript="我又有点鼻塞流鼻涕"),
+        )
+
+        self.assertEqual(comparison.stage, "clarification")
+        self.assertEqual(comparison.extracted_information.pending_clarification, "history_change")
+        self.assertIn("上次", comparison.reply)
+
+        next_question = service.process_turn(current.session_id, InquiryTurnRequest(transcript="比上次轻一些"))
+        self.assertEqual(next_question.extracted_information.clarification_answers["history_change"], "比上次轻一些")
+        self.assertEqual(next_question.extracted_information.pending_clarification, "nasal_discharge")
+
+    def test_current_features_dominate_and_history_only_breaks_close_candidate_scores(self) -> None:
+        knowledge = MedicineKnowledgeRepository()
+
+        clear_plan = knowledge.treatment_options(
+            ["感冒鼻部症状"],
+            "无",
+            symptom_features=["清稀鼻涕"],
+        )[0]
+        yellow_plan = knowledge.treatment_options(
+            ["感冒鼻部症状"],
+            "无",
+            symptom_features=["黄稠鼻涕"],
+        )[0]
+        historical_tie_break = knowledge.treatment_options(
+            ["发热全身不适"],
+            "无",
+            history_medicine_counts={"slot-03-ganmao-qingre": 1},
+        )[0]
+
+        self.assertEqual(clear_plan.medicines[0].id, "slot-03-ganmao-qingre")
+        self.assertEqual(yellow_plan.medicines[0].id, "slot-01-fufang-ganmaoling")
+        self.assertEqual(historical_tie_break.medicines[0].id, "slot-03-ganmao-qingre")
+
+    def test_three_medicine_wound_plan_opens_exactly_one_cabinet_per_request(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["轻微外伤"],
+                    dimension_evidence={"轻微外伤": "擦伤破皮"},
+                    symptom_features=["皮肤破损"],
+                    feature_evidence={"皮肤破损": "破皮"},
+                    duration="刚开始",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    action_intent="analyze",
+                    confidence=0.92,
+                    source="cloud",
+                )
+            ]
+        )
+        dispense = FakeDispenseService()
+        service, session = self.create_session(interpreter, dispense)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="刚才擦伤破皮，还没用药，没有过敏"),
+        )
+        selected = result.treatment_options[0]
+        self.assertEqual(len(selected.medicines), 3)
+
+        responses = []
+        for index in range(3):
+            responses.append(
+                service.confirm_treatment(
+                    result.session_id,
+                    InquiryTreatmentConfirmRequest(
+                        option_id=selected.option_id,
+                        confirmed_safety_notice=True,
+                        expected_item_index=index,
+                    ),
+                )
+            )
+            self.assertEqual(len(dispense.requests), index + 1)
+
+        self.assertEqual([response.status for response in responses], ["opening", "opening", "complete"])
+        self.assertEqual(responses[-1].completed_count, 3)
+        self.assertEqual([request.medicine_id for request in dispense.requests], [
+            medicine.id for medicine in selected.medicines
+        ])
 
     def test_high_spo2_risk_blocks_candidates(self) -> None:
         interpreter = FakeInterpreter(
@@ -341,15 +479,17 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertFalse(knowledge._eligible(medicine, "布地奈德过敏"))
         self.assertTrue(knowledge._eligible(medicine, "无"))
 
-    def test_relevant_non_otc_inventory_can_be_shown_with_safety_notice(self) -> None:
+    def test_non_otc_and_chronic_inventory_is_not_used_by_inquiry_recommendations(self) -> None:
         knowledge = MedicineKnowledgeRepository()
 
         respiratory = knowledge.candidates(["发热全身不适", "咽喉口腔不适"], "无")
         allergy = knowledge.candidates(["过敏瘙痒"], "无")
+        chronic = knowledge.candidates(["慢病既往用药"], "无")
 
-        self.assertIn("slot-14-oseltamivir", {candidate.id for candidate in respiratory})
-        self.assertIn("slot-04-amoxicillin", {candidate.id for candidate in respiratory})
-        self.assertIn("slot-23-desloratadine", {candidate.id for candidate in allergy})
+        self.assertNotIn("slot-14-oseltamivir", {candidate.id for candidate in respiratory})
+        self.assertNotIn("slot-04-amoxicillin", {candidate.id for candidate in respiratory})
+        self.assertNotIn("slot-23-desloratadine", {candidate.id for candidate in allergy})
+        self.assertEqual(chronic, [])
 
     def test_at_most_one_optional_alternative_is_returned_for_ambiguous_evidence(self) -> None:
         interpreter = FakeInterpreter(
@@ -357,6 +497,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 SymptomInterpretation(
                     symptom_dimensions=["感冒鼻部症状", "发热全身不适"],
                     dimension_evidence={"感冒鼻部症状": "鼻塞", "发热全身不适": "头痛"},
+                    symptom_features=["清稀鼻涕", "明显畏寒"],
+                    feature_evidence={"清稀鼻涕": "清鼻涕", "明显畏寒": "怕冷"},
                     duration="刚开始",
                     used_medicines="未使用",
                     allergy_or_contraindication="无",
@@ -411,6 +553,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 SymptomInterpretation(
                     symptom_dimensions=["咳嗽咳痰", "咽喉口腔不适"],
                     dimension_evidence={"咳嗽咳痰": "咳嗽", "咽喉口腔不适": "喉咙痛"},
+                    symptom_features=["干咳", "咽喉疼痛"],
+                    feature_evidence={"干咳": "干咳", "咽喉疼痛": "喉咙痛"},
                     duration="一天",
                     used_medicines="未使用",
                     allergy_or_contraindication="头孢过敏",
@@ -432,18 +576,28 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryVitalsRequest(temperature=36.7, heart_rate=78, spo2=98),
         )
 
-        self.assertGreaterEqual(len(result.treatment_options), 2)
-        selected = result.treatment_options[1]
+        self.assertGreaterEqual(len(result.treatment_options), 1)
+        selected = max(result.treatment_options, key=lambda option: len(option.medicines))
         selected_ids = [medicine.id for medicine in selected.medicines]
-        self.assertGreaterEqual(len(selected_ids), 2)
+        self.assertGreaterEqual(len(selected_ids), 1)
 
-        confirmed = service.confirm_treatment(
-            result.session_id,
-            InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
-        )
+        confirmed = None
+        for item_index in range(len(selected_ids)):
+            confirmed = service.confirm_treatment(
+                result.session_id,
+                InquiryTreatmentConfirmRequest(
+                    option_id=selected.option_id,
+                    confirmed_safety_notice=True,
+                    expected_item_index=item_index,
+                ),
+            )
+            self.assertEqual(len(dispense.requests), item_index + 1)
+            expected_status = "complete" if item_index == len(selected_ids) - 1 else "opening"
+            self.assertEqual(confirmed.status, expected_status)
 
+        self.assertIsNotNone(confirmed)
         self.assertTrue(confirmed.ok)
-        self.assertEqual(confirmed.status, "complete")
+        self.assertEqual(confirmed.completed_count, len(selected_ids))
         self.assertEqual([request.medicine_id for request in dispense.requests], selected_ids)
         self.assertTrue(all(request.confirm_real_dispense for request in dispense.requests))
         with self.assertRaises(DispenseError):
@@ -489,6 +643,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 SymptomInterpretation(
                     symptom_dimensions=["感冒鼻部症状"],
                     dimension_evidence={"感冒鼻部症状": "鼻塞"},
+                    symptom_features=["清稀鼻涕"],
+                    feature_evidence={"清稀鼻涕": "清鼻涕"},
                     duration="刚开始",
                     used_medicines="未使用",
                     allergy_or_contraindication="无",
@@ -526,8 +682,10 @@ class InquiryOrchestratorTest(unittest.TestCase):
         interpreter = FakeInterpreter(
             [
                 SymptomInterpretation(
-                    symptom_dimensions=["咳嗽咳痰", "咽喉口腔不适"],
-                    dimension_evidence={"咳嗽咳痰": "咳嗽", "咽喉口腔不适": "咽痛"},
+                    symptom_dimensions=["轻微外伤"],
+                    dimension_evidence={"轻微外伤": "擦伤破皮"},
+                    symptom_features=["皮肤破损"],
+                    feature_evidence={"皮肤破损": "破皮"},
                     duration="一天",
                     used_medicines="未使用",
                     allergy_or_contraindication="无",
@@ -541,7 +699,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         service, session = self.create_session(interpreter, dispense)
         pending = service.process_turn(
             session.session_id,
-            InquiryTurnRequest(transcript="咳嗽咽痛一天，没有用药，没有过敏"),
+            InquiryTurnRequest(transcript="擦伤破皮一天，没有用药，没有过敏"),
         )
         result = service.attach_vitals(
             pending.session_id,
@@ -549,11 +707,24 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
         selected = result.treatment_options[0]
 
+        first = service.confirm_treatment(
+            result.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id=selected.option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
         confirmed = service.confirm_treatment(
             result.session_id,
-            InquiryTreatmentConfirmRequest(option_id=selected.option_id, confirmed_safety_notice=True),
+            InquiryTreatmentConfirmRequest(
+                option_id=selected.option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=1,
+            ),
         )
 
+        self.assertEqual(first.status, "opening")
         self.assertFalse(confirmed.ok)
         self.assertEqual(confirmed.status, "partial")
         self.assertEqual(len(dispense.requests), 2)
