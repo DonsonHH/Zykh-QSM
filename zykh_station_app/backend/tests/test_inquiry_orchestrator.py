@@ -22,7 +22,7 @@ from app.schemas.dispense import DispenseConfirmResponse  # noqa: E402
 from app.services.dispense_service import DispenseError  # noqa: E402
 from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
-from app.services.symptom_interpreter import SymptomInterpretation  # noqa: E402
+from app.services.symptom_interpreter import SymptomInterpretation, SymptomInterpreter  # noqa: E402
 
 
 class FakeInterpreter:
@@ -33,6 +33,11 @@ class FakeInterpreter:
         if self.results:
             return self.results.pop(0)
         return SymptomInterpretation(source="rules_fallback")
+
+
+class UnavailableAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {"ok": False}
 
 
 class FakeDispenseService:
@@ -110,7 +115,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点流鼻涕"))
 
         self.assertEqual(result.stage, "duration")
-        self.assertIn("持续多久", result.reply)
+        self.assertIn("什么时候开始", result.reply)
         self.assertNotIn("过敏", result.reply)
 
     def test_old_age_alone_does_not_raise_risk(self) -> None:
@@ -162,7 +167,111 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.risk_level, "medium")
         self.assertEqual(result.next_action, "show_recommendation")
         self.assertEqual(result.primary_candidate.id, "slot-08-huoxiang-zhengqi")
+        self.assertIn("解表化湿", result.primary_candidate.indications)
+        self.assertIn("一次1丸", result.primary_candidate.dosage)
         self.assertTrue(result.can_view_medicines)
+        self.assertEqual(result.vitals["temperature"], 36.6)
+        self.assertTrue(any("额温 36.6" in reason and "血氧 98" in reason for reason in result.risk_reasons))
+
+    def test_short_context_answers_advance_without_repeating_questions(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+
+        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点胃痛"))
+        used = service.process_turn(session.session_id, InquiryTurnRequest(transcript="五分钟"))
+        allergies = service.process_turn(session.session_id, InquiryTurnRequest(transcript="还没有"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="没有"))
+
+        self.assertEqual(duration.stage, "duration")
+        self.assertEqual(used.stage, "used_medicines")
+        self.assertEqual(allergies.stage, "allergies")
+        self.assertEqual(result.next_action, "show_recommendation")
+        self.assertEqual(result.extracted_information.duration, "五分钟")
+        self.assertEqual(result.extracted_information.used_medicines, "未使用")
+        self.assertEqual(result.extracted_information.allergy_or_contraindication, "无")
+
+    def test_explicit_vitals_request_interrupts_missing_field_order_and_then_resumes(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+
+        pending = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我头晕，现在先测一下身体体征"),
+        )
+
+        self.assertEqual(pending.next_action, "measure_vitals")
+        self.assertEqual(pending.stage, "vitals")
+
+        resumed = service.attach_vitals(
+            session.session_id,
+            InquiryVitalsRequest(temperature=36.6, heart_rate=76, spo2=98, measured_at="2026-07-18 09:00:00"),
+        )
+
+        self.assertEqual(resumed.next_action, "ask")
+        self.assertEqual(resumed.stage, "duration")
+        self.assertIn("开始", resumed.reply)
+        self.assertEqual(resumed.vitals["spo2"], 98)
+
+    def test_model_can_request_vitals_before_duration_and_resume_after_measurement(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["轻微外伤"],
+                    dimension_evidence={"轻微外伤": "擦伤"},
+                    action_intent="measure_vitals",
+                    action_reason="用户同时描述明显乏力",
+                    confidence=0.8,
+                    source="cloud",
+                )
+            ]
+        )
+        service, session = self.create_session(interpreter)
+
+        pending = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我擦伤了，而且很乏力"))
+        resumed = service.attach_vitals(
+            session.session_id,
+            InquiryVitalsRequest(temperature=36.7, heart_rate=74, spo2=98, measured_at="2026-07-18 09:00:00"),
+        )
+
+        self.assertEqual(pending.next_action, "measure_vitals")
+        self.assertEqual(resumed.stage, "duration")
+        self.assertEqual(resumed.next_action, "ask")
+
+    def test_historical_relative_duration_advances_instead_of_repeating_the_same_question(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+
+        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点胃痛"))
+        next_step = service.process_turn(session.session_id, InquiryTurnRequest(transcript="去年"))
+
+        self.assertEqual(duration.stage, "duration")
+        self.assertEqual(next_step.stage, "used_medicines")
+        self.assertEqual(next_step.extracted_information.duration, "去年")
+        self.assertNotEqual(next_step.reply, duration.reply)
+
+    def test_unclear_answer_rephrases_instead_of_repeating_the_identical_prompt(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+
+        first = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点胃痛"))
+        second = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我说不清"))
+
+        self.assertEqual(first.stage, "duration")
+        self.assertEqual(second.stage, "duration")
+        self.assertNotEqual(second.reply, first.reply)
+        self.assertIn("刚开始", second.reply)
 
     def test_high_spo2_risk_blocks_candidates(self) -> None:
         interpreter = FakeInterpreter(
@@ -232,7 +341,17 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertFalse(knowledge._eligible(medicine, "布地奈德过敏"))
         self.assertTrue(knowledge._eligible(medicine, "无"))
 
-    def test_only_one_optional_alternative_is_returned_for_ambiguous_evidence(self) -> None:
+    def test_relevant_non_otc_inventory_can_be_shown_with_safety_notice(self) -> None:
+        knowledge = MedicineKnowledgeRepository()
+
+        respiratory = knowledge.candidates(["发热全身不适", "咽喉口腔不适"], "无")
+        allergy = knowledge.candidates(["过敏瘙痒"], "无")
+
+        self.assertIn("slot-14-oseltamivir", {candidate.id for candidate in respiratory})
+        self.assertIn("slot-04-amoxicillin", {candidate.id for candidate in respiratory})
+        self.assertIn("slot-23-desloratadine", {candidate.id for candidate in allergy})
+
+    def test_at_most_one_optional_alternative_is_returned_for_ambiguous_evidence(self) -> None:
         interpreter = FakeInterpreter(
             [
                 SymptomInterpretation(

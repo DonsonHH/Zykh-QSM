@@ -16,6 +16,10 @@ export function playBeep(volume) {
   return apiPost("/api/audio/beep", { volume });
 }
 
+export function stopAudioPlayback() {
+  return apiPost("/api/audio/stream/stop", {});
+}
+
 export function testAudioRelay(payload = {}) {
   return apiPost("/api/audio/relay-test", payload);
 }

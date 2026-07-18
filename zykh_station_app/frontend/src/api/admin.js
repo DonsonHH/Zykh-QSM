@@ -52,6 +52,10 @@ export function loadAdminLogs(source = "backend") {
   return adminRequest(`/api/admin/logs?source=${encodeURIComponent(source)}`);
 }
 
+export function loadAdminInquiries(limit = 40) {
+  return adminRequest(`/api/admin/inquiries?limit=${encodeURIComponent(limit)}`);
+}
+
 export function runAdminSystemAction(action, confirmation) {
   return adminRequest("/api/admin/system/action", { method: "POST", payload: { action, confirmation } });
 }

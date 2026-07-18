@@ -22,6 +22,11 @@ if (!$req) {
 }
 my $fps = 30;
 my $boundary = "frame";
+my $method = "POST";
+my $path = "/api/audio/stream/stop";
+if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
+    return send_json($client, 200, stop_audio_pcm_stream());
+}
     my $last_path = '';
     my $last_mtime = 0;
     my $delay = 1 / $fps;
@@ -61,6 +66,8 @@ sub latest_stream_frame { return ""; }
         self.assertNotIn("close $client;\n    next;", patched)
         self.assertIn("ZYKH_STATION_CAMERA_STREAM_IDLE_EXIT", patched)
         self.assertIn("$idle_ticks >= $fps * 3", patched)
+        self.assertIn("ZYKH_STATION_AUDIO_STOP_ALL", patched)
+        self.assertIn("release_audio_playback_device()", patched)
 
 
 if __name__ == "__main__":

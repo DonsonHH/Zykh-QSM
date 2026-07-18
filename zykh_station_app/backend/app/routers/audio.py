@@ -28,6 +28,7 @@ from ..services.qsm_client import QsmClient
 from ..services.qwen_realtime_tts import QwenRealtimeTts
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
+_active_tts_tasks: set[asyncio.Task] = set()
 
 
 def _saved_volume(key: str, default: int, minimum: int, maximum: int) -> int:
@@ -138,6 +139,27 @@ def audio_status() -> dict[str, object]:
 
 @router.post("/speak")
 async def audio_speak(request: SpeakRequest) -> dict[str, object]:
+    task = asyncio.current_task()
+    if task is not None:
+        _active_tts_tasks.add(task)
+    try:
+        return await _audio_speak_impl(request)
+    except asyncio.CancelledError:
+        return {
+            "ok": False,
+            "cancelled": True,
+            "message": "语音播报已停止。",
+            "requested_mode": _tts_mode_for_network(),
+            "engine": "cancelled",
+            "offline": False,
+            "raw": {},
+        }
+    finally:
+        if task is not None:
+            _active_tts_tasks.discard(task)
+
+
+async def _audio_speak_impl(request: SpeakRequest) -> dict[str, object]:
     client = QsmClient()
     volume = request.volume if request.volume is not None else _saved_volume("speaker_volume", 230, 0, 255)
     network_mode = _tts_mode_for_network()
@@ -259,10 +281,21 @@ def audio_stream_start(request: AudioStreamRequest) -> dict[str, object]:
 
 
 @router.post("/stream/stop")
-def audio_stream_stop() -> dict[str, object]:
-    result = QsmClient().audio_stream_stop()
+async def audio_stream_stop() -> dict[str, object]:
+    current = asyncio.current_task()
+    pending = [task for task in tuple(_active_tts_tasks) if task is not current and not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    result = await asyncio.to_thread(QsmClient().audio_stream_stop)
     ok = bool(result.get("ok"))
-    return {"ok": ok, "message": result.get("detail") or result.get("error_message") or "", "raw": result}
+    return {
+        "ok": ok,
+        "cancelled_tts": len(pending),
+        "message": result.get("detail") or result.get("error_message") or "",
+        "raw": result,
+    }
 
 
 @router.websocket("/asr/realtime")

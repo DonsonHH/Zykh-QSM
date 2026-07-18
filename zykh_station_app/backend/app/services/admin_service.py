@@ -22,6 +22,7 @@ from ..schemas.admin import AdminAuditRecord
 from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlanCreateRequest, TodayPlanUpdateRequest
+from ..repositories.inquiry_repository import InquiryRepository
 from .dispense_service import DispenseService
 from .dispense_archive_service import DispenseArchiveService
 from .fingerprint_service import FingerprintService
@@ -291,6 +292,24 @@ class AdminService:
             "updated_at": db.now_text(),
             "sources": sources,
         }
+
+    def inquiry_history(self, limit: int = 40) -> dict[str, object]:
+        sessions = InquiryRepository().list_sessions(limit=max(1, min(limit, 100)))
+        repeated = sum(1 for session in sessions if self._has_repeated_assistant_question(session.messages))
+        return {
+            "ok": True,
+            "sessions": sessions,
+            "repeated_question_sessions": repeated,
+        }
+
+    @staticmethod
+    def _has_repeated_assistant_question(messages) -> bool:
+        questions = [
+            message.content.strip()
+            for message in messages
+            if message.role == "assistant" and ("？" in message.content or "?" in message.content)
+        ]
+        return len(questions) != len(set(questions))
 
     def audit(self, action: str, target: str, result: str, detail: str) -> None:
         db.init_db()

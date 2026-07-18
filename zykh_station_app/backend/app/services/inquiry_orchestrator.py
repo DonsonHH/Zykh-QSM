@@ -44,9 +44,9 @@ class InquiryOrchestrator:
         now = db.now_text()
         user_name = str(user.get("name") or request.guest_name.strip() or "访客")
         reply = (
-            f"{user_name}，已读取你的基础信息。请告诉我现在最不舒服的地方。"
+            f"{user_name}，我已经读取你的基础信息。请说说这次最明显的不适。"
             if user
-            else "本次将以访客身份记录。请告诉我现在最不舒服的地方。"
+            else "你好，我们先从这次的情况开始。请说说现在最明显的不适。"
         )
         session = InquirySessionResponse(
             session_id=f"inquiry-session-{uuid4().hex[:14]}",
@@ -99,6 +99,7 @@ class InquiryOrchestrator:
                 "allergies": session.user_allergies,
             },
         )
+        self._apply_contextual_answer(session.stage, transcript, interpretation)
         extracted = self._merge_interpretation(session, transcript, interpretation)
         session.extracted_information = extracted
         session.source = interpretation.source
@@ -106,27 +107,22 @@ class InquiryOrchestrator:
         session.model_action_intent = interpretation.action_intent
         session.action_reason = interpretation.action_reason
 
+        if not session.vitals and self._should_measure_vitals_now(transcript, extracted, interpretation):
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.reply = "这项信息现在会影响安全判断。请测量额温、心率和血氧，完成后我会接着询问尚未确认的内容。"
+            self._clear_decision(session)
+            return self._commit(session)
+
         missing = self._missing_field(extracted)
         if missing:
-            stage, reply = self._follow_up(missing, interpretation.follow_up_question)
-            session.stage = stage
-            session.next_action = "ask"
-            session.reply = reply
-            session.risk_level = None
-            session.risk_reasons = []
-            session.primary_candidate = None
-            session.alternative_candidate = None
-            session.treatment_options = []
-            session.can_view_medicines = False
-            session.selected_option_id = ""
-            session.action_status = "idle"
-            session.action_message = ""
+            self._ask_for_missing(session, missing, interpretation.follow_up_question)
             return self._commit(session)
 
         if self._requires_vitals(extracted, interpretation) and not session.vitals:
             session.stage = "vitals"
             session.next_action = "measure_vitals"
-            session.reply = "关键信息已整理。请完成心率、血氧和额温测量，确认后我会继续进行安全核验。"
+            session.reply = "为了让安全判断更准确，接下来测一下额温、心率和血氧。完成后会自动回到这里继续。"
             return self._commit(session)
 
         return self._finish(session, extracted, source=interpretation.source)
@@ -134,6 +130,10 @@ class InquiryOrchestrator:
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
         session.vitals = request.model_dump(exclude_none=True)
+        missing = self._missing_field(session.extracted_information)
+        if missing:
+            self._ask_for_missing(session, missing, "")
+            return self._commit(session)
         return self._finish(session, session.extracted_information, source=session.source)
 
     def confirm_treatment(
@@ -376,10 +376,10 @@ class InquiryOrchestrator:
     @staticmethod
     def _follow_up(missing: str, model_question: str) -> tuple[str, str]:
         questions = {
-            "symptoms": ("symptoms", "请具体说说现在最不舒服的地方。"),
-            "duration": ("duration", "这种不舒服持续多久了？"),
-            "used_medicines": ("used_medicines", "这次不舒服以后已经用过什么药吗？"),
-            "allergies": ("allergies", "有没有药物过敏或明确不能使用的药？"),
+            "symptoms": ("symptoms", "请再具体说说，现在哪个部位最不舒服？"),
+            "duration": ("duration", "这种感觉大概从什么时候开始？"),
+            "used_medicines": ("used_medicines", "这次不舒服后，有没有吃过或用过药？"),
+            "allergies": ("allergies", "有没有明确过敏或不能用的药？不清楚也可以直接说。"),
         }
         question_terms = {
             "symptoms": ("不舒服", "症状", "哪里", "感觉", "描述"),
@@ -392,6 +392,71 @@ class InquiryOrchestrator:
         question = proposed if proposed and any(term in proposed for term in question_terms[missing]) else fallback
         return stage, question
 
+    @classmethod
+    def _ask_for_missing(
+        cls,
+        session: InquirySessionResponse,
+        missing: str,
+        model_question: str,
+    ) -> None:
+        stage, reply = cls._follow_up(missing, model_question)
+        prior_replies = {message.content for message in session.messages if message.role == "assistant"}
+        if reply in prior_replies:
+            alternatives = {
+                "symptoms": (
+                    "我还没有听清最明显的不适，请直接说头痛、胃痛、咳嗽或其他部位。",
+                    "请只说现在最难受的一项，我会接着往下问。",
+                ),
+                "duration": (
+                    "我还没听清开始时间，请说刚开始、半天、一天以上，或直接说不确定。",
+                    "请告诉我大约从哪一天或哪个时间开始，不清楚也可以直接说。",
+                ),
+                "used_medicines": (
+                    "我还没确认本次用药，请回答未用药、已用药或不确定。",
+                    "请只说这次不舒服后是否用过药；不记得也可以直接说。",
+                ),
+                "allergies": (
+                    "我还没确认过敏禁忌，请回答无、有或不确定。",
+                    "请说出不能使用的药名；如果记不清，请直接说不确定。",
+                ),
+            }[missing]
+            reply = next((value for value in alternatives if value not in prior_replies), alternatives[-1])
+        session.stage = stage
+        session.next_action = "ask"
+        session.reply = reply
+        cls._clear_decision(session)
+
+    @staticmethod
+    def _clear_decision(session: InquirySessionResponse) -> None:
+        session.risk_level = None
+        session.risk_reasons = []
+        session.primary_candidate = None
+        session.alternative_candidate = None
+        session.treatment_options = []
+        session.can_view_medicines = False
+        session.selected_option_id = ""
+        session.action_status = "idle"
+        session.action_message = ""
+
+    @staticmethod
+    def _apply_contextual_answer(
+        stage: str,
+        transcript: str,
+        interpretation: SymptomInterpretation,
+    ) -> None:
+        if stage == "duration" and not interpretation.duration:
+            interpretation.duration = SymptomInterpreter.duration_answer(transcript)
+        elif stage == "used_medicines" and not interpretation.used_medicines:
+            interpretation.used_medicines = SymptomInterpreter.used_medicine_answer(
+                transcript,
+                allow_short_answer=True,
+            )
+        elif stage == "allergies" and not interpretation.allergy_or_contraindication:
+            interpretation.allergy_or_contraindication = SymptomInterpreter.allergy_answer(
+                transcript,
+                allow_short_answer=True,
+            )
+
     @staticmethod
     def _requires_vitals(
         extracted: InquiryExtractedInformation,
@@ -401,6 +466,19 @@ class InquiryOrchestrator:
             VITALS_DIMENSIONS.intersection(extracted.symptom_dimensions)
             or interpretation.action_intent == "measure_vitals"
         )
+
+    @classmethod
+    def _should_measure_vitals_now(
+        cls,
+        transcript: str,
+        extracted: InquiryExtractedInformation,
+        interpretation: SymptomInterpretation,
+    ) -> bool:
+        explicit_request = any(
+            term in transcript
+            for term in ("测体征", "测一下体征", "测量体征", "读取体征", "身体体征", "量一下体温")
+        )
+        return bool(explicit_request or cls._requires_vitals(extracted, interpretation))
 
     @staticmethod
     def _profile_context(session: InquirySessionResponse) -> str:

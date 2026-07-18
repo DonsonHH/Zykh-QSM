@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -13,6 +13,9 @@ import {
 } from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
+import { speakText, stopAudioPlayback } from "../api/audio.js";
+import { isLocalNetworkMode } from "../utils/network.js";
+import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
 
 const riskLabels = {
   low: "低风险",
@@ -29,7 +32,8 @@ export function InquiryResultStep({
   actionResult,
   onConfirmTreatment,
   onRestart,
-  onHome
+  onHome,
+  networkStatus
 }) {
   const options = result?.treatment_options || [];
   const [selectedOptionId, setSelectedOptionId] = useState(result?.selected_option_id || options[0]?.option_id || "");
@@ -45,6 +49,33 @@ export function InquiryResultStep({
     () => options.find((option) => option.option_id === selectedOptionId) || options[0],
     [options, selectedOptionId]
   );
+  const requiresExistingDirection = Boolean(
+    selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
+  );
+  const spokenKeysRef = useRef(new Set());
+  const playbackGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (!result?.session_id || (!canProceed && !highRisk)) return;
+    const key = `recommendation:${result.session_id}`;
+    if (spokenKeysRef.current.has(key)) return;
+    spokenKeysRef.current.add(key);
+    playResultSpeech(buildRecommendationSpeech(result, selectedOption), networkStatus, playbackGenerationRef);
+  }, [canProceed, highRisk, networkStatus, result?.session_id, selectedOption]);
+
+  useEffect(() => {
+    if (!actionFinished || !actionMessage) return;
+    const key = `action:${result?.session_id}:${actionStatus}`;
+    if (spokenKeysRef.current.has(key)) return;
+    spokenKeysRef.current.add(key);
+    playResultSpeech(buildActionSpeech(actionMessage), networkStatus, playbackGenerationRef);
+  }, [actionFinished, actionMessage, actionStatus, networkStatus, result?.session_id]);
+
+  useEffect(() => () => {
+    playbackGenerationRef.current += 1;
+    window.speechSynthesis?.cancel();
+    stopAudioPlayback().catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (!options.some((option) => option.option_id === selectedOptionId)) {
@@ -108,7 +139,12 @@ export function InquiryResultStep({
                   {option.medicines.map((medicine) => (
                     <span className="option-medicine-row" key={medicine.id}>
                       <Pill size={18} aria-hidden="true" />
-                      <span><strong>{medicine.name}</strong><small>{medicine.role}</small></span>
+                      <span>
+                        <strong>{medicine.name}</strong>
+                        <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
+                          {medicine.requires_existing_direction ? `${medicine.role} · 按既往医嘱核对` : medicine.role}
+                        </small>
+                      </span>
                       <em>{medicine.slot}号柜</em>
                     </span>
                   ))}
@@ -138,7 +174,12 @@ export function InquiryResultStep({
               disabled={actionInProgress || countdown !== null}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
-            <span><ShieldCheck size={20} />我已核对所选方案、个人禁忌和药品安全提示</span>
+            <span>
+              <ShieldCheck size={20} />
+              {requiresExistingDirection
+                ? "我已确认该方案符合本人既往医嘱，并核对禁忌和安全提示"
+                : "我已核对所选方案、个人禁忌和药品安全提示"}
+            </span>
           </label>
           {countdown !== null ? (
             <div className="treatment-countdown" role="status">
@@ -187,4 +228,26 @@ function evidenceSummary(result = {}) {
     ? `已按“${allergy}”排除明显冲突项。`
     : "未记录明确过敏冲突。";
   return `${result.reasoning_summary || "已按用户原话整理症状证据。"}${allergyText}`;
+}
+
+async function playResultSpeech(text, networkStatus, playbackGenerationRef) {
+  if (!text) return;
+  const generation = playbackGenerationRef.current + 1;
+  playbackGenerationRef.current = generation;
+  window.speechSynthesis?.cancel();
+  await stopAudioPlayback().catch(() => null);
+  if (generation !== playbackGenerationRef.current) return;
+  try {
+    await speakText(text, undefined, 1.12, isLocalNetworkMode(networkStatus) ? "offline" : "auto");
+  } catch {
+    if (generation === playbackGenerationRef.current) speakResultLocally(text);
+  }
+}
+
+function speakResultLocally(text) {
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "zh-CN";
+  utterance.rate = 1.08;
+  window.speechSynthesis.speak(utterance);
 }

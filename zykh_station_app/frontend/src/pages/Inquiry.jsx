@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   BadgeCheck,
-  CakeSlice,
   CircleHelp,
+  Clock3,
+  Droplets,
   HeartPulse,
-  House,
-  NotebookText,
+  Pill,
   ScanFace,
   ShieldAlert,
+  Thermometer,
   UserRound
 } from "lucide-react";
 import {
@@ -97,6 +99,39 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
         : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
   const IdentityIcon = identityPresentation.icon;
+  const contextSummary = useMemo(() => {
+    const extracted = session?.extracted_information || {};
+    const evidence = Object.values(extracted.dimension_evidence || {})
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const vitals = session?.vitals || {};
+    const temperature = Number(vitals.temperature) > 0 ? `${Number(vitals.temperature).toFixed(1)}℃` : "待测";
+    const heartRate = Number(vitals.heart_rate) > 0 ? `${Number(vitals.heart_rate)}` : "待测";
+    const spo2 = Number(vitals.spo2) > 0 ? `${Number(vitals.spo2)}%` : "待测";
+    const allergy = extracted.allergy_or_contraindication || displayedUser?.allergies || "";
+    const facts = [
+      evidence.length > 0,
+      Boolean(extracted.duration),
+      Boolean(extracted.used_medicines),
+      Boolean(allergy),
+      temperature !== "待测" && heartRate !== "待测" && spo2 !== "待测"
+    ];
+    const medicineText = extracted.used_medicines === "未使用"
+      ? "本次未用药"
+      : extracted.used_medicines === "已使用"
+        ? "本次已用药"
+        : extracted.used_medicines || "尚未确认";
+    return {
+      complaint: evidence.join("、") || "等待描述",
+      duration: extracted.duration || "尚未确认",
+      medicine: medicineText,
+      allergy: allergy || "尚未确认",
+      temperature,
+      heartRate,
+      spo2,
+      confirmedCount: facts.filter(Boolean).length
+    };
+  }, [displayedUser, session]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -288,14 +323,35 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
               <IdentityIcon size={24} aria-hidden="true" />
             </span>
           </div>
-          <div className="user-profile-grid">
-            <article aria-label="年龄"><CakeSlice size={22} aria-hidden="true" /><strong>{displayedUser?.age ? `${displayedUser.age}岁` : "待补充"}</strong></article>
-            <article aria-label="家庭身份"><House size={22} aria-hidden="true" /><strong>{displayedUser?.role || "待确认"}</strong></article>
+          <div className="context-profile-summary">
+            <div className="context-profile-tags">
+              <span>{displayedUser?.age ? `${displayedUser.age}岁` : "年龄待补充"}</span>
+              <span>{displayedUser?.role || "身份待确认"}</span>
+            </div>
+            <p><HeartPulse size={18} aria-hidden="true" />{displayedUser?.conditions || "健康背景待补充"}</p>
           </div>
-          <div className="user-health-facts">
-            <article aria-label="基础病信息"><HeartPulse size={23} aria-hidden="true" /><strong>{displayedUser?.conditions || "基础病待补充"}</strong></article>
-            <article aria-label="过敏和禁忌信息"><ShieldAlert size={23} aria-hidden="true" /><strong>{displayedUser?.allergies || "过敏禁忌待补充"}</strong></article>
-            <article aria-label="病例备注"><NotebookText size={23} aria-hidden="true" /><strong>{displayedUser?.note || "通过语音继续补充"}</strong></article>
+          <div className="inquiry-live-summary">
+            <header><span>本次已确认</span><strong>{contextSummary.confirmedCount}/5</strong></header>
+            <article className="inquiry-chief-fact">
+              <UserRound size={23} aria-hidden="true" />
+              <span><small>本次情况</small><strong>{contextSummary.complaint}</strong></span>
+            </article>
+            <div className="inquiry-fact-pair">
+              <article><Clock3 size={20} aria-hidden="true" /><span><small>开始时间</small><strong>{contextSummary.duration}</strong></span></article>
+              <article><Pill size={20} aria-hidden="true" /><span><small>本次用药</small><strong>{contextSummary.medicine}</strong></span></article>
+            </div>
+            <article className="inquiry-allergy-fact">
+              <ShieldAlert size={21} aria-hidden="true" />
+              <span><small>过敏禁忌</small><strong>{contextSummary.allergy}</strong></span>
+            </article>
+            <section className="inquiry-core-vitals" aria-label="核心体征">
+              <header><Thermometer size={19} aria-hidden="true" /><strong>核心体征</strong></header>
+              <div>
+                <span><HeartPulse size={18} /><small>心率</small><strong>{contextSummary.heartRate}</strong></span>
+                <span><Droplets size={18} /><small>血氧</small><strong>{contextSummary.spo2}</strong></span>
+                <span><Activity size={18} /><small>额温</small><strong>{contextSummary.temperature}</strong></span>
+              </div>
+            </section>
           </div>
         </section>
       </aside>
@@ -311,6 +367,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onConfirmTreatment={handleTreatmentConfirm}
             onRestart={resetFlow}
             onHome={() => onNavigate("home")}
+            networkStatus={networkStatus}
           />
         ) : session ? (
           <InquiryChatStep session={session} sending={sending} notify={notify} onSend={handleTurn} onReset={resetFlow} networkStatus={networkStatus} />

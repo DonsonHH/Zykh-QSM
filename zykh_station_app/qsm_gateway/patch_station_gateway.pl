@@ -99,6 +99,24 @@ PERL
     $changed = 1;
 }
 
+if ($source !~ /ZYKH_STATION_AUDIO_STOP_ALL/) {
+    my $pattern = qr{
+        if\s*\(\s*\$method\s+eq\s+'POST'\s*&&\s*\$path\s+eq\s+'/api/audio/stream/stop'\s*\)\s*\{\s*
+        return\s+send_json\(\$client,\s*200,\s*stop_audio_pcm_stream\(\)\);\s*
+        \}
+    }x;
+    my $replacement = <<'PERL';
+if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
+        # ZYKH_STATION_AUDIO_STOP_ALL
+        return send_json($client, 200, release_audio_playback_device());
+    }
+PERL
+    my $matches = () = $source =~ /$pattern/g;
+    die "Expected exactly one audio stream stop route, found $matches\n" unless $matches == 1;
+    $source =~ s/$pattern/$replacement/;
+    $changed = 1;
+}
+
 if (!$changed) {
     print "Station gateway reliability fixes already installed.\n";
     exit 0;

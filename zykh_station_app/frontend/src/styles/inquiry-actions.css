@@ -210,6 +210,11 @@
   font-weight: 750;
 }
 
+.option-medicine-row small.direction-required {
+  color: #a45308;
+  font-weight: 850;
+}
+
 .option-medicine-row em {
   color: var(--primary);
   font-size: 12px;

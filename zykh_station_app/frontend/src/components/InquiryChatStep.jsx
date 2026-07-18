@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, LoaderCircle, Mic, RotateCcw, Volume2 } from "lucide-react";
-import { speakText } from "../api/audio.js";
+import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
 import { isLocalNetworkMode } from "../utils/network.js";
@@ -31,6 +31,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
   const finishedRef = useRef(false);
   const voicePhaseRef = useRef(VoicePhase.IDLE);
   const bottomRef = useRef(null);
+  const playbackGenerationRef = useRef(0);
 
   const preparingVoice = voicePhase === VoicePhase.PREPARING;
   const listening = voicePhase === VoicePhase.LISTENING;
@@ -62,16 +63,30 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     return () => window.clearInterval(timer);
   }, [session.reply]);
 
-  useEffect(() => () => stopVoice(false), []);
+  useEffect(() => () => {
+    stopVoice(false);
+    interruptPlayback();
+  }, []);
 
   async function playReply(text) {
     if (!text) return;
+    const generation = playbackGenerationRef.current + 1;
+    playbackGenerationRef.current = generation;
+    window.speechSynthesis?.cancel();
+    await stopAudioPlayback().catch(() => null);
+    if (generation !== playbackGenerationRef.current) return;
     const mode = isLocalNetworkMode(networkStatus) ? "offline" : "auto";
     try {
       await speakText(text, undefined, 1.12, mode);
     } catch {
-      speakLocally(text);
+      if (generation === playbackGenerationRef.current) speakLocally(text);
     }
+  }
+
+  function interruptPlayback() {
+    playbackGenerationRef.current += 1;
+    window.speechSynthesis?.cancel();
+    stopAudioPlayback().catch(() => null);
   }
 
   async function send(text) {
@@ -87,6 +102,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
   }
 
   async function startVoice() {
+    interruptPlayback();
     if (voicePhaseRef.current === VoicePhase.PREPARING) {
       stopVoice(false);
       setVoiceMessage("已取消，点击按钮可重新开始。");

@@ -170,6 +170,8 @@ class RulesEngine:
             stock=medicine.stock,
             unit=medicine.unit,
             safety_note=medicine.safety_note,
+            indications=medicine.indications,
+            dosage=medicine.dosage,
         )
 
     def _risk_label(self, risk_level: RiskLevel) -> str:

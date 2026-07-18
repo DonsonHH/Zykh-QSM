@@ -18,8 +18,10 @@ from app.services.qsm_client import QsmClient  # noqa: E402
 class FakeQsmClient:
     def __init__(self) -> None:
         self.speak_calls: list[tuple[str, int | None, float | None, str]] = []
+        self.stop_calls = 0
 
     def audio_stream_stop(self) -> dict[str, object]:
+        self.stop_calls += 1
         return {"ok": True}
 
     def audio_speak(
@@ -125,6 +127,36 @@ class AudioTtsRoutingTest(unittest.TestCase):
         self.assertEqual(payload["volume"], 255)
         self.assertEqual(payload["speed"], 1.8)
         self.assertEqual(payload["tts_mode"], "auto")
+
+    def test_stream_stop_cancels_an_active_tts_request(self) -> None:
+        client = FakeQsmClient()
+
+        class BlockingRealtimeTts:
+            def __init__(self, _client) -> None:
+                pass
+
+            async def speak(self, *_args, **_kwargs):
+                await asyncio.Event().wait()
+
+        async def scenario() -> tuple[dict[str, object], dict[str, object]]:
+            task = asyncio.create_task(audio.audio_speak(SpeakRequest(text="正在播报")))
+            await asyncio.sleep(0)
+            stopped = await audio.audio_stream_stop()
+            return await task, stopped
+
+        with (
+            patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio, "QwenRealtimeTts", BlockingRealtimeTts),
+            patch.object(audio, "_read_api_key", return_value="private"),
+            patch.object(audio.db, "get_setting", return_value="sim"),
+            patch.object(audio, "_record"),
+        ):
+            speak_result, stopped = asyncio.run(scenario())
+
+        self.assertTrue(speak_result["cancelled"])
+        self.assertTrue(stopped["ok"])
+        self.assertEqual(stopped["cancelled_tts"], 1)
+        self.assertEqual(client.stop_calls, 1)
 
 
 if __name__ == "__main__":

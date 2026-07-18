@@ -37,6 +37,7 @@ class MedicineSafetyEngine:
         reasons: list[str] = []
         spo2 = self._vital_number(vitals, "spo2")
         temperature = self._vital_number(vitals, "temperature")
+        heart_rate = self._vital_number(vitals, "heart_rate")
         chest_pain = self._has_unnegated_term(text, "胸痛")
         breathing_difficulty = self._has_unnegated_term(text, "呼吸困难")
         if (chest_pain and breathing_difficulty) or any(
@@ -72,6 +73,11 @@ class MedicineSafetyEngine:
         else:
             reasons.append("未发现明确高危信号")
 
+        if temperature is not None and heart_rate is not None and spo2 is not None:
+            reasons.append(
+                f"本次额温 {temperature:g}℃、心率 {heart_rate:g} 次/分、血氧 {spo2:g}% 已纳入安全核验"
+            )
+
         if level in {"high", "emergency"}:
             return SafetyDecision(level, reasons, None, None, [])
         context_text = "；".join(
@@ -104,7 +110,10 @@ class MedicineSafetyEngine:
             stock=value.stock,
             unit=value.unit,
             safety_note=value.safety_note,
+            indications=value.indications,
+            dosage=value.dosage,
             match_reason=value.match_reason,
+            requires_existing_direction=value.requires_existing_direction,
         )
 
     @staticmethod

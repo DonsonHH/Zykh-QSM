@@ -9,21 +9,22 @@ from ..schemas.medicine import Medicine
 
 
 DIMENSION_MEDICINE_IDS = {
-    "感冒鼻部症状": ["slot-03-ganmao-qingre", "slot-01-fufang-ganmaoling", "slot-18-budesonide-nasal"],
-    "发热全身不适": ["slot-01-fufang-ganmaoling", "slot-03-ganmao-qingre"],
-    "咳嗽咳痰": ["slot-05-nin-jiom-pei-pa-koa", "slot-07-yinhuang"],
-    "咽喉口腔不适": ["slot-07-yinhuang", "slot-11-guilin-xiguashuang"],
+    "感冒鼻部症状": ["slot-03-ganmao-qingre", "slot-01-fufang-ganmaoling", "slot-18-budesonide-nasal", "slot-14-oseltamivir"],
+    "发热全身不适": ["slot-01-fufang-ganmaoling", "slot-03-ganmao-qingre", "slot-14-oseltamivir"],
+    "咳嗽咳痰": ["slot-05-nin-jiom-pei-pa-koa", "slot-07-yinhuang", "slot-04-amoxicillin"],
+    "咽喉口腔不适": ["slot-07-yinhuang", "slot-11-guilin-xiguashuang", "slot-04-amoxicillin"],
     "恶心暑湿": ["slot-08-huoxiang-zhengqi"],
     "腹泻肠道不适": ["slot-09-bifid-triple"],
     "便秘": ["slot-06-lactulose"],
     "胃酸胃部不适": ["slot-12-hydrotalcite"],
     "过敏瘙痒": ["slot-18-budesonide-nasal", "slot-23-desloratadine"],
-    "轻微外伤": ["slot-17-iodophor", "slot-20-bandage", "slot-10-gauze", "slot-22-cotton-swab"],
+    "轻微外伤": ["slot-17-iodophor", "slot-20-bandage", "slot-10-gauze", "slot-22-cotton-swab", "slot-15-mupirocin"],
     "皮肤真菌不适": ["slot-16-ketoconazole"],
     "肌肉关节疼痛": ["slot-19-ketoprofen-gel"],
     "干眼不适": ["slot-13-sodium-hyaluronate-eye"],
     "鼻炎过敏": ["slot-18-budesonide-nasal", "slot-23-desloratadine"],
     "营养补充": ["slot-02-centrum"],
+    "慢病既往用药": ["slot-21-amlodipine"],
 }
 
 COMBINATION_GROUPS = {
@@ -102,6 +103,10 @@ class MedicineKnowledgeRepository:
                 for current_dimension in dimensions
                 if medicine_id in DIMENSION_MEDICINE_IDS.get(current_dimension, [])
             ]
+            if not medicine.is_otc:
+                score -= 18
+            if medicine.category == "慢病常用":
+                score -= 12
             ranked.append((score, coverage, self._candidate(medicine, dimension)))
         ranked.sort(key=lambda item: (-item[0], int(item[2].slot)))
         return ranked
@@ -202,7 +207,7 @@ class MedicineKnowledgeRepository:
 
     @staticmethod
     def _eligible(medicine: Medicine, context_text: str) -> bool:
-        if medicine.stock <= 0 or not medicine.is_otc or medicine.category == "慢病常用":
+        if medicine.stock <= 0:
             return False
         if MedicineKnowledgeRepository._expired(medicine.expire_date):
             return False
@@ -247,5 +252,12 @@ class MedicineKnowledgeRepository:
             stock=medicine.stock,
             unit=medicine.unit,
             safety_note=medicine.safety_note,
-            match_reason=f"与{dimension}相关，仅供查看药品信息和安全提示。",
+            indications=medicine.indications,
+            dosage=medicine.dosage,
+            match_reason=(
+                f"与{dimension}相关；该药需按既往医嘱核对后使用。"
+                if not medicine.is_otc
+                else f"与{dimension}相关，仅供查看药品信息和安全提示。"
+            ),
+            requires_existing_direction=not medicine.is_otc,
         )

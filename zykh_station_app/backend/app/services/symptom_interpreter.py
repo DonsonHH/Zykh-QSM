@@ -23,6 +23,7 @@ ALLOWED_DIMENSIONS = {
     "干眼不适",
     "鼻炎过敏",
     "营养补充",
+    "慢病既往用药",
 }
 
 ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze"}
@@ -31,7 +32,7 @@ VITALS_SENSITIVE_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑�
 
 DIMENSION_KEYWORDS = {
     "恶心暑湿": ("中暑", "暑湿", "恶心", "头晕", "胸闷腹胀"),
-    "感冒鼻部症状": ("流鼻涕", "流涕", "鼻塞", "打喷嚏", "风寒"),
+    "感冒鼻部症状": ("流清鼻涕", "清鼻涕", "流鼻涕", "流涕", "鼻塞", "打喷嚏", "风寒"),
     "发热全身不适": ("发热", "发烧", "头痛", "乏力", "身痛", "畏寒"),
     "咳嗽咳痰": ("咳嗽", "咳痰", "痰多"),
     "咽喉口腔不适": ("咽痛", "喉咙痛", "口腔溃疡", "咽喉"),
@@ -45,6 +46,7 @@ DIMENSION_KEYWORDS = {
     "干眼不适": ("眼干", "干眼", "眼涩"),
     "鼻炎过敏": ("鼻炎", "过敏性鼻炎"),
     "营养补充": ("维生素", "营养补充"),
+    "慢病既往用药": ("高血压", "血压高", "降压药", "慢病用药", "长期用药"),
 }
 
 
@@ -88,8 +90,8 @@ class SymptomInterpreter:
         rules = self._rules_interpret(transcript)
         evidence = payload.get("dimension_evidence")
         evidence = evidence if isinstance(evidence, dict) else {}
-        dimensions: list[str] = []
-        clean_evidence: dict[str, str] = {}
+        dimensions: list[str] = list(rules.symptom_dimensions)
+        clean_evidence: dict[str, str] = dict(rules.dimension_evidence)
         for raw_dimension in payload.get("symptom_dimensions") or []:
             dimension = str(raw_dimension).strip()
             quote = str(evidence.get(dimension) or "").strip()
@@ -134,20 +136,9 @@ class SymptomInterpreter:
             if match:
                 dimensions.append(dimension)
                 evidence[dimension] = match
-        duration = self._first_match(
-            transcript,
-            ("刚开始", "半天", "一天", "1天", "两天", "2天", "三天", "3天", "一周", "持续很久"),
-        )
-        used = ""
-        if any(term in transcript for term in ("没吃药", "没有吃药", "未使用", "还没用药")):
-            used = "未使用"
-        elif any(term in transcript for term in ("吃过", "用过", "已经吃", "已使用")):
-            used = "已使用"
-        allergy = ""
-        if any(term in transcript for term in ("没有过敏", "无过敏", "没有禁忌")):
-            allergy = "无"
-        elif "过敏" in transcript or "禁忌" in transcript:
-            allergy = transcript[:120]
+        duration = self.duration_answer(transcript)
+        used = self.used_medicine_answer(transcript)
+        allergy = self.allergy_answer(transcript)
         if VITALS_SENSITIVE_DIMENSIONS.intersection(dimensions):
             action_intent = "measure_vitals"
             action_reason = "核心体征会影响本次风险核验"
@@ -173,6 +164,58 @@ class SymptomInterpreter:
     @staticmethod
     def _first_match(text: str, candidates: tuple[str, ...]) -> str:
         return next((item for item in candidates if item in text), "")
+
+    @staticmethod
+    def duration_answer(transcript: str) -> str:
+        text = transcript.strip()
+        if not text:
+            return ""
+        match = re.search(
+            r"(?:刚刚|刚才|刚开始|没多久|持续很久|今天|昨晚|昨天|前天|去年|前年|上周|上个月|"
+            r"(?:大约|大概|差不多)?(?:半|[零一二两三四五六七八九十百\d]+)"
+            r"(?:秒钟?|分钟?|小时|钟头|天|周|星期|个月|月|年)(?:半|左右|上下|多)?)",
+            text,
+        )
+        if not match:
+            return ""
+        value = match.group(0)
+        for prefix in ("大约", "大概", "差不多"):
+            value = value.removeprefix(prefix)
+        return value
+
+    @classmethod
+    def used_medicine_answer(cls, transcript: str, *, allow_short_answer: bool = False) -> str:
+        text = transcript.strip()
+        negative = (
+            "没吃药", "没有吃药", "没吃过药", "没有吃过药", "还没吃药", "还没吃过药",
+            "没用药", "没有用药", "没用过药", "没有用过药", "还没用药", "还没用过药",
+            "未使用", "未用药", "什么药都没用", "什么药都没有用", "暂时还没有",
+        )
+        if any(term in text for term in negative) or (
+            allow_short_answer and text in {"没有", "还没有", "没", "暂时没有"}
+        ):
+            return "未使用"
+        if any(cls._has_unnegated_term(text, term) for term in ("吃过", "用过", "已经吃", "已经用", "已使用")):
+            return text[:120] if len(text) > 4 else "已使用"
+        return ""
+
+    @staticmethod
+    def allergy_answer(transcript: str, *, allow_short_answer: bool = False) -> str:
+        text = transcript.strip()
+        uncertain = ("不知道", "不清楚", "不确定", "不能明确", "无法确认", "记不清")
+        if any(term in text for term in uncertain):
+            return "不确定"
+        negative = (
+            "没有过敏", "没有药物过敏", "无过敏", "无药物过敏", "没有禁忌", "无禁忌",
+            "没有不能用的药", "没有不能使用的药",
+        )
+        if any(term in text for term in negative) or (
+            allow_short_answer and text in {"没有", "还没有", "没", "无"}
+        ):
+            return "无"
+        if "过敏" in text or "禁忌" in text or "不能用" in text or "不能使用" in text:
+            return text[:120]
+        return ""
 
     @staticmethod
     def _verbatim_value(value: object, transcript: str) -> str:

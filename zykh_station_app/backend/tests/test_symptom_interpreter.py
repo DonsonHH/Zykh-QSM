@@ -70,6 +70,28 @@ class SymptomInterpreterTest(unittest.TestCase):
         self.assertEqual(result.symptom_dimensions, [])
         self.assertEqual(result.allergy_or_contraindication, "无")
 
+    def test_negated_used_medicine_phrase_is_not_misread_as_used(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("还没用过药")
+
+        self.assertEqual(result.used_medicines, "未使用")
+
+    def test_natural_short_duration_is_extracted(self) -> None:
+        for transcript in ("五分钟", "十秒钟", "没多久", "两年半", "一天半", "去年"):
+            with self.subTest(transcript=transcript):
+                result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret(transcript)
+                self.assertEqual(result.duration, transcript)
+
+    def test_uncertain_allergy_history_is_not_recorded_as_a_positive_allergy(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("没有药物过敏或不能明确")
+
+        self.assertEqual(result.allergy_or_contraindication, "不确定")
+
+    def test_clear_runny_nose_phrase_is_kept_as_nasal_cold_evidence(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("今天开始流清鼻涕，还有一点头痛")
+
+        self.assertIn("感冒鼻部症状", result.symptom_dimensions)
+        self.assertEqual(result.dimension_evidence["感冒鼻部症状"], "流清鼻涕")
+
 
 if __name__ == "__main__":
     unittest.main()

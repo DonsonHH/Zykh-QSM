@@ -5,6 +5,7 @@ import { BrandLogoImage } from "../components/BrandLogoImage.jsx";
 import { AdminCabinet } from "../components/admin/AdminCabinet.jsx";
 import { AdminDevices } from "../components/admin/AdminDevices.jsx";
 import { AdminLogs } from "../components/admin/AdminLogs.jsx";
+import { AdminInquiries } from "../components/admin/AdminInquiries.jsx";
 import { AdminOverview } from "../components/admin/AdminOverview.jsx";
 import { AdminPlans } from "../components/admin/AdminPlans.jsx";
 import { AdminSidebar } from "../components/admin/AdminSidebar.jsx";
@@ -106,6 +107,7 @@ export function AdminConsole({ onExit }) {
         {section === "plans" && <AdminPlans notify={notify} onSessionExpired={expireSession} />}
         {section === "cabinet" && <AdminCabinet notify={notify} onSessionExpired={expireSession} />}
         {section === "devices" && <AdminDevices overview={overview} loading={loadingOverview} onRefresh={() => refreshOverview().catch((error) => notify(error.message))} notify={notify} onSessionExpired={expireSession} />}
+        {section === "inquiries" && <AdminInquiries notify={notify} onSessionExpired={expireSession} />}
         {section === "logs" && <AdminLogs notify={notify} onSessionExpired={expireSession} />}
       </section>
       <div className={`admin-notice ${notice ? "show" : ""}`} role="status">{notice}</div>

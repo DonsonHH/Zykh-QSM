@@ -10,6 +10,7 @@ from ..schemas.admin import (
     AdminCabinetOpenRequest,
     AdminConfirmationRequest,
     AdminLogsResponse,
+    AdminInquiryHistoryResponse,
     AdminMedicinesResponse,
     AdminMedicineUpdateRequest,
     AdminOverviewResponse,
@@ -81,6 +82,14 @@ def admin_overview(_: str = Depends(require_admin)) -> AdminOverviewResponse:
 @router.get("/logs", response_model=AdminLogsResponse)
 def admin_logs(source: str = "backend", limit: int = Query(default=300, ge=20, le=1000), _: str = Depends(require_admin)) -> AdminLogsResponse:
     return AdminLogsResponse(**AdminService().logs(source, limit))
+
+
+@router.get("/inquiries", response_model=AdminInquiryHistoryResponse)
+def admin_inquiries(
+    limit: int = Query(default=40, ge=1, le=100),
+    _: str = Depends(require_admin),
+) -> AdminInquiryHistoryResponse:
+    return AdminInquiryHistoryResponse(**AdminService().inquiry_history(limit))
 
 
 @router.post("/system/action", response_model=AdminActionResponse)

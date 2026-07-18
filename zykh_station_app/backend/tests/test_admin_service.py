@@ -13,6 +13,8 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.services.admin_service import AdminService, AdminServiceError  # noqa: E402
+from app.schemas.inquiry import InquirySessionCreateRequest  # noqa: E402
+from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
 
 
 class AdminServiceTest(unittest.TestCase):
@@ -90,6 +92,17 @@ class AdminServiceTest(unittest.TestCase):
             daemon=True,
         )
         thread.return_value.start.assert_called_once_with()
+
+    def test_inquiry_history_keeps_messages_and_structured_debug_state(self) -> None:
+        session = InquiryOrchestrator().create_session(
+            InquirySessionCreateRequest(service_user_id="zhangsan")
+        )
+
+        result = AdminService().inquiry_history()
+
+        self.assertEqual(result["sessions"][0].session_id, session.session_id)
+        self.assertEqual(result["sessions"][0].messages[0].role, "assistant")
+        self.assertEqual(result["sessions"][0].extracted_information.symptom_dimensions, [])
 
 
 if __name__ == "__main__":

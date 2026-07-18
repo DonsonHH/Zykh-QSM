@@ -25,7 +25,10 @@ class CandidateMedicine(BaseModel):
     stock: int
     unit: str
     safety_note: str
+    indications: str = ""
+    dosage: str = ""
     match_reason: str = ""
+    requires_existing_direction: bool = False
 
 
 class TreatmentMedicine(CandidateMedicine):

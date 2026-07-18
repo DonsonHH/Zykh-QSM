@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .inquiry import InquirySessionResponse
 from .medicine import Medicine, MedicineUpdateRequest
 from .records import (
     ServiceUser,
@@ -70,6 +71,12 @@ class AdminLogsResponse(BaseModel):
     lines: list[str]
     updated_at: str
     sources: list[AdminLogSource]
+
+
+class AdminInquiryHistoryResponse(BaseModel):
+    ok: bool = True
+    sessions: list[InquirySessionResponse]
+    repeated_question_sessions: int = 0
 
 
 class AdminSystemActionRequest(BaseModel):
