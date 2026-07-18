@@ -22,6 +22,12 @@ def pcm16le_to_float32le(data: bytes) -> bytes:
     return struct.pack(f"<{sample_count}f", *(sample / 32768.0 for sample in samples))
 
 
+def build_paraformer_payload(data: bytes, sample_rate: int = 16000) -> bytes:
+    """Build the binary request expected by sherpa's offline WebSocket server."""
+    float_samples = pcm16le_to_float32le(data)
+    return struct.pack("<II", sample_rate, len(float_samples)) + float_samples
+
+
 def sherpa_transcript(raw: str | bytes) -> tuple[str, bool] | None:
     if raw == "Done!" or raw == b"Done!":
         return None
@@ -34,7 +40,12 @@ def sherpa_transcript(raw: str | bytes) -> tuple[str, bool] | None:
     text = str(data.get("text") or data.get("transcript") or "").strip()
     if not text:
         return None
-    final = bool(data.get("final") or data.get("is_final") or data.get("is_endpoint"))
+    final_fields = ("final", "is_final", "is_endpoint")
+    final = (
+        any(bool(data.get(field)) for field in final_fields)
+        if any(field in data for field in final_fields)
+        else True
+    )
     return text, final
 
 
@@ -87,32 +98,36 @@ class LocalAsrClient:
         microphone: asyncio.StreamReader,
         stopped: asyncio.Event,
     ) -> AsyncIterator[tuple[str, bool]]:
-        producer = asyncio.create_task(self._send_audio(upstream, microphone, stopped))
+        pcm = await self._collect_audio(microphone, stopped)
+        if not pcm:
+            return
+        payload = build_paraformer_payload(pcm)
         try:
-            async for raw in upstream:
-                result = sherpa_transcript(raw)
-                if result is None:
-                    continue
-                yield result
-                if result[1]:
-                    stopped.set()
-                    return
+            chunk_size = 10_240
+            for offset in range(0, len(payload), chunk_size):
+                await upstream.send(payload[offset : offset + chunk_size])
+            raw = await asyncio.wait_for(
+                upstream.recv(),
+                timeout=settings.qsm_local_asr_timeout_seconds,
+            )
+            result = sherpa_transcript(raw)
+            if result is not None:
+                yield result[0], True
         finally:
             stopped.set()
-            await asyncio.gather(producer, return_exceptions=True)
-
-    @staticmethod
-    async def _send_audio(upstream, microphone: asyncio.StreamReader, stopped: asyncio.Event) -> None:
-        try:
-            while not stopped.is_set():
-                audio = await microphone.read(3200)
-                if not audio:
-                    break
-                converted = pcm16le_to_float32le(audio)
-                if converted:
-                    await upstream.send(converted)
-        finally:
             try:
                 await upstream.send("Done")
             except Exception:
                 pass
+
+    @staticmethod
+    async def _collect_audio(microphone: asyncio.StreamReader, stopped: asyncio.Event) -> bytes:
+        chunks: list[bytes] = []
+        while True:
+            if stopped.is_set() and microphone.at_eof():
+                break
+            audio = await microphone.read(3200)
+            if not audio:
+                break
+            chunks.append(audio)
+        return b"".join(chunks)

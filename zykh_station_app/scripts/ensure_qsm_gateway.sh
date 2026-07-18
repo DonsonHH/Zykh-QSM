@@ -14,7 +14,7 @@ FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
 LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
 LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
-LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-8084}"
+LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 AUDIO_STREAM_HOST_PORT="${QSM_AUDIO_STREAM_HOST_PORT:-19001}"
 AUDIO_STREAM_DEVICE_PORT="${QSM_AUDIO_STREAM_DEVICE_PORT:-19001}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
@@ -62,12 +62,17 @@ vitals_ready() {
   command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "$QSM_VITALS_BASE_URL/api/vitals/session/status?session_id=health" >/dev/null 2>&1
 }
 
-if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready; then
+local_asr_ready() {
+  command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$LOCAL_ASR_HOST_PORT" >/dev/null 2>&1
+}
+
+if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready && local_asr_ready; then
   log "外设网关已可访问：$QSM_BASE_URL"
   log "人脸识别网关已可访问：$QSM_FACE_BASE_URL"
   log "麦克风采集网关已可访问：$QSM_MIC_BASE_URL"
   log "指纹识别网关已可访问：$QSM_FINGERPRINT_BASE_URL"
   log "体征测量网关已可访问：$QSM_VITALS_BASE_URL"
+  log "本地 Paraformer 语音识别已可访问：127.0.0.1:${LOCAL_ASR_HOST_PORT}"
   exit 0
 fi
 
@@ -103,8 +108,8 @@ log "建立指纹识别端口转发：127.0.0.1:${FINGERPRINT_HOST_PORT} -> tcp:
 $ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1 || warn "指纹识别端口转发失败。"
 log "建立离线模型端口转发：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1 || warn "离线模型端口转发失败。"
-if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_asr.sh' >/dev/null 2>&1; then
-  $ADB_PREFIX shell 'sh /userdata/zykh_app/scripts/start_local_asr.sh' >/dev/null 2>&1 \
+if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_asr_service.sh' >/dev/null 2>&1; then
+  $ADB_PREFIX shell '/userdata/zykh_app/scripts/start_asr_service.sh start' >/dev/null 2>&1 \
     || warn "板端本地语音识别服务未能启动。"
 else
   warn "板端尚未部署本地语音识别；联网时仍可使用云端识别。"
@@ -113,7 +118,7 @@ if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_tts_server.
   $ADB_PREFIX shell 'sh /userdata/zykh_app/scripts/start_local_tts_server.sh' >/dev/null 2>&1 \
     || warn "板端常驻离线语音服务未能启动，将使用兼容回退。"
 fi
-log "建立本地语音识别端口转发：127.0.0.1:${LOCAL_ASR_HOST_PORT} -> tcp:${LOCAL_ASR_DEVICE_PORT}"
+log "建立本地 Paraformer 语音识别端口转发：127.0.0.1:${LOCAL_ASR_HOST_PORT} -> tcp:${LOCAL_ASR_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" >/dev/null 2>&1 || warn "本地语音识别端口转发失败。"
 log "建立实时音频播放端口转发：127.0.0.1:${AUDIO_STREAM_HOST_PORT} -> tcp:${AUDIO_STREAM_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${AUDIO_STREAM_HOST_PORT}" "tcp:${AUDIO_STREAM_DEVICE_PORT}" >/dev/null 2>&1 || warn "实时音频播放端口转发失败。"

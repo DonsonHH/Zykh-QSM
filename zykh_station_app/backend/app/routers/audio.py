@@ -567,7 +567,7 @@ async def _audio_asr_local(
             await websocket.send_json(
                 {
                     "type": "error",
-                    "message": "本地实时语音识别连接失败。",
+                    "message": "本地离线语音识别连接失败。",
                     "detail": str(exc),
                 }
             )

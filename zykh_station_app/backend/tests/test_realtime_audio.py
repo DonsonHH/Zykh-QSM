@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import struct
 import sys
@@ -11,6 +12,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.local_asr_client import (  # noqa: E402
+    LocalAsrClient,
+    build_paraformer_payload,
     pcm16le_to_float32le,
     sherpa_transcript,
 )
@@ -36,10 +39,25 @@ class RealtimeAudioTest(unittest.TestCase):
     def test_sherpa_result_keeps_partial_and_final_state(self) -> None:
         partial = sherpa_transcript(json.dumps({"text": "我有点头", "segment": 0, "final": False}))
         final = sherpa_transcript(json.dumps({"text": "我有点头晕", "segment": 0, "final": True}))
+        paraformer = sherpa_transcript(json.dumps({"text": "我对青霉素和头孢过敏"}))
 
         self.assertEqual(partial, ("我有点头", False))
         self.assertEqual(final, ("我有点头晕", True))
+        self.assertEqual(paraformer, ("我对青霉素和头孢过敏", True))
         self.assertIsNone(sherpa_transcript("Done!"))
+
+    def test_paraformer_payload_contains_rate_length_and_float_pcm(self) -> None:
+        source = struct.pack("<hhh", -32768, 0, 16384)
+
+        payload = build_paraformer_payload(source, sample_rate=16000)
+
+        rate, byte_count = struct.unpack("<II", payload[:8])
+        samples = struct.unpack("<fff", payload[8:])
+        self.assertEqual(rate, 16000)
+        self.assertEqual(byte_count, 12)
+        self.assertAlmostEqual(samples[0], -1.0, places=5)
+        self.assertAlmostEqual(samples[1], 0.0, places=5)
+        self.assertAlmostEqual(samples[2], 0.5, places=5)
 
     def test_qwen_session_accepts_an_explicit_voice_speed(self) -> None:
         event = session_update_event(speed=1.75)
@@ -73,6 +91,33 @@ class RealtimeAudioTest(unittest.TestCase):
 
 
 class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
+    async def test_local_paraformer_uploads_one_complete_utterance(self) -> None:
+        class Upstream:
+            def __init__(self) -> None:
+                self.sent: list[bytes | str] = []
+
+            async def send(self, payload: bytes | str) -> None:
+                self.sent.append(payload)
+
+            async def recv(self) -> str:
+                return json.dumps({"text": "我有点头晕"})
+
+        microphone = asyncio.StreamReader()
+        microphone.feed_data(struct.pack("<hhhh", -1000, 0, 1000, 2000))
+        microphone.feed_eof()
+        stopped = asyncio.Event()
+        upstream = Upstream()
+
+        results = [
+            item
+            async for item in LocalAsrClient().recognize_connected(upstream, microphone, stopped)
+        ]
+
+        binary = b"".join(item for item in upstream.sent if isinstance(item, bytes))
+        self.assertEqual(struct.unpack("<II", binary[:8]), (16000, 16))
+        self.assertEqual(results, [("我有点头晕", True)])
+        self.assertEqual(upstream.sent[-1], "Done")
+
     async def test_recording_waits_for_session_updated(self) -> None:
         class Upstream:
             def __init__(self) -> None:

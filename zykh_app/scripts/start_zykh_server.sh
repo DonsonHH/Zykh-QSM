@@ -8,6 +8,10 @@ cd "$APP_DIR" || exit 1
 pidof perl >/dev/null 2>&1 && kill $(pidof perl) 2>/dev/null
 sleep 1
 
+if [ -x "$APP_DIR/scripts/start_asr_service.sh" ]; then
+  "$APP_DIR/scripts/start_asr_service.sh" start >> "$APP_DIR/data/asr-startup.log" 2>&1 || true
+fi
+
 TZ="${TZ:-CST-8}" AI_MODEL="${AI_MODEL:-deepseek-v4-flash}" perl server.pl --daemon \
   > "$APP_DIR/server.log" 2>&1 < /dev/null
 

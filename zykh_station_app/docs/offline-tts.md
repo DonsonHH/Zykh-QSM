@@ -62,20 +62,6 @@ A successful offline response contains:
 
 On the verified board, the old process-per-request route took about 17.18 seconds for a short sentence because model loading consumed roughly 14 seconds. Keeping the model resident reduced end-to-end time to about 4.16 seconds and began playback after about 1.28 seconds. This is still the offline fallback; online speech uses Qwen realtime TTS and writes each PCM delta directly to QSM. The bundled voice model is restricted to non-commercial use; replace it or obtain suitable licensing before commercial distribution.
 
-## Offline realtime ASR
-
-`scripts/deploy_local_asr.sh` installs the Chinese streaming
-`sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30` Transducer on QSM. The
-service uses `modified_beam_search` and `qsm_gateway/asr_hotwords.txt` for
-names, symptoms, and medicine terms used by this terminal. Endpoint detection
-waits for 1.1 seconds of trailing silence so short pauses do not truncate a
-sentence.
-
-The browser first displays a preparation state. It switches to the animated
-recording state only after the selected cloud or local recognizer and the QSM
-microphone stream are both ready. Deploy and verify the local recognizer with:
-
-```bash
-sh scripts/deploy_local_asr.sh
-curl http://127.0.0.1:8000/api/audio/status
-```
+Offline speech recognition is deployed separately from TTS. See
+[`offline-asr.md`](offline-asr.md) for the resident Paraformer service,
+deployment bundle, ports and real-board verification.

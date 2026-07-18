@@ -267,7 +267,7 @@ Runs the visual recognition fallback against an existing image path.
 
 ### POST /api/audio/asr
 
-Calls the QSM audio ASR path and returns recognized text or a structured gateway error.
+Records 16 kHz mono audio on QSM and calls the resident offline Paraformer service. It returns recognized text, the model identifier and structured errors without requiring a cloud API key.
 
 ### POST /api/audio/speak
 
@@ -275,11 +275,11 @@ Speaks text through the QSM speaker. Online mode uses Qwen realtime TTS and stre
 
 ### WebSocket /api/audio/asr/realtime
 
-Streams real FF Camera microphone PCM into Qwen realtime ASR while online or the QSM sherpa-onnx streaming recognizer while local. Both routes emit `ready`, partial/final `transcript`, and structured `error` events.
+Streams real FF Camera microphone PCM into Qwen realtime ASR while online. In local mode it keeps the same browser control channel, buffers audio until the user stops speaking, then sends the complete utterance to the resident QSM Paraformer recognizer. Cloud mode can emit partial transcripts; local mode emits one final transcript.
 
 ### GET /api/audio/status
 
-Returns the QSM cloud/offline TTS readiness without exposing API keys or model file paths to the terminal UI.
+Returns QSM cloud/offline TTS readiness and resident Paraformer status without exposing API keys to the terminal UI.
 
 ### POST /api/audio/beep
 

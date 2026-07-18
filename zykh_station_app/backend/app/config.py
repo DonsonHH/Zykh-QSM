@@ -111,10 +111,10 @@ class Settings:
     qsm_audio_stream_host: str = _env("QSM_AUDIO_STREAM_HOST", "127.0.0.1")
     qsm_audio_stream_port: int = int(_env("QSM_AUDIO_STREAM_PORT", "19001"))
     qsm_local_asr_url: str = _env("QSM_LOCAL_ASR_URL", "ws://127.0.0.1:18084")
-    qsm_local_asr_timeout_seconds: float = float(_env("QSM_LOCAL_ASR_TIMEOUT_SECONDS", "4"))
+    qsm_local_asr_timeout_seconds: float = float(_env("QSM_LOCAL_ASR_TIMEOUT_SECONDS", "8"))
     qsm_local_asr_model: str = _env(
         "QSM_LOCAL_ASR_MODEL",
-        "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30",
+        "paraformer-zh-small-2024-03-09-int8-resident",
     )
     qsm_network_status_path: str = _env("QSM_NETWORK_STATUS_PATH", "/api/network/status")
     qsm_network_start_4g_path: str = _env("QSM_NETWORK_START_4G_PATH", "/api/network/start_4g")

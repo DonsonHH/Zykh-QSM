@@ -24,7 +24,7 @@ The gateway adapter supports:
 - `QSM_MODE=mock`: stable local demo data.
 - `QSM_MODE=real`: HTTP calls to the main gateway at `QSM_BASE_URL` (`18080`), the face gateway at `QSM_FACE_BASE_URL` (`18081`), and the FF Camera microphone gateway at `QSM_MIC_BASE_URL` (`18082`).
 - the QSM llama.cpp service listens on board port `8083` and is forwarded to `LOCAL_AI_BASE_URL` (`18083`).
-- the QSM sherpa-onnx streaming ASR service listens on board port `8084` and is forwarded to `18084`.
+- the QSM sherpa-onnx Paraformer ASR service listens on board port `6006` and is forwarded to `18084`; local recognition uploads one complete utterance and returns one final transcript.
 - online TTS sends incremental 24 kHz PCM to the QSM speaker stream on `19001`, serializes concurrent speech, and drains the calculated PCM tail before stopping playback; offline TTS uses a resident board-local model service on `19002`.
 - structured failure responses when the gateway is unavailable.
 - `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1` as the real-device default, with explicit identity confirmation after biometric matching, optional `REAL_DISPENSE_TEST_SLOT`, and local audit record for every cabinet action.

@@ -9,6 +9,7 @@ use POSIX qw(strftime setsid);
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
 use Cwd qw(abs_path);
+use Time::HiRes ();
 
 $ENV{TZ} ||= 'CST-8';
 eval { POSIX::tzset() };
@@ -1336,7 +1337,7 @@ sub record_audio {
 
     prepare_audio_capture();
     my $device = capture_audio_device();
-    my $rate = int($ENV{ASR_RECORD_RATE} || 8000);
+    my $rate = int($ENV{ASR_RECORD_RATE} || 16000);
     my $cmd = 'arecord -q -D ' . shell_quote($device) . ' -f S16_LE -r ' . int($rate) . ' -c 1 -d ' . int($duration) . ' ' . shell_quote($out);
     my $run = $cmd . ' >' . shell_quote($log) . ' 2>&1';
     my $rc;
@@ -1389,51 +1390,84 @@ sub audio_asr {
     my ($p) = @_;
     my $rec = record_audio($p);
     return $rec unless $rec->{ok};
-    my $helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
+    my $status = offline_asr_status();
     return {
         ok => JSON::PP::false,
-        error => 'ASR 辅助程序不存在',
-        detail => '请部署 /userdata/zykh_app/bin/zykh-ai-voice',
+        offline => JSON::PP::true,
+        error => '板端离线语音识别尚未部署',
+        detail => join('；', @{$status->{missing} || []}),
         recording => $rec,
-    } unless -x $helper;
-    my $api_key = dashscope_api_key();
-    return { ok => JSON::PP::false, error => '未配置 DashScope API Key', recording => $rec } if $api_key eq '';
+    } unless $status->{available};
 
-    my $out = "$DATA_DIR/audio/asr-result.json";
     my $log = "$DATA_DIR/audio-asr.log";
-    my $cmd = 'DASHSCOPE_API_KEY=' . shell_quote($api_key) . ' ' .
-              shell_quote($helper) . ' asr --input ' . shell_quote($rec->{file}) .
-              ' --output ' . shell_quote($out) .
-              ' --model ' . shell_quote($ENV{ASR_MODEL} || 'fun-asr-flash-8k-realtime');
+    my $cmd = shell_quote($status->{script}) . ' ' . shell_quote($rec->{file});
+    my $started = Time::HiRes::time();
     my $rc;
     {
         local $SIG{CHLD} = 'DEFAULT';
-        $rc = system('timeout', '35', 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+        $rc = system('timeout', int($ENV{ASR_OFFLINE_TIMEOUT} || 20), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
     }
     my $exit = $rc == -1 ? -1 : ($rc >> 8);
-    my $raw = read_text_file($out);
-    my $obj = eval { decode_json($raw || '') };
-    if ($obj && $obj->{ok}) {
-        $obj->{recording} = $rec;
-        return $obj;
+    my $raw = read_text_file($log);
+    my $obj;
+    for my $line (reverse split /\r?\n/, $raw || '') {
+        next if trim($line) eq '';
+        $obj = eval { decode_json(Encode::encode('UTF-8', $line)) };
+        last if $obj && ref($obj) eq 'HASH';
     }
-    if ($obj && exists $obj->{text} && trim($obj->{text} || '') eq '') {
+    if ($exit == 0 && $obj && trim($obj->{text} || '') ne '') {
         return {
             ok => JSON::PP::true,
-            text => '',
-            model => $obj->{model} || ($ENV{ASR_MODEL} || 'fun-asr-flash-8k-realtime'),
-            task_id => $obj->{task_id} || '',
-            detail => '录音完成，但没有识别到清晰语音。',
+            offline => JSON::PP::true,
+            text => trim($obj->{text}),
+            model => 'paraformer-zh-small-2024-03-09-int8-resident',
+            detail => '板端离线语音识别完成。',
             recording => $rec,
             exit_code => $exit,
+            recognition_ms => int((Time::HiRes::time() - $started) * 1000),
         };
     }
     return {
         ok => JSON::PP::false,
-        error => 'ASR 识别失败',
-        detail => substr(read_text_file($log) || $raw || '', 0, 600),
+        offline => JSON::PP::true,
+        error => $exit == 124 ? '离线语音识别超时' : '未识别到清晰语音',
+        detail => substr($raw || '', 0, 600),
         exit_code => $exit,
         recording => $rec,
+    };
+}
+
+sub offline_asr_status {
+    my $voice_root = $ENV{ZYKH_VOICE_ROOT} || '/userdata/zykh_voice';
+    my $script = $ENV{ZYKH_OFFLINE_ASR_CMD} || "$HOME_DIR/scripts/offline_asr.sh";
+    my $service = "$HOME_DIR/scripts/start_asr_service.sh";
+    my @required = (
+        $script,
+        $service,
+        "$HOME_DIR/scripts/asr_ws_client.pl",
+        "$voice_root/runtime/bin/sherpa-onnx-offline-websocket-server",
+        "$voice_root/models/asr-paraformer/model.int8.onnx",
+        "$voice_root/models/asr-paraformer/tokens.txt",
+    );
+    my @missing = grep { !-s $_ } @required;
+    my $ready = JSON::PP::false;
+    if (!@missing) {
+        my $rc;
+        {
+            local $SIG{CHLD} = 'DEFAULT';
+            $rc = system('sh', '-c', shell_quote($service) . ' status >/dev/null 2>&1');
+        }
+        $ready = JSON::PP::true if $rc == 0;
+    }
+    return {
+        available => @missing ? JSON::PP::false : JSON::PP::true,
+        ready => $ready,
+        offline => JSON::PP::true,
+        engine => 'sherpa-onnx-paraformer-resident',
+        model => 'paraformer-zh-small-2024-03-09-int8-resident',
+        port => int($ENV{ASR_WS_PORT} || 6006),
+        script => $script,
+        missing => \@missing,
     };
 }
 
@@ -1518,6 +1552,7 @@ sub speak_offline_streaming {
 
 sub audio_status {
     my $offline = offline_tts_status();
+    my $asr = offline_asr_status();
     my $cloud_helper = $ENV{ZYKH_AI_VOICE_BIN} || "$HOME_DIR/bin/zykh-ai-voice";
     my $cloud_ready = -x $cloud_helper && dashscope_api_key() ne '';
     return {
@@ -1530,6 +1565,7 @@ sub audio_status {
             available => $cloud_ready ? JSON::PP::true : JSON::PP::false,
             engine => 'qwen-tts',
         },
+        asr => $asr,
         playback_device => $ENV{AUDIO_PLAY_DEVICE} || 'plughw:0,0',
     };
 }

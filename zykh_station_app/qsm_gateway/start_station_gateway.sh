@@ -22,6 +22,11 @@ if [ -f "$QSM_HOME/scripts/patch_station_gateway.pl" ]; then
   perl "$QSM_HOME/scripts/patch_station_gateway.pl" "$QSM_HOME/server.pl" || exit 1
 fi
 
+if [ -x "$QSM_HOME/scripts/start_asr_service.sh" ]; then
+  "$QSM_HOME/scripts/start_asr_service.sh" start >/dev/null 2>&1 || \
+    printf 'Warning: resident Paraformer ASR did not start; cloud recognition remains available.\n' >&2
+fi
+
 if [ -x "$QSM_HOME/scripts/start_local_tts_server.sh" ]; then
   sh "$QSM_HOME/scripts/start_local_tts_server.sh" >/dev/null 2>&1 || \
     printf 'Warning: persistent offline TTS did not start; script fallback remains available.\n' >&2

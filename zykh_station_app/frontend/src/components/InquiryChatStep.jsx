@@ -171,7 +171,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
       markNetworkActivity("upload");
       ws.send(JSON.stringify({ type: "stop" }));
       setVoiceMessage("正在生成语音文字...");
-      finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 1800);
+      finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 6000);
     } else if (ws && ws.readyState <= WebSocket.OPEN) {
       ws.close();
     }
