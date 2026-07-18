@@ -87,8 +87,7 @@ class LocalAsrClient:
         return websockets.connect(
             self.url,
             open_timeout=settings.qsm_local_asr_timeout_seconds,
-            ping_interval=20,
-            ping_timeout=20,
+            ping_interval=None,
             max_size=2 * 1024 * 1024,
         )
 
@@ -115,10 +114,6 @@ class LocalAsrClient:
                 yield result[0], True
         finally:
             stopped.set()
-            try:
-                await upstream.send("Done")
-            except Exception:
-                pass
 
     @staticmethod
     async def _collect_audio(microphone: asyncio.StreamReader, stopped: asyncio.Event) -> bytes:

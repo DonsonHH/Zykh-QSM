@@ -116,7 +116,8 @@ class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
         binary = b"".join(item for item in upstream.sent if isinstance(item, bytes))
         self.assertEqual(struct.unpack("<II", binary[:8]), (16000, 16))
         self.assertEqual(results, [("我有点头晕", True)])
-        self.assertEqual(upstream.sent[-1], "Done")
+        self.assertTrue(upstream.sent)
+        self.assertTrue(all(isinstance(item, bytes) for item in upstream.sent))
 
     async def test_recording_waits_for_session_updated(self) -> None:
         class Upstream:
