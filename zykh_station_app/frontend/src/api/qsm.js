@@ -12,6 +12,18 @@ export function prepareQsmVitals() {
   return apiPost("/api/vitals/prepare", {});
 }
 
+export function startVitalsSession() {
+  return apiPost("/api/vitals/session/start", {});
+}
+
+export function loadVitalsSession(sessionId) {
+  return apiGet(`/api/vitals/session/${encodeURIComponent(sessionId)}`);
+}
+
+export function cancelVitalsSession(sessionId) {
+  return apiPost(`/api/vitals/session/${encodeURIComponent(sessionId)}/cancel`, {});
+}
+
 export function captureQsmCamera() {
   return apiPost("/api/camera/capture", {});
 }

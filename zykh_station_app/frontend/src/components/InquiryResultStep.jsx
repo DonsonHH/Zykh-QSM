@@ -4,109 +4,104 @@ import { RiskBadge } from "./RiskBadge.jsx";
 import { SafetyNotice } from "./SafetyNotice.jsx";
 import { aiSourceLabel } from "../utils/ai.js";
 
-export function InquiryResultStep({ result, blockedReason, onViewCandidates, onRestart, onHome }) {
-  const riskCanProceed = result?.risk_level === "low" || result?.risk_level === "medium";
-  const canProceed = Boolean(result?.can_proceed_to_dispense || riskCanProceed) && !blockedReason;
-  const categories = result?.suggested_categories || [];
-  const medicines = result?.candidate_medicines || [];
-  const warnings = result?.contraindication_warnings || [];
-  const nextSteps = blockedReason ? [blockedReason] : result?.next_steps || [];
-  const channelLabel = aiSourceLabel(result?.ai_source);
+const riskLabels = {
+  low: "低风险",
+  medium: "中风险",
+  high: "高风险",
+  emergency: "紧急风险"
+};
+
+export function InquiryResultStep({ result, onViewCandidates, onRestart, onHome }) {
+  const canProceed = Boolean(result?.can_view_medicines && result?.primary_candidate);
+  const candidates = [
+    result?.primary_candidate ? { ...result.primary_candidate, optionLabel: "主候选" } : null,
+    result?.alternative_candidate ? { ...result.alternative_candidate, optionLabel: "备选" } : null
+  ].filter(Boolean);
+  const summary = symptomSummary(result?.extracted_information);
+  const categories = [...new Set(candidates.map((candidate) => candidate.category))];
+  const warnings = contraindicationWarnings(result);
+  const channelLabel = aiSourceLabel(result?.source);
+  const highRisk = ["high", "emergency"].includes(result?.risk_level);
 
   return (
     <section className="inquiry-result-step">
       <div className="result-flow-head">
-        <span
-          className={`result-risk-motion ${result?.risk_level === "low" ? "low" : "warn"}`}
-          role="img"
-          aria-label={result?.risk_level === "low" ? "低风险提示" : "需要关注的风险提示"}
-        >
+        <span className={`result-risk-motion ${result?.risk_level === "low" ? "low" : "warn"}`} role="img" aria-label={riskLabels[result?.risk_level] || "风险提示"}>
           {result?.risk_level === "low" ? <ShieldCheck size={42} /> : <AlertTriangle size={42} />}
         </span>
         <div className="inquiry-flow-heading compact">
           <p>问询结果</p>
-          <h2>结构化风险提示</h2>
-          <span>{result.symptoms_summary}</span>
+          <h2>用药安全核验</h2>
+          <span>{summary}</span>
           <small className="result-ai-channel">{channelLabel}</small>
         </div>
-        <RiskBadge level={result.risk_level} label={result.risk_label} />
+        <RiskBadge level={result.risk_level} label={riskLabels[result.risk_level] || "待核验"} />
       </div>
 
       <div className="result-flow-grid">
         <section className="flow-result-block">
-          <h3>候选药品类别</h3>
+          <h3>候选类别</h3>
           <div className="result-chip-row large">
-            {categories.length ? categories.map((category) => <span key={category}>{category}</span>) : <span>暂无匹配类别</span>}
+            {categories.length ? categories.map((category) => <span key={category}>{category}</span>) : <span>本次不展示候选</span>}
           </div>
         </section>
 
         <section className="flow-result-block">
-          <h3>当前可匹配药品</h3>
-          {medicines.length ? (
+          <h3>候选药品</h3>
+          {candidates.length ? (
             <div className="flow-candidate-list">
-              {medicines.slice(0, 2).map((medicine) => (
+              {candidates.map((medicine) => (
                 <article key={medicine.id}>
                   <PackageSearch size={21} aria-hidden="true" />
-                  <strong>{medicine.name}</strong>
-                  <span>
-                    {medicine.stock}
-                    {medicine.unit}
-                  </span>
+                  <strong><em>{medicine.optionLabel}</em>{medicine.name}</strong>
+                  <span>{medicine.slot}号仓</span>
                 </article>
               ))}
             </div>
-          ) : (
-            <p className="muted-line">暂无可匹配库存，请联系家人或远程协助人员。</p>
-          )}
+          ) : <p className="muted-line">高风险、紧急风险或无合格库存时不展示候选。</p>}
         </section>
 
-        <section className={`flow-result-block warning ${warnings.length || blockedReason ? "show" : ""}`}>
-          <h3>
-            <AlertTriangle size={20} aria-hidden="true" />
-            禁忌提醒
-          </h3>
-          {warnings.length || blockedReason ? (
-            <ul>
-              {warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-              {blockedReason ? <li>{blockedReason}</li> : null}
-            </ul>
-          ) : (
-            <p>未填写明显禁忌，取药前仍需再次核验。</p>
-          )}
+        <section className={`flow-result-block warning ${warnings.length ? "show" : ""}`}>
+          <h3><AlertTriangle size={20} aria-hidden="true" />禁忌核验</h3>
+          {warnings.length ? <ul>{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p>取药前仍需核对实物说明和个人禁忌。</p>}
         </section>
 
         <section className="flow-result-block">
-          <h3>后续建议</h3>
+          <h3>核验结论</h3>
           <div className="flow-next-list">
-            {nextSteps.slice(0, 2).map((step) => (
-              <span key={step}>{step}</span>
-            ))}
+            {(result.risk_reasons || []).slice(0, 2).map((reason) => <span key={reason}>{reason}</span>)}
           </div>
         </section>
       </div>
 
-      <SafetyNotice tone={canProceed ? "green" : "orange"}>{result.safety_notice}</SafetyNotice>
+      <SafetyNotice tone={canProceed ? "green" : "orange"}>
+        {highRisk
+          ? "本次不提供候选药品，请联系医生、家人或现场协助人员。"
+          : "主候选与备选是二选一的信息参考，不表示联合使用；后续仍需完成原有取药确认。"}
+      </SafetyNotice>
 
       {canProceed ? (
-        <button className="primary-action result-flow-action" type="button" onClick={onViewCandidates}>
-          查看候选药品
-        </button>
+        <button className="primary-action result-flow-action" type="button" onClick={onViewCandidates}>查看主候选药品</button>
       ) : (
-        <div className="blocked-action result-flow-blocked">建议联系医生、家人或远程协助人员</div>
+        <div className="blocked-action result-flow-blocked">建议联系医生、家人或现场协助人员</div>
       )}
 
       <div className="result-bottom-actions">
-        <button className="secondary-action" type="button" onClick={onRestart}>
-          <RotateCcw size={21} aria-hidden="true" />
-          重新问询
-        </button>
-        <button className="secondary-action" type="button" onClick={onHome}>
-          <Home size={21} aria-hidden="true" />
-          返回首页
-        </button>
+        <button className="secondary-action" type="button" onClick={onRestart}><RotateCcw size={21} aria-hidden="true" />重新问询</button>
+        <button className="secondary-action" type="button" onClick={onHome}><Home size={21} aria-hidden="true" />返回首页</button>
       </div>
     </section>
   );
+}
+
+function symptomSummary(extracted = {}) {
+  const evidence = Object.values(extracted.dimension_evidence || {}).filter(Boolean);
+  const parts = [evidence.join("、"), extracted.duration ? `持续${extracted.duration}` : ""].filter(Boolean);
+  return parts.join("，") || "已完成本次信息整理";
+}
+
+function contraindicationWarnings(result) {
+  const allergy = String(result?.extracted_information?.allergy_or_contraindication || "").trim();
+  if (!allergy || ["无", "没有", "不确定"].includes(allergy)) return [];
+  return [`已记录：${allergy}`, "候选已排除明显禁忌冲突项，取药前仍需再次核对。"];
 }

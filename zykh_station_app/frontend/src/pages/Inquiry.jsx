@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   CakeSlice,
@@ -10,28 +10,27 @@ import {
   ShieldAlert,
   UserRound
 } from "lucide-react";
-import { openCabinet } from "../api/dispense.js";
-import { evaluateInquiry } from "../api/inquiry.js";
+import {
+  attachInquiryVitals,
+  createInquirySession,
+  loadInquirySession,
+  sendInquiryTurn
+} from "../api/inquiry.js";
 import { loadServiceUsers } from "../api/records.js";
-import { InquiryAnalyzingStep } from "../components/InquiryAnalyzingStep.jsx";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
-import { clearInquirySession, INQUIRY_DRAFT_KEY } from "../utils/inquirySession.js";
+import {
+  clearInquirySession,
+  INQUIRY_BACKEND_SESSION_KEY,
+  INQUIRY_DRAFT_KEY,
+  INQUIRY_VITALS_AWAITING_KEY
+} from "../utils/inquirySession.js";
 
-const initialForm = {
-  symptoms_text: "",
-  duration: "",
-  used_medicines: "",
-  allergy_or_contraindication: "",
-  scene_type: "家庭",
-  include_vitals: false
-};
-
-function readDraft() {
+function readJson(key) {
   try {
-    const raw = window.sessionStorage.getItem(INQUIRY_DRAFT_KEY);
+    const raw = window.sessionStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -39,36 +38,29 @@ function readDraft() {
 }
 
 function normalizeUser(user) {
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
   return {
-    id: user.id,
+    id: user.id || "",
     name: user.name || "待确认",
     age: Number(user.age || 0),
     role: user.status || "家庭成员",
-    conditions: user.profile || "待补充",
+    conditions: user.profile || user.conditions || "待补充",
     allergies: user.allergies || "待补充",
     note: user.note || "请通过语音补充基础病、过敏禁忌和近期用药。"
   };
 }
 
 export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus }) {
-  const initialDraft = readDraft();
-  const restoredIdentityConfirmed = Boolean(
-    initialDraft?.identityConfirmed && (initialDraft?.selectedUserId || initialDraft?.guestUser)
-  );
-  const [step, setStep] = useState(restoredIdentityConfirmed ? initialDraft?.step || "start" : "start");
-  const [form, setForm] = useState(initialDraft?.form || initialForm);
-  const [result, setResult] = useState(null);
-  const [blockedReason, setBlockedReason] = useState("");
+  const draft = readJson(INQUIRY_DRAFT_KEY);
+  const restoredSessionId = window.sessionStorage.getItem(INQUIRY_BACKEND_SESSION_KEY) || "";
   const [serviceUsers, setServiceUsers] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState(restoredIdentityConfirmed ? initialDraft.selectedUserId : "");
-  const [identityConfirmed, setIdentityConfirmed] = useState(restoredIdentityConfirmed);
-  const [guestUser, setGuestUser] = useState(restoredIdentityConfirmed ? initialDraft?.guestUser || null : null);
-  const [chatSessionId, setChatSessionId] = useState(0);
-  const [pendingCabinetAction, setPendingCabinetAction] = useState(null);
-  const [cabinetCountdown, setCabinetCountdown] = useState(0);
+  const [selectedUserId, setSelectedUserId] = useState(draft?.selectedUserId || "");
+  const [identityConfirmed, setIdentityConfirmed] = useState(Boolean(draft?.identityConfirmed));
+  const [guestUser, setGuestUser] = useState(draft?.guestUser || null);
+  const [session, setSession] = useState(null);
+  const [sessionId, setSessionId] = useState(restoredSessionId);
+  const [sending, setSending] = useState(false);
+  const creatingRef = useRef(false);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
@@ -77,23 +69,44 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
   } = useFaceIdentity({ auto: false, activateOnMatch: false });
 
   const selectedUser = useMemo(
-    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId)) || (identityConfirmed ? normalizeUser(guestUser || faceIdentity) : null),
+    () => normalizeUser(serviceUsers.find((user) => user.id === selectedUserId))
+      || (identityConfirmed ? normalizeUser(guestUser || faceIdentity) : null),
     [faceIdentity, guestUser, identityConfirmed, selectedUserId, serviceUsers]
   );
   const candidateUser = identityConfirmed ? null : normalizeUser(faceIdentity);
-  const displayedUser = selectedUser || candidateUser;
-  const identityPresentation = selectedUser
-    ? { icon: BadgeCheck, tone: "matched", label: `已确认使用人：${selectedUser.name}` }
+  const displayedUser = selectedUser || candidateUser || (session ? {
+    id: session.user_id,
+    name: session.user_name,
+    age: session.user_age,
+    role: session.user_id ? "已登记" : "访客",
+    conditions: session.user_profile || "待补充",
+    allergies: session.user_allergies || "待补充",
+    note: "请通过语音继续补充本次情况"
+  } : null);
+  const identityPresentation = displayedUser && identityConfirmed
+    ? { icon: BadgeCheck, tone: "matched", label: `已确认使用人：${displayedUser.name}` }
     : candidateUser
-      ? { icon: BadgeCheck, tone: "candidate", label: `识别到使用人：${candidateUser.name}，等待确认` }
-    : faceIdentityStatus === "identifying"
-      ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
-      : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
+      ? { icon: BadgeCheck, tone: "candidate", label: `识别到使用人：${candidateUser.name}` }
+      : faceIdentityStatus === "identifying"
+        ? { icon: ScanFace, tone: "identifying", label: "正在确认使用人" }
+        : { icon: CircleHelp, tone: "pending", label: "使用人尚未确认" };
   const IdentityIcon = identityPresentation.icon;
 
   useEffect(() => {
     refreshUsers();
-    if (!identityConfirmed) {
+    if (restoredSessionId) {
+      loadInquirySession(restoredSessionId)
+        .then((data) => {
+          setSession(data);
+          setIdentityConfirmed(true);
+          setSelectedUserId(data.user_id || "");
+          if (!data.user_id) setGuestUser({ name: data.user_name, status: "访客" });
+        })
+        .catch(() => {
+          setSessionId("");
+          window.sessionStorage.removeItem(INQUIRY_BACKEND_SESSION_KEY);
+        });
+    } else if (!identityConfirmed) {
       clearFaceIdentity();
       window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
     }
@@ -101,21 +114,74 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(INQUIRY_DRAFT_KEY, JSON.stringify({ step, form, selectedUserId, identityConfirmed, guestUser }));
+      window.sessionStorage.setItem(
+        INQUIRY_DRAFT_KEY,
+        JSON.stringify({ selectedUserId, identityConfirmed, guestUser })
+      );
     } catch {
-      // Draft storage is optional.
+      // Session storage is optional.
     }
-  }, [step, form, selectedUserId, identityConfirmed, guestUser]);
+  }, [guestUser, identityConfirmed, selectedUserId]);
+
+  useEffect(() => {
+    if (!identityConfirmed || sessionId || creatingRef.current) return;
+    let cancelled = false;
+    creatingRef.current = true;
+    createInquirySession({
+      service_user_id: selectedUserId,
+      guest_name: guestUser?.name || "访客"
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setSession(data);
+        setSessionId(data.session_id);
+        window.sessionStorage.setItem(INQUIRY_BACKEND_SESSION_KEY, data.session_id);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        notify(error.message || "问询会话创建失败，请重试");
+        setIdentityConfirmed(false);
+        window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 180);
+      })
+      .finally(() => {
+        creatingRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const awaiting = window.sessionStorage.getItem(INQUIRY_VITALS_AWAITING_KEY);
+    const vitals = readJson("zykh-latest-vitals");
+    if (awaiting !== sessionId || !vitals || vitals.status !== "complete") return;
+    window.sessionStorage.removeItem(INQUIRY_VITALS_AWAITING_KEY);
+    attachInquiryVitals(sessionId, {
+      temperature: vitals.temperature,
+      heart_rate: vitals.heart_rate,
+      spo2: vitals.spo2,
+      systolic_pressure: vitals.systolic_pressure || null,
+      diastolic_pressure: vitals.diastolic_pressure || null,
+      respiratory_rate: vitals.respiratory_rate || null,
+      hrv_sdnn: vitals.hrv_sdnn || null,
+      hrv_rmssd: vitals.hrv_rmssd || null,
+      measured_at: vitals.measured_at || new Date().toISOString()
+    })
+      .then(handleSessionUpdate)
+      .catch((error) => notify(error.message || "体征信息未能写入本次问询"));
+  }, [sessionId]);
+
+  function refreshUsers() {
+    return loadServiceUsers().then((data) => setServiceUsers(data.users || [])).catch(() => setServiceUsers([]));
+  }
 
   function confirmIdentity() {
-    if (!faceIdentity?.id) {
-      return;
-    }
+    if (!faceIdentity?.id) return;
     setSelectedUserId(faceIdentity.id);
     setIdentityConfirmed(true);
     setGuestUser(null);
     activateIdentity(faceIdentity);
-    refreshUsers();
     notify(`已确认使用人：${faceIdentity.name}`);
   }
 
@@ -128,15 +194,7 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
   }
 
   function confirmGuestInquiry() {
-    const visitor = {
-      id: "",
-      name: "访客",
-      age: 0,
-      profile: "身份未登记",
-      allergies: "待问询确认",
-      note: "本次问询以访客身份进行",
-      status: "游客"
-    };
+    const visitor = { id: "", name: "访客", age: 0, profile: "身份未登记", allergies: "待问询确认", status: "访客" };
     clearFaceIdentity();
     setGuestUser(visitor);
     setSelectedUserId("");
@@ -145,161 +203,46 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
     notify("已以访客身份开始问询");
   }
 
-  useEffect(() => {
-    if (!pendingCabinetAction || cabinetCountdown <= 0) {
-      return undefined;
+  async function handleTurn(transcript) {
+    if (!sessionId || sending) return;
+    setSending(true);
+    try {
+      const data = await sendInquiryTurn(sessionId, transcript);
+      handleSessionUpdate(data);
+    } catch (error) {
+      notify(error.message || "问询暂不可用，请重试");
+    } finally {
+      setSending(false);
     }
-    const timer = window.setTimeout(() => {
-      setCabinetCountdown((value) => Math.max(0, value - 1));
-    }, 1000);
-    return () => window.clearTimeout(timer);
-  }, [cabinetCountdown, pendingCabinetAction]);
-
-  function refreshUsers() {
-    return loadServiceUsers()
-      .then((data) => setServiceUsers(data.users || []))
-      .catch(() => setServiceUsers([]));
   }
 
-  function analyzeChatTranscript(transcript, meta = {}) {
-    const symptoms = transcript.trim();
-    if (!symptoms) {
-      notify("请先完成一轮语音问询");
-      return;
+  function handleSessionUpdate(data) {
+    setSession(data);
+    if (data.next_action === "measure_vitals") {
+      window.sessionStorage.removeItem("zykh-latest-vitals");
+      window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, data.session_id);
+      window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 700);
     }
-    const profile = meta.profile || selectedUser;
-    const nextForm = {
-      symptoms_text: profile?.name ? `${profile.name}：${symptoms}` : symptoms,
-      duration: "由 AI 对话问询整理",
-      used_medicines: "见对话记录",
-      allergy_or_contraindication: profile?.allergies && profile.allergies !== "待补充" ? profile.allergies : "",
-      scene_type: "家庭",
-      include_vitals: Boolean(meta.includeVitals ?? true)
-    };
-    setForm(nextForm);
-    setBlockedReason("");
-    setStep("analyzing");
-    window.setTimeout(() => {
-      evaluateInquiry(nextForm)
-        .then((data) => {
-          setResult(data);
-          setStep("result");
-        })
-        .catch((error) => {
-          notify(error.message || "问询失败，请重试");
-          setStep("start");
-        });
-    }, 520);
   }
 
   function handleViewCandidates() {
-    const riskCanProceed = result?.risk_level === "low" || result?.risk_level === "medium";
-    if (!(result?.can_proceed_to_dispense || riskCanProceed) || blockedReason) {
-      return;
-    }
-    const firstMedicine = result.candidate_medicines[0];
-    onViewCandidates({
-      category: firstMedicine?.category || result.suggested_categories[0] || "全部",
-      medicineId: firstMedicine?.id || null
-    });
-  }
-
-  function handleDemoRecommendation(payload) {
-    const demoResult = {
-      inquiry_id: `demo-${Date.now()}`,
-      risk_level: "medium",
-      risk_label: "中风险提示",
-      symptoms_summary: `${payload?.profile?.name || "张三"}：中暑头晕，已完成体征测量。`,
-      suggested_categories: ["肠胃"],
-      candidate_medicines: [
-        {
-          id: "slot-08-huoxiang-zhengqi",
-          name: "藿香正气丸",
-          category: "肠胃",
-          slot: "8",
-          stock: 1,
-          unit: "盒",
-          safety_note: "按药品说明核验禁忌后取用。"
-        }
-      ],
-      contraindication_warnings: ["已记录头孢过敏，当前推荐药品不属于头孢类。"],
-      safety_notice: "本次为家庭康护用药安全提示，取药前请再次核对药名和说明。",
-      next_steps: ["已定位家庭药柜 8 号柜。", "如头晕加重、持续高热或意识异常，请联系医生或家人。"],
-      can_proceed_to_dispense: true,
-      created_at: new Date().toISOString(),
-      ai_source: "cloud",
-      ai_message: "演示问询链路已整理。"
-    };
-    setResult(demoResult);
-    setBlockedReason("");
-    setCabinetCountdown(3);
-    setPendingCabinetAction({
-      slot: 8,
-      medicineId: "slot-08-huoxiang-zhengqi",
-      medicineName: "藿香正气丸",
-      category: "肠胃",
-      userName: payload?.profile?.name || "张三",
-      opening: false,
-      error: ""
-    });
-    notify("已生成候选药品，请确认后打开 8 号柜。");
-  }
-
-  function handleConfirmCabinetOpen() {
-    if (!pendingCabinetAction || cabinetCountdown > 0 || pendingCabinetAction.opening) {
-      return;
-    }
-    setPendingCabinetAction((current) => (current ? { ...current, opening: true, error: "" } : current));
-    openCabinet({
-      slot: pendingCabinetAction.slot,
-      quantity: 1,
-      reason: `${pendingCabinetAction.userName}中暑头晕演示推荐${pendingCabinetAction.medicineName}`,
-      confirmed_open: true,
-      medicine_id: pendingCabinetAction.medicineId,
-      target_user_id: selectedUser?.id || faceIdentity?.id || "",
-      target_user_name: pendingCabinetAction.userName
-    })
-      .then((data) => {
-        if (!data.ok) {
-          setPendingCabinetAction((current) =>
-            current ? { ...current, opening: false, error: data.message || "开柜失败，请人工处理。" } : current
-          );
-          return;
-        }
-        notify(`已打开 ${pendingCabinetAction.slot} 号柜，请核对${pendingCabinetAction.medicineName}。`);
-        setPendingCabinetAction(null);
-        onViewCandidates({
-          category: pendingCabinetAction.category,
-          medicineId: pendingCabinetAction.medicineId
-        });
-      })
-      .catch((error) => {
-        setPendingCabinetAction((current) =>
-          current ? { ...current, opening: false, error: error.message || "开柜失败，请人工处理。" } : current
-        );
-      });
-  }
-
-  function handleCancelCabinetOpen() {
-    setPendingCabinetAction(null);
-    notify("已取消开柜，请在药品页继续核对。");
+    const candidate = session?.primary_candidate;
+    if (!session?.can_view_medicines || !candidate) return;
+    onViewCandidates({ category: candidate.category || "全部", medicineId: candidate.id });
   }
 
   function resetFlow() {
-    setStep("start");
-    setForm(initialForm);
-    setResult(null);
-    setBlockedReason("");
-    setPendingCabinetAction(null);
-    setCabinetCountdown(0);
+    clearInquirySession();
+    setSession(null);
+    setSessionId("");
     setSelectedUserId("");
     setIdentityConfirmed(false);
     setGuestUser(null);
-    setChatSessionId((value) => value + 1);
     clearFaceIdentity();
-    clearInquirySession();
-    window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 250);
+    window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
   }
+
+  const showResult = session?.stage === "result" || session?.stage === "escalated";
 
   return (
     <main className="inquiry-page conversation-layout" id="main-content">
@@ -307,127 +250,34 @@ export function Inquiry({ notify, onViewCandidates, onNavigate, networkStatus })
         <section className="inquiry-user-card dynamic">
           <div className="context-heading user-context-heading">
             <UserRound size={26} aria-hidden="true" />
-            <div className="user-context-copy">
-              <span>使用人</span>
-              <h2>{displayedUser?.name || (faceIdentityStatus === "identifying" ? "正在识别" : "等待确认")}</h2>
-            </div>
-            <span
-              className={`identity-confirmation-icon ${identityPresentation.tone}`}
-              role="img"
-              aria-label={identityPresentation.label}
-              title={identityPresentation.label}
-            >
+            <div className="user-context-copy"><span>使用人</span><h2>{displayedUser?.name || "等待确认"}</h2></div>
+            <span className={`identity-confirmation-icon ${identityPresentation.tone}`} role="img" aria-label={identityPresentation.label} title={identityPresentation.label}>
               <IdentityIcon size={24} aria-hidden="true" />
             </span>
           </div>
-
           <div className="user-profile-grid">
-            <article aria-label="年龄">
-              <CakeSlice size={22} aria-hidden="true" />
-              <strong>{displayedUser?.age ? `${displayedUser.age}岁` : "待补充"}</strong>
-            </article>
-            <article aria-label="家庭身份">
-              <House size={22} aria-hidden="true" />
-              <strong>{displayedUser?.role || "待确认"}</strong>
-            </article>
+            <article aria-label="年龄"><CakeSlice size={22} aria-hidden="true" /><strong>{displayedUser?.age ? `${displayedUser.age}岁` : "待补充"}</strong></article>
+            <article aria-label="家庭身份"><House size={22} aria-hidden="true" /><strong>{displayedUser?.role || "待确认"}</strong></article>
           </div>
           <div className="user-health-facts">
-            <article aria-label="基础病信息">
-              <HeartPulse size={23} aria-hidden="true" />
-              <strong>{displayedUser?.conditions || "基础病待补充"}</strong>
-            </article>
-            <article aria-label="过敏和禁忌信息">
-              <ShieldAlert size={23} aria-hidden="true" />
-              <strong>{displayedUser?.allergies || "过敏禁忌待补充"}</strong>
-            </article>
-            <article aria-label="病例备注">
-              <NotebookText size={23} aria-hidden="true" />
-              <strong>{displayedUser?.note || "通过语音继续补充"}</strong>
-            </article>
+            <article aria-label="基础病信息"><HeartPulse size={23} aria-hidden="true" /><strong>{displayedUser?.conditions || "基础病待补充"}</strong></article>
+            <article aria-label="过敏和禁忌信息"><ShieldAlert size={23} aria-hidden="true" /><strong>{displayedUser?.allergies || "过敏禁忌待补充"}</strong></article>
+            <article aria-label="病例备注"><NotebookText size={23} aria-hidden="true" /><strong>{displayedUser?.note || "通过语音继续补充"}</strong></article>
           </div>
         </section>
       </aside>
 
       <section className="inquiry-flow-card chat-only" aria-label="AI 应急问询流程">
-        {step === "start" && !identityConfirmed ? (
-          <InquiryIdentityGate
-            candidate={candidateUser}
-            status={faceIdentityStatus}
-            onConfirm={confirmIdentity}
-            onRetry={retryIdentity}
-            onRequestGuest={confirmGuestInquiry}
-          />
-        ) : step === "start" ? (
-          <InquiryChatStep
-            key={`new-${chatSessionId}`}
-            notify={notify}
-            onStructuredAnalyze={analyzeChatTranscript}
-            onOpenVitals={() => onNavigate("vitals", { returnTo: "inquiry" })}
-            onDemoRecommendation={handleDemoRecommendation}
-            onReset={resetFlow}
-            profile={selectedUser}
-            networkStatus={networkStatus}
-          />
-        ) : step === "analyzing" ? (
-          <InquiryAnalyzingStep />
-        ) : result ? (
-          <InquiryResultStep
-            result={result}
-            blockedReason={blockedReason}
-            onViewCandidates={handleViewCandidates}
-            onRestart={resetFlow}
-            onHome={() => onNavigate("home")}
-          />
-        ) : null}
+        {!identityConfirmed ? (
+          <InquiryIdentityGate candidate={candidateUser} status={faceIdentityStatus} onConfirm={confirmIdentity} onRetry={retryIdentity} onRequestGuest={confirmGuestInquiry} />
+        ) : showResult ? (
+          <InquiryResultStep result={session} onViewCandidates={handleViewCandidates} onRestart={resetFlow} onHome={() => onNavigate("home")} />
+        ) : session ? (
+          <InquiryChatStep session={session} sending={sending} notify={notify} onSend={handleTurn} onReset={resetFlow} networkStatus={networkStatus} />
+        ) : (
+          <div className="inquiry-session-loading" role="status">正在建立本次问询...</div>
+        )}
       </section>
-      {pendingCabinetAction ? (
-        <div className="modal-layer inquiry-cabinet-confirm" role="dialog" aria-modal="true" aria-labelledby="cabinet-confirm-title">
-          <section className="dispense-modal compact-confirm">
-            <div className="modal-heading">
-              <span aria-hidden="true">8</span>
-              <div>
-                <p>推荐药品已定位</p>
-                <h2 id="cabinet-confirm-title">确认打开 8 号柜</h2>
-              </div>
-            </div>
-            <div className="modal-medicine-meta">
-              <article>
-                <span>使用人</span>
-                <strong>{pendingCabinetAction.userName}</strong>
-              </article>
-              <article>
-                <span>候选药品</span>
-                <strong>{pendingCabinetAction.medicineName}</strong>
-              </article>
-              <article>
-                <span>柜门</span>
-                <strong>{pendingCabinetAction.slot} 号</strong>
-              </article>
-            </div>
-            <p className="modal-safety">请先核对使用人、药名和柜门编号。确认后系统将打开对应柜门，不会自动判断服用剂量。</p>
-            {cabinetCountdown > 0 ? (
-              <p className="modal-message">请等待 {cabinetCountdown} 秒后确认开柜。</p>
-            ) : pendingCabinetAction.error ? (
-              <p className="modal-message error">{pendingCabinetAction.error}</p>
-            ) : (
-              <p className="modal-message success">已完成等待，请现场确认后开柜。</p>
-            )}
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={handleCancelCabinetOpen} disabled={pendingCabinetAction.opening}>
-                取消
-              </button>
-              <button
-                className="primary-action"
-                type="button"
-                onClick={handleConfirmCabinetOpen}
-                disabled={cabinetCountdown > 0 || pendingCabinetAction.opening}
-              >
-                {pendingCabinetAction.opening ? "正在开柜..." : cabinetCountdown > 0 ? `${cabinetCountdown} 秒后可确认` : "确认开柜"}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </main>
   );
 }

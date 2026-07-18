@@ -32,7 +32,7 @@
 
 ## 安全边界
 
-系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。涉及中高风险、禁忌风险、重复服药风险或信息不足时，应转由专业人员处理。
+系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。低风险和中风险可展示通过库存、OTC、有效期与禁忌核验的候选药品；高风险和紧急风险不展示候选，并提示联系医生或救援人员。候选只用于查看药品信息，不替代诊断或处方。
 
 ## 运行方式
 
@@ -121,6 +121,7 @@ curl -X POST http://127.0.0.1:8000/api/sync/run
 ```text
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
+QSM_VITALS_BASE_URL=http://127.0.0.1:18085
 QSM_TIMEOUT_SECONDS=5
 QSM_FACE_BASE_URL=http://127.0.0.1:18081
 QSM_MIC_BASE_URL=http://127.0.0.1:18082
@@ -134,6 +135,10 @@ AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_MODEL=deepseek-v4-flash
 AI_ENABLE_THINKING=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
+INQUIRY_SPO2_EMERGENCY_BELOW=90
+INQUIRY_SPO2_HIGH_MAX=93
+INQUIRY_TEMPERATURE_HIGH_AT=39
+INQUIRY_MEDIUM_CONFIDENCE_BELOW=0.65
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 CLOUD_SYNC_ENABLED=true
@@ -163,16 +168,16 @@ real 模式用于本机访问外设网关。如果 real 模式不可用，后端
 
 当前硬件分工：摄像头、FF Camera 麦克风、AS608 指纹模块、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，指纹模板保留在 AS608 内，主机 SQLite 只保存不含原始生物特征的服务对象映射。
 
-身体状态测量页通过 `/api/vitals/read-all` 同时读取 GY-614 额温和 QSM UART8 综合体征模块。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。血压、呼吸频率和 HRV 统一作为健康状态辅助参考，不作为诊断依据。
+身体状态测量页使用 `/api/vitals/session/*` 会话接口并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；板端成功写出 `0x24` 后才确认硬件已启动，完成、取消和异常均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。
 
 首次部署或更新板端体征读取器时执行：
 
 ```bash
 cd zykh_station_app
-sh scripts/deploy_qsm_gateway.sh
+sh scripts/deploy_qsm_vitals.sh
 ```
 
-该脚本会部署 `qsm_gateway/read_vitals_uart8.pl`、主网关启动包装、人脸识别网关、麦克风采集网关和 AS608 指纹网关。若板端尚未安装 AS608 驱动，脚本会自动读取仓库根目录的 `QSM368ZP-AS608-offline-deploy(1).zip`；也可通过 `QSM_FINGERPRINT_BUNDLE=/path/to/package.zip` 指定离线包。部署不会删除或覆盖模块内已有模板。主机端新模板默认从 16 开始，0-15 保留给板端测试和迁移。检测到 `/home/jetson/QSM368ZP-board-face-recognition(1).zip`（或 `QSM_FACE_BUNDLE` 指定文件）时，还会部署板端运行库与模型。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。心率、血氧和额温作为本页核心测量值；三项齐全即判定测量完成。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
+该脚本只部署 `read_vitals_uart8.pl` 和独立的 8085 体征会话网关，并建立本机 `18085 → 8085` 转发，不扰动已经工作的摄像头、人脸、麦克风和指纹服务。完整外设首次部署仍使用 `scripts/deploy_qsm_gateway.sh`。新模块温度按“整数 + 小数字节/100”解析为指温参考，额温仍以 GY-614 结果为准。血压、呼吸、HRV 和指温等字段仅在模块实际生成后展示，不会因辅助字段缺失误报测量失败，也不会通过估算补值。
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
@@ -280,7 +285,7 @@ curl http://127.0.0.1:8000/api/qsm/status
 curl http://127.0.0.1:8000/api/identity/status
 curl http://127.0.0.1:8000/api/fingerprint/status
 curl -X POST http://127.0.0.1:8000/api/identity/resolve
-curl -X POST http://127.0.0.1:8000/api/vitals/read-all
+curl -X POST http://127.0.0.1:8000/api/vitals/session/start
 curl -X POST http://127.0.0.1:8000/api/audio/beep
 curl -X POST http://127.0.0.1:8000/api/camera/capture
 curl -X POST http://127.0.0.1:8000/api/medicine/scan

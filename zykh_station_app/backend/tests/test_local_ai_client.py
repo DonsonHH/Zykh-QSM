@@ -222,7 +222,7 @@ class AiServiceOfflineTest(unittest.TestCase):
         )
 
     @patch("app.services.ai_service.settings")
-    def test_structured_inquiry_can_come_from_local_model(self, mocked_settings) -> None:
+    def test_inquiry_fact_extraction_can_come_from_local_model(self, mocked_settings) -> None:
         mocked_settings.ai_mode = "local"
         mocked_settings.ai_api_key = ""
         mocked_settings.ai_api_key_file = Path("/nonexistent")
@@ -231,28 +231,26 @@ class AiServiceOfflineTest(unittest.TestCase):
                 "ok": True,
                 "reply": json.dumps(
                     {
-                        "risk_level": "low",
-                        "risk_label": "低风险",
-                        "symptoms_summary": "轻微流涕",
-                        "suggested_categories": ["感冒发热"],
-                        "contraindication_warnings": [],
-                        "safety_notice": "先核对说明。",
-                        "next_steps": ["继续观察"],
-                        "can_proceed_to_dispense": True,
+                        "symptom_dimensions": ["感冒鼻部症状"],
+                        "dimension_evidence": {"感冒鼻部症状": "轻微流涕"},
+                        "duration": "",
+                        "used_medicines": "",
+                        "allergy_or_contraindication": "",
+                        "follow_up_question": "这种情况持续多久了？",
+                        "confidence": 0.9,
                     },
                     ensure_ascii=False,
                 ),
             }
         )
         service = AiService(local_client=client)
-        service._inquiry_system_prompt = lambda: "json only"
-        service._inquiry_user_prompt = lambda _request, compact=False: "input"
 
-        result = service.evaluate_inquiry(InquiryEvaluateRequest(symptoms_text="轻微流涕"))
+        result = service.extract_inquiry_information("轻微流涕", {}, {})
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["source"], "local_llm")
-        self.assertTrue(result["offline"])
+        self.assertEqual(result["symptom_dimensions"], ["感冒鼻部症状"])
+        self.assertNotIn("risk_level", result)
 
 
 if __name__ == "__main__":

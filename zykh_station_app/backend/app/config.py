@@ -49,6 +49,16 @@ class Settings:
     qsm_vitals_timeout_seconds: float = float(_env("QSM_VITALS_TIMEOUT_SECONDS", "22"))
     qsm_vitals_retry_attempts: int = max(1, int(_env("QSM_VITALS_RETRY_ATTEMPTS", "1")))
     qsm_vitals_retry_delay_seconds: float = max(0.0, float(_env("QSM_VITALS_RETRY_DELAY_SECONDS", "0.7")))
+    qsm_vitals_api_base: str = _env("QSM_VITALS_BASE_URL", "http://127.0.0.1:18085").rstrip("/")
+    qsm_vitals_session_start_path: str = _env(
+        "QSM_VITALS_SESSION_START_PATH", "/api/vitals/session/start"
+    )
+    qsm_vitals_session_status_path: str = _env(
+        "QSM_VITALS_SESSION_STATUS_PATH", "/api/vitals/session/status"
+    )
+    qsm_vitals_session_cancel_path: str = _env(
+        "QSM_VITALS_SESSION_CANCEL_PATH", "/api/vitals/session/cancel"
+    )
     qsm_audio_timeout_seconds: float = float(_env("QSM_AUDIO_TIMEOUT_SECONDS", "120"))
     qsm_mic_api_base: str = _env("QSM_MIC_BASE_URL", "http://127.0.0.1:18082").rstrip("/")
     qsm_mic_timeout_seconds: float = float(_env("QSM_MIC_TIMEOUT_SECONDS", "5"))
@@ -160,6 +170,10 @@ class Settings:
     }
     ai_chat_timeout_seconds: float = float(_env("AI_CHAT_TIMEOUT_SECONDS", "35"))
     ai_inquiry_timeout_seconds: float = float(_env("AI_INQUIRY_TIMEOUT_SECONDS", "45"))
+    inquiry_spo2_emergency_below: float = float(_env("INQUIRY_SPO2_EMERGENCY_BELOW", "90"))
+    inquiry_spo2_high_max: float = float(_env("INQUIRY_SPO2_HIGH_MAX", "93"))
+    inquiry_temperature_high_at: float = float(_env("INQUIRY_TEMPERATURE_HIGH_AT", "39"))
+    inquiry_medium_confidence_below: float = float(_env("INQUIRY_MEDIUM_CONFIDENCE_BELOW", "0.65"))
     ai_connectivity_timeout_seconds: float = float(_env("AI_CONNECTIVITY_TIMEOUT_SECONDS", "2"))
     local_ai_base_url: str = _env("LOCAL_AI_BASE_URL", "http://127.0.0.1:18083").rstrip("/")
     local_ai_chat_path: str = _env("LOCAL_AI_CHAT_PATH", "/v1/chat/completions")

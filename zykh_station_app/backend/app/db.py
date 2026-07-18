@@ -143,6 +143,48 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS inquiry_sessions (
+              session_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL DEFAULT '',
+              user_name TEXT NOT NULL,
+              user_age INTEGER NOT NULL DEFAULT 0,
+              user_profile TEXT NOT NULL DEFAULT '',
+              user_allergies TEXT NOT NULL DEFAULT '',
+              stage TEXT NOT NULL,
+              reply TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT 'rules_fallback',
+              extracted_json TEXT NOT NULL DEFAULT '{}',
+              vitals_json TEXT NOT NULL DEFAULT '',
+              risk_level TEXT NOT NULL DEFAULT '',
+              risk_reasons_json TEXT NOT NULL DEFAULT '[]',
+              next_action TEXT NOT NULL,
+              primary_candidate_json TEXT NOT NULL DEFAULT '',
+              alternative_candidate_json TEXT NOT NULL DEFAULT '',
+              can_view_medicines INTEGER NOT NULL DEFAULT 0,
+              title TEXT NOT NULL DEFAULT '新问询',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inquiry_messages (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              content TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES inquiry_sessions(session_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS inquiry_messages_session_idx ON inquiry_messages(session_id, created_at, id)"
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS vitals_records (
               id TEXT PRIMARY KEY,
               temperature REAL,

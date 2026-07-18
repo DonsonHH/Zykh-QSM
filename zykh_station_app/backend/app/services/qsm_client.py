@@ -4,6 +4,7 @@ import json
 import socket
 import threading
 import time
+from datetime import datetime
 from copy import deepcopy
 from collections.abc import Callable
 from typing import Any
@@ -113,12 +114,19 @@ class _VitalsMeasurementCoordinator:
 
 
 _VITALS_MEASUREMENT = _VitalsMeasurementCoordinator()
+_MOCK_VITALS_SESSIONS: dict[str, dict[str, Any]] = {}
 
 
 class QsmClient:
-    def __init__(self, mode: str | None = None, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        mode: str | None = None,
+        base_url: str | None = None,
+        vitals_base_url: str | None = None,
+    ) -> None:
         self.mode = (mode or settings.qsm_mode or "mock").lower()
         self.base_url = (base_url or settings.qsm_api_base).rstrip("/")
+        self.vitals_base_url = (vitals_base_url or settings.qsm_vitals_api_base).rstrip("/")
 
     def health_check(self) -> dict[str, Any]:
         status = self.get_qsm_status()
@@ -197,6 +205,101 @@ class QsmClient:
             "mode": "real",
             "status": "preparing" if started else "in_progress",
             "started": started,
+        }
+
+    def start_vitals_session(self) -> dict[str, Any]:
+        if self.mode != "real":
+            session_id = f"mock-vitals-{int(time.time() * 1000)}"
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            result = {
+                "ok": True,
+                "mode": "mock",
+                "session_id": session_id,
+                "status": "complete",
+                "hardware_started": True,
+                "elapsed_seconds": 0.0,
+                "temperature": 36.5,
+                "heart_rate": 76,
+                "spo2": 98,
+                "finger_detected": True,
+                "sample_count": 3,
+                "source": "mock",
+                "started_at": now,
+                "updated_at": now,
+                "measured_at": now,
+            }
+            _MOCK_VITALS_SESSIONS[session_id] = result
+            return deepcopy(result)
+
+        payload, error = self._request_json(
+            settings.qsm_vitals_session_start_path,
+            method="POST",
+            payload={},
+            body_format="json",
+            timeout=4,
+            base_url=self.vitals_base_url,
+        )
+        if error:
+            return self._vitals_session_error("", "failed", error)
+        if not payload.get("hardware_started"):
+            return self._vitals_session_error(
+                str(payload.get("session_id") or ""),
+                "failed",
+                str(payload.get("error_message") or "体征设备未确认启动。"),
+            )
+        payload.setdefault("ok", True)
+        payload.setdefault("mode", "real")
+        return payload
+
+    def get_vitals_session(self, session_id: str) -> dict[str, Any]:
+        if self.mode != "real":
+            return deepcopy(
+                _MOCK_VITALS_SESSIONS.get(session_id)
+                or self._vitals_session_error(session_id, "failed", "未找到体征测量会话。")
+            )
+        query = urlencode({"session_id": session_id})
+        payload, error = self._request_json(
+            f"{settings.qsm_vitals_session_status_path}?{query}",
+            method="GET",
+            timeout=3,
+            base_url=self.vitals_base_url,
+        )
+        if error:
+            return self._vitals_session_error(session_id, "failed", error)
+        payload.setdefault("ok", payload.get("status") not in {"failed", "cancelled"})
+        payload.setdefault("mode", "real")
+        return payload
+
+    def cancel_vitals_session(self, session_id: str) -> dict[str, Any]:
+        if self.mode != "real":
+            result = _MOCK_VITALS_SESSIONS.get(session_id)
+            if result is None:
+                return self._vitals_session_error(session_id, "failed", "未找到体征测量会话。")
+            result.update({"ok": True, "status": "cancelled"})
+            return deepcopy(result)
+        payload, error = self._request_json(
+            settings.qsm_vitals_session_cancel_path,
+            method="POST",
+            payload={"session_id": session_id},
+            body_format="json",
+            timeout=4,
+            base_url=self.vitals_base_url,
+        )
+        if error:
+            return self._vitals_session_error(session_id, "failed", error)
+        payload.setdefault("ok", True)
+        payload.setdefault("mode", "real")
+        return payload
+
+    def _vitals_session_error(self, session_id: str, status: str, message: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "mode": self.mode,
+            "session_id": session_id,
+            "status": status,
+            "hardware_started": False,
+            "error_message": message,
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
 
     def _coordinated_full_vitals(self, fallback_error: str = "") -> dict[str, Any]:
@@ -583,11 +686,19 @@ class QsmClient:
         payload: dict[str, Any] | None = None,
         body_format: str = "form",
         timeout: float | None = None,
+        base_url: str | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         formats = ["none"] if method == "GET" else ([body_format] if body_format in {"form", "json"} else ["form", "json"])
         errors: list[str] = []
         for item in formats:
-            result, error = self._single_request_json(path, method=method, payload=payload, body_format=item, timeout=timeout)
+            result, error = self._single_request_json(
+                path,
+                method=method,
+                payload=payload,
+                body_format=item,
+                timeout=timeout,
+                base_url=base_url,
+            )
             if not error:
                 return result, None
             errors.append(error)
@@ -602,6 +713,7 @@ class QsmClient:
         payload: dict[str, Any] | None,
         body_format: str,
         timeout: float | None = None,
+        base_url: str | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         try:
             data = None
@@ -614,7 +726,7 @@ class QsmClient:
                     body = urlencode(payload or {}).encode("utf-8")
                     headers["Content-Type"] = "application/x-www-form-urlencoded"
                 data = body
-            request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
+            request = Request(f"{(base_url or self.base_url).rstrip('/')}{path}", data=data, headers=headers, method=method)
             with urlopen(request, timeout=timeout or settings.qsm_timeout_seconds) as res:
                 body = res.read().decode("utf-8")
             if not body:

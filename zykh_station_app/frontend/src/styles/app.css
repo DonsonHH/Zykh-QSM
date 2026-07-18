@@ -7095,6 +7095,29 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   transform: translateX(4px);
 }
 
+.inquiry-session-loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: var(--surface-soft);
+  color: var(--primary);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.flow-candidate-list article strong em {
+  display: inline-flex;
+  margin-right: 8px;
+  border-radius: 8px;
+  background: #eaf2ff;
+  padding: 3px 7px;
+  color: var(--primary);
+  font-size: 13px;
+  font-style: normal;
+  vertical-align: 2px;
+}
+
 .card-heading {
   display: flex;
   align-items: center;

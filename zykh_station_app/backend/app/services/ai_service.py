@@ -11,9 +11,6 @@ from urllib.request import Request, urlopen
 
 from .. import db
 from ..config import settings
-from ..repositories.medicine_repository import MedicineRepository
-from ..repositories.vitals_repository import VitalsRepository
-from ..schemas.inquiry import InquiryEvaluateRequest
 from .local_ai_client import LocalAiClient
 
 
@@ -212,28 +209,63 @@ class AiService:
             yield {"type": "replace", "source": "cloud", "text": guarded}
         yield {"type": "done", "source": "cloud", "reply": guarded}
 
-    def evaluate_inquiry(self, request: InquiryEvaluateRequest) -> dict[str, Any]:
-        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+    def extract_inquiry_information(
+        self,
+        transcript: str,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Extract evidence-backed facts; risk and medicine choice stay local."""
+        allowed = [
+            "感冒鼻部症状", "发热全身不适", "咳嗽咳痰", "咽喉口腔不适", "恶心暑湿",
+            "腹泻肠道不适", "便秘", "胃酸胃部不适", "过敏瘙痒", "轻微外伤",
+            "皮肤真菌不适", "肌肉关节疼痛", "干眼不适", "鼻炎过敏", "营养补充",
+        ]
+        system_prompt = (
+            "你是家庭康护问询的信息提取器，不诊断、不分级、不推荐药品。"
+            "只提取用户原话直接支持的信息，并只输出 JSON。"
+            "symptom_dimensions 只能从给定枚举中选择；dimension_evidence 必须逐字引用本轮用户原话。"
+            "信息没有明确表达时返回空字符串，不得猜测。每次最多给一个 follow_up_question。"
+        )
+        user_prompt = json.dumps(
+            {
+                "allowed_dimensions": allowed,
+                "transcript": transcript,
+                "existing": existing,
+                "profile": profile,
+                "output": {
+                    "symptom_dimensions": [],
+                    "dimension_evidence": {},
+                    "duration": "",
+                    "used_medicines": "",
+                    "allergy_or_contraindication": "",
+                    "follow_up_question": "",
+                    "confidence": 0.0,
+                },
+            },
+            ensure_ascii=False,
+        )
         if settings.ai_mode == "local" or self._network_local_mode():
-            return self._evaluate_inquiry_local(request, "当前为离线模式。")
+            return self._extract_inquiry_local(system_prompt, user_prompt, "当前为离线模式。")
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key:
-            return self._evaluate_inquiry_local(request, "未配置云端密钥。")
+            return self._extract_inquiry_local(system_prompt, user_prompt, "未配置云端密钥。")
         if settings.ai_mode == "auto" and not self._cloud_reachable():
-            return self._evaluate_inquiry_local(request, "当前未检测到可用云端网络。")
+            return self._extract_inquiry_local(system_prompt, user_prompt, "云端网络不可用。")
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": settings.ai_model,
             "messages": [
-                {"role": "system", "content": self._inquiry_system_prompt()},
-                {"role": "user", "content": self._inquiry_user_prompt(request)},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.1,
-            "max_tokens": 700,
+            "temperature": 0.0,
+            "max_tokens": 420,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
-        self._apply_provider_options(payload, enable_thinking=settings.ai_inquiry_enable_thinking)
-        http_request = Request(
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
             settings.ai_api_base,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
@@ -244,23 +276,31 @@ class AiService:
             },
         )
         try:
-            with urlopen(http_request, timeout=settings.ai_inquiry_timeout_seconds) as response:
+            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            return self._evaluate_inquiry_local(request, f"主机云通道 HTTP {exc.code}。")
-        except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            return self._evaluate_inquiry_local(request, f"主机云通道暂不可用：{exc}。")
-
-        content = self._extract_message_text(data)
-        parsed = self._parse_json_content(content)
-        if parsed is None:
-            return self._evaluate_inquiry_local(request, "主机云通道结构化内容无法解析。")
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return self._extract_inquiry_local(system_prompt, user_prompt, f"云端提取失败：{exc}。")
+        parsed = self._parse_json_content(self._extract_message_text(data))
         if not isinstance(parsed, dict):
-            return self._evaluate_inquiry_local(request, "主机云通道结构化内容为空。")
-        parsed["ok"] = True
-        parsed["source"] = "cloud"
-        parsed["message"] = "云通道已完成结构化分析。"
-        return parsed
+            return self._extract_inquiry_local(system_prompt, user_prompt, "云端未返回有效结构。")
+        return {"ok": True, "source": "cloud", **parsed}
+
+    def _extract_inquiry_local(self, system_prompt: str, user_prompt: str, reason: str) -> dict[str, Any]:
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=360,
+            response_format={"type": "json_object"},
+        )
+        if not result.get("ok"):
+            return {"ok": False, "source": "rules_fallback", "message": reason}
+        parsed = self._parse_json_content(str(result.get("reply") or ""))
+        if not isinstance(parsed, dict):
+            return {"ok": False, "source": "rules_fallback", "message": reason}
+        return {"ok": True, "source": "local_llm", **parsed}
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
         """Generate structured reference text without presenting it as verified prescribing data."""
@@ -463,107 +503,6 @@ class AiService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-
-    def _inquiry_system_prompt(self) -> str:
-        return "\n".join(
-            [
-                "你是偏远家庭弱网用药终端的 AI 应急问询助手，使用中文。",
-                "你只能做健康信息整理、风险提示、药品信息匹配和禁忌核验，不能替代医生诊断或处方。",
-                "不能输出“应该吃某药”；只能输出可查看候选药品类别和安全提示。",
-                "中高风险、禁忌不明、症状严重或信息不足时，can_proceed_to_dispense 必须为 false。",
-                "请只输出合法 JSON，不要输出 markdown。",
-                "JSON 格式示例：{\"risk_level\":\"low\",\"risk_label\":\"低风险\",\"symptoms_summary\":\"...\",\"suggested_categories\":[\"感冒发热\"],\"contraindication_warnings\":[],\"safety_notice\":\"...\",\"next_steps\":[\"...\"],\"can_proceed_to_dispense\":true}",
-            ]
-        )
-
-    def _inquiry_user_prompt(self, request: InquiryEvaluateRequest, compact: bool = False) -> str:
-        medicines = MedicineRepository().list_all()
-        latest_vitals = VitalsRepository().latest_for_context() if request.include_vitals else None
-        if compact:
-            medicine_text = [
-                {
-                    "name": medicine.name,
-                    "category": medicine.category,
-                    "slot": medicine.hardware_slot,
-                    "is_otc": medicine.is_otc,
-                }
-                for medicine in medicines
-                if medicine.stock > 0
-            ]
-        else:
-            medicine_text = [
-                {
-                    "id": medicine.id,
-                    "name": medicine.name,
-                    "category": medicine.category,
-                    "slot": medicine.hardware_slot,
-                    "stock": medicine.stock,
-                    "unit": medicine.unit,
-                    "contraindications": medicine.contraindications,
-                    "is_otc": medicine.is_otc,
-                }
-                for medicine in medicines
-                if medicine.stock > 0
-            ]
-        vitals = None
-        if latest_vitals:
-            vitals = {
-                "temperature": latest_vitals.temperature,
-                "heart_rate": latest_vitals.heart_rate,
-                "spo2": latest_vitals.spo2,
-                "systolic_pressure": latest_vitals.systolic_pressure,
-                "diastolic_pressure": latest_vitals.diastolic_pressure,
-                "respiratory_rate": latest_vitals.respiratory_rate,
-                "hrv_sdnn": latest_vitals.hrv_sdnn,
-                "hrv_rmssd": latest_vitals.hrv_rmssd,
-                "measured_at": latest_vitals.measured_at,
-            }
-        return json.dumps(
-            {
-                "instruction": "请基于以下家庭成员自述、体征和家庭药柜库存做风险提示与药品信息匹配，输出 JSON。",
-                "symptoms_text": request.symptoms_text,
-                "duration": request.duration,
-                "used_medicines": request.used_medicines,
-                "allergy_or_contraindication": request.allergy_or_contraindication,
-                "scene_type": request.scene_type,
-                "include_vitals": request.include_vitals,
-                "latest_vitals": vitals,
-                "available_medicines": medicine_text,
-            },
-            ensure_ascii=False,
-        )
-
-    def _evaluate_inquiry_local(self, request: InquiryEvaluateRequest, reason: str) -> dict[str, Any]:
-        system_prompt = self._inquiry_system_prompt()
-        user_prompt = self._inquiry_user_prompt(request, compact=True)
-        result = self.local_client.chat(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=520,
-            response_format={"type": "json_object"},
-        )
-        if not result.get("ok"):
-            detail = str(result.get("error_message") or "离线模型不可用")
-            return {
-                "ok": False,
-                "source": "rules_fallback",
-                "message": f"{reason}离线模型不可用：{detail}；已由安全规则继续核验。",
-            }
-        parsed = self._parse_json_content(str(result.get("reply") or ""))
-        if not isinstance(parsed, dict):
-            return {
-                "ok": False,
-                "source": "rules_fallback",
-                "message": f"{reason}离线模型未返回可解析的结构化结果；已由安全规则继续核验。",
-            }
-        parsed["ok"] = True
-        parsed["source"] = "local_llm"
-        parsed["message"] = f"{reason}QSM 离线模型已完成结构化分析。"
-        parsed["offline"] = True
-        return parsed
 
     def _emergency_reply(self, message: str) -> dict[str, Any] | None:
         if not message or not any(self._has_unnegated_term(message, term) for term in self.EMERGENCY_TERMS):

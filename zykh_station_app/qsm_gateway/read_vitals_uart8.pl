@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Fcntl qw(O_RDWR O_NOCTTY LOCK_EX LOCK_NB);
-use JSON::PP qw(encode_json);
+use JSON::PP qw(encode_json decode_json);
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
 
@@ -17,6 +17,9 @@ my %options = (
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
     temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 100),
     input_file        => '',
+    state_file        => '',
+    cancel_file       => '',
+    session_id        => '',
 );
 
 parse_arguments(\%options, @ARGV);
@@ -51,8 +54,23 @@ if ($options{input_file}) {
 
 my $payload = build_payload($frames, $read_error, \%options);
 write_json($options{output}, $payload);
+if ($options{state_file} && !$options{input_file}) {
+    my $status = $read_error && $read_error eq '__cancelled__'
+        ? 'cancelled'
+        : $payload->{ok}
+            ? 'stabilizing'
+            : 'failed';
+    write_state(\%options, {
+        ok               => $payload->{ok},
+        status           => $status,
+        hardware_started => JSON::PP::true,
+        finger_detected  => $payload->{finger_detected} || JSON::PP::false,
+        sample_count     => int($payload->{sample_count} || 0),
+        error_message    => $payload->{error} || '',
+    });
+}
 print encode_json($payload), "\n";
-exit($payload->{ok} ? 0 : 2);
+exit($payload->{ok} ? 0 : $read_error && $read_error eq '__cancelled__' ? 3 : 2);
 
 sub parse_arguments {
     my ($options, @args) = @_;
@@ -84,6 +102,12 @@ sub parse_arguments {
             $options->{temperature_scale} = number_or(require_value($name, \@args), 0);
         } elsif ($name eq '--input-file') {
             $options->{input_file} = require_value($name, \@args);
+        } elsif ($name eq '--state-file') {
+            $options->{state_file} = require_value($name, \@args);
+        } elsif ($name eq '--cancel-file') {
+            $options->{cancel_file} = require_value($name, \@args);
+        } elsif ($name eq '--session-id') {
+            $options->{session_id} = require_value($name, \@args);
         } else {
             die "Unknown argument: $name\n";
         }
@@ -139,31 +163,81 @@ sub read_uart_frames {
         or return ([], "Cannot open $device: $!");
     binmode($uart);
 
+    my $stopped = 0;
+    my $stop_hardware = sub {
+        return if $stopped;
+        syswrite($uart, pack('C', 0x2A));
+        $stopped = 1;
+    };
+    local $SIG{INT} = sub { $stop_hardware->(); close $uart; exit 130; };
+    local $SIG{TERM} = sub { $stop_hardware->(); close $uart; exit 143; };
+
     my $written = syswrite($uart, pack('C', 0x24));
     if (!defined $written || $written != 1) {
         close $uart;
         return ([], "Failed to send start command to $device: $!");
     }
 
+    write_state($options, {
+        ok               => JSON::PP::true,
+        status           => 'starting',
+        hardware_started => JSON::PP::true,
+        finger_detected  => JSON::PP::false,
+        sample_count     => 0,
+    });
+
     my $buffer = '';
     my @frames;
-    my $deadline = time() + $options->{timeout};
+    my $started_at = time();
+    my $deadline = $started_at + $options->{timeout};
+    my $start_retried = 0;
     while (time() < $deadline) {
+        if ($options->{cancel_file} && -e $options->{cancel_file}) {
+            $stop_hardware->();
+            close $uart;
+            return (\@frames, '__cancelled__');
+        }
         my $count = sysread($uart, my $chunk, $options->{chunk_size});
         if (!defined $count) {
             next if $!{EINTR};
-            syswrite($uart, pack('C', 0x2A));
+            $stop_hardware->();
             close $uart;
             return (\@frames, "Failed reading $device: $!");
         }
         if ($count > 0) {
             $buffer .= $chunk;
             extract_frames(\$buffer, \@frames);
+            my @measured = grep { frame_has_measurement($_) } @frames;
+            write_state($options, {
+                ok               => JSON::PP::true,
+                status           => @measured ? 'stabilizing' : 'waiting_finger',
+                hardware_started => JSON::PP::true,
+                finger_detected  => @measured ? JSON::PP::true : JSON::PP::false,
+                sample_count     => scalar(@frames),
+            });
             last if measurement_window_ready(\@frames, $options);
+        }
+        if (!$start_retried && time() - $started_at >= 2) {
+            my @measured = grep { frame_has_measurement($_) } @frames;
+            if (!@measured) {
+                $stop_hardware->();
+                select(undef, undef, undef, 0.08);
+                syswrite($uart, pack('C', 0x24));
+                $stopped = 0;
+                $start_retried = 1;
+                write_state($options, {
+                    ok               => JSON::PP::true,
+                    status           => 'waiting_finger',
+                    hardware_started => JSON::PP::true,
+                    finger_detected  => JSON::PP::false,
+                    sample_count     => scalar(@frames),
+                    start_retried    => JSON::PP::true,
+                });
+            }
         }
     }
 
-    syswrite($uart, pack('C', 0x2A));
+    $stop_hardware->();
     close $uart;
     return (\@frames, '');
 }
@@ -334,6 +408,33 @@ sub write_json {
     open my $fh, '>:raw', $path or die "Cannot write $path: $!\n";
     print {$fh} encode_json($payload);
     close $fh;
+}
+
+sub write_state {
+    my ($options, $changes) = @_;
+    return unless $options->{state_file};
+    my $existing = read_json_file($options->{state_file});
+    my $state = {
+        %{$existing || {}},
+        session_id => $options->{session_id} || '',
+        source     => 'UART8-vitals-24B',
+        updated_at => now_text(),
+        %{$changes || {}},
+    };
+    my $temporary = "$options->{state_file}.$$";
+    write_json($temporary, $state);
+    rename $temporary, $options->{state_file};
+}
+
+sub read_json_file {
+    my ($path) = @_;
+    return {} unless $path && -s $path;
+    open my $fh, '<:raw', $path or return {};
+    local $/;
+    my $raw = <$fh>;
+    close $fh;
+    my $payload = eval { decode_json($raw || '') };
+    return $payload && ref($payload) eq 'HASH' ? $payload : {};
 }
 
 sub now_text {

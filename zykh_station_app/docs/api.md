@@ -91,6 +91,22 @@ Returns local dispense confirmation records.
 
 Runs rules fallback for AI应急问询, risk prompts, medicine category matching and contraindication checks.
 
+### POST /api/inquiry/sessions
+
+Creates a persisted inquiry session after identity is confirmed once. The response contains `stage`, `reply`, `next_action`, extracted evidence and current safety decision.
+
+### GET /api/inquiry/sessions/{session_id}
+
+Restores one inquiry session with messages, identity, vitals snapshot and result.
+
+### POST /api/inquiry/sessions/{session_id}/turn
+
+Adds one speech transcript. The model can only extract evidence-backed symptom dimensions and one follow-up question; deterministic local rules own risk and candidate selection.
+
+### POST /api/inquiry/sessions/{session_id}/vitals
+
+Attaches required `temperature`, `heart_rate` and `spo2` to the same inquiry session. Optional blood-pressure, respiratory-rate and HRV values do not block completion.
+
 ### GET /api/inquiry/{inquiry_id}
 
 Returns one inquiry result.
@@ -153,9 +169,21 @@ Returns current peripheral capability states:
 - QSM connection state;
 - mode.
 
+### POST /api/vitals/session/start
+
+Starts a QSM measurement session. A successful response requires `hardware_started=true`, which is returned only after the board writes UART start byte `0x24`.
+
+### GET /api/vitals/session/{session_id}
+
+Returns the real device stage: `starting`, `waiting_finger`, `stabilizing`, `complete`, `failed` or `cancelled`. `complete` requires heart rate, SpO2 and forehead temperature; auxiliary values are optional.
+
+### POST /api/vitals/session/{session_id}/cancel
+
+Cancels the session and causes the board reader to send stop byte `0x2A`.
+
 ### POST /api/vitals/prepare
 
-Starts one shared background QSM measurement when the body-status page opens. A following `read-all` request waits for and reuses that same hardware session; repeated prepare calls while it is active do not start another UART measurement.
+Legacy compatibility endpoint for the earlier shared background read flow.
 
 ### POST /api/vitals/read-all
 

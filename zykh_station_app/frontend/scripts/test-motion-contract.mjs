@@ -98,6 +98,19 @@ assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating 
 const vitalsPage = await readFile(`${sourceRoot}/pages/Vitals.jsx`, "utf8");
 assert.match(vitalsPage, /vitals-back-button/, "vitals page is missing its top-left back button");
 assert.match(appStyles, /\.vitals-back-button[\s\S]*width:\s*56px[\s\S]*height:\s*56px/, "vitals back button is too small for touch use");
+const vitalsEffects = [...vitalsPage.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/g)];
+assert.equal(
+  vitalsEffects.some((match) => match[1].includes("startVitalsSession()")),
+  false,
+  "vitals hardware starts before the user presses the measurement button"
+);
+assert.match(
+  vitalsPage,
+  /function handleMeasure\(\)[\s\S]*startVitalsSession\(\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
+  "the first measurement click does not start a hardware-confirmed QSM session"
+);
+assert.match(vitalsPage, /loadVitalsSession\(sessionId\)/, "vitals page does not poll the active QSM session");
+assert.match(vitalsPage, /cancelVitalsSession\(currentSession\)/, "vitals page cannot cancel the active QSM session");
 
 const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");
 assert.match(app, /document\.startViewTransition/, "same-document page transitions are not enabled");

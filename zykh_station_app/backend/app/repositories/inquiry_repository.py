@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 
 from .. import db
-from ..schemas.inquiry import InquiryResult
+from ..schemas.inquiry import InquiryMessage, InquiryResult, InquirySessionResponse
 
 
 class InquiryRepository:
@@ -39,3 +40,132 @@ class InquiryRepository:
                 (result.inquiry_id, json.dumps(result.model_dump(), ensure_ascii=False), result.created_at),
             )
         return result
+
+    def save_session(self, session: InquirySessionResponse) -> InquirySessionResponse:
+        db.init_db()
+        primary = session.primary_candidate.model_dump() if session.primary_candidate else None
+        alternative = session.alternative_candidate.model_dump() if session.alternative_candidate else None
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inquiry_sessions(
+                  session_id, user_id, user_name, user_age, user_profile, user_allergies,
+                  stage, reply, source, extracted_json, vitals_json, risk_level,
+                  risk_reasons_json, next_action, primary_candidate_json,
+                  alternative_candidate_json, can_view_medicines, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  user_id=excluded.user_id,
+                  user_name=excluded.user_name,
+                  user_age=excluded.user_age,
+                  user_profile=excluded.user_profile,
+                  user_allergies=excluded.user_allergies,
+                  stage=excluded.stage,
+                  reply=excluded.reply,
+                  source=excluded.source,
+                  extracted_json=excluded.extracted_json,
+                  vitals_json=excluded.vitals_json,
+                  risk_level=excluded.risk_level,
+                  risk_reasons_json=excluded.risk_reasons_json,
+                  next_action=excluded.next_action,
+                  primary_candidate_json=excluded.primary_candidate_json,
+                  alternative_candidate_json=excluded.alternative_candidate_json,
+                  can_view_medicines=excluded.can_view_medicines,
+                  title=excluded.title,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    session.session_id,
+                    session.user_id,
+                    session.user_name,
+                    session.user_age,
+                    session.user_profile,
+                    session.user_allergies,
+                    session.stage,
+                    session.reply,
+                    session.source,
+                    json.dumps(session.extracted_information.model_dump(), ensure_ascii=False),
+                    json.dumps(session.vitals, ensure_ascii=False) if session.vitals else "",
+                    session.risk_level or "",
+                    json.dumps(session.risk_reasons, ensure_ascii=False),
+                    session.next_action,
+                    json.dumps(primary, ensure_ascii=False) if primary else "",
+                    json.dumps(alternative, ensure_ascii=False) if alternative else "",
+                    int(session.can_view_medicines),
+                    session.title,
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+        return session
+
+    def append_message(self, session_id: str, role: str, content: str, source: str = "") -> InquiryMessage:
+        message = InquiryMessage(
+            id=f"message-{uuid4().hex[:14]}",
+            role=role,
+            content=content,
+            source=source,
+            created_at=db.now_text(),
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inquiry_messages(id, session_id, role, content, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (message.id, session_id, message.role, message.content, message.source, message.created_at),
+            )
+        return message
+
+    def get_session(self, session_id: str) -> InquirySessionResponse | None:
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute("SELECT * FROM inquiry_sessions WHERE session_id=?", (session_id,)).fetchone()
+            if row is None:
+                return None
+            message_rows = conn.execute(
+                """
+                SELECT id, role, content, source, created_at
+                FROM inquiry_messages
+                WHERE session_id=?
+                ORDER BY rowid
+                """,
+                (session_id,),
+            ).fetchall()
+        values = dict(row)
+        return InquirySessionResponse(
+            session_id=values["session_id"],
+            user_id=values["user_id"],
+            user_name=values["user_name"],
+            user_age=values["user_age"],
+            user_profile=values["user_profile"],
+            user_allergies=values["user_allergies"],
+            stage=values["stage"],
+            reply=values["reply"],
+            source=values["source"],
+            extracted_information=json.loads(values["extracted_json"] or "{}"),
+            vitals=json.loads(values["vitals_json"]) if values["vitals_json"] else None,
+            risk_level=values["risk_level"] or None,
+            risk_reasons=json.loads(values["risk_reasons_json"] or "[]"),
+            next_action=values["next_action"],
+            primary_candidate=json.loads(values["primary_candidate_json"])
+            if values["primary_candidate_json"]
+            else None,
+            alternative_candidate=json.loads(values["alternative_candidate_json"])
+            if values["alternative_candidate_json"]
+            else None,
+            can_view_medicines=bool(values["can_view_medicines"]),
+            messages=[InquiryMessage(**dict(message)) for message in message_rows],
+            title=values["title"],
+            created_at=values["created_at"],
+            updated_at=values["updated_at"],
+        )
+
+    def list_sessions(self, limit: int = 20) -> list[InquirySessionResponse]:
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT session_id FROM inquiry_sessions ORDER BY updated_at DESC LIMIT ?",
+                (max(1, min(limit, 100)),),
+            ).fetchall()
+        return [session for row in rows if (session := self.get_session(str(row["session_id"]))) is not None]

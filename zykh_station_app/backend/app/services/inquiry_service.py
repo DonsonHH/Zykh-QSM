@@ -4,85 +4,89 @@ from uuid import uuid4
 
 from ..db import now_text
 from ..repositories.inquiry_repository import InquiryRepository
-from ..schemas.inquiry import InquiryEvaluateRequest, InquiryResult
+from ..schemas.inquiry import InquiryEvaluateRequest, InquiryExtractedInformation, InquiryResult
 from .ai_service import AiService
-from .rules_engine import RulesEngine
-
-
-RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "emergency": 3}
+from .medicine_safety_engine import MedicineSafetyEngine
+from .symptom_interpreter import SymptomInterpreter
 
 
 class InquiryService:
+    """Compatibility facade for the phase-three evaluate API."""
+
     def __init__(
         self,
         repository: InquiryRepository | None = None,
-        rules_engine: RulesEngine | None = None,
         ai_service: AiService | None = None,
+        safety_engine: MedicineSafetyEngine | None = None,
     ) -> None:
         self.repository = repository or InquiryRepository()
-        self.rules_engine = rules_engine or RulesEngine()
         self.ai_service = ai_service or AiService()
+        self.interpreter = SymptomInterpreter(self.ai_service)
+        self.safety_engine = safety_engine or MedicineSafetyEngine()
 
     def evaluate(self, request: InquiryEvaluateRequest) -> InquiryResult:
-        evaluation = self.rules_engine.evaluate(request)
-        ai = self.ai_service.evaluate_inquiry(request)
-        ai_ok = bool(ai.get("ok"))
-
-        risk_level = evaluation.risk_level
-        risk_label = evaluation.risk_label
-        symptoms_summary = evaluation.symptoms_summary
-        suggested_categories = evaluation.suggested_categories
-        contraindication_warnings = evaluation.contraindication_warnings
-        safety_notice = evaluation.safety_notice
-        next_steps = evaluation.next_steps
-        can_proceed = evaluation.can_proceed_to_dispense
-
-        if ai_ok:
-            ai_risk = str(ai.get("risk_level") or "").strip()
-            if ai_risk in RISK_ORDER and RISK_ORDER[ai_risk] > RISK_ORDER[risk_level]:
-                risk_level = ai_risk
-                risk_label = str(ai.get("risk_label") or self.rules_engine._risk_label(risk_level))
-            symptoms_summary = str(ai.get("symptoms_summary") or symptoms_summary)
-            ai_categories = [str(item) for item in ai.get("suggested_categories", []) if str(item).strip()]
-            if ai_categories:
-                suggested_categories = ai_categories[:3]
-            ai_warnings = [str(item) for item in ai.get("contraindication_warnings", []) if str(item).strip()]
-            if ai_warnings:
-                contraindication_warnings = list(dict.fromkeys([*contraindication_warnings, *ai_warnings]))
-            ai_notice = self._safe_ai_notice(ai.get("safety_notice"))
-            if ai_notice:
-                safety_notice = ai_notice
-            ai_steps = [str(item) for item in ai.get("next_steps", []) if str(item).strip()]
-            if ai_steps:
-                next_steps = ai_steps[:4]
-            can_proceed = (
-                can_proceed
-                and bool(ai.get("can_proceed_to_dispense"))
-                and risk_level == "low"
-                and not contraindication_warnings
+        transcript = "；".join(
+            item.strip()
+            for item in (
+                request.symptoms_text,
+                request.duration,
+                request.used_medicines,
+                request.allergy_or_contraindication,
             )
-
-        candidate_medicines = self.rules_engine.candidate_medicines_for(
-            suggested_categories,
-            request.allergy_or_contraindication,
+            if item.strip()
         )
-        has_stock = any(medicine.stock > 0 for medicine in candidate_medicines)
-        can_proceed = can_proceed and has_stock
-
+        interpretation = self.interpreter.interpret(transcript, {}, {})
+        extracted = InquiryExtractedInformation(
+            symptom_dimensions=interpretation.symptom_dimensions,
+            dimension_evidence=interpretation.dimension_evidence,
+            symptoms_text=request.symptoms_text,
+            duration=request.duration or interpretation.duration,
+            used_medicines=request.used_medicines or interpretation.used_medicines,
+            allergy_or_contraindication=(
+                request.allergy_or_contraindication or interpretation.allergy_or_contraindication
+            ),
+            confidence=interpretation.confidence,
+        )
+        decision = self.safety_engine.assess(extracted, None)
+        candidates = [candidate for candidate in (decision.primary_candidate, decision.alternative_candidate) if candidate]
+        can_view = decision.risk_level in {"low", "medium"} and bool(candidates)
+        categories = list(dict.fromkeys(candidate.category for candidate in candidates))
+        warnings = []
+        allergy = extracted.allergy_or_contraindication.strip()
+        if allergy and allergy not in {"无", "没有", "不确定"}:
+            warnings.append(f"已记录过敏/禁忌信息：{allergy}")
+        risk_label = {
+            "low": "低风险",
+            "medium": "中风险",
+            "high": "高风险",
+            "emergency": "紧急风险",
+        }[decision.risk_level]
+        if decision.risk_level == "emergency":
+            notice = "存在紧急危险信号，请立即联系医生或救援人员。"
+            steps = ["停止自行取药", "立即联系医生或救援人员", "保持有人陪同"]
+        elif decision.risk_level == "high":
+            notice = "存在高风险信号，本次不展示候选药品。"
+            steps = ["尽快联系医生或现场协助人员", "不要自行新增用药"]
+        elif can_view:
+            notice = "可查看候选药品及安全提示；主候选与备选为二选一，不表示联合使用。"
+            steps = ["查看候选药品说明", "在药品页完成原有用药安全核验"]
+        else:
+            notice = "当前库存中没有通过核验的候选药品，请联系医生或家人协助。"
+            steps = ["补充信息或联系医生"]
         result = InquiryResult(
             inquiry_id=f"inquiry-{uuid4().hex[:12]}",
-            risk_level=risk_level,
+            risk_level=decision.risk_level,
             risk_label=risk_label,
-            symptoms_summary=symptoms_summary,
-            suggested_categories=suggested_categories,
-            candidate_medicines=candidate_medicines,
-            contraindication_warnings=contraindication_warnings,
-            safety_notice=safety_notice,
-            next_steps=next_steps,
-            can_proceed_to_dispense=can_proceed,
+            symptoms_summary=transcript,
+            suggested_categories=categories,
+            candidate_medicines=candidates,
+            contraindication_warnings=warnings,
+            safety_notice=notice,
+            next_steps=steps,
+            can_proceed_to_dispense=can_view,
             created_at=now_text(),
-            ai_source=str(ai.get("source") or "rules_fallback"),
-            ai_message=str(ai.get("message") or "安全规则核验"),
+            ai_source=interpretation.source,
+            ai_message="模型仅提取症状证据，风险与候选由本地规则核验。",
         )
         return self.repository.append(result)
 

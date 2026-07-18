@@ -43,6 +43,10 @@ QSM_FINGERPRINT_TEMPLATE_START=16
 QSM_VITALS_RETRY_ATTEMPTS=2
 QSM_VITALS_RETRY_DELAY_SECONDS=0.7
 QSM_VITALS_PREFER_FULL=false
+QSM_VITALS_BASE_URL=http://127.0.0.1:18085
+QSM_VITALS_SESSION_START_PATH=/api/vitals/session/start
+QSM_VITALS_SESSION_STATUS_PATH=/api/vitals/session/status
+QSM_VITALS_SESSION_CANCEL_PATH=/api/vitals/session/cancel
 QSM_STATUS_PATH=/api/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
 QSM_VITALS_PATH=/api/vitals/read
@@ -94,6 +98,7 @@ adb forward tcp:18080 tcp:8080
 adb forward tcp:18081 tcp:8081
 adb forward tcp:18082 tcp:8082
 adb forward tcp:18083 tcp:8083
+adb forward tcp:18085 tcp:8085
 adb forward tcp:18086 tcp:8086
 ```
 
@@ -115,7 +120,7 @@ The medicine cabinet remains on `/dev/ttyS5`. Deploy the reader and restart wrap
 
 ```bash
 cd zykh_station_app
-sh scripts/deploy_qsm_gateway.sh
+sh scripts/deploy_qsm_vitals.sh
 ```
 
 The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, validates the `FF 01` header and `0xF1` trailer, and waits for stable measurement frames. A non-blocking process lock prevents concurrent HTTP requests from interleaving UART start/stop bytes. Non-zero readings are preserved even when they fall outside common reference ranges; risk interpretation belongs to the safety layer, not the transport parser. It writes the legacy `heart_rate_bpm` and `spo2_percent` keys expected by the existing Perl gateway plus these optional fields:
@@ -128,7 +133,7 @@ The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, val
 
 `VITALS_UART_TEMP_DECIMAL_SCALE` defaults to `100`, so bytes `36,11` are exposed as a `36.11°C` fingertip-temperature reference. The separate GY-614 remains the authoritative forehead-temperature source. Heart rate and SpO2 are treated as core measurements; blood pressure and HRV are displayed only as auxiliary reference data when the module actually emits non-zero values.
 
-The UART collection window defaults to 16 seconds. This stays below the existing QSM gateway's 18-second sensor-process limit while providing 60% more collection time than the previous 10-second window. The reader waits for at least three heart-rate/SpO2 frames and, when available, two blood-pressure and HRV frames. Each field independently uses the median of its five most recent non-zero samples, so sparse reference values are not discarded merely because they occur in different frames. Fewer than three core frames are reported as `poor_signal`; blood-pressure and HRV values are never synthesized when the module does not emit them. The host allows up to 30 seconds for the combined UART8 and GY-614 response, while the terminal presents an 18-second guided measurement window. A busy UART returns a structured error instead of starting a second overlapping measurement.
+The 8085 gateway owns one measurement session at a time. It runs UART8 and GY-614 reads concurrently, retries the UART start sequence once when no valid frame appears after two seconds, normally finishes in 4–8 seconds and enforces a 10-second measurement timeout. The reader waits for three stable heart-rate/SpO2 frames and independently uses the median of recent non-zero samples. Heart rate, SpO2 and forehead temperature are all required for `complete`; blood pressure and HRV are never synthesized and do not delay completion. Cancellation, completion and read failure all stop the module with `0x2A`.
 
 ## Supported adapter methods
 
@@ -137,6 +142,9 @@ The UART collection window defaults to 16 seconds. This stays below the existing
 - `read_vitals()`
 - `read_full_vitals()`
 - `read_temperature()`
+- `start_vitals_session()`
+- `get_vitals_session(session_id)`
+- `cancel_vitals_session(session_id)`
 - `get_device_status()`
 - `dispense(slot, dry_run=False)`
 - `audio_asr()`
@@ -164,6 +172,9 @@ The gateway also exposes best-effort `/api/fingerprint/standby` and `/api/finger
 
 ```text
 POST /api/vitals/read-all
+POST /api/vitals/session/start
+GET  /api/vitals/session/{session_id}
+POST /api/vitals/session/{session_id}/cancel
 POST /api/camera/capture
 GET  /api/camera/stream
 POST /api/medicine/scan
