@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas.inquiry import (
     InquiryEvaluateRequest,
+    InquiryInformationRevisionRequest,
     InquiryRecordResponse,
     InquiryRecordsResponse,
     InquiryResult,
@@ -43,6 +44,17 @@ def get_inquiry_session(session_id: str) -> InquirySessionResponse:
 def process_inquiry_turn(session_id: str, request: InquiryTurnRequest) -> InquirySessionResponse:
     try:
         return InquiryOrchestrator().process_turn(session_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/information", response_model=InquirySessionResponse)
+def revise_inquiry_information(
+    session_id: str,
+    request: InquiryInformationRevisionRequest,
+) -> InquirySessionResponse:
+    try:
+        return InquiryOrchestrator().revise_information(session_id, request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

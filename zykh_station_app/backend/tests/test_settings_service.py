@@ -91,6 +91,32 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(db.get_setting("idle_timeout_seconds"), "300")
         self.assertEqual(result.settings.network_mode, "local")
 
+    def test_wifi_stays_on_when_sim_backup_cannot_be_prepared(self) -> None:
+        service = SettingsService()
+        with (
+            patch.object(service, "_bool_setting", return_value=True),
+            patch("app.services.settings_service.NetworkService.start_4g", return_value={"ok": False, "message": "备用通道失败"}),
+            patch.object(service, "_run") as run,
+        ):
+            warning = service._set_wifi(False)
+
+        self.assertIn("Wi-Fi 保持开启", warning)
+        run.assert_not_called()
+
+    def test_wifi_can_turn_off_after_sim_backup_is_ready(self) -> None:
+        service = SettingsService()
+        command_result = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with (
+            patch.object(service, "_bool_setting", return_value=True),
+            patch("app.services.settings_service.NetworkService.start_4g", return_value={"ok": True}),
+            patch.object(service, "_run", return_value=command_result) as run,
+        ):
+            warning = service._set_wifi(False)
+
+        self.assertEqual(warning, "")
+        run.assert_called_once_with(["nmcli", "radio", "wifi", "off"])
+        self.assertEqual(db.get_setting("wifi_enabled"), "false")
+
 
 if __name__ == "__main__":
     unittest.main()

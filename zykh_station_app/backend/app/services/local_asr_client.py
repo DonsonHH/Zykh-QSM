@@ -119,9 +119,12 @@ class LocalAsrClient:
     async def _collect_audio(microphone: asyncio.StreamReader, stopped: asyncio.Event) -> bytes:
         chunks: list[bytes] = []
         while True:
-            if stopped.is_set() and microphone.at_eof():
+            if stopped.is_set():
                 break
-            audio = await microphone.read(3200)
+            try:
+                audio = await asyncio.wait_for(microphone.read(3200), timeout=0.25)
+            except TimeoutError:
+                continue
             if not audio:
                 break
             chunks.append(audio)

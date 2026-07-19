@@ -46,6 +46,36 @@ class NegatedEvidenceAiService:
         }
 
 
+class FollowupOnlyAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "follow_up_question": "这种头晕是突然出现的，还是慢慢加重的？",
+            "action_intent": "ask",
+            "reasoning_summary": "我听到你主要是头晕。",
+        }
+
+
+class SparseLocalAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {"ok": True, "source": "local_llm", "action_intent": "ask"}
+
+
+class ContextAwareAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {
+            "ok": True,
+            "source": "cloud",
+            "symptom_dimensions": ["感冒鼻部症状"],
+            "dimension_evidence": {"感冒鼻部症状": "鼻塞"},
+            "follow_up_question": "头晕是在起身时更明显，还是一直都有？",
+            "assistant_reply": "鼻塞我记下了。头晕是在起身时更明显，还是一直都有？",
+            "action_intent": "ask",
+            "confidence": 0.86,
+        }
+
+
 class SymptomInterpreterTest(unittest.TestCase):
     def test_model_cannot_invent_scalar_facts_not_present_in_transcript(self) -> None:
         result = SymptomInterpreter(ai_service=FakeAiService()).interpret("刚有点鼻塞")
@@ -68,6 +98,26 @@ class SymptomInterpreterTest(unittest.TestCase):
 
         self.assertIn("明显畏寒", result.symptom_features)
         self.assertNotIn("明显口渴", result.symptom_features)
+
+    def test_head_discomfort_is_understood_without_asking_for_body_location(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("头有点不舒服")
+
+        self.assertIn("发热全身不适", result.symptom_dimensions)
+        self.assertEqual(result.dimension_evidence["发热全身不适"], "头有点不舒服")
+
+    def test_drug_allergy_is_not_misread_as_active_skin_or_nasal_symptom(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("我对头孢过敏")
+
+        self.assertNotIn("过敏瘙痒", result.symptom_dimensions)
+        self.assertNotIn("鼻炎过敏", result.symptom_dimensions)
+        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
+
+    def test_allergy_is_extracted_from_a_longer_spoken_sentence(self) -> None:
+        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret(
+            "我有点头晕，已经半天了，还没有用药，我对头孢过敏"
+        )
+
+        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
 
     def test_model_dimension_with_negated_evidence_is_rejected(self) -> None:
         result = SymptomInterpreter(ai_service=NegatedEvidenceAiService()).interpret("没有过敏")
@@ -96,6 +146,34 @@ class SymptomInterpreterTest(unittest.TestCase):
 
         self.assertIn("感冒鼻部症状", result.symptom_dimensions)
         self.assertEqual(result.dimension_evidence["感冒鼻部症状"], "流清鼻涕")
+
+    def test_model_followup_is_kept_even_when_the_turn_adds_no_new_structured_field(self) -> None:
+        result = SymptomInterpreter(ai_service=FollowupOnlyAiService()).interpret(
+            "就是刚才说的那种感觉",
+            {"symptom_dimensions": ["恶心暑湿"], "current_stage": "clarification"},
+        )
+
+        self.assertEqual(result.source, "local_llm")
+        self.assertEqual(result.follow_up_question, "这种头晕是突然出现的，还是慢慢加重的？")
+
+    def test_sparse_local_model_result_keeps_local_dialogue_path_and_verified_facts(self) -> None:
+        result = SymptomInterpreter(ai_service=SparseLocalAiService()).interpret(
+            "我中暑头晕半天了，还没有用药，对头孢过敏",
+            {"current_stage": "symptoms"},
+        )
+
+        self.assertEqual(result.source, "local_llm")
+        self.assertIn("恶心暑湿", result.symptom_dimensions)
+        self.assertEqual(result.duration, "半天")
+        self.assertEqual(result.used_medicines, "未使用")
+        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
+
+    def test_cloud_model_leads_ambiguous_symptom_interpretation_without_keyword_union(self) -> None:
+        result = SymptomInterpreter(ai_service=ContextAwareAiService()).interpret("我鼻塞，还有一点头晕")
+
+        self.assertEqual(result.symptom_dimensions, ["感冒鼻部症状"])
+        self.assertEqual(result.follow_up_question, "头晕是在起身时更明显，还是一直都有？")
+        self.assertEqual(result.assistant_reply, "鼻塞我记下了。头晕是在起身时更明显，还是一直都有？")
 
 
 if __name__ == "__main__":

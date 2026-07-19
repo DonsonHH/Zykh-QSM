@@ -1,11 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, LoaderCircle, Mic, RotateCcw, Volume2 } from "lucide-react";
+import {
+  Bot,
+  ClipboardCheck,
+  Cpu,
+  Keyboard,
+  LoaderCircle,
+  MessageCircle,
+  Mic,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Volume2,
+  X
+} from "lucide-react";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
-import { aiSourceLabel } from "../utils/ai.js";
+import { aiSourcePresentation } from "../utils/ai.js";
 import { isLocalNetworkMode } from "../utils/network.js";
 import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
+import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
 
 function speakLocally(text) {
   if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return false;
@@ -18,10 +33,13 @@ function speakLocally(text) {
   return true;
 }
 
-export function InquiryChatStep({ session, sending, notify, onSend, onReset, networkStatus }) {
+export function InquiryChatStep({ session, sending, notify, onSend, onReset, onReview, networkStatus }) {
   const [voicePhase, setVoicePhase] = useState(VoicePhase.IDLE);
-  const [voiceMessage, setVoiceMessage] = useState("点击按钮开始语音问询。");
+  const [voiceMessage, setVoiceMessage] = useState("请在右侧按住说话。");
   const [localPending, setLocalPending] = useState("");
+  const [transcriptPreview, setTranscriptPreview] = useState("");
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardText, setKeyboardText] = useState("");
   const [streamedReply, setStreamedReply] = useState(session.reply || "");
   const [streaming, setStreaming] = useState(false);
   const wsRef = useRef(null);
@@ -32,10 +50,12 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
   const voicePhaseRef = useRef(VoicePhase.IDLE);
   const bottomRef = useRef(null);
   const playbackGenerationRef = useRef(0);
+  const holdActiveRef = useRef(false);
 
   const preparingVoice = voicePhase === VoicePhase.PREPARING;
   const listening = voicePhase === VoicePhase.LISTENING;
   const transcribingVoice = voicePhase === VoicePhase.TRANSCRIBING;
+  const voiceOverlayOpen = preparingVoice || listening || transcribingVoice || Boolean(transcriptPreview);
   const lastAssistantId = useMemo(
     () => [...(session.messages || [])].reverse().find((message) => message.role === "assistant")?.id || "",
     [session.messages]
@@ -68,6 +88,21 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     interruptPlayback();
   }, []);
 
+  useEffect(() => {
+    const release = (event) => {
+      if (holdActiveRef.current) handleHoldEnd(event);
+    };
+    const cancel = (event) => {
+      if (holdActiveRef.current) handleHoldCancel(event);
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", cancel);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", cancel);
+    };
+  }, []);
+
   async function playReply(text) {
     if (!text) return;
     const generation = playbackGenerationRef.current + 1;
@@ -93,6 +128,9 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     const content = String(text || "").trim();
     if (!content || sending) return;
     setLocalPending(content);
+    setTranscriptPreview("");
+    setKeyboardText("");
+    setKeyboardOpen(false);
     setVoiceMessage("已发送，正在整理关键信息。");
     try {
       await onSend(content);
@@ -103,19 +141,12 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
 
   async function startVoice() {
     interruptPlayback();
-    if (voicePhaseRef.current === VoicePhase.PREPARING) {
-      stopVoice(false);
-      setVoiceMessage("已取消，点击按钮可重新开始。");
-      return;
-    }
-    if (voicePhaseRef.current === VoicePhase.LISTENING) {
-      stopVoice(true);
-      return;
-    }
     if (voicePhaseRef.current !== VoicePhase.IDLE || sending) return;
 
     finishedRef.current = false;
     partialTextRef.current = "";
+    setTranscriptPreview("");
+    setKeyboardOpen(false);
     moveVoice(VoiceEvent.START);
     setVoiceMessage("正在连接麦克风，请看到“正在听”后再说话。");
     try {
@@ -149,6 +180,11 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     }
     if (data.type === "ready") {
       if (voicePhaseRef.current !== VoicePhase.PREPARING) return;
+      if (!holdActiveRef.current) {
+        stopVoice(false);
+        setVoiceMessage("请长按语音按钮，看到“正在听”后再说话。");
+        return;
+      }
       moveVoice(VoiceEvent.READY);
       setVoiceMessage(data.offline ? "本地识别正在听，请自然说话。" : "正在听，请自然说话。");
       window.clearTimeout(listenTimerRef.current);
@@ -161,18 +197,19 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     }
     if (data.type === "transcript" && data.text) {
       partialTextRef.current = data.text;
-      setVoiceMessage(data.final ? `识别完成：${data.text}` : `识别中：${data.text}`);
-      if (data.final) finishVoice(data.text);
+      setVoiceMessage(data.final ? "语音已转成文字，请核对后发送。" : `识别中：${data.text}`);
+      if (data.final) completeTranscriptPreview(data.text);
     }
   }
 
-  function finishVoice(text) {
+  function completeTranscriptPreview(text) {
     if (finishedRef.current) return;
     finishedRef.current = true;
     stopVoice(false);
-    const content = String(text || partialTextRef.current || "").trim();
+    const content = normalizeVoiceTranscript(text || partialTextRef.current);
     if (content) {
-      send(content);
+      setTranscriptPreview(content);
+      setVoiceMessage("请核对识别文字，可以发送或重新录音。");
     } else {
       setVoiceMessage("未识别到有效语音，请再试一次。");
     }
@@ -187,7 +224,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
       markNetworkActivity("upload");
       ws.send(JSON.stringify({ type: "stop" }));
       setVoiceMessage("正在生成语音文字...");
-      finishTimerRef.current = window.setTimeout(() => finishVoice(partialTextRef.current), 6000);
+      finishTimerRef.current = window.setTimeout(() => completeTranscriptPreview(partialTextRef.current), 6000);
     } else if (ws && ws.readyState <= WebSocket.OPEN) {
       ws.close();
     }
@@ -211,6 +248,48 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
     playReply(session.reply || "");
   }
 
+  function handleHoldStart(event) {
+    if (sending || transcribingVoice) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    holdActiveRef.current = true;
+    startVoice();
+  }
+
+  function handleHoldEnd(event) {
+    event.preventDefault();
+    if (!holdActiveRef.current) return;
+    holdActiveRef.current = false;
+    if (voicePhaseRef.current === VoicePhase.LISTENING) {
+      stopVoice(true);
+      return;
+    }
+    if (voicePhaseRef.current === VoicePhase.PREPARING) {
+      stopVoice(false);
+      setVoiceMessage("麦克风还没准备好，请重新长按并等待“正在听”。");
+    }
+  }
+
+  function handleHoldCancel(event) {
+    event.preventDefault();
+    if (!holdActiveRef.current) return;
+    holdActiveRef.current = false;
+    stopVoice(false);
+    setVoiceMessage("录音已取消。");
+  }
+
+  function closeVoiceOverlay() {
+    holdActiveRef.current = false;
+    stopVoice(false);
+    setTranscriptPreview("");
+    setVoiceMessage("请在右侧按住说话。");
+  }
+
+  function submitKeyboard(event) {
+    event.preventDefault();
+    send(keyboardText);
+  }
+
   return (
     <section className="inquiry-chat-step voice-only" aria-label="AI 对话问询">
       <section className="chat-main-panel">
@@ -218,6 +297,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
           <span className="chat-assistant-motion" aria-hidden="true"><Bot size={26} /></span>
           <div><h2>AI问询 · {session.user_name}</h2></div>
           <div className="chat-icon-actions">
+            <button type="button" className="chat-speak-button icon-only" onClick={onReview} aria-label="核对本次问询信息"><ClipboardCheck size={21} aria-hidden="true" /></button>
             <button type="button" className="chat-speak-button icon-only" onClick={replay} aria-label="重播最近回复"><Volume2 size={21} aria-hidden="true" /></button>
             <button type="button" className="chat-speak-button icon-only" onClick={onReset} aria-label="重新对话并确认使用人"><RotateCcw size={21} aria-hidden="true" /></button>
           </div>
@@ -229,8 +309,10 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
             const content = isLastAssistant ? streamedReply : message.content;
             return (
               <article key={message.id} className={`chat-bubble ${message.role} ${isLastAssistant && streaming ? "streaming" : ""}`}>
-                <p>{content || "正在整理..."}</p>
-                {message.source ? <small>{aiSourceLabel(message.source)}</small> : null}
+                <div className="chat-message-line">
+                  {message.role === "assistant" && message.source ? <MessageSource source={message.source} /> : null}
+                  <p>{content || "正在整理..."}</p>
+                </div>
               </article>
             );
           })}
@@ -239,17 +321,110 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, net
           <span ref={bottomRef} />
         </div>
 
-        <div className="chat-voice-bar">
-          <button className={`voice-chat-button compact ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`} type="button" onClick={startVoice} disabled={sending || transcribingVoice} aria-pressed={listening}>
-            {listening ? <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />
-              : preparingVoice ? <LoaderCircle className="voice-preparing-spinner" size={23} aria-hidden="true" />
-                : <Mic size={23} aria-hidden="true" />}
-            {sending ? "AI 正在整理" : transcribingVoice ? "正在识别" : preparingVoice ? "正在准备 · 点击取消" : listening ? "正在听 · 点击发送" : "点击开始说话"}
-          </button>
-          <div className={`voice-status chat-voice-status ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`} aria-live="polite">{voiceMessage}</div>
-        </div>
+        {keyboardOpen ? (
+          <form className="chat-keyboard-entry" onSubmit={submitKeyboard}>
+            <input
+              autoFocus
+              type="text"
+              inputMode="text"
+              lang="zh-CN"
+              enterKeyHint="send"
+              autoCapitalize="none"
+              value={keyboardText}
+              onChange={(event) => setKeyboardText(event.target.value)}
+              placeholder="使用屏幕键盘补充一句话"
+              aria-label="手动输入问询内容"
+            />
+            <button type="button" className="icon-action" onClick={() => setKeyboardOpen(false)} aria-label="关闭键盘输入"><X size={21} /></button>
+            <button type="submit" className="primary-action" disabled={!keyboardText.trim() || sending}><Send size={20} />发送</button>
+          </form>
+        ) : (
+          <div className="chat-voice-bar hold-to-talk">
+            <div className={`voice-status chat-voice-status ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`} aria-live="polite">{voiceMessage}</div>
+            <button type="button" className="chat-keyboard-button" onClick={() => setKeyboardOpen(true)} aria-label="打开屏幕键盘"><Keyboard size={24} /></button>
+            <button
+              className={`voice-chat-button compact ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`}
+              type="button"
+              onPointerDown={handleHoldStart}
+              onPointerUp={handleHoldEnd}
+              onPointerCancel={handleHoldCancel}
+              onContextMenu={(event) => event.preventDefault()}
+              disabled={sending || transcribingVoice}
+              aria-pressed={listening}
+            >
+              {listening ? <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />
+                : preparingVoice ? <LoaderCircle className="voice-preparing-spinner" size={23} aria-hidden="true" />
+                  : <Mic size={23} aria-hidden="true" />}
+              {sending ? "AI 正在整理" : transcribingVoice ? "正在识别" : preparingVoice ? "保持按住 · 正在准备" : listening ? "正在听 · 松开结束" : "按住说话"}
+            </button>
+          </div>
+        )}
       </section>
+      {voiceOverlayOpen ? (
+        <div className={`voice-capture-overlay ${listening ? "listening" : preparingVoice ? "preparing" : transcribingVoice ? "processing" : "review"}`} role="dialog" aria-modal="true" aria-label="语音输入">
+          <button type="button" className="voice-overlay-close" onClick={closeVoiceOverlay} aria-label="关闭语音输入"><X size={28} /></button>
+          <div className="voice-overlay-content">
+            {transcriptPreview ? (
+              <>
+                <div className="voice-overlay-mark ready"><MessageCircle size={44} aria-hidden="true" /></div>
+                <div className="voice-overlay-copy">
+                  <span>请确认我听到的内容</span>
+                  <h3>{transcriptPreview}</h3>
+                  <p>文字无误后直接发送；需要修改时重新按住说话。</p>
+                </div>
+                <div className="voice-overlay-actions">
+                  <button
+                    type="button"
+                    className="voice-overlay-rerecord"
+                    onPointerDown={handleHoldStart}
+                    onPointerUp={handleHoldEnd}
+                    onPointerCancel={handleHoldCancel}
+                    onContextMenu={(event) => event.preventDefault()}
+                  ><Mic size={25} />按住重录</button>
+                  <button type="button" className="voice-overlay-send" onClick={() => send(transcriptPreview)} disabled={sending}><Send size={25} />发送给问询助手</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={`voice-overlay-stage ${listening ? "listening" : preparingVoice ? "preparing" : "processing"}`} aria-hidden="true">
+                  <span className="voice-overlay-pulse pulse-one" />
+                  <span className="voice-overlay-pulse pulse-two" />
+                  {preparingVoice || transcribingVoice
+                    ? <LoaderCircle className="voice-preparing-spinner" size={58} />
+                    : <StrokeDrawIcon icon={Mic} size={64} strokeWidth={1.9} mode="yoyo" />}
+                </div>
+                <div className="voice-overlay-copy">
+                  <span>{preparingVoice ? "正在准备麦克风" : transcribingVoice ? "正在识别语音" : "正在听"}</span>
+                  <h3>{preparingVoice ? "请继续按住，准备完成后再说话" : transcribingVoice ? "请稍候，不需要再次操作" : "现在可以说话，松开即可完成"}</h3>
+                  <p>{voiceMessage}</p>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function MessageSource({ source }) {
+  const presentation = aiSourcePresentation(source);
+  const Icon = presentation.kind === "smart"
+    ? Sparkles
+    : presentation.kind === "local"
+      ? Cpu
+      : presentation.kind === "safety"
+        ? ShieldCheck
+        : MessageCircle;
+  return (
+    <span
+      className={`chat-source-icon ${presentation.kind}`}
+      role="img"
+      aria-label={presentation.label}
+      title={presentation.label}
+    >
+      <Icon size={14} aria-hidden="true" />
+    </span>
   );
 }
 

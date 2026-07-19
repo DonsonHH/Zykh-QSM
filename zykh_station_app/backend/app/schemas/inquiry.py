@@ -87,6 +87,14 @@ class InquiryTurnRequest(BaseModel):
     transcript: str = Field(min_length=1, max_length=600)
 
 
+class InquiryInformationRevisionRequest(BaseModel):
+    main_complaint: str = Field(min_length=1, max_length=300)
+    duration: str = Field(min_length=1, max_length=120)
+    used_medicines: str = Field(min_length=1, max_length=180)
+    allergy_or_contraindication: str = Field(min_length=1, max_length=180)
+    finalize: bool = True
+
+
 class InquiryVitalsRequest(BaseModel):
     temperature: float = Field(gt=0, lt=50)
     heart_rate: int = Field(gt=0, lt=260)

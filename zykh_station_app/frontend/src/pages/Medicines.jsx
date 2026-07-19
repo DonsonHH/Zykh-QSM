@@ -41,6 +41,18 @@ export function Medicines({ notify, focus, onNavigate }) {
   }, [notify]);
 
   useEffect(() => {
+    const updateInventory = (event) => {
+      const updated = event.detail;
+      if (!updated?.id) return;
+      setMedicines((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setSelectedMedicine((current) => current?.id === updated.id ? updated : current);
+      notify(`${updated.hardware_slot || updated.slot}号仓已标记为缺药`);
+    };
+    window.addEventListener("zykh:medicine-updated", updateInventory);
+    return () => window.removeEventListener("zykh:medicine-updated", updateInventory);
+  }, [notify]);
+
+  useEffect(() => {
     if (!focus || medicines.length === 0) {
       return;
     }

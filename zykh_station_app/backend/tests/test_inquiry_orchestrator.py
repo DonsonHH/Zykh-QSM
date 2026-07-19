@@ -14,6 +14,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app import db  # noqa: E402
 from app.schemas.inquiry import (  # noqa: E402
     InquiryExtractedInformation,
+    InquiryInformationRevisionRequest,
     InquirySessionCreateRequest,
     InquiryTreatmentConfirmRequest,
     InquiryTurnRequest,
@@ -34,6 +35,34 @@ class FakeInterpreter:
         if self.results:
             return self.results.pop(0)
         return SymptomInterpretation(source="rules_fallback")
+
+
+class FakeOpeningInterpreter(FakeInterpreter):
+    def opening_question(self, profile, fallback):
+        return f"{profile['name']}，今天感觉怎么样？哪里最不舒服？", "cloud"
+
+
+class CapturingInterpreter(FakeInterpreter):
+    def __init__(self, results: list[SymptomInterpretation]) -> None:
+        super().__init__(results)
+        self.contexts = []
+
+    def interpret(self, _transcript, existing, _profile) -> SymptomInterpretation:
+        self.contexts.append(existing)
+        return super().interpret()
+
+
+class RecommendationInterpreter(FakeInterpreter):
+    def explain_recommendation(self, _context):
+        return {
+            "ok": True,
+            "source": "cloud",
+            "summary": "你目前主要是喉咙疼和干咳，现有信息更适合先照顾咽喉不适。",
+            "option_reasons": {
+                "A": "银黄颗粒更贴近这次咽喉疼和干咳，作为当前首选更直接。",
+                "B": "如果咳嗽感更突出，可对照这一方案的适用说明再选择。",
+            },
+        }
 
 
 class UnavailableAiService:
@@ -63,6 +92,14 @@ class FakeDispenseService:
         )
 
 
+class FakeGuestArchiveService:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def schedule_capture(self, session_id: str, guest_name: str) -> None:
+        self.requests.append((session_id, guest_name))
+
+
 class InquiryOrchestratorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -79,10 +116,12 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self,
         interpreter: FakeInterpreter | None = None,
         dispense_service: FakeDispenseService | None = None,
+        guest_archive_service: FakeGuestArchiveService | None = None,
     ):
         service = InquiryOrchestrator(
             interpreter=interpreter or FakeInterpreter([]),
             dispense_service=dispense_service,
+            guest_archive_service=guest_archive_service,
         )
         session = service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
         return service, session
@@ -93,13 +132,73 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(session.user_name, "张三")
         self.assertEqual(session.stage, "symptoms")
         self.assertEqual(session.next_action, "ask")
+        self.assertIn("今天哪里不舒服", session.reply)
+        self.assertIn("慢慢说", session.reply)
+        self.assertNotIn("我已经读取你的基础信息", session.reply)
 
         restored = service.get_session(session.session_id)
         self.assertEqual(restored.user_name, "张三")
         self.assertEqual(restored.messages[0].role, "assistant")
         self.assertNotIn("确认姓名", restored.reply)
 
-    def test_model_follow_up_cannot_skip_the_current_missing_field(self) -> None:
+    def test_guest_session_schedules_a_background_identity_photo(self) -> None:
+        archive = FakeGuestArchiveService()
+        service = InquiryOrchestrator(
+            interpreter=FakeInterpreter([]),
+            dispense_service=FakeDispenseService(),
+            guest_archive_service=archive,
+        )
+
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+
+        self.assertEqual(archive.requests, [(session.session_id, "访客")])
+        self.assertIn("今天哪里不舒服", session.reply)
+
+    def test_cloud_opening_can_replace_the_fallback_without_controlling_session_state(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=FakeOpeningInterpreter([]),
+            guest_archive_service=FakeGuestArchiveService(),
+        )
+
+        session = service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
+
+        self.assertEqual(session.reply, "张三，今天感觉怎么样？哪里最不舒服？")
+        self.assertEqual(session.source, "cloud")
+        self.assertEqual(session.stage, "symptoms")
+        self.assertEqual(session.next_action, "ask")
+
+    def test_distinct_symptoms_reach_distinct_otc_medicines(self) -> None:
+        knowledge = MedicineKnowledgeRepository()
+        examples = [
+            (["感冒鼻部症状"], ["清稀鼻涕"], "slot-03-ganmao-qingre"),
+            (["咳嗽咳痰"], ["干咳"], "slot-05-nin-jiom-pei-pa-koa"),
+            (["咽喉口腔不适"], ["口腔溃疡"], "slot-11-guilin-xiguashuang"),
+            (["恶心暑湿"], ["恶心呕吐"], "slot-08-huoxiang-zhengqi"),
+            (["腹泻肠道不适"], ["腹泻"], "slot-09-bifid-triple"),
+            (["便秘"], ["便秘"], "slot-06-lactulose"),
+            (["胃酸胃部不适"], ["反酸烧心"], "slot-12-hydrotalcite"),
+            (["皮肤真菌不适"], [], "slot-16-ketoconazole"),
+            (["肌肉关节疼痛"], ["肌肉关节疼痛"], "slot-19-ketoprofen-gel"),
+            (["干眼不适"], ["眼干眼涩"], "slot-13-sodium-hyaluronate-eye"),
+            (["鼻炎过敏"], ["鼻痒喷嚏"], "slot-18-budesonide-nasal"),
+            (["营养补充"], [], "slot-02-centrum"),
+        ]
+
+        selected = []
+        for dimensions, features, expected_id in examples:
+            options = knowledge.treatment_options(
+                dimensions,
+                "头孢过敏",
+                symptom_features=features,
+            )
+            self.assertTrue(options, dimensions)
+            actual_id = options[0].medicines[0].id
+            self.assertEqual(actual_id, expected_id, dimensions)
+            selected.append(actual_id)
+
+        self.assertGreaterEqual(len(set(selected)), 10)
+
+    def test_model_can_choose_the_most_useful_next_question(self) -> None:
         interpreter = FakeInterpreter(
             [
                 SymptomInterpretation(
@@ -115,13 +214,198 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我有点流鼻涕"))
 
-        self.assertEqual(result.stage, "clarification")
-        self.assertIn("清稀鼻涕", result.reply)
-        self.assertNotIn("过敏", result.reply)
+        self.assertEqual(result.stage, "allergies")
+        self.assertEqual(result.reply, "有没有药物过敏？")
+        self.assertEqual(result.source, "cloud")
 
-        duration = service.process_turn(session.session_id, InquiryTurnRequest(transcript="是清稀鼻涕"))
-        self.assertEqual(duration.stage, "duration")
-        self.assertIn("什么时候开始", duration.reply)
+    def test_model_worded_follow_up_is_used_when_it_matches_the_required_field(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["便秘"],
+                    dimension_evidence={"便秘": "排便困难"},
+                    follow_up_question="排便困难持续多久了，是今天才有还是已经好几天？",
+                    confidence=0.9,
+                    source="cloud",
+                )
+            ]
+        )
+        service, session = self.create_session(interpreter)
+
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="最近排便困难"))
+
+        self.assertEqual(result.stage, "duration")
+        self.assertEqual(result.reply, "排便困难持续多久了，是今天才有还是已经好几天？")
+        self.assertEqual(result.source, "cloud")
+
+    def test_model_can_continue_one_material_followup_after_core_facts_are_complete(self) -> None:
+        repeated = [
+            SymptomInterpretation(
+                symptom_dimensions=["便秘"],
+                dimension_evidence={"便秘": "排便困难"},
+                duration="一天",
+                used_medicines="未使用",
+                allergy_or_contraindication="无",
+                follow_up_question=question,
+                action_intent="ask",
+                confidence=0.9,
+                source="cloud",
+            )
+            for question in ("大便是否干硬？", "大概几天一次？", "最近饮水怎么样？")
+        ]
+        service, session = self.create_session(FakeInterpreter(repeated))
+
+        first = service.process_turn(session.session_id, InquiryTurnRequest(transcript="排便困难一天了"))
+        second = service.process_turn(session.session_id, InquiryTurnRequest(transcript="大便有点干硬"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="大概两天一次"))
+
+        self.assertEqual(first.reply, "大便是否干硬？")
+        self.assertEqual(second.reply, "大概几天一次？")
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertEqual(result.reply, "最近饮水怎么样？")
+
+    def test_model_does_not_repeat_a_question_the_user_already_answered(self) -> None:
+        repeated_reply = "好的，伤口没有红肿或渗液。请问伤口有没有红肿或渗液？"
+        service, session = self.create_session(
+            FakeInterpreter(
+                [
+                    SymptomInterpretation(
+                        symptom_dimensions=["轻微外伤"],
+                        dimension_evidence={"轻微外伤": "膝盖擦伤"},
+                        symptom_features=["皮肤破损"],
+                        duration="刚刚",
+                        used_medicines="未使用",
+                        allergy_or_contraindication="无",
+                        follow_up_question="伤口有没有红肿或渗液？",
+                        assistant_reply=repeated_reply,
+                        action_intent="ask",
+                        confidence=0.9,
+                        source="cloud",
+                    ),
+                    SymptomInterpretation(
+                        symptom_dimensions=["轻微外伤"],
+                        dimension_evidence={"轻微外伤": "没有红肿或渗液"},
+                        follow_up_question="伤口有没有红肿或渗液？",
+                        assistant_reply=repeated_reply,
+                        action_intent="ask",
+                        confidence=0.9,
+                        source="cloud",
+                    ),
+                ]
+            )
+        )
+
+        first = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我刚刚膝盖擦伤了"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="没有红肿或渗液"))
+
+        self.assertEqual(first.next_action, "ask")
+        self.assertEqual(result.stage, "result")
+        self.assertNotEqual(result.reply, repeated_reply)
+
+    def test_model_receives_the_complete_prior_conversation(self) -> None:
+        interpreter = CapturingInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["便秘"],
+                    dimension_evidence={"便秘": "排便困难"},
+                    follow_up_question=f"继续确认第{index}项？",
+                    assistant_reply=f"我记下了。继续确认第{index}项？",
+                    action_intent="ask",
+                    confidence=0.8,
+                    source="cloud",
+                )
+                for index in range(1, 9)
+            ]
+        )
+        service, session = self.create_session(interpreter)
+        for index in range(1, 8):
+            service.process_turn(session.session_id, InquiryTurnRequest(transcript=f"补充信息{index}"))
+
+        service.process_turn(session.session_id, InquiryTurnRequest(transcript="最后一项补充"))
+
+        conversation = interpreter.contexts[-1]["conversation"]
+        self.assertGreater(len(conversation), 12)
+        self.assertEqual(conversation[0]["role"], "assistant")
+        self.assertIn("今天哪里不舒服", conversation[0]["content"])
+
+    def test_ai_writes_natural_reasons_without_changing_safe_options(self) -> None:
+        interpreter = RecommendationInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["咽喉口腔不适"],
+                    dimension_evidence={"咽喉口腔不适": "喉咙疼"},
+                    symptom_features=["咽喉疼痛"],
+                    duration="两天",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="头孢过敏",
+                    action_intent="analyze",
+                    confidence=0.92,
+                    source="cloud",
+                )
+            ]
+        )
+        service, session = self.create_session(interpreter)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="喉咙疼两天了，没吃药"),
+        )
+
+        self.assertGreaterEqual(len(result.treatment_options), 1)
+        self.assertIn("更贴近", result.treatment_options[0].when)
+        self.assertNotIn("优先覆盖", result.treatment_options[0].when)
+        self.assertTrue(result.reasoning_summary.startswith("你目前主要是"))
+
+    def test_review_revision_replaces_facts_and_recomputes_recommendation_once(self) -> None:
+        interpreter = FakeInterpreter(
+            [
+                SymptomInterpretation(
+                    symptom_dimensions=["便秘"],
+                    dimension_evidence={"便秘": "排便困难"},
+                    symptom_features=["便秘"],
+                    duration="一天",
+                    used_medicines="未使用",
+                    allergy_or_contraindication="无",
+                    action_intent="analyze",
+                    confidence=0.91,
+                    source="cloud",
+                ),
+                SymptomInterpretation(
+                    symptom_dimensions=["胃酸胃部不适"],
+                    dimension_evidence={"胃酸胃部不适": "反酸烧心"},
+                    symptom_features=["反酸烧心"],
+                    reasoning_summary="你描述的是反酸烧心，持续半天，目前还没有用药。",
+                    action_intent="analyze",
+                    confidence=0.93,
+                    source="cloud",
+                ),
+            ]
+        )
+        service, session = self.create_session(interpreter)
+        original = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="排便困难一天了，还没有用药，也没有过敏"),
+        )
+        self.assertEqual(original.primary_candidate.id, "slot-06-lactulose")
+
+        revised = service.revise_information(
+            session.session_id,
+            InquiryInformationRevisionRequest(
+                main_complaint="反酸烧心",
+                duration="半天",
+                used_medicines="未使用",
+                allergy_or_contraindication="头孢过敏",
+                finalize=True,
+            ),
+        )
+
+        self.assertEqual(revised.stage, "result")
+        self.assertEqual(revised.extracted_information.symptoms_text, "反酸烧心")
+        self.assertEqual(revised.extracted_information.duration, "半天")
+        self.assertEqual(revised.extracted_information.allergy_or_contraindication, "头孢过敏")
+        self.assertEqual(revised.primary_candidate.id, "slot-12-hydrotalcite")
+        self.assertEqual(revised.action_status, "ready")
 
     def test_old_age_alone_does_not_raise_risk(self) -> None:
         interpreter = FakeInterpreter(
@@ -166,12 +450,10 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(pending.next_action, "measure_vitals")
 
-        clarification = service.attach_vitals(
+        result = service.attach_vitals(
             session.session_id,
             InquiryVitalsRequest(temperature=36.6, heart_rate=76, spo2=98, measured_at="2026-07-18 09:00:00"),
         )
-        self.assertEqual(clarification.stage, "clarification")
-        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="还有一点恶心想吐"))
 
         self.assertEqual(result.risk_level, "medium")
         self.assertEqual(result.next_action, "show_recommendation")
@@ -201,6 +483,32 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.extracted_information.duration, "五分钟")
         self.assertEqual(result.extracted_information.used_medicines, "未使用")
         self.assertEqual(result.extracted_information.allergy_or_contraindication, "无")
+
+    def test_invalid_asr_text_does_not_resolve_a_structured_clarification(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+        clarification = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我感冒流鼻涕"))
+        retry = service.process_turn(session.session_id, InquiryTurnRequest(transcript="蝗虫"))
+
+        self.assertEqual(clarification.extracted_information.pending_clarification, "nasal_discharge")
+        self.assertEqual(retry.extracted_information.pending_clarification, "nasal_discharge")
+        self.assertNotIn("nasal_discharge", retry.extracted_information.clarification_answers)
+        self.assertIn("清稀", retry.reply)
+
+    def test_chest_tightness_and_shortness_of_breath_are_escalated_immediately(self) -> None:
+        service = InquiryOrchestrator(
+            interpreter=SymptomInterpreter(ai_service=UnavailableAiService()),
+            dispense_service=FakeDispenseService(),
+        )
+        session = service.create_session(InquirySessionCreateRequest(guest_name="访客"))
+        result = service.process_turn(session.session_id, InquiryTurnRequest(transcript="我胸闷气短"))
+
+        self.assertIn(result.risk_level, {"high", "emergency"})
+        self.assertEqual(result.next_action, "escalate")
+        self.assertFalse(result.can_view_medicines)
 
     def test_explicit_vitals_request_interrupts_missing_field_order_and_then_resumes(self) -> None:
         service = InquiryOrchestrator(
@@ -518,6 +826,16 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIsNotNone(result.alternative_candidate)
         self.assertNotEqual(result.primary_candidate.id, result.alternative_candidate.id)
         self.assertLessEqual(len(result.treatment_options), 2)
+
+    def test_knowledge_repository_never_returns_more_than_two_options_by_default(self) -> None:
+        options = MedicineKnowledgeRepository().treatment_options(
+            ["感冒鼻部症状", "发热全身不适", "咳嗽咳痰", "咽喉口腔不适"],
+            "头孢过敏",
+            symptom_features=["清稀鼻涕", "干咳", "咽喉疼痛"],
+        )
+
+        self.assertGreaterEqual(len(options), 1)
+        self.assertLessEqual(len(options), 2)
 
     def test_model_action_intent_can_request_vitals_for_a_non_default_dimension(self) -> None:
         interpreter = FakeInterpreter(

@@ -17,11 +17,13 @@ import {
   confirmInquiryTreatment,
   createInquirySession,
   loadInquirySession,
+  reviseInquiryInformation,
   sendInquiryTurn
 } from "../api/inquiry.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
+import { InquiryInformationReview } from "../components/InquiryInformationReview.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import {
@@ -66,6 +68,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const [sending, setSending] = useState(false);
   const [openingTreatment, setOpeningTreatment] = useState(false);
   const [treatmentAction, setTreatmentAction] = useState(null);
+  const [manualReviewOpen, setManualReviewOpen] = useState(false);
+  const [resultConfirmed, setResultConfirmed] = useState(false);
+  const [revisingResult, setRevisingResult] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
@@ -104,32 +110,25 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     const dimensions = (extracted.symptom_dimensions || [])
       .map((value) => symptomDimensionLabel(value))
       .filter(Boolean);
+    const evidence = Object.values(extracted.dimension_evidence || {}).filter(Boolean);
     const vitals = session?.vitals || {};
     const temperature = Number(vitals.temperature) > 0 ? `${Number(vitals.temperature).toFixed(1)}℃` : "待测";
     const heartRate = Number(vitals.heart_rate) > 0 ? `${Number(vitals.heart_rate)}` : "待测";
     const spo2 = Number(vitals.spo2) > 0 ? `${Number(vitals.spo2)}%` : "待测";
     const allergy = extracted.allergy_or_contraindication || displayedUser?.allergies || "";
-    const facts = [
-      dimensions.length > 0,
-      Boolean(extracted.duration),
-      Boolean(extracted.used_medicines),
-      Boolean(allergy),
-      temperature !== "待测" && heartRate !== "待测" && spo2 !== "待测"
-    ];
     const medicineText = extracted.used_medicines === "未使用"
       ? "本次未用药"
       : extracted.used_medicines === "已使用"
         ? "本次已用药"
         : extracted.used_medicines || "尚未确认";
     return {
-      complaint: dimensions.join("、") || "等待描述",
+      complaint: evidence[0] || dimensions[0] || "等待描述",
       duration: extracted.duration || "尚未确认",
       medicine: medicineText,
       allergy: allergy || "尚未确认",
       temperature,
       heartRate,
-      spo2,
-      confirmedCount: facts.filter(Boolean).length
+      spo2
     };
   }, [displayedUser, session]);
 
@@ -263,6 +262,11 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
 
   function handleSessionUpdate(data) {
     setSession(data);
+    if (data.stage === "result") {
+      setResultConfirmed(false);
+      setRevisingResult(false);
+      setManualReviewOpen(false);
+    }
     if (data.next_action === "measure_vitals") {
       window.sessionStorage.removeItem("zykh-latest-vitals");
       window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, data.session_id);
@@ -275,6 +279,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     openingTreatmentRef.current = true;
     setOpeningTreatment(true);
     setTreatmentAction(null);
+    setManualReviewOpen(false);
+    setRevisingResult(false);
     try {
       let expectedItemIndex = Number(session?.action_progress_index || 0);
       while (mountedRef.current) {
@@ -316,7 +322,52 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
   }
 
-  const showResult = session?.stage === "result" || session?.stage === "escalated";
+  const resultReady = session?.stage === "result";
+  const showResult = session?.stage === "escalated" || (resultReady && resultConfirmed);
+  const showReview = Boolean(
+    session && (manualReviewOpen || (resultReady && !resultConfirmed && !revisingResult))
+  );
+
+  async function confirmInformationReview(information, changed = false) {
+    if (savingReview) return;
+    setManualReviewOpen(false);
+    if (changed && sessionId) {
+      setSavingReview(true);
+      try {
+        const updated = await reviseInquiryInformation(sessionId, {
+          ...information,
+          finalize: resultReady
+        });
+        setSession(updated);
+        setRevisingResult(false);
+        setResultConfirmed(updated.stage === "result");
+        if (updated.next_action === "measure_vitals") {
+          window.sessionStorage.removeItem("zykh-latest-vitals");
+          window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, updated.session_id);
+          window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 500);
+        } else if (updated.stage !== "result") {
+          notify("修正内容已保存，请继续问询");
+        }
+      } catch (error) {
+        setManualReviewOpen(true);
+        notify(error.message || "问询信息保存失败，请重试");
+      } finally {
+        setSavingReview(false);
+      }
+      return;
+    }
+    if (resultReady) {
+      setResultConfirmed(true);
+      setRevisingResult(false);
+    } else {
+      notify("已确认当前问询信息，可以继续补充");
+    }
+  }
+
+  function continueInquiryFromReview() {
+    setManualReviewOpen(false);
+    if (resultReady) setRevisingResult(true);
+  }
 
   return (
     <main className="inquiry-page conversation-layout" id="main-content">
@@ -337,21 +388,17 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             <p><HeartPulse size={18} aria-hidden="true" />{displayedUser?.conditions || "健康背景待补充"}</p>
           </div>
           <div className="inquiry-live-summary">
-            <header><span>本次已确认</span><strong>{contextSummary.confirmedCount}/5</strong></header>
-            <article className="inquiry-chief-fact">
-              <UserRound size={23} aria-hidden="true" />
-              <span><small>本次情况</small><strong>{contextSummary.complaint}</strong></span>
-            </article>
-            <div className="inquiry-fact-pair">
-              <article><Clock3 size={20} aria-hidden="true" /><span><small>开始时间</small><strong>{contextSummary.duration}</strong></span></article>
-              <article><Pill size={20} aria-hidden="true" /><span><small>本次用药</small><strong>{contextSummary.medicine}</strong></span></article>
+            <header><span>问询信息</span></header>
+            <div className="inquiry-fact-list">
+              <article className="inquiry-chief-fact"><UserRound size={21} /><span><small>主要不适</small><strong>{contextSummary.complaint}</strong></span></article>
+              <div className="inquiry-fact-pair">
+                <article><Clock3 size={20} /><span><small>持续时间</small><strong>{contextSummary.duration}</strong></span></article>
+                <article><Pill size={20} /><span><small>本次用药</small><strong>{contextSummary.medicine}</strong></span></article>
+              </div>
+              <article className="inquiry-allergy-fact"><ShieldAlert size={20} /><span><small>过敏或禁忌</small><strong>{contextSummary.allergy}</strong></span></article>
             </div>
-            <article className="inquiry-allergy-fact">
-              <ShieldAlert size={21} aria-hidden="true" />
-              <span><small>过敏禁忌</small><strong>{contextSummary.allergy}</strong></span>
-            </article>
             <section className="inquiry-core-vitals" aria-label="核心体征">
-              <header><Thermometer size={19} aria-hidden="true" /><strong>核心体征</strong></header>
+              <header><Thermometer size={19} aria-hidden="true" /><strong>体征信息</strong></header>
               <div>
                 <span><HeartPulse size={18} /><small>心率</small><strong>{contextSummary.heartRate}</strong></span>
                 <span><Droplets size={18} /><small>血氧</small><strong>{contextSummary.spo2}</strong></span>
@@ -365,6 +412,14 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       <section className="inquiry-flow-card chat-only" aria-label="AI 应急问询流程">
         {!identityConfirmed ? (
           <InquiryIdentityGate candidate={candidateUser} status={faceIdentityStatus} onConfirm={confirmIdentity} onRetry={retryIdentity} onRequestGuest={confirmGuestInquiry} />
+        ) : showReview ? (
+          <InquiryInformationReview
+            session={session}
+            ready={resultReady}
+            saving={savingReview}
+            onConfirm={confirmInformationReview}
+            onContinue={continueInquiryFromReview}
+          />
         ) : showResult ? (
           <InquiryResultStep
             result={session}
@@ -376,7 +431,15 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             networkStatus={networkStatus}
           />
         ) : session ? (
-          <InquiryChatStep session={session} sending={sending} notify={notify} onSend={handleTurn} onReset={resetFlow} networkStatus={networkStatus} />
+          <InquiryChatStep
+            session={session}
+            sending={sending}
+            notify={notify}
+            onSend={handleTurn}
+            onReset={resetFlow}
+            onReview={() => setManualReviewOpen(true)}
+            networkStatus={networkStatus}
+          />
         ) : (
           <div className="inquiry-session-loading" role="status">正在建立本次问询...</div>
         )}

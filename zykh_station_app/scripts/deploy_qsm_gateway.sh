@@ -31,6 +31,7 @@ LOCAL_AUDIO_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_audio_capture_g
 LOCAL_FINGERPRINT_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/fingerprint_gateway.pl"
 LOCAL_FINGERPRINT_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_fingerprint_gateway.sh"
 LOCAL_FINGERPRINT_DRIVER="$REPO_ROOT/zykh_station_app/qsm_gateway/as608.pl"
+LOCAL_HOST_TETHER="$REPO_ROOT/zykh_station_app/qsm_gateway/start_host_tether.sh"
 FACE_BUNDLE="${QSM_FACE_BUNDLE:-}"
 FINGERPRINT_BUNDLE="${QSM_FINGERPRINT_BUNDLE:-}"
 TEMP_DIR=""
@@ -57,6 +58,7 @@ fail() {
 [ -f "$LOCAL_FINGERPRINT_GATEWAY" ] || fail "找不到指纹识别网关：$LOCAL_FINGERPRINT_GATEWAY"
 [ -f "$LOCAL_FINGERPRINT_START" ] || fail "找不到指纹识别启动脚本：$LOCAL_FINGERPRINT_START"
 [ -f "$LOCAL_FINGERPRINT_DRIVER" ] || fail "找不到指纹驱动：$LOCAL_FINGERPRINT_DRIVER"
+[ -f "$LOCAL_HOST_TETHER" ] || fail "找不到 QSM 主机网络共享脚本：$LOCAL_HOST_TETHER"
 command -v adb >/dev/null 2>&1 || fail "未找到 adb"
 
 DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
@@ -73,6 +75,8 @@ fi
 
 log "部署 UART8 体征适配到现有外设网关"
 $ADB_PREFIX shell "mkdir -p '$QSM_HOME/scripts' '$QSM_HOME/data'" >/dev/null || fail "创建板端目录失败"
+$ADB_PREFIX push "$LOCAL_HOST_TETHER" "$QSM_HOME/scripts/start_host_tether.sh" >/dev/null || fail "推送主机网络共享脚本失败"
+$ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_host_tether.sh'" >/dev/null || fail "设置主机网络共享脚本权限失败"
 $ADB_PREFIX shell "test -f '$QSM_HOME/server.pl'" >/dev/null 2>&1 \
   || fail "板端缺少 $QSM_HOME/server.pl；请先部署外设网关，再安装 UART8 适配。"
 $ADB_PREFIX push "$LOCAL_START" "$QSM_HOME/scripts/start_station_gateway.sh" >/dev/null || fail "推送外设网关启动脚本失败"

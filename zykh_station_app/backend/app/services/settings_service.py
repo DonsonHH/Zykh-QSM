@@ -107,6 +107,13 @@ class SettingsService:
         return "Soft blocked: yes" not in (result.stdout or "")
 
     def _set_wifi(self, enabled: bool) -> str:
+        if not enabled:
+            if not self._bool_setting("sim_enabled", True):
+                return "请先开启数据网络；为避免失去连接，Wi-Fi 保持开启。"
+            sim_result = NetworkService().start_4g()
+            if not sim_result.get("ok"):
+                detail = str(sim_result.get("message") or "数据网络备用通道未就绪。")
+                return f"{detail} 为避免失去连接，Wi-Fi 保持开启。"
         action = "on" if enabled else "off"
         result = self._run(["nmcli", "radio", "wifi", action])
         if result and result.returncode == 0:
@@ -128,6 +135,7 @@ class SettingsService:
                 db.set_setting("network_mode", previous_mode)
             return "" if result.get("ok") else str(result.get("message") or "SIM 网络启动失败，请检查外设连接。")
 
+        tether = NetworkService().disable_host_tether()
         command = (
             "killall udhcpc 2>/dev/null; "
             "route del default dev usb0 2>/dev/null; "
@@ -138,9 +146,9 @@ class SettingsService:
         if serial:
             adb.extend(["-s", serial])
         result = self._run([*adb, "shell", command], timeout=8)
-        if result and result.returncode == 0:
+        if result and result.returncode == 0 and tether.get("ok"):
             return ""
-        return "SIM 开关状态已保存，但外设网络接口未能关闭。"
+        return str(tether.get("message") or "SIM 开关状态已保存，但外设网络接口未能关闭。")
 
     def _set_host_speaker_volume(self, volume: int) -> None:
         percent = max(0, min(round((int(volume) / 255) * 100), 100))

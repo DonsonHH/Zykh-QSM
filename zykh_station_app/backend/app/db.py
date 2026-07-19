@@ -183,6 +183,20 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS inquiry_messages_session_idx ON inquiry_messages(session_id, created_at, id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inquiry_guest_archives (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL UNIQUE,
+              guest_name TEXT NOT NULL,
+              captured_at TEXT NOT NULL,
+              image_path TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL,
+              error_message TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(session_id) REFERENCES inquiry_sessions(session_id)
+            )
+            """
+        )
         _ensure_column(conn, "inquiry_sessions", "reasoning_summary", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "inquiry_sessions", "model_action_intent", "TEXT NOT NULL DEFAULT 'ask'")
         _ensure_column(conn, "inquiry_sessions", "action_reason", "TEXT NOT NULL DEFAULT ''")
@@ -328,8 +342,14 @@ def init_db() -> None:
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in columns:
+    if column in columns:
+        return
+    try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except sqlite3.OperationalError:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            raise
 
 
 def _migrate_today_plans(conn: sqlite3.Connection) -> None:

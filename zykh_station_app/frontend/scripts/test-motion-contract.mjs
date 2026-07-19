@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
+  "components/BottomNav.jsx",
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
   "components/InquiryEntryCard.jsx",
@@ -70,8 +71,9 @@ assert.match(idleScreen, /pace="idle"/, "idle screen icon does not use the slowe
 assert.doesNotMatch(idleScreen, /HandwrittenHello|<HandwrittenHello/, "idle screen still renders the Hello animation");
 
 const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
-assert.doesNotMatch(bottomNav, /StrokeDrawIcon|useState/, "frequent bottom navigation actions should use stable static icons");
-assert.match(bottomNav, /<Icon size=\{27\} strokeWidth=\{2\.1\}/, "bottom navigation lost its consistent icon geometry");
+assert.match(bottomNav, /StrokeDrawIcon/, "bottom navigation motion was not restored");
+assert.match(bottomNav, /replayKey/, "each navigation press cannot replay its own icon motion");
+assert.match(bottomNav, /size=\{27\}\s+strokeWidth=\{2\.1\}/, "bottom navigation lost its consistent icon geometry");
 
 for (const file of allowedDrawFiles) {
   const content = await readFile(`${sourceRoot}/${file}`, "utf8");
@@ -93,6 +95,9 @@ assert.match(appStyles, /\.vitals-measure-progress/, "vitals progress feedback i
 assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does not advance from left to right");
 assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
 assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating vitals loader is still present");
+assert.match(appStyles, /\.toast\s*\{[\s\S]*top:\s*16px[\s\S]*transform:\s*translate\(-50%, -16px\)/, "toast does not enter downward from the top bar");
+assert.match(appStyles, /\.medicine-card-context \.medicine-efficacy\s*\{[\s\S]*color:\s*var\(--primary\)/, "medicine category labels are not consistently blue");
+assert.match(appStyles, /\.detail-section\.dosage-section h3 svg\s*\{[\s\S]*color:\s*var\(--primary\)/, "medicine detail dosage icon is not blue");
 
 const vitalsPage = await readFile(`${sourceRoot}/pages/Vitals.jsx`, "utf8");
 assert.match(vitalsPage, /vitals-back-button/, "vitals page is missing its top-left back button");
@@ -115,6 +120,13 @@ const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");
 assert.match(app, /document\.startViewTransition/, "same-document page transitions are not enabled");
 assert.match(app, /flushSync\(update\)/, "React page updates are not committed inside the view transition callback");
 assert.doesNotMatch(app, /loadDashboard\(identity|__unconfirmed__/, "home dashboard still depends on a confirmed identity");
+
+const settingsPage = await readFile(`${sourceRoot}/pages/Settings.jsx`, "utf8");
+const settingsStyles = await readFile(`${sourceRoot}/styles/settings.css`, "utf8");
+assert.match(settingsPage, /controlsLocked = loading \|\| saveState === "saving"/, "settings controls are editable while device state is unresolved");
+assert.match(settingsPage, /settings-loading-shield[\s\S]*正在读取设备设置[\s\S]*读取完成后即可修改/, "settings loading lock is not explicit to the operator");
+assert.match(settingsStyles, /\.settings-switch\s*\{[\s\S]*width:\s*54px[\s\S]*height:\s*32px[\s\S]*box-sizing:\s*border-box/, "settings switches do not share stable aligned geometry");
+assert.match(settingsStyles, /\.settings-loading-shield\s*\{[\s\S]*position:\s*absolute[\s\S]*inset:\s*0/, "settings loading shield does not cover all controls");
 const wakeHandler = app.match(/function handleWake\(\) \{([\s\S]*?)\n  \}/)?.[1] || "";
 assert.ok(wakeHandler, "home wake handler is missing");
 assert.doesNotMatch(wakeHandler, /identify|capture|verify/, "waking the home screen still triggers identity recognition");
@@ -135,10 +147,11 @@ const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "u
 assert.match(motionSystem, /--motion-control:\s*180ms/, "control feedback no longer shares the standard motion token");
 assert.match(motionSystem, /\.inquiry-assistant-orbit[\s\S]*animation-iteration-count:\s*2/, "home decorative motion runs forever");
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*::view-transition-old/, "polished view transitions ignore reduced motion");
+assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-backdrop-exit/, "admin dialogs disappear without an exit animation");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
 assert.match(home, /plan\.status === "待执行"/, "home medication list includes completed plans");
-assert.match(home, /orderMedicationPlans\(pendingPlans, now\)\.slice\(0, 3\)/, "home does not limit its nearest pending task list to three items");
+assert.match(home, /selectNearestMedicationPlans\(pendingPlans, now, 3\)/, "home does not select and chronologically display the nearest three pending tasks");
 assert.match(home, /home-medication-list/, "home medication tasks are not rendered as a list");
 assert.doesNotMatch(home, /metric-grid/, "home medication card still renders the removed summary metrics");
 assert.match(home, /home-plan-picker-trigger/, "home medication list has no scalable overflow picker");
@@ -202,19 +215,28 @@ assert.doesNotMatch(
 );
 assert.match(dispenseModal, /FACE_VERIFICATION_FRAME_INTERVAL_MS\s*=\s*250/, "face verification preview refresh is not bounded");
 assert.match(dispenseModal, /\/api\/identity\/frame\?t=/, "face verification does not use the recognition-owned live frame source");
-assert.match(dispenseModal, /DISPENSE_AUTO_CLOSE_MS\s*=\s*2000/, "successful dispense does not use the requested two-second close delay");
+assert.match(dispenseModal, /DISPENSE_COMPLETE_HOLD_MS\s*=\s*1200/, "successful dispense does not briefly show the cabinet-open result");
 assert.match(
   dispenseModal,
-  /phase === "complete"[\s\S]*window\.setTimeout\([\s\S]*onCancel[\s\S]*DISPENSE_AUTO_CLOSE_MS/,
-  "successful dispense does not close the confirmation modal automatically"
+  /phase === "complete"[\s\S]*window\.setTimeout\([\s\S]*setPhase\("inventory_check"\)[\s\S]*DISPENSE_COMPLETE_HOLD_MS/,
+  "successful dispense does not continue to inventory confirmation"
 );
 assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "auto-close callback is not stable across parent clock renders");
 assert.match(dispenseModal, /onCancelRef\.current\(\)/, "auto-close timer does not call the latest close callback");
 assert.match(
   dispenseModal,
   /if \(open && phase === "complete"\)[\s\S]*?\}, \[open, phase\]\);/,
-  "auto-close timer can still restart whenever a parent recreates the close callback"
+  "inventory confirmation timer can still restart whenever a parent recreates the close callback"
 );
+assert.match(dispenseModal, /<MedicineRemainingPrompt/, "dispense flow does not ask whether medicine remains");
+assert.match(dispenseModal, /updateMedicine\(medicine\.id, \{ stock: 0 \}\)/, "depleted medicine does not trigger the inventory warning");
+const remainingPrompt = await readFile(`${sourceRoot}/components/MedicineRemainingPrompt.jsx`, "utf8");
+assert.match(remainingPrompt, /INVENTORY_CONFIRM_SECONDS\s*=\s*10/, "inventory confirmation does not keep the requested ten-second window");
+assert.match(remainingPrompt, /nextValue === 0[\s\S]*onHasStockRef\.current\(\)/, "inventory confirmation timeout does not retain stock by default");
+assert.doesNotMatch(remainingPrompt, /\[busy, message, onHasStock, seconds\]/, "parent renders can restart the inventory timer");
+assert.match(remainingPrompt, /已经用完[\s\S]*还有药/, "inventory confirmation actions are incomplete");
+assert.match(appStyles, /remaining-progress-countdown\s+10s\s+linear/, "inventory progress ring is not smooth and linear");
+assert.match(dispenseModal, /useExitPresence/, "dispense confirmation disappears without an exit animation");
 assert.match(dispenseModal, /DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15/, "dispense fingerprint timeout is still too long");
 assert.match(dispenseModal, /await nextPaint\(\)[\s\S]*setPreviewActive\(true\)[\s\S]*await nextPaint\(\)/, "face preview is not remounted safely before retry");
 assert.match(dispenseModal, /key=\{`\$\{previewAttempt\}-\$\{previewRetry\}`\}/, "face preview retry reuses the stale image element");

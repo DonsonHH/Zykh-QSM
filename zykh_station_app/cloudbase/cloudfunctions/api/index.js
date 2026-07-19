@@ -1,8 +1,9 @@
 const cloud = require("wx-server-sdk");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
+
 const db = cloud.database();
-const schemaRevision = "2.1";
+const schemaRevision = "2.1-miniprogram";
 
 const collections = {
   devices: "devices",
@@ -31,13 +32,16 @@ const readActions = new Set([
   "GET_DEVICE",
   "LIST_MEDICINES",
   "GET_LATEST_VITALS",
+  "LIST_VITALS",
   "LIST_RECORDS",
   "LIST_COMMANDS",
+  "LIST_INQUIRIES",
   "GET_SNAPSHOT",
 ]);
 
 const allowedCommandTypes = new Set([
   "AUDIO_BEEP",
+  "AUDIO_SPEAK",
   "READ_VITALS_ALL",
   "AI_CHAT",
   "UPSERT_MEDICINE",
@@ -52,6 +56,13 @@ function nowText() {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
 }
 
+function firstPresent(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return null;
+}
+
 function cleanData(value) {
   const result = Object.assign({}, value || {});
   delete result._id;
@@ -64,10 +75,22 @@ function safeId(value) {
   return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
 }
 
+function normalizeVitals(vitals = {}) {
+  return Object.assign({}, vitals, {
+    heartRate: firstPresent(vitals.heartRate, vitals.heart_rate, vitals.heart_rate_bpm),
+    spo2: firstPresent(vitals.spo2, vitals.spo2_percent),
+    bodyTemp: firstPresent(vitals.bodyTemp, vitals.body_temp_c, vitals.target_temp_c, vitals.temperature),
+    quality: firstPresent(vitals.quality, vitals.signal_quality, vitals.status, "unknown"),
+    createdAt: firstPresent(vitals.createdAt, vitals.created_at, vitals.measured_at, vitals.time),
+  });
+}
+
 function expectedDeviceSecret(deviceId) {
   try {
     const map = JSON.parse((process.env.DEVICE_SECRETS || "{}").trim() || "{}");
-    if (Object.prototype.hasOwnProperty.call(map, deviceId)) return String(map[deviceId] || "").trim();
+    if (Object.prototype.hasOwnProperty.call(map, deviceId)) {
+      return String(map[deviceId] || "").trim();
+    }
   } catch (error) {
     // Fall through to the shared secret.
   }
@@ -88,12 +111,27 @@ function validateDeviceId(data) {
 function parseEvent(event = {}) {
   if (event.action) return { payload: event, isHttp: false };
   let body = event.body;
-  if (event.isBase64Encoded && typeof body === "string") body = Buffer.from(body, "base64").toString("utf8");
+  if (event.isBase64Encoded && typeof body === "string") {
+    body = Buffer.from(body, "base64").toString("utf8");
+  }
   if (typeof body === "string") {
-    try { body = body ? JSON.parse(body) : {}; } catch (error) { body = {}; }
+    try {
+      body = body ? JSON.parse(body) : {};
+    } catch (error) {
+      body = {};
+    }
   }
   if (body && body.action) return { payload: body, isHttp: true };
-  return { payload: event, isHttp: Boolean(event.httpMethod || event.requestContext) };
+  if (event.queryStringParameters && event.queryStringParameters.action) {
+    return {
+      payload: {
+        action: event.queryStringParameters.action,
+        data: event.queryStringParameters,
+      },
+      isHttp: true,
+    };
+  }
+  return { payload: event, isHttp: Boolean(event.httpMethod || event.headers || event.requestContext) };
 }
 
 function httpResult(result) {
@@ -116,7 +154,12 @@ async function setDocument(collection, id, data) {
 async function listAllDeviceRows(collection, deviceId, maximum = 2000) {
   const rows = [];
   for (let offset = 0; offset < maximum; offset += 100) {
-    const result = await db.collection(collection).where({ deviceId }).orderBy("_id", "asc").skip(offset).limit(100).get();
+    const result = await db.collection(collection)
+      .where({ deviceId })
+      .orderBy("_id", "asc")
+      .skip(offset)
+      .limit(100)
+      .get();
     const batch = result.data || [];
     rows.push(...batch);
     if (batch.length < 100) break;
@@ -129,12 +172,141 @@ async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
   for (const row of rows || []) {
     const id = idForRow(row);
     ids.push(id);
-    await setDocument(collection, id, Object.assign(cleanData(row), { deviceId, syncOwner: "zykh_station_app", updatedAt: nowText() }));
+    await setDocument(collection, id, Object.assign(cleanData(row), {
+      deviceId,
+      syncOwner: "zykh_station_app",
+      updatedAt: nowText(),
+    }));
   }
   const existing = await listAllDeviceRows(collection, deviceId);
   const keep = new Set(ids);
-  await Promise.all(existing.filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id)).map(item => db.collection(collection).doc(item._id).remove()));
+  await Promise.all(existing
+    .filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id))
+    .map(item => db.collection(collection).doc(item._id).remove()));
   return ids.length;
+}
+
+async function listRows(collection, deviceId, limit = 100, order = "updatedAt", direction = "desc") {
+  let query = db.collection(collection).where({ deviceId });
+  if (order) query = query.orderBy(order, direction);
+  const result = await query.limit(Math.min(Number(limit) || 20, 100)).get();
+  return result.data || [];
+}
+
+async function tryListRows(collection, deviceId, limit = 100, order = "updatedAt", direction = "desc") {
+  try {
+    return await listRows(collection, deviceId, limit, order, direction);
+  } catch (error) {
+    return [];
+  }
+}
+
+function commandToInquiry(command = {}) {
+  const payload = command.payload || {};
+  const result = command.result || {};
+  const commandId = command._id || command.id || command.commandId || "";
+  const question = firstPresent(payload.question, payload.message, payload.prompt, result.question, "");
+  const reply = firstPresent(
+    result.reply,
+    result.answer,
+    result.ai_message,
+    result.message,
+    result.content,
+    result.text,
+    result.summary,
+    result.error,
+    "",
+  );
+  const createdAt = firstPresent(command.createdAt, command.created_at, command.updatedAt, nowText());
+  const updatedAt = firstPresent(command.updatedAt, command.updated_at, createdAt);
+  const messages = [];
+  if (question) {
+    messages.push({
+      id: `${commandId || "ai"}-question`,
+      role: "user",
+      content: question,
+      source: "miniprogram",
+      created_at: createdAt,
+    });
+  }
+  if (reply) {
+    messages.push({
+      id: `${commandId || "ai"}-reply`,
+      role: command.status === "failed" ? "system" : "assistant",
+      content: reply,
+      source: "board",
+      created_at: updatedAt,
+    });
+  }
+  return {
+    deviceId: command.deviceId,
+    inquiry_id: commandId,
+    sourceCommandId: commandId,
+    target_user_id: firstPresent(payload.target_user_id, payload.user_id, ""),
+    target_user_name: firstPresent(payload.target_user_name, payload.user_name, payload.patient_name, "家庭成员"),
+    title: question || "AI 问诊",
+    topic: question || "AI 问诊",
+    symptoms_summary: question || "AI 问诊",
+    reasoning_summary: firstPresent(result.reasoning_summary, result.summary, ""),
+    reply,
+    ai_message: reply,
+    risk_label: firstPresent(result.risk_label, result.riskLevel, result.risk_level, ""),
+    risk_level: firstPresent(result.risk_level, result.riskLevel, ""),
+    status: command.status || "done",
+    messages,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    createdAt,
+    updatedAt,
+    syncOwner: "ai_command",
+  };
+}
+
+function summaryInquiryRows(device = {}) {
+  const summary = device.syncSummary || {};
+  return (summary.recentInquiries || []).map(row => Object.assign({}, row, {
+    deviceId: device.deviceId || device._id,
+    updatedAt: firstPresent(row.updatedAt, row.updated_at, row.createdAt, row.created_at, row.created_at),
+    syncOwner: "device_summary",
+  }));
+}
+
+function inquiryRowKey(row = {}) {
+  return String(firstPresent(row.sourceCommandId, row.inquiry_id, row.session_id, row._id, `${row.createdAt || row.created_at}-${row.title || row.symptoms_summary}`));
+}
+
+function inquiryTime(row = {}) {
+  const text = String(firstPresent(row.updatedAt, row.updated_at, row.createdAt, row.created_at, "")).replace(/-/g, "/");
+  const time = Date.parse(text);
+  return Number.isFinite(time) ? time : 0;
+}
+
+async function listInquiries(data) {
+  const limit = Math.min(Number(data.limit) || 100, 100);
+  const rows = await tryListRows(collections.inquiries, data.deviceId, limit, "updatedAt");
+  const commandRows = (await tryListRows(collections.commands, data.deviceId, 100, "updatedAt"))
+    .filter(command => command.type === "AI_CHAT")
+    .map(commandToInquiry);
+  let summaryRows = [];
+  try {
+    const device = (await db.collection(collections.devices).doc(data.deviceId).get()).data || {};
+    summaryRows = summaryInquiryRows(Object.assign({ deviceId: data.deviceId }, device));
+  } catch (error) {
+    summaryRows = [];
+  }
+  const map = new Map();
+  rows.concat(commandRows, summaryRows).forEach(row => {
+    const key = inquiryRowKey(row);
+    const current = map.get(key);
+    const currentMessages = Array.isArray(current && current.messages) ? current.messages.length : 0;
+    const nextMessages = Array.isArray(row.messages) ? row.messages.length : 0;
+    if (!current || nextMessages >= currentMessages || inquiryTime(row) >= inquiryTime(current)) {
+      map.set(key, row);
+    }
+  });
+  return Array.from(map.values())
+    .sort((a, b) => inquiryTime(b) - inquiryTime(a))
+    .slice(0, limit);
 }
 
 async function reportDevice(data) {
@@ -146,7 +318,11 @@ async function reportDevice(data) {
   } catch (error) {
     // The first heartbeat creates the document below.
   }
-  const patch = Object.assign(cleanData(data), { online: true, lastSeenAt: nowText(), updatedAt: nowText() });
+  const patch = Object.assign(cleanData(data), {
+    online: true,
+    lastSeenAt: nowText(),
+    updatedAt: nowText(),
+  });
   await setDocument(collections.devices, data.deviceId, patch);
   return patch;
 }
@@ -163,7 +339,10 @@ async function uploadMedicines(data) {
 
 async function uploadVitals(data) {
   if (!data.vitals) throw new Error("vitals required");
-  const row = Object.assign(cleanData(data.vitals), { deviceId: data.deviceId, createdAt: data.vitals.createdAt || nowText() });
+  const row = Object.assign(normalizeVitals(data.vitals), {
+    deviceId: data.deviceId,
+    createdAt: firstPresent(data.vitals.createdAt, data.vitals.created_at, data.vitals.measured_at, nowText()),
+  });
   const id = `${data.deviceId}-vitals-${safeId(data.vitals.id || data.vitals.recordId || row.createdAt)}`;
   await setDocument(collections.vitals, id, row);
   return Object.assign({ _id: id }, row);
@@ -171,7 +350,10 @@ async function uploadVitals(data) {
 
 async function uploadRecord(data) {
   if (!data.record) throw new Error("record required");
-  const row = Object.assign(cleanData(data.record), { deviceId: data.deviceId, createdAt: data.record.createdAt || nowText() });
+  const row = Object.assign(cleanData(data.record), {
+    deviceId: data.deviceId,
+    createdAt: data.record.createdAt || data.record.created_at || nowText(),
+  });
   const id = `${data.deviceId}-record-${safeId(data.record.id || data.record.recordId || row.createdAt)}`;
   await setDocument(collections.records, id, row);
   return Object.assign({ _id: id }, row);
@@ -181,23 +363,35 @@ async function uploadSnapshot(data) {
   const deviceId = data.deviceId;
   const snapshot = data.snapshot || {};
   const counts = {};
-  if (Object.prototype.hasOwnProperty.call(snapshot, "medicines")) counts.medicines = await replaceDeviceRows(collections.medicines, deviceId, snapshot.medicines || [], row => `${deviceId}-slot-${Number(row.slot || row.hardware_slot || 0)}`);
-  if (Object.prototype.hasOwnProperty.call(snapshot, "serviceUsers")) counts.serviceUsers = await replaceDeviceRows(collections.serviceUsers, deviceId, snapshot.serviceUsers || [], row => `${deviceId}-user-${safeId(row.id)}`);
-  if (Object.prototype.hasOwnProperty.call(snapshot, "plans")) counts.plans = await replaceDeviceRows(collections.plans, deviceId, snapshot.plans || [], row => `${deviceId}-plan-${safeId(row.id)}`);
-  if (Object.prototype.hasOwnProperty.call(snapshot, "inquiries")) counts.inquiries = await replaceDeviceRows(collections.inquiries, deviceId, snapshot.inquiries || [], row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.id)}`);
-  if (Object.prototype.hasOwnProperty.call(snapshot, "vitals")) counts.vitals = await replaceDeviceRows(collections.vitals, deviceId, snapshot.vitals || [], row => `${deviceId}-vitals-${safeId(row.id)}`);
-  if (Object.prototype.hasOwnProperty.call(snapshot, "records")) counts.records = await replaceDeviceRows(collections.records, deviceId, snapshot.records || [], row => `${deviceId}-record-${safeId(row.id)}`);
+  if (Object.prototype.hasOwnProperty.call(snapshot, "medicines")) {
+    counts.medicines = await replaceDeviceRows(collections.medicines, deviceId, snapshot.medicines || [], row => `${deviceId}-slot-${Number(row.slot || row.hardware_slot || 0)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "serviceUsers")) {
+    counts.serviceUsers = await replaceDeviceRows(collections.serviceUsers, deviceId, snapshot.serviceUsers || [], row => `${deviceId}-user-${safeId(row.id || row.user_id || row.name)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "plans")) {
+    counts.plans = await replaceDeviceRows(collections.plans, deviceId, snapshot.plans || [], row => `${deviceId}-plan-${safeId(row.id)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "inquiries")) {
+    counts.inquiries = await replaceDeviceRows(collections.inquiries, deviceId, snapshot.inquiries || [], row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.session_id || row.id)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "vitals")) {
+    counts.vitals = await replaceDeviceRows(collections.vitals, deviceId, snapshot.vitals || [], row => `${deviceId}-vitals-${safeId(row.id || row.measured_at || row.createdAt)}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "records")) {
+    counts.records = await replaceDeviceRows(collections.records, deviceId, snapshot.records || [], row => `${deviceId}-record-${safeId(row.id || row.created_at || row.createdAt)}`);
+  }
   return { counts, syncedAt: nowText(), schemaVersion: 2 };
 }
 
 function snapshotKind(kind, deviceId) {
   const map = {
     medicines: [collections.medicines, row => `${deviceId}-slot-${Number(row.slot || row.hardware_slot || 0)}`],
-    serviceUsers: [collections.serviceUsers, row => `${deviceId}-user-${safeId(row.id)}`],
+    serviceUsers: [collections.serviceUsers, row => `${deviceId}-user-${safeId(row.id || row.user_id || row.name)}`],
     plans: [collections.plans, row => `${deviceId}-plan-${safeId(row.id)}`],
-    inquiries: [collections.inquiries, row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.id)}`],
-    vitals: [collections.vitals, row => `${deviceId}-vitals-${safeId(row.id)}`],
-    records: [collections.records, row => `${deviceId}-record-${safeId(row.id)}`],
+    inquiries: [collections.inquiries, row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.session_id || row.id)}`],
+    vitals: [collections.vitals, row => `${deviceId}-vitals-${safeId(row.id || row.measured_at || row.createdAt)}`],
+    records: [collections.records, row => `${deviceId}-record-${safeId(row.id || row.created_at || row.createdAt)}`],
   };
   if (!map[kind]) throw new Error("unsupported snapshot kind");
   return map[kind];
@@ -209,7 +403,11 @@ async function upsertSnapshotBatch(data) {
   for (const row of data.rows || []) {
     const id = idForRow(row);
     ids.push(id);
-    await setDocument(collection, id, Object.assign(cleanData(row), { deviceId: data.deviceId, syncOwner: "zykh_station_app", updatedAt: nowText() }));
+    await setDocument(collection, id, Object.assign(cleanData(row), {
+      deviceId: data.deviceId,
+      syncOwner: "zykh_station_app",
+      updatedAt: nowText(),
+    }));
   }
   return { kind: data.kind, ids, count: ids.length };
 }
@@ -232,13 +430,6 @@ async function cleanupLegacyRecords(deviceId) {
   return legacy.length;
 }
 
-async function listRows(collection, deviceId, limit = 100, order = "updatedAt", direction = "desc") {
-  let query = db.collection(collection).where({ deviceId });
-  if (order) query = query.orderBy(order, direction);
-  const result = await query.limit(Math.min(Number(limit) || 20, 100)).get();
-  return result.data || [];
-}
-
 async function pullCommands(data) {
   try {
     const current = (await db.collection(collections.devices).doc(data.deviceId).get()).data || {};
@@ -248,6 +439,7 @@ async function pullCommands(data) {
   } catch (error) {
     // Missing device state is handled by the normal query below.
   }
+
   const running = await db.collection(collections.commands)
     .where({ deviceId: data.deviceId, status: "running" })
     .limit(20)
@@ -261,13 +453,16 @@ async function pullCommands(data) {
       data: { status: "pending", recoveryReason: "stale-running", updatedAt: nowText() },
     });
   }));
+
   const result = await db.collection(collections.commands)
     .where({ deviceId: data.deviceId, status: "pending" })
     .orderBy("createdAt", "asc")
     .limit(Math.min(Number(data.limit) || 10, 20))
     .get();
   const pulledAt = nowText();
-  await Promise.all((result.data || []).map(command => db.collection(collections.commands).doc(command._id).update({ data: { status: "running", pulledAt, updatedAt: pulledAt } })));
+  await Promise.all((result.data || []).map(command => db.collection(collections.commands).doc(command._id).update({
+    data: { status: "running", pulledAt, updatedAt: pulledAt },
+  })));
   return (result.data || []).map(command => Object.assign({}, command, { status: "running", pulledAt, updatedAt: pulledAt }));
 }
 
@@ -276,11 +471,27 @@ async function ackCommand(data) {
   const command = await db.collection(collections.commands).doc(data.commandId).get();
   if (command.data && command.data.deviceId !== data.deviceId) throw new Error("unauthorized command");
   const status = data.status || "done";
-  await db.collection(collections.commands).doc(data.commandId).update({ data: { status, result: data.result || {}, updatedAt: nowText() } });
+  await db.collection(collections.commands).doc(data.commandId).update({
+    data: { status, result: data.result || {}, updatedAt: nowText() },
+  });
+  if (command.data && command.data.type === "AI_CHAT") {
+    try {
+      const mirrored = commandToInquiry(Object.assign({}, command.data, {
+        _id: data.commandId,
+        status,
+        result: data.result || {},
+        updatedAt: nowText(),
+      }));
+      await setDocument(collections.inquiries, `${data.deviceId}-inquiry-${safeId(data.commandId)}`, mirrored);
+    } catch (error) {
+      // Command ACK must remain reliable even if the optional inquiry mirror is not ready.
+    }
+  }
   return { commandId: data.commandId, status };
 }
 
-async function createCommand(data, wxContext) {
+async function createCommand(data, wxContext, isHttp) {
+  if (isHttp) throw new Error("miniprogram function invocation required");
   if (!wxContext.OPENID) throw new Error("miniprogram identity required");
   if (!allowedCommandTypes.has(data.type)) throw new Error("unsupported command type");
   if (data.type === "OPEN_CABINET" && (!data.payload || data.payload.remote_confirmed !== true)) {
@@ -314,7 +525,9 @@ async function createCommand(data, wxContext) {
 async function handleAction(payload, wxContext, isHttp = false) {
   const action = payload.action;
   const data = payload.data || {};
-  if (action === "PING") return { ok: true, time: nowText(), schemaVersion: 2, schemaRevision, collections };
+  if (action === "PING") {
+    return { ok: true, time: nowText(), schemaVersion: 2, schemaRevision, collections };
+  }
   if (boardActions.has(action)) {
     const error = validateDevice(data);
     if (error) return error;
@@ -322,6 +535,7 @@ async function handleAction(payload, wxContext, isHttp = false) {
     const error = validateDeviceId(data);
     if (error) return error;
   }
+
   switch (action) {
     case "REPORT_DEVICE": return reportDevice(data);
     case "UPLOAD_MEDICINES": return uploadMedicines(data);
@@ -332,21 +546,24 @@ async function handleAction(payload, wxContext, isHttp = false) {
     case "FINALIZE_SNAPSHOT": return finalizeSnapshot(data);
     case "PULL_COMMANDS": return pullCommands(data);
     case "ACK_COMMAND": return ackCommand(data);
-    case "CREATE_COMMAND": {
-      if (isHttp) throw new Error("miniprogram function invocation required");
-      return createCommand(data, wxContext);
-    }
+    case "CREATE_COMMAND": return createCommand(data, wxContext, isHttp);
     case "GET_DEVICE": {
-      try { return (await db.collection(collections.devices).doc(data.deviceId).get()).data || null; } catch (error) { return null; }
+      try {
+        return (await db.collection(collections.devices).doc(data.deviceId).get()).data || null;
+      } catch (error) {
+        return null;
+      }
     }
     case "LIST_MEDICINES": return listRows(collections.medicines, data.deviceId, data.limit, "slot", "asc");
     case "GET_LATEST_VITALS": return (await listRows(collections.vitals, data.deviceId, 1, "createdAt"))[0] || null;
+    case "LIST_VITALS": return listRows(collections.vitals, data.deviceId, data.limit, "createdAt");
     case "LIST_RECORDS": return listRows(collections.records, data.deviceId, data.limit, "createdAt");
     case "LIST_COMMANDS": return listRows(collections.commands, data.deviceId, data.limit, "updatedAt");
+    case "LIST_INQUIRIES": return listInquiries(data);
     case "GET_SNAPSHOT": return {
-      serviceUsers: await listRows(collections.serviceUsers, data.deviceId, 100, "updatedAt"),
-      plans: await listRows(collections.plans, data.deviceId, 100, "updatedAt"),
-      inquiries: await listRows(collections.inquiries, data.deviceId, 100, "updatedAt"),
+      serviceUsers: await tryListRows(collections.serviceUsers, data.deviceId, 100, "updatedAt"),
+      plans: await tryListRows(collections.plans, data.deviceId, 100, "updatedAt"),
+      inquiries: await listInquiries(data),
     };
     default: throw new Error(`unknown action: ${action}`);
   }

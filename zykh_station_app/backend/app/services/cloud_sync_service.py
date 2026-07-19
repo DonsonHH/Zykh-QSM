@@ -89,12 +89,15 @@ class CloudSyncWorker:
                 self._handle_command(command)
 
             snapshot = self._build_snapshot()
+            from .network_service import NetworkService
+
+            network_status = NetworkService().status()
             self._call(
                 "REPORT_DEVICE",
                 {
                     "online": True,
-                    "network": "connected",
-                    "signal": "online",
+                    "network": str(network_status.get("transport") or network_status.get("mode") or "local"),
+                    "signal": str(network_status.get("signal") or "none"),
                     "cloudAgent": "zykh_station_app",
                     "localApi": "http://127.0.0.1:8000",
                     "board": "智药康护终端",
@@ -222,7 +225,29 @@ class CloudSyncWorker:
         records_service = RecordsService()
         service_users = [item.model_dump(mode="json") for item in records_service.list_service_users()]
         plans = [item.model_dump(mode="json") for item in records_service.list_today_plans(due_only=False)]
-        inquiries = [item.model_dump(mode="json") for item in InquiryRepository().list_records()]
+        inquiry_repository = InquiryRepository()
+        inquiries: list[dict[str, object]] = []
+        inquiry_ids: set[str] = set()
+        for session in inquiry_repository.list_sessions(limit=100):
+            row = session.model_dump(mode="json")
+            row.update(
+                {
+                    "inquiry_id": session.session_id,
+                    "target_user_id": session.user_id,
+                    "target_user_name": session.user_name,
+                    "symptoms_summary": session.extracted_information.symptoms_text or session.title,
+                    "createdAt": session.created_at,
+                    "updatedAt": session.updated_at,
+                }
+            )
+            inquiries.append(row)
+            inquiry_ids.add(session.session_id)
+        for result in inquiry_repository.list_records():
+            if result.inquiry_id in inquiry_ids:
+                continue
+            row = result.model_dump(mode="json")
+            row.update({"createdAt": result.created_at, "updatedAt": result.created_at})
+            inquiries.append(row)
         records = []
         for item in DispenseRepository().list_records():
             row = item.model_dump(mode="json")
@@ -345,11 +370,18 @@ class CloudSyncWorker:
             "plans": snapshot.get("plans", []),
             "recentInquiries": [
                 {
-                    "inquiry_id": row.get("inquiry_id"),
+                    "inquiry_id": row.get("inquiry_id") or row.get("session_id"),
+                    "session_id": row.get("session_id") or row.get("inquiry_id"),
+                    "target_user_id": row.get("target_user_id") or row.get("user_id"),
+                    "target_user_name": row.get("target_user_name") or row.get("user_name"),
+                    "title": row.get("title"),
                     "risk_level": row.get("risk_level"),
                     "risk_label": row.get("risk_label"),
                     "symptoms_summary": row.get("symptoms_summary"),
+                    "reply": row.get("reply") or row.get("ai_message"),
+                    "messages": row.get("messages") or [],
                     "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at") or row.get("created_at"),
                 }
                 for row in inquiries
             ],
@@ -461,6 +493,8 @@ class CloudSyncWorker:
         payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
         if command_type == "AUDIO_BEEP":
             return QsmClient().audio_beep(self._int(payload.get("volume")))
+        if command_type == "AUDIO_SPEAK":
+            return self._speak_reminder(payload)
         if command_type == "READ_VITALS_ALL":
             from ..routers.qsm import qsm_vitals
 
@@ -479,6 +513,43 @@ class CloudSyncWorker:
         if command_type == "OPEN_CABINET":
             return self._open_cabinet(payload, command)
         raise CloudSyncError(f"不支持的云端命令：{command_type}")
+
+    @staticmethod
+    def _speak_reminder(payload: dict[str, object]) -> dict[str, object]:
+        text = str(payload.get("text") or payload.get("message") or "").strip()
+        if not text:
+            user_name = str(
+                payload.get("target_user_name")
+                or payload.get("user_name")
+                or payload.get("targetUserName")
+                or payload.get("patient_name")
+                or payload.get("name")
+                or ""
+            ).strip()
+            medicine_name = str(
+                payload.get("medicine_name")
+                or payload.get("medicineName")
+                or payload.get("medicine")
+                or ""
+            ).strip()
+            if user_name and medicine_name:
+                text = f"{user_name}，该服用{medicine_name}了。"
+            elif user_name:
+                text = f"{user_name}，该服药了。"
+        if not text:
+            raise CloudSyncError("AUDIO_SPEAK 缺少播报内容或使用人姓名。")
+
+        raw_speed = payload.get("speed")
+        try:
+            speed = float(raw_speed) if raw_speed not in (None, "") else None
+        except (TypeError, ValueError):
+            speed = None
+        return QsmClient().audio_speak(
+            text[:240],
+            CloudSyncWorker._int(payload.get("volume")),
+            speed=speed,
+            tts_mode=str(payload.get("tts_mode") or "auto"),
+        )
 
     @staticmethod
     def _upsert_medicine(payload: dict[str, object]) -> dict[str, object]:

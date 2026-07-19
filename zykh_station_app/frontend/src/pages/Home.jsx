@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicine } from "../api/medicines.js";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
@@ -10,6 +10,12 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
   const [submitting, setSubmitting] = useState(false);
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
+
+  useEffect(() => {
+    const refresh = () => onDashboardRefresh?.();
+    window.addEventListener("zykh:medicine-updated", refresh);
+    return () => window.removeEventListener("zykh:medicine-updated", refresh);
+  }, [onDashboardRefresh]);
 
   function handleQuickAction(action) {
     if (action.id === "scan") {

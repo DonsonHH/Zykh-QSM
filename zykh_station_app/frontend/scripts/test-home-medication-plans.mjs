@@ -4,7 +4,8 @@ import {
   medicationPlanDayLabel,
   medicationPlanTimeLabel,
   orderMedicationPlans,
-  orderMedicationTaskPickerPlans
+  orderMedicationTaskPickerPlans,
+  selectNearestMedicationPlans
 } from "../src/utils/medicationPlans.js";
 
 const plans = [
@@ -17,6 +18,21 @@ const plans = [
 
 const ordered = orderMedicationPlans(plans, new Date("2026-07-17T10:00:00"));
 assert.deepEqual(ordered.map((plan) => plan.id), ["past-near", "future-near", "meal", "later", "unrestricted"]);
+const nearestChronological = selectNearestMedicationPlans(
+  [
+    { id: "past-closest", time: "09:58" },
+    { id: "past-third", time: "09:50" },
+    { id: "future-second", time: "10:05" },
+    { id: "future-far", time: "10:40" }
+  ],
+  new Date("2026-07-17T10:00:00"),
+  3
+);
+assert.deepEqual(
+  nearestChronological.map((plan) => plan.id),
+  ["past-third", "past-closest", "future-second"],
+  "the nearest three tasks must be displayed from earliest to latest"
+);
 assert.equal(medicationPlanTimeLabel(plans[1]), "12:30");
 assert.equal(medicationPlanTimeLabel({ timing_label: "饭后", time: "" }), "饭后");
 assert.equal(medicationPlanTimeLabel(plans[4]), "不限时");

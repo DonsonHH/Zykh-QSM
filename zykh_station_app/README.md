@@ -79,6 +79,12 @@ sh scripts/launch_kiosk.sh
 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
+脚本默认启动 Fcitx5 拼音与 Onboard 屏幕键盘；点按问询信息核对页、AI 问询等可编辑区域时会自动弹出中文输入。接入实体键盘或不需要屏幕键盘时可关闭：
+
+```bash
+KIOSK_TOUCH_KEYBOARD=0 sh scripts/launch_kiosk.sh
+```
+
 脚本会记录启动前的分辨率。浏览器退出、按 `Ctrl+C`、关闭终端或任务管理器发送退出信号时，会停止本机音频转发并自动恢复分辨率。独立清理守护进程也覆盖主启动脚本被强制终止的情况，兜底结果写入 `data/run/kiosk-cleanup.log`。若需要保留 kiosk 分辨率：
 
 ```bash
@@ -106,6 +112,7 @@ sh scripts/open_kiosk.sh
 ## 微信小程序与云同步
 
 FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和取药记录，并拉取小程序命令。网络中断不影响本地使用，恢复后自动补传。
+小程序下发 `AUDIO_SPEAK` 时，终端会把姓名和药品名称整理成服药提醒并通过 QSM 喇叭播报；小程序端无需访问终端局域网地址。
 
 ```bash
 curl http://127.0.0.1:8000/api/sync/status
@@ -232,6 +239,14 @@ sh scripts/start_4g.sh
 ```
 
 该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询自动使用 QSM 离线模型；模型进程也不可用时才由安全规则继续处理。
+
+主机通过 QSM 的 USB RNDIS 接口使用该数据链路：QSM `usb0` 连接 EC200A，QSM `usb1` 连接主机，主机侧接口名为 `usb0`。首次启动终端时，`launch_kiosk.sh` 会请求一次管理员授权并安装受限路由助手。之后关闭 Wi-Fi 前，后端会先完成 QSM NAT、主机 `192.168.77.2/24` 地址和 metric 700 备用路由验证；任一步失败都会保留 Wi-Fi，避免终端失联。也可提前手动安装：
+
+```bash
+sudo sh scripts/install_qsm_tether_helper.sh
+```
+
+Wi-Fi 默认路由优先级高于 SIM；Wi-Fi 关闭或失效后才自动使用 QSM 数据网络。仅 QSM 自身联网但主机备用路由未通时，界面不会误报主机已使用 SIM。
 
 ## QSM real 模式验证
 

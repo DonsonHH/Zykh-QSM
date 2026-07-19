@@ -3,16 +3,19 @@ import {
   AlertTriangle,
   Check,
   CircleCheckBig,
+  Cpu,
   DoorOpen,
   Home,
   LoaderCircle,
+  MessageCircle,
   Pill,
   RotateCcw,
   ShieldCheck,
+  Sparkles,
   X
 } from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
-import { aiSourceLabel } from "../utils/ai.js";
+import { aiSourcePresentation } from "../utils/ai.js";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { isLocalNetworkMode } from "../utils/network.js";
 import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
@@ -37,7 +40,6 @@ export function InquiryResultStep({
 }) {
   const options = result?.treatment_options || [];
   const [selectedOptionId, setSelectedOptionId] = useState(result?.selected_option_id || options[0]?.option_id || "");
-  const [confirmed, setConfirmed] = useState(false);
   const [countdown, setCountdown] = useState(null);
   const highRisk = ["high", "emergency"].includes(result?.risk_level);
   const actionStatus = actionResult?.status || result?.action_status || "idle";
@@ -101,7 +103,13 @@ export function InquiryResultStep({
   }, [countdown, onConfirmTreatment, selectedOptionId]);
 
   function beginConfirmation() {
-    if (!confirmed || !selectedOptionId || activelyOpening || actionFinished) return;
+    if (!selectedOptionId || activelyOpening || actionFinished) return;
+    const cabinetText = selectedOption?.medicines?.map((medicine) => `${medicine.slot}号柜`).join("、") || "对应药柜";
+    playResultSpeech(
+      `方案已确认，三秒后将依次打开${cabinetText}，请准备取药。`,
+      networkStatus,
+      playbackGenerationRef
+    );
     setCountdown(3);
   }
 
@@ -112,35 +120,34 @@ export function InquiryResultStep({
           {result?.risk_level === "low" ? <ShieldCheck size={38} /> : <AlertTriangle size={38} />}
         </span>
         <div>
-          <p>问询结果</p>
           <h2>{highRisk ? "请优先联系专业人员" : "请选择一个方案"}</h2>
-          <span>{symptomSummary(result?.extracted_information)}</span>
         </div>
         <div className="treatment-result-meta">
           <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
-          <small>{aiSourceLabel(result?.source)}</small>
+          <ResultSource source={result?.source} />
         </div>
       </header>
 
       {canProceed ? (
-        <div className={`treatment-option-grid count-${Math.min(options.length, 3)}`} role="radiogroup" aria-label="互斥用药方案">
-          {options.map((option) => {
+        <div className={`treatment-option-grid count-${Math.min(options.length, 2)}`} role="radiogroup" aria-label="用药方案">
+          {options.slice(0, 2).map((option, optionIndex) => {
             const selected = option.option_id === selectedOptionId;
             return (
-              <label className={`treatment-option-card ${selected ? "selected" : ""}`} key={option.option_id}>
+              <label className={`treatment-option-card ${optionIndex === 0 ? "recommended" : "alternative"} ${selected ? "selected" : ""}`} key={option.option_id}>
                 <input
                   type="radio"
                   name="treatment-option"
                   value={option.option_id}
                   checked={selected}
                   disabled={activelyOpening || resumePending || countdown !== null || actionFinished}
-                  onChange={() => {
-                    setSelectedOptionId(option.option_id);
-                    setConfirmed(false);
-                  }}
+                  onChange={() => setSelectedOptionId(option.option_id)}
                 />
-                <span className="option-choice-mark">{selected ? <Check size={18} /> : option.option_id}</span>
-                <span className="option-heading"><strong>{option.label}</strong><small>{option.when}</small></span>
+                <span className="option-choice-mark">{selected ? <Check size={18} /> : optionIndex + 1}</span>
+                <span className="option-heading">
+                  <strong>{optionIndex === 0 ? "推荐方案" : `备选方案${optionIndex}`}</strong>
+                  {optionIndex === 0 ? <em>优先推荐</em> : null}
+                  <small>{optionDescription(option, optionIndex)}</small>
+                </span>
                 <span className="option-medicine-list">
                   {option.medicines.map((medicine) => (
                     <span className="option-medicine-row" key={medicine.id}>
@@ -148,7 +155,7 @@ export function InquiryResultStep({
                       <span>
                         <strong>{medicine.name}</strong>
                         <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
-                          {medicine.requires_existing_direction ? `${medicine.role} · 按既往医嘱核对` : medicine.role}
+                          {medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
                         </small>
                       </span>
                       <em>{medicine.slot}号柜</em>
@@ -167,85 +174,87 @@ export function InquiryResultStep({
         </div>
       )}
 
-      {!highRisk ? (
-        <div className="treatment-evidence-line">
-          <ShieldCheck size={18} />
-          <span>{evidenceSummary(result)}</span>
-        </div>
-      ) : null}
-
-      {canProceed && !actionFinished ? (
-        <div className="treatment-confirm-bar">
-          <label className="treatment-safety-check">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              disabled={activelyOpening || countdown !== null}
-              onChange={(event) => setConfirmed(event.target.checked)}
-            />
-            <span>
-              <ShieldCheck size={20} />
-              {requiresExistingDirection
-                ? "我已确认该方案符合本人既往医嘱，并核对禁忌和安全提示"
-                : "我已核对所选方案、个人禁忌和药品安全提示"}
-            </span>
-          </label>
-          {countdown !== null ? (
-            <div className="treatment-countdown" role="status">
-              <strong>{countdown}</strong>
-              <span>秒后{resumePending ? "继续" : "开始"}打开 {resumePending ? remainingCount : totalCount} 个对应药柜</span>
-              <button type="button" onClick={() => setCountdown(null)} aria-label="取消开柜倒计时"><X size={20} /></button>
-            </div>
-          ) : activelyOpening ? (
-            <div className="treatment-opening-progress" role="status" aria-live="polite">
-              <span><LoaderCircle className="spin" size={22} /></span>
-              <div>
-                <strong>正在逐柜处理 {Math.min(completedCount + 1, totalCount)}/{totalCount}</strong>
-                <small>{nextMedicine ? `当前：${nextMedicine.slot}号柜 · ${nextMedicine.name}` : "正在确认柜门状态"}</small>
+      <div className="treatment-result-footer-row">
+        {canProceed && !actionFinished ? (
+          <div className={`treatment-confirm-bar ${requiresExistingDirection ? "with-notice" : "simple"}`}>
+            {requiresExistingDirection ? (
+              <div className="treatment-confirm-notice">
+                <ShieldCheck size={20} />
+                <span>仅限本人既往医嘱中已经使用的药品。</span>
               </div>
-              <em>{completedCount}/{totalCount}</em>
-            </div>
-          ) : (
-            <button
-              className="treatment-open-button"
-              type="button"
-              disabled={!confirmed || activelyOpening}
-              onClick={beginConfirmation}
-            >
-              <DoorOpen size={23} />
-              {resumePending ? "继续打开下一柜" : "确认方案并逐柜打开"}
-            </button>
-          )}
-        </div>
-      ) : null}
+            ) : null}
+            {countdown !== null ? (
+              <div className="treatment-countdown" role="status">
+                <strong>{countdown}</strong>
+                <span>秒后{resumePending ? "继续" : "开始"}打开 {resumePending ? remainingCount : totalCount} 个对应药柜</span>
+                <button type="button" onClick={() => setCountdown(null)} aria-label="取消开柜倒计时"><X size={20} /></button>
+              </div>
+            ) : activelyOpening ? (
+              <div className="treatment-opening-progress" role="status" aria-live="polite">
+                <span><LoaderCircle className="spin" size={22} /></span>
+                <div>
+                  <strong>正在逐柜处理 {Math.min(completedCount + 1, totalCount)}/{totalCount}</strong>
+                  <small>{nextMedicine ? `当前：${nextMedicine.slot}号柜 · ${nextMedicine.name}` : "正在确认柜门状态"}</small>
+                </div>
+                <em>{completedCount}/{totalCount}</em>
+              </div>
+            ) : (
+              <button
+                className="treatment-open-button"
+                type="button"
+                disabled={activelyOpening}
+                onClick={beginConfirmation}
+              >
+                <DoorOpen size={23} />
+                {resumePending ? "继续打开下一柜" : "确认方案并逐柜打开"}
+              </button>
+            )}
+          </div>
+        ) : null}
 
-      {actionFinished ? (
-        <div className={`treatment-action-result ${actionStatus}`} role="status">
-          {actionStatus === "complete" ? <CircleCheckBig size={26} /> : <AlertTriangle size={26} />}
-          <strong>{actionMessage}</strong>
-        </div>
-      ) : null}
+        {actionFinished ? (
+          <div className={`treatment-action-result ${actionStatus}`} role="status">
+            {actionStatus === "complete" ? <CircleCheckBig size={26} /> : <AlertTriangle size={26} />}
+            <strong>{actionMessage}</strong>
+          </div>
+        ) : null}
 
-      <footer className="treatment-result-actions">
-        <button className="secondary-action" type="button" onClick={onRestart}><RotateCcw size={20} />重新问询</button>
-        <button className="secondary-action" type="button" onClick={onHome}><Home size={20} />返回首页</button>
-      </footer>
+        <footer className="treatment-result-actions">
+          <button className="compact-result-action" type="button" onClick={onRestart} aria-label="重新问询" title="重新问询"><RotateCcw size={23} /></button>
+          <button className="compact-result-action" type="button" onClick={onHome} aria-label="返回首页" title="返回首页"><Home size={23} /></button>
+        </footer>
+      </div>
     </section>
   );
 }
 
-function symptomSummary(extracted = {}) {
-  const dimensions = (extracted.symptom_dimensions || []).filter(Boolean);
-  const parts = [dimensions.join("、"), extracted.duration ? `持续${extracted.duration}` : ""].filter(Boolean);
-  return parts.join("，") || "已完成本次信息整理";
+function ResultSource({ source }) {
+  const presentation = aiSourcePresentation(source);
+  const Icon = presentation.kind === "smart"
+    ? Sparkles
+    : presentation.kind === "local"
+      ? Cpu
+      : presentation.kind === "safety"
+        ? ShieldCheck
+        : MessageCircle;
+  return (
+    <span
+      className={`result-source-icon ${presentation.kind}`}
+      role="img"
+      aria-label={presentation.label}
+      title={presentation.label}
+    >
+      <Icon size={17} aria-hidden="true" />
+    </span>
+  );
 }
 
-function evidenceSummary(result = {}) {
-  const allergy = String(result?.extracted_information?.allergy_or_contraindication || "").trim();
-  const allergyText = allergy && !["无", "没有", "不确定"].includes(allergy)
-    ? `已按“${allergy}”排除明显冲突项。`
-    : "未记录明确过敏冲突。";
-  return `${result.reasoning_summary || "已按用户原话整理症状证据。"}${allergyText}`;
+function optionDescription(option, index) {
+  if (option?.when) return option.when;
+  const medicine = option?.medicines?.[0]?.name || "对应药品";
+  return index === 0
+    ? `${medicine}更贴近你这次描述的主要不适，可先对照药品说明。`
+    : `${medicine}的侧重点不同，如果更符合你最明显的不适，可对照这一方案。`;
 }
 
 async function playResultSpeech(text, networkStatus, playbackGenerationRef) {

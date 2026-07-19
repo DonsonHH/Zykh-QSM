@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+import re
 import threading
 from uuid import uuid4
 
@@ -8,6 +10,7 @@ from ..repositories.inquiry_repository import InquiryRepository
 from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.inquiry import (
     InquiryExtractedInformation,
+    InquiryInformationRevisionRequest,
     InquirySessionCreateRequest,
     InquirySessionResponse,
     InquiryTreatmentConfirmRequest,
@@ -18,11 +21,13 @@ from ..schemas.inquiry import (
 )
 from .dispense_service import DispenseError, DispenseService
 from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryService
+from .inquiry_guest_archive_service import InquiryGuestArchiveService
 from .medicine_safety_engine import MedicineSafetyEngine
-from .symptom_interpreter import FEATURE_KEYWORDS, SymptomInterpretation, SymptomInterpreter
+from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
 
 
 VITALS_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
+MODEL_LED_SOURCES = {"cloud", "local_llm"}
 
 CLARIFICATION_QUESTIONS = {
     "history_change": "你以前有过相似情况。这次和上次相比，是更重、更轻，还是表现不一样？",
@@ -46,21 +51,36 @@ class InquiryOrchestrator:
         safety_engine: MedicineSafetyEngine | None = None,
         dispense_service: DispenseService | None = None,
         history_service: InquiryHistoryService | None = None,
+        guest_archive_service: InquiryGuestArchiveService | None = None,
     ) -> None:
         self.repository = repository or InquiryRepository()
         self.interpreter = interpreter or SymptomInterpreter()
         self.safety_engine = safety_engine or MedicineSafetyEngine()
         self.dispense_service = dispense_service or DispenseService()
         self.history_service = history_service or InquiryHistoryService(self.repository)
+        self.guest_archive_service = guest_archive_service or InquiryGuestArchiveService()
 
     def create_session(self, request: InquirySessionCreateRequest) -> InquirySessionResponse:
         user = self._load_user(request.service_user_id)
         now = db.now_text()
         user_name = str(user.get("name") or request.guest_name.strip() or "访客")
-        reply = (
-            f"{user_name}，我已经读取你的基础信息。请说说这次最明显的不适。"
+        fallback_reply = (
+            f"{user_name}，你好。今天哪里不舒服？慢慢说，我会边听边帮你整理。"
             if user
-            else "你好，我们先从这次的情况开始。请说说现在最明显的不适。"
+            else "你好。今天哪里不舒服？慢慢说，我会边听边帮你整理。"
+        )
+        opening = getattr(self.interpreter, "opening_question", None)
+        reply, opening_source = (
+            opening(
+                {
+                    "name": user_name,
+                    "profile": str(user.get("profile") or ""),
+                    "allergies": str(user.get("allergies") or ""),
+                },
+                fallback_reply,
+            )
+            if callable(opening)
+            else (fallback_reply, "assistant")
         )
         session = InquirySessionResponse(
             session_id=f"inquiry-session-{uuid4().hex[:14]}",
@@ -71,7 +91,7 @@ class InquiryOrchestrator:
             user_allergies=str(user.get("allergies") or ""),
             stage="symptoms",
             reply=reply,
-            source="rules_fallback",
+            source=opening_source,
             extracted_information=InquiryExtractedInformation(
                 allergy_or_contraindication=str(user.get("allergies") or "")
             ),
@@ -81,7 +101,9 @@ class InquiryOrchestrator:
             updated_at=now,
         )
         self.repository.save_session(session)
-        self.repository.append_message(session.session_id, "assistant", reply, "rules_fallback")
+        self.repository.append_message(session.session_id, "assistant", reply, opening_source)
+        if not user:
+            self.guest_archive_service.schedule_capture(session.session_id, user_name)
         return self._required_session(session.session_id)
 
     def get_session(self, session_id: str) -> InquirySessionResponse:
@@ -89,7 +111,7 @@ class InquiryOrchestrator:
 
     def process_turn(self, session_id: str, request: InquiryTurnRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
-        transcript = request.transcript.strip()
+        transcript = request.transcript.strip().rstrip("。．.").strip()
         self.repository.append_message(session_id, "user", transcript, "speech")
 
         emergency_extracted = session.extracted_information.model_copy(deep=True)
@@ -99,13 +121,20 @@ class InquiryOrchestrator:
             session.vitals,
             self._profile_context(session),
         )
-        if emergency.risk_level == "emergency":
+        if emergency.risk_level in {"high", "emergency"}:
             session.extracted_information = emergency_extracted
             return self._finish(session, emergency_extracted, source="safety_rules")
 
+        existing_context = session.extracted_information.model_dump()
+        existing_context["current_stage"] = session.stage
+        existing_context["conversation_turns"] = self._current_user_turn_count(session)
+        existing_context["conversation"] = [
+            {"role": message.role, "content": message.content}
+            for message in session.messages
+        ]
         interpretation = self.interpreter.interpret(
             transcript,
-            session.extracted_information.model_dump(),
+            existing_context,
             {
                 "name": session.user_name,
                 "age": session.user_age,
@@ -120,8 +149,17 @@ class InquiryOrchestrator:
         session.reasoning_summary = interpretation.reasoning_summary
         session.model_action_intent = interpretation.action_intent
         session.action_reason = interpretation.action_reason
+        model_led = interpretation.source in MODEL_LED_SOURCES
+        if model_led and extracted.pending_clarification:
+            extracted.pending_clarification = ""
+            session.extracted_information = extracted
 
-        if not session.vitals and self._should_measure_vitals_now(transcript, extracted, interpretation):
+        if not session.vitals and self._should_measure_vitals_now(
+            transcript,
+            extracted,
+            interpretation,
+            model_led=model_led,
+        ):
             session.stage = "vitals"
             session.next_action = "measure_vitals"
             session.reply = "这项信息现在会影响安全判断。请测量额温、心率和血氧，完成后我会接着询问尚未确认的内容。"
@@ -129,6 +167,37 @@ class InquiryOrchestrator:
             return self._commit(session)
 
         history = self._history_context(session, extracted)
+        if model_led:
+            missing = self._missing_field(extracted)
+            if interpretation.follow_up_question and (
+                missing
+                or interpretation.action_intent == "ask"
+            ):
+                if self._repeats_answered_question(session, interpretation):
+                    if missing:
+                        self._ask_for_missing(session, missing, "")
+                        return self._commit(session)
+                    return self._finish(session, extracted, source=interpretation.source)
+                self._ask_model_followup(
+                    session,
+                    interpretation.assistant_reply,
+                    interpretation.follow_up_question,
+                    missing,
+                )
+                return self._commit(session)
+            if missing:
+                self._ask_for_missing(session, missing, "")
+                return self._commit(session)
+            if self._requires_vitals(extracted, interpretation) and not session.vitals:
+                session.stage = "vitals"
+                session.next_action = "measure_vitals"
+                session.reply = "为了确认当前状态，请测量额温、心率和血氧。完成后我会接着整理结果。"
+                return self._commit(session)
+            return self._finish(session, extracted, source=interpretation.source)
+
+        if extracted.pending_clarification:
+            self._repeat_pending_clarification(session, extracted.pending_clarification)
+            return self._commit(session)
         clarification = self._next_clarification(extracted, history)
         if clarification:
             self._ask_clarification(session, *clarification)
@@ -159,15 +228,76 @@ class InquiryOrchestrator:
         )
         if immediate.risk_level in {"high", "emergency"}:
             return self._finish(session, session.extracted_information, source="safety_rules")
-        clarification = self._next_clarification(session.extracted_information, history)
-        if clarification:
-            self._ask_clarification(session, *clarification)
-            return self._commit(session)
+        if session.source not in MODEL_LED_SOURCES:
+            clarification = self._next_clarification(session.extracted_information, history)
+            if clarification:
+                self._ask_clarification(session, *clarification)
+                return self._commit(session)
         missing = self._missing_field(session.extracted_information)
         if missing:
             self._ask_for_missing(session, missing, "")
             return self._commit(session)
         return self._finish(session, session.extracted_information, source=session.source)
+
+    def revise_information(
+        self,
+        session_id: str,
+        request: InquiryInformationRevisionRequest,
+    ) -> InquirySessionResponse:
+        """Replace reviewed facts as one coherent state update before showing a result."""
+        session = self._required_session(session_id)
+        complaint = request.main_complaint.strip().rstrip("。．.").strip()
+        duration = request.duration.strip()
+        used_medicines = request.used_medicines.strip()
+        allergy = request.allergy_or_contraindication.strip()
+        interpretation = self.interpreter.interpret(
+            complaint,
+            {
+                "duration": duration,
+                "used_medicines": used_medicines,
+                "allergy_or_contraindication": allergy,
+                "current_stage": "review",
+            },
+            {
+                "name": session.user_name,
+                "age": session.user_age,
+                "profile": session.user_profile,
+                "allergies": session.user_allergies,
+            },
+        )
+        extracted = InquiryExtractedInformation(
+            symptom_dimensions=interpretation.symptom_dimensions,
+            dimension_evidence=interpretation.dimension_evidence,
+            symptom_features=interpretation.symptom_features,
+            feature_evidence=interpretation.feature_evidence,
+            symptoms_text=complaint,
+            duration=duration,
+            used_medicines=used_medicines,
+            allergy_or_contraindication=allergy,
+            confidence=interpretation.confidence,
+        )
+        session.extracted_information = extracted
+        session.source = interpretation.source
+        session.reasoning_summary = (
+            interpretation.reasoning_summary
+            or "已根据核对后的主诉、持续时间、用药和禁忌信息重新整理。"
+        )
+        session.model_action_intent = "analyze"
+        session.action_reason = "用户已在信息核对页确认或修正本次情况"
+        self._clear_decision(session)
+
+        if not request.finalize:
+            missing = self._missing_field(extracted)
+            if missing:
+                self._ask_for_missing(session, missing, "")
+                return self._commit(session)
+            if self._requires_vitals(extracted, interpretation) and not session.vitals:
+                session.stage = "vitals"
+                session.next_action = "measure_vitals"
+                session.reply = "修正内容已保存。为了完成安全核验，请测量额温、心率和血氧。"
+                return self._commit(session)
+
+        return self._finish(session, extracted, source=interpretation.source)
 
     def confirm_treatment(
         self,
@@ -368,6 +498,7 @@ class InquiryOrchestrator:
             session.reasoning_summary = "".join(
                 part for part in (session.reasoning_summary, history_note) if part
             )
+        self._apply_recommendation_language(session, decision)
         session.title = self._title(session)
         if decision.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
@@ -385,11 +516,58 @@ class InquiryOrchestrator:
             session.stage = "result"
             session.next_action = "show_recommendation"
             option_count = len(decision.treatment_options)
-            option_text = f"已生成 {option_count} 个互斥方案，请只选择其中一个。" if option_count > 1 else "当前信息较明确，已生成一个优先方案。"
-            session.reply = (
-                f"安全核验已完成。{option_text}确认后系统才会打开方案对应药柜。"
+            option_text = (
+                f"结合这些信息，我整理了 {option_count} 个不同侧重点的选择，你可以对照原因和用法选一项。"
+                if option_count > 1
+                else "结合这些信息，我整理了一个更贴近当前情况的选择。"
             )
+            natural_summary = self._natural_summary(session.reasoning_summary)
+            session.reply = f"{natural_summary}{option_text}"
         return self._commit(session)
+
+    def _apply_recommendation_language(self, session: InquirySessionResponse, decision) -> None:
+        if decision.risk_level not in {"low", "medium"} or not decision.treatment_options:
+            return
+        context = {
+            "user_name": session.user_name,
+            "reasoning_summary": session.reasoning_summary,
+            "symptom_dimensions": session.extracted_information.symptom_dimensions,
+            "symptom_evidence": session.extracted_information.dimension_evidence,
+            "duration": session.extracted_information.duration,
+            "used_medicines": session.extracted_information.used_medicines,
+            "allergy_or_contraindication": session.extracted_information.allergy_or_contraindication,
+            "vitals": session.vitals or {},
+            "risk_level": decision.risk_level,
+            "options": [
+                {
+                    "option_id": option.option_id,
+                    "medicines": [
+                        {
+                            "name": medicine.name,
+                            "indications": medicine.indications,
+                            "dosage": medicine.dosage,
+                            "role": medicine.role,
+                            "covered_symptoms": medicine.covered_symptoms,
+                        }
+                        for medicine in option.medicines
+                    ],
+                }
+                for option in decision.treatment_options
+            ],
+        }
+        narrator = getattr(self.interpreter, "explain_recommendation", None)
+        language = narrator(context) if callable(narrator) else {"ok": False}
+        if not language.get("ok"):
+            return
+        summary = str(language.get("summary") or "").strip()
+        if summary:
+            session.reasoning_summary = summary
+        reasons = language.get("option_reasons")
+        reasons = reasons if isinstance(reasons, dict) else {}
+        for option in decision.treatment_options:
+            reason = str(reasons.get(option.option_id) or "").strip()
+            if reason:
+                option.when = reason[:120]
 
     def _commit(self, session: InquirySessionResponse) -> InquirySessionResponse:
         session.updated_at = db.now_text()
@@ -424,33 +602,25 @@ class InquiryOrchestrator:
         current = session.extracted_information
         dimensions = list(dict.fromkeys([*current.symptom_dimensions, *interpretation.symptom_dimensions]))
         evidence = {**current.dimension_evidence, **interpretation.dimension_evidence}
-        rule_features: list[str] = []
-        rule_feature_evidence: dict[str, str] = {}
-        for feature, keywords in FEATURE_KEYWORDS.items():
-            match = next(
-                (keyword for keyword in keywords if SymptomInterpreter._has_unnegated_term(transcript, keyword)),
-                "",
-            )
-            if match:
-                rule_features.append(feature)
-                rule_feature_evidence[feature] = match
-        features = list(
-            dict.fromkeys([*current.symptom_features, *interpretation.symptom_features, *rule_features])
-        )
+        features = list(dict.fromkeys([*current.symptom_features, *interpretation.symptom_features]))
         feature_evidence = {
             **current.feature_evidence,
             **interpretation.feature_evidence,
-            **rule_feature_evidence,
         }
         clarification_answers = dict(current.clarification_answers)
         pending_clarification = current.pending_clarification
         if pending_clarification:
-            clarification_answers[pending_clarification] = transcript[:160]
             contextual_features = InquiryOrchestrator._clarification_features(pending_clarification, transcript)
+            if InquiryOrchestrator._valid_clarification_answer(
+                pending_clarification,
+                transcript,
+                contextual_features,
+            ):
+                clarification_answers[pending_clarification] = transcript[:160]
+                pending_clarification = ""
             features = list(dict.fromkeys([*features, *contextual_features]))
             for feature in contextual_features:
                 feature_evidence[feature] = transcript[:120]
-            pending_clarification = ""
         return InquiryExtractedInformation(
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
@@ -485,10 +655,10 @@ class InquiryOrchestrator:
     @staticmethod
     def _follow_up(missing: str, model_question: str) -> tuple[str, str]:
         questions = {
-            "symptoms": ("symptoms", "请再具体说说，现在哪个部位最不舒服？"),
-            "duration": ("duration", "这种感觉大概从什么时候开始？"),
-            "used_medicines": ("used_medicines", "这次不舒服后，有没有吃过或用过药？"),
-            "allergies": ("allergies", "有没有明确过敏或不能用的药？不清楚也可以直接说。"),
+            "symptoms": ("symptoms", "先说说现在最难受的感觉，比如头痛、头晕、咳嗽或胃不舒服。"),
+            "duration": ("duration", "这种不舒服大概从什么时候开始，是刚开始还是已经持续一段时间了？"),
+            "used_medicines": ("used_medicines", "这次不舒服以后，有没有吃过或用过药？直接说“没有”也可以。"),
+            "allergies": ("allergies", "有没有明确不能用或会过敏的药？没有就直接说“没有”。"),
         }
         question_terms = {
             "symptoms": ("不舒服", "症状", "哪里", "感觉", "描述"),
@@ -544,6 +714,75 @@ class InquiryOrchestrator:
         session.stage = "clarification"
         session.next_action = "ask"
         session.reply = question
+        cls._clear_decision(session)
+
+    @classmethod
+    def _ask_model_followup(
+        cls,
+        session: InquirySessionResponse,
+        assistant_reply: str,
+        question: str,
+        missing: str,
+    ) -> None:
+        session.stage = cls._question_stage(question, missing)
+        session.next_action = "ask"
+        session.reply = assistant_reply.strip() or question.strip()
+        cls._clear_decision(session)
+
+    @classmethod
+    def _repeats_answered_question(
+        cls,
+        session: InquirySessionResponse,
+        interpretation: SymptomInterpretation,
+    ) -> bool:
+        candidate = cls._question_signature(
+            interpretation.follow_up_question or interpretation.assistant_reply
+        )
+        if len(candidate) < 4:
+            return False
+        prior_questions = [
+            cls._question_signature(message.content)
+            for message in session.messages
+            if message.role == "assistant" and ("?" in message.content or "？" in message.content)
+        ]
+        return any(
+            prior and (
+                candidate == prior
+                or candidate in prior
+                or prior in candidate
+                or SequenceMatcher(None, candidate, prior).ratio() >= 0.72
+            )
+            for prior in prior_questions
+        )
+
+    @staticmethod
+    def _question_signature(value: str) -> str:
+        text = str(value or "").strip()
+        question_parts = [part for part in re.split(r"[。！？!?]", text) if part.strip()]
+        if question_parts:
+            text = question_parts[-1]
+        text = re.sub(r"^(?:好的|明白了|我记下了|谢谢你说明|请问|那|那么|再确认一下)[，,：:\s]*", "", text)
+        text = re.sub(r"(?:请问|现在|目前|这次|一下|呢|吗|呀|啊)", "", text)
+        return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", text)
+
+    @staticmethod
+    def _question_stage(question: str, missing: str) -> str:
+        text = question.strip()
+        if any(term in text for term in ("多久", "多长时间", "什么时候", "持续", "开始")):
+            return "duration"
+        if any(term in text for term in ("吃过药", "用过药", "用药", "服药", "什么药")):
+            return "used_medicines"
+        if any(term in text for term in ("过敏", "禁忌", "不能用", "不能使用")):
+            return "allergies"
+        if missing in {"symptoms", "duration", "used_medicines", "allergies"}:
+            return missing
+        return "clarification"
+
+    @classmethod
+    def _repeat_pending_clarification(cls, session: InquirySessionResponse, topic: str) -> None:
+        session.stage = "clarification"
+        session.next_action = "ask"
+        session.reply = f"刚才这句我没听清。{CLARIFICATION_QUESTIONS.get(topic, '请换一种说法再告诉我。')}"
         cls._clear_decision(session)
 
     @staticmethod
@@ -632,6 +871,19 @@ class InquiryOrchestrator:
         return list(dict.fromkeys(matches))
 
     @staticmethod
+    def _valid_clarification_answer(topic: str, transcript: str, features: list[str]) -> bool:
+        text = transcript.strip()
+        if features:
+            return True
+        if any(term in text for term in ("不清楚", "不知道", "说不清", "不确定", "都没有", "没有这些", "都不是")):
+            return True
+        if topic == "history_change":
+            return any(term in text for term in ("更重", "重一些", "更轻", "轻一些", "一样", "差不多", "不同", "不一样", "没变化"))
+        if topic == "wound_state":
+            return any(term in text for term in ("只是", "轻微", "破皮", "没红肿", "没有红肿"))
+        return False
+
+    @staticmethod
     def _clear_decision(session: InquirySessionResponse) -> None:
         session.risk_level = None
         session.risk_reasons = []
@@ -681,12 +933,18 @@ class InquiryOrchestrator:
         transcript: str,
         extracted: InquiryExtractedInformation,
         interpretation: SymptomInterpretation,
+        *,
+        model_led: bool = False,
     ) -> bool:
         explicit_request = any(
             term in transcript
             for term in ("测体征", "测一下体征", "测量体征", "读取体征", "身体体征", "量一下体温")
         )
-        return bool(explicit_request or cls._requires_vitals(extracted, interpretation))
+        if explicit_request:
+            return True
+        if model_led:
+            return interpretation.action_intent == "measure_vitals"
+        return cls._requires_vitals(extracted, interpretation)
 
     @staticmethod
     def _profile_context(session: InquirySessionResponse) -> str:
@@ -695,6 +953,11 @@ class InquiryOrchestrator:
             for value in (session.user_profile, session.user_allergies)
             if value and value.strip()
         )
+
+    @staticmethod
+    def _current_user_turn_count(session: InquirySessionResponse) -> int:
+        # The current transcript is persisted before this in-memory session is refreshed.
+        return sum(1 for message in session.messages if message.role == "user") + 1
 
     def _history_context(
         self,
@@ -752,3 +1015,12 @@ class InquiryOrchestrator:
     def _title(session: InquirySessionResponse) -> str:
         evidence = next(iter(session.extracted_information.dimension_evidence.values()), "健康问询")
         return f"{session.user_name} · {evidence[:12]}"
+
+    @staticmethod
+    def _natural_summary(value: str) -> str:
+        summary = value.strip()
+        if not summary:
+            return "我已经把你刚才说的情况整理好了。"
+        summary = summary.replace("用户", "你").replace("患者", "你")
+        summary = summary.rstrip("。！？!?")
+        return f"{summary}。"

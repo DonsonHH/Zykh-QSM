@@ -2,7 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Fingerprint, Minus, Plus, RotateCcw, ScanFace, ShieldCheck, UserRound, X } from "lucide-react";
 import { identifyFingerprint } from "../api/fingerprint.js";
 import { verifyDispenseIdentity } from "../api/identity.js";
+import { updateMedicine } from "../api/medicines.js";
 import { activateIdentity } from "../hooks/useFaceIdentity.js";
+import { useExitPresence } from "../hooks/useExitPresence.js";
+import { MedicineRemainingPrompt } from "./MedicineRemainingPrompt.jsx";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -12,7 +15,7 @@ const nextPaint = () => new Promise((resolve) => {
 const DISPENSE_FINGERPRINT_TIMEOUT_SECONDS = 15;
 const FACE_PREVIEW_READY_TIMEOUT_MS = 4500;
 const FACE_VERIFICATION_FRAME_INTERVAL_MS = 250;
-const DISPENSE_AUTO_CLOSE_MS = 2000;
+const DISPENSE_COMPLETE_HOLD_MS = 1200;
 const anonymousGuest = {
   id: "",
   name: "访客",
@@ -46,7 +49,11 @@ function faceFailureOutcome(verification = {}) {
   };
 }
 
-export function DispenseConfirmModal({ medicine, plan = null, open, submitting, result, error, onCancel, onSubmit }) {
+export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, open, submitting, result, error, onCancel, onSubmit }) {
+  const medicineRef = useRef(currentMedicine);
+  if (currentMedicine) medicineRef.current = currentMedicine;
+  const medicine = currentMedicine || medicineRef.current;
+  const { present, exiting } = useExitPresence(Boolean(open && currentMedicine));
   const [quantity, setQuantity] = useState(1);
   const [method, setMethod] = useState(plan ? "fingerprint" : "face");
   const [phase, setPhase] = useState("idle");
@@ -58,6 +65,8 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
   const [previewReady, setPreviewReady] = useState(false);
   const [verificationFrameVersion, setVerificationFrameVersion] = useState(0);
   const [verificationFrameReady, setVerificationFrameReady] = useState(false);
+  const [inventoryUpdating, setInventoryUpdating] = useState(false);
+  const [inventoryMessage, setInventoryMessage] = useState("");
   const sessionRef = useRef(0);
   const verificationAttemptRef = useRef(0);
   const previewRetryTimerRef = useRef(null);
@@ -87,6 +96,8 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
       setPreviewReady(false);
       setVerificationFrameVersion(0);
       setVerificationFrameReady(false);
+      setInventoryUpdating(false);
+      setInventoryMessage("");
     } else {
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
@@ -119,17 +130,14 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
   useEffect(() => {
     if (open && phase === "complete") {
       autoCloseTimerRef.current = window.setTimeout(() => {
-        sessionRef.current += 1;
-        verificationAttemptRef.current += 1;
-        setPreviewActive(false);
-        onCancelRef.current();
-      }, DISPENSE_AUTO_CLOSE_MS);
+        setPhase("inventory_check");
+      }, DISPENSE_COMPLETE_HOLD_MS);
       return () => window.clearTimeout(autoCloseTimerRef.current);
     }
     return undefined;
   }, [open, phase]);
 
-  if (!open || !medicine) {
+  if (!present || !medicine) {
     return null;
   }
 
@@ -417,11 +425,30 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     window.clearTimeout(autoCloseTimerRef.current);
     settlePreviewReadiness(false);
     setPreviewActive(false);
-    onCancel();
+    onCancelRef.current();
+  }
+
+  async function markMedicineDepleted() {
+    if (inventoryUpdating) return;
+    setInventoryUpdating(true);
+    try {
+      const response = await updateMedicine(medicine.id, { stock: 0 });
+      const updatedMedicine = response.medicine || { ...medicine, stock: 0 };
+      window.dispatchEvent(new CustomEvent("zykh:medicine-updated", { detail: updatedMedicine }));
+      setInventoryMessage("已触发库存警告");
+      autoCloseTimerRef.current = window.setTimeout(cancelSession, 900);
+    } catch (requestError) {
+      setInventoryMessage(requestError.message || "库存警告记录失败，请在设置中核对库存");
+      autoCloseTimerRef.current = window.setTimeout(cancelSession, 1800);
+    } finally {
+      setInventoryUpdating(false);
+    }
   }
 
   const stageTitle =
-    phase === "verifying"
+    phase === "inventory_check"
+      ? "库存确认"
+      : phase === "verifying"
       ? method === "fingerprint" ? "正在读取指纹" : "正在确认面部"
       : phase === "face_retry"
         ? "面部识别未完成"
@@ -468,7 +495,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
     : "";
 
   return (
-    <div className="modal-layer" role="presentation">
+    <div className={`modal-layer${exiting ? " is-exiting" : ""}`} role="presentation">
       <section className="dispense-modal biometric-dispense-modal" role="dialog" aria-modal="true" aria-labelledby="dispense-title">
         <button className="modal-close" type="button" onClick={cancelSession} aria-label="关闭取药确认" disabled={phase === "opening" || submitting}>
           <X size={24} aria-hidden="true" />
@@ -484,7 +511,15 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
           </div>
         </div>
 
-        <div className="biometric-dispense-grid">
+        {phase === "inventory_check" ? (
+          <MedicineRemainingPrompt
+            medicine={medicine}
+            busy={inventoryUpdating}
+            message={inventoryMessage}
+            onHasStock={cancelSession}
+            onDepleted={markMedicineDepleted}
+          />
+        ) : <div className="biometric-dispense-grid">
           <div className="dispense-summary-column">
             <div className="modal-medicine-meta compact-meta">
               <article>
@@ -646,7 +681,7 @@ export function DispenseConfirmModal({ medicine, plan = null, open, submitting, 
               )}
             </div>
           </div>
-        </div>
+        </div>}
       </section>
     </div>
   );

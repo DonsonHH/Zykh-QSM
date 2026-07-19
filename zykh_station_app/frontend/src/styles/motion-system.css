@@ -6,7 +6,7 @@
   --motion-press: 110ms;
   --motion-control: 180ms;
   --motion-page-enter: 260ms;
-  --motion-page-exit: 140ms;
+  --motion-page-exit: 180ms;
   --motion-modal-enter: 240ms;
   --motion-modal-exit: 150ms;
 }
@@ -114,10 +114,29 @@ html[data-page-transition="backward"]::view-transition-new(kiosk-page) {
   animation-timing-function: var(--ease-fluid);
 }
 
+.admin-dialog-backdrop {
+  animation: modal-backdrop-enter var(--motion-control) var(--ease-fluid) both;
+}
+
 .modal-layer > [role="dialog"],
-.system-check-layer > [role="dialog"] {
+.system-check-layer > [role="dialog"],
+.admin-dialog-backdrop > [role="dialog"] {
   animation-duration: var(--motion-modal-enter);
   animation-timing-function: var(--ease-fluid);
+}
+
+.admin-dialog-backdrop > [role="dialog"] {
+  animation-name: modal-surface-enter;
+  animation-fill-mode: both;
+}
+
+.admin-dialog-backdrop.is-exiting {
+  pointer-events: none;
+  animation: modal-backdrop-exit var(--motion-modal-exit) var(--ease-exit) both;
+}
+
+.admin-dialog-backdrop.is-exiting > [role="dialog"] {
+  animation: modal-surface-exit var(--motion-modal-exit) var(--ease-exit) both;
 }
 
 @keyframes modal-backdrop-enter {

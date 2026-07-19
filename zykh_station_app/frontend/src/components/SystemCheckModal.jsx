@@ -19,6 +19,7 @@ import { loadHostAudioStatus, testAudioRelay } from "../api/audio.js";
 import { loadDeviceCheck } from "../api/device.js";
 import { loadNetworkStatus, setNetworkMode, startQsm4g } from "../api/network.js";
 import { isLocalNetworkMode } from "../utils/network.js";
+import { useExitPresence } from "../hooks/useExitPresence.js";
 
 const fallbackCheck = {
   qsm_mode: "mock",
@@ -41,6 +42,7 @@ const fallbackCheck = {
 };
 
 export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStatusChange, onClose, notify }) {
+  const { present, exiting } = useExitPresence(open);
   const [check, setCheck] = useState(fallbackCheck);
   const [network, setNetwork] = useState(networkStatus || null);
   const [audio, setAudio] = useState(null);
@@ -112,7 +114,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       .finally(() => setStarting4g(false));
   }
 
-  if (!open) {
+  if (!present) {
     return null;
   }
 
@@ -186,7 +188,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   ];
 
   return (
-    <div className="system-check-layer" role="presentation">
+    <div className={`system-check-layer${exiting ? " is-exiting" : ""}`} role="presentation">
       <section className="system-check-modal" role="dialog" aria-modal="true" aria-labelledby="system-check-title">
         <button className="modal-close" type="button" onClick={onClose} aria-label="关闭系统检查">
           <X size={24} aria-hidden="true" />

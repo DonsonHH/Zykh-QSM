@@ -18,8 +18,8 @@ import { cancelVitalsSession, loadVitalsSession, startVitalsSession } from "../a
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const activePhases = new Set(["starting", "waiting_finger", "stabilizing"]);
-const baseMeasurementSeconds = 10;
-const extendedMeasurementSeconds = 20;
+const baseMeasurementSeconds = 18;
+const extendedMeasurementSeconds = 30;
 
 export function Vitals({ onNavigate, returnPage = "home", notify }) {
   const [phase, setPhase] = useState("idle");
@@ -258,6 +258,9 @@ function describeVitals(result, errorMessage, phase) {
     }
     if (Number(result?.spo2_frame_count || 0) > 0 && Number(result?.heart_rate_frame_count || 0) === 0) {
       return { tone: "active", title: "心率正在稳定", summary: "血氧信号已读取，请保持手指不动", detail: "" };
+    }
+    if (Number(result?.elapsed_seconds || 0) < 10) {
+      return { tone: "active", title: "传感器预热中", summary: "请保持手指与额头位置不动", detail: "" };
     }
     if (phase === "waiting_finger") {
       return { tone: "active", title: "等待手指信号", summary: "请用指腹完整覆盖传感器", detail: "" };

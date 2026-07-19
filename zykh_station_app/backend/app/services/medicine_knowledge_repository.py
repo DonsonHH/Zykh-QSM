@@ -109,8 +109,9 @@ class MedicineKnowledgeRepository:
             self._serialize_plan(
                 plan,
                 option_id=chr(ord("A") + index),
-                label="优先方案" if index == 0 else f"替代方案 {index}",
+                label="推荐方案" if index == 0 else f"备选方案{index}",
                 dimensions=dimensions,
+                option_index=index,
             )
             for index, plan in enumerate(plans[:limit])
         ]
@@ -227,6 +228,7 @@ class MedicineKnowledgeRepository:
         option_id: str,
         label: str,
         dimensions: list[str],
+        option_index: int,
     ) -> TreatmentOption:
         medicines = [
             TreatmentMedicine(
@@ -237,7 +239,12 @@ class MedicineKnowledgeRepository:
             for index, (candidate, coverage) in enumerate(plan)
         ]
         covered = list(dict.fromkeys(dimension for medicine in medicines for dimension in medicine.covered_symptoms))
-        when = f"适合以{'、'.join(covered)}为主要表现时核对" if covered else "需结合当前症状进一步核对"
+        coverage_text = "、".join(covered) or "这次描述的主要不适"
+        medicine_names = "和".join(medicine.name for medicine in medicines)
+        if option_index == 0:
+            when = f"{medicine_names}更贴近你提到的{coverage_text}，可先对照药品说明确认是否合适。"
+        else:
+            when = f"{medicine_names}的侧重点有所不同，如果更符合你最明显的不适，可对照这一方案。"
         return TreatmentOption(option_id=option_id, label=label, when=when, medicines=medicines)
 
     @staticmethod

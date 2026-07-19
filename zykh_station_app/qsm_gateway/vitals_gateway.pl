@@ -15,7 +15,10 @@ my $DATA = "$HOME/data";
 my $UART_READER = $ENV{QSM_VITALS_UART_READER} || '/userdata/zykh_app/scripts/read_vitals_uart8.pl';
 my $GY_READER = $ENV{QSM_GY614_READER} || '/userdata/medical_assistant/scripts/read_gy614_uart4.pl';
 my $GY_DEVICE = $ENV{GY614_UART} || '/dev/ttyS4';
-my $MEASURE_TIMEOUT = int($ENV{QSM_VITALS_MEASURE_TIMEOUT} || 10);
+# The module needs 5-10 seconds to initialize its algorithm after a cold start,
+# then produces an update about every 1.28 seconds. Stable warm readings still
+# exit early in read_vitals_uart8.pl.
+my $MEASURE_TIMEOUT = int($ENV{QSM_VITALS_MEASURE_TIMEOUT} || 18);
 my $CURRENT = "$DATA/current.json";
 
 system('mkdir', '-p', $DATA) == 0 or die "Cannot create $DATA\n";

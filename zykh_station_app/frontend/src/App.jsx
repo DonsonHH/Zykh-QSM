@@ -19,6 +19,7 @@ import { IdleScreen } from "./pages/IdleScreen.jsx";
 import { AdminConsole } from "./pages/AdminConsole.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 import { clearInquirySession } from "./utils/inquirySession.js";
+import { enableTouchKeyboardForEvent } from "./utils/touchKeyboard.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
 let viewTransitionToken = 0;
@@ -72,6 +73,12 @@ export function App() {
   const toastTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
   const { clear: clearIdentity } = useFaceIdentity({ auto: false });
+
+  useEffect(() => {
+    const showKeyboard = (event) => enableTouchKeyboardForEvent(event);
+    document.addEventListener("pointerdown", showKeyboard, true);
+    return () => document.removeEventListener("pointerdown", showKeyboard, true);
+  }, []);
 
   useEffect(() => {
     const applySettings = (settings) => {

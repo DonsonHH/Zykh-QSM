@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Fingerprint, ListChecks } from "lucide-react";
-import { medicationPlanTimeLabel, orderMedicationPlans } from "../utils/medicationPlans.js";
+import { medicationPlanTimeLabel, selectNearestMedicationPlans } from "../utils/medicationPlans.js";
 import { MedicationTaskPicker } from "./MedicationTaskPicker.jsx";
 
 export function MedicationSummaryCard({ medication, onQuickDispense, quickDispenseBusy = false }) {
@@ -34,7 +34,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
     onQuickDispense?.(plan);
   }
 
-  const visiblePlans = useMemo(() => orderMedicationPlans(pendingPlans, now).slice(0, 3), [now, pendingPlans]);
+  const visiblePlans = useMemo(() => selectNearestMedicationPlans(pendingPlans, now, 3), [now, pendingPlans]);
 
   return (
     <section className="card task-card medication-summary-card">

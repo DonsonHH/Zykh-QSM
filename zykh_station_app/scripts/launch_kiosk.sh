@@ -14,11 +14,14 @@ KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
 KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"
 KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
+KIOSK_TOUCH_KEYBOARD="${KIOSK_TOUCH_KEYBOARD:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
 AUDIO_RELAY_PID=""
 AUDIO_RELAY_PROCESS_GROUP="0"
 AUDIO_RELAY_STARTED="0"
+TOUCH_KEYBOARD_PID=""
+TOUCH_KEYBOARD_STARTED="0"
 CLEANUP_STARTED="0"
 KIOSK_GUARD_STARTED="0"
 KIOSK_GUARD_DONE="$RUN_DIR/kiosk-cleanup.$$.done"
@@ -104,6 +107,63 @@ stop_browser() {
   terminate_managed_process "$BROWSER_PID" "0"
 }
 
+start_touch_keyboard_if_needed() {
+  if [ "$KIOSK_TOUCH_KEYBOARD" != "1" ]; then
+    return 0
+  fi
+  if ! command -v onboard >/dev/null 2>&1; then
+    warn "未找到 Onboard 屏幕键盘；文本区域仍会请求系统虚拟键盘。"
+    return 0
+  fi
+  if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.onboard.auto-show enabled true >/dev/null 2>&1 || true
+    gsettings set org.onboard start-minimized true >/dev/null 2>&1 || true
+    gsettings set org.onboard.window docking-enabled false >/dev/null 2>&1 || true
+    gsettings set org.onboard.window force-to-top true >/dev/null 2>&1 || true
+  fi
+  if pgrep -x onboard >/dev/null 2>&1; then
+    log "屏幕键盘已运行，将在文本区域获得焦点时自动显示。"
+    return 0
+  fi
+  keyboard_width=$((KIOSK_WIDTH * 4 / 5))
+  keyboard_height=$((KIOSK_HEIGHT / 3))
+  keyboard_x=$(((KIOSK_WIDTH - keyboard_width) / 2))
+  keyboard_y=$((KIOSK_HEIGHT - keyboard_height))
+  onboard --size "${keyboard_width}x${keyboard_height}" -x "$keyboard_x" -y "$keyboard_y" \
+    >"$RUN_DIR/onboard.log" 2>&1 &
+  TOUCH_KEYBOARD_PID="$!"
+  TOUCH_KEYBOARD_STARTED="1"
+  log "屏幕键盘已就绪，点按可编辑区域会自动弹出。"
+}
+
+stop_touch_keyboard() {
+  if [ "$TOUCH_KEYBOARD_STARTED" = "1" ]; then
+    terminate_managed_process "$TOUCH_KEYBOARD_PID" "0"
+  fi
+  TOUCH_KEYBOARD_PID=""
+  TOUCH_KEYBOARD_STARTED="0"
+}
+
+prepare_chinese_input_method() {
+  if [ "$KIOSK_TOUCH_KEYBOARD" != "1" ]; then
+    return 0
+  fi
+  export GTK_IM_MODULE=fcitx
+  export QT_IM_MODULE=fcitx
+  export XMODIFIERS=@im=fcitx
+  if ! command -v fcitx5 >/dev/null 2>&1; then
+    warn "未找到 Fcitx5，屏幕键盘只能输入基础字符。"
+    return 0
+  fi
+  if ! pgrep -x fcitx5 >/dev/null 2>&1; then
+    fcitx5 -d >/dev/null 2>&1 || true
+    sleep 1
+  fi
+  if command -v fcitx5-remote >/dev/null 2>&1; then
+    fcitx5-remote -s pinyin >/dev/null 2>&1 || warn "未能自动切换拼音输入法，可在系统输入法中手动选择拼音。"
+  fi
+}
+
 start_audio_relay_if_needed() {
   if [ "$KIOSK_AUDIO_RELAY" != "1" ]; then
     return 0
@@ -153,6 +213,7 @@ cleanup_once() {
   trap - EXIT
   trap '' HUP INT QUIT TERM
   stop_browser
+  stop_touch_keyboard
   stop_audio_relay
   restore_resolution
   if [ "$KIOSK_GUARD_STARTED" = "1" ]; then
@@ -487,8 +548,60 @@ find_browser() {
   fi
 }
 
+install_qsm_tether_helper_if_needed() {
+  helper="/usr/local/sbin/zykh-qsm-tether"
+  installer="$ROOT_DIR/scripts/install_qsm_tether_helper.sh"
+  if [ -x "$helper" ] || [ "${KIOSK_INSTALL_QSM_TETHER:-1}" != "1" ]; then
+    return 0
+  fi
+  if [ ! -f "$installer" ]; then
+    warn "未找到主机数据网络安装脚本；Wi-Fi 仍可正常使用。"
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    warn "主机数据网络助手尚未安装；请运行 sudo sh scripts/install_qsm_tether_helper.sh。"
+    return 0
+  fi
+  log "首次启用 QSM 数据网络需要一次管理员授权。"
+  if sudo sh "$installer"; then
+    log "QSM 数据网络备用路由已就绪。"
+  else
+    warn "未完成主机数据网络助手安装；本次将保留 Wi-Fi，应用其他功能不受影响。"
+  fi
+}
+
+prepare_sim_fallback() {
+  if [ "${KIOSK_QSM_TETHER:-1}" != "1" ]; then
+    return 0
+  fi
+
+  preferred_mode="$(curl -fsS --max-time 3 "$BACKEND_URL/api/settings/basic" 2>/dev/null \
+    | sed -n 's/.*"network_mode":"\([^"]*\)".*/\1/p' \
+    | head -n 1)"
+  [ -n "$preferred_mode" ] || preferred_mode="sim"
+
+  log "检查 QSM 数据网络备用通道..."
+  response="$(curl -fsS --max-time 35 -X POST "$BACKEND_URL/api/network/start-4g" 2>/dev/null || true)"
+  if printf '%s' "$response" | grep -q '"ok":true'; then
+    log "QSM 数据网络备用通道已就绪。"
+  else
+    warn "QSM 数据网络备用通道尚未就绪；Wi-Fi 和本地功能仍可继续使用。"
+  fi
+
+  case "$preferred_mode" in
+    local|offline)
+      curl -fsS --max-time 3 -X POST \
+        -H 'Content-Type: application/json' \
+        -d "{\"mode\":\"$preferred_mode\"}" \
+        "$BACKEND_URL/api/network/mode" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+install_qsm_tether_helper_if_needed
 start_backend_if_needed
 sh "$ROOT_DIR/scripts/ensure_qsm_gateway.sh" || true
+prepare_sim_fallback
 if [ "$KIOSK_OFFLINE_AI" = "1" ]; then
   if [ -x "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" ]; then
     sh "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" || warn "QSM 离线模型暂未就绪；云端和安全规则仍可继续使用。"
@@ -502,6 +615,8 @@ fi
 start_frontend_if_needed
 set_kiosk_resolution
 start_audio_relay_if_needed
+prepare_chinese_input_method
+start_touch_keyboard_if_needed
 
 BROWSER="$(find_browser || true)"
 if [ -z "$BROWSER" ]; then
@@ -522,6 +637,8 @@ set -- "$BROWSER" \
   --window-size="${KIOSK_WIDTH},${KIOSK_HEIGHT}" \
   --force-device-scale-factor="$KIOSK_SCALE" \
   --disable-pinch \
+  --force-renderer-accessibility \
+  --enable-features=TouchVirtualKeyboard \
   --overscroll-history-navigation=0 \
   --no-first-run \
   --use-fake-ui-for-media-stream \

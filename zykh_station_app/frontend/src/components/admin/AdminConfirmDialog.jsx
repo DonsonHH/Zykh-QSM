@@ -1,11 +1,13 @@
 import React from "react";
 import { AlertTriangle, X } from "lucide-react";
+import { useExitPresence } from "../../hooks/useExitPresence.js";
 
 export function AdminConfirmDialog({ open, title, description, expected, confirmLabel, tone = "danger", busy, onCancel, onConfirm }) {
-  if (!open) return null;
+  const { present, exiting } = useExitPresence(open);
+  if (!present) return null;
 
   return (
-    <div className="admin-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onCancel()}>
+    <div className={`admin-dialog-backdrop${exiting ? " is-exiting" : ""}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && open && onCancel()}>
       <section className="admin-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-confirm-title">
         <header>
           <div className={`admin-dialog-icon ${tone}`}>

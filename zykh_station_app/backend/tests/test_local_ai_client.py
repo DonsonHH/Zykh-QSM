@@ -42,9 +42,13 @@ class FakeLocalClient:
     def __init__(self, result: dict[str, object]) -> None:
         self.result = result
         self.calls = 0
+        self.last_messages = []
+        self.last_kwargs = {}
 
-    def chat(self, *_args, **_kwargs) -> dict[str, object]:
+    def chat(self, messages, **kwargs) -> dict[str, object]:
         self.calls += 1
+        self.last_messages = messages
+        self.last_kwargs = kwargs
         return dict(self.result)
 
     def status(self) -> dict[str, object]:
@@ -214,6 +218,24 @@ class AiServiceOfflineTest(unittest.TestCase):
 
         self.assertNotIn("头晕。。", reply)
 
+    def test_recommendation_language_removes_efficacy_promises(self) -> None:
+        result = AiService._normalize_recommendation_language(
+            {
+                "summary": "这个方案一定有效，可以治好当前不适。",
+                "option_reasons": {"A": "这个方案见效快、快速缓解并且保证有效。"},
+            },
+            ["A"],
+            "cloud",
+        )
+
+        combined = result["summary"] + result["option_reasons"]["A"]
+        self.assertTrue(result["ok"])
+        self.assertNotIn("见效快", combined)
+        self.assertNotIn("快速缓解", combined)
+        self.assertNotIn("一定有效", combined)
+        self.assertNotIn("可以治好", combined)
+        self.assertNotIn("保证有效", combined)
+
     def test_definitive_local_model_safety_notice_is_ignored(self) -> None:
         self.assertEqual(InquiryService._safe_ai_notice("无禁忌，可以服用"), "")
         self.assertEqual(
@@ -251,6 +273,50 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertEqual(result["source"], "local_llm")
         self.assertEqual(result["symptom_dimensions"], ["感冒鼻部症状"])
         self.assertNotIn("risk_level", result)
+
+    @patch("app.services.ai_service.settings")
+    def test_local_inquiry_extraction_has_a_strict_short_completion_budget(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": json.dumps(
+                    {
+                        "d": [["summer", "头晕"]],
+                        "du": "半天",
+                        "u": "未使用",
+                        "a": "无",
+                        "q": "有没有恶心或腹泻？",
+                        "n": "ask",
+                        "r": "已确认头晕持续半天。",
+                        "c": 0.86,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我头晕半天了，没有用药，也没有过敏",
+            {},
+            {"age": 65},
+        )
+
+        self.assertEqual(client.last_kwargs["max_tokens"], 96)
+        self.assertLess(len(client.last_messages[0]["content"]), 520)
+        self.assertIn('"s"', client.last_messages[1]["content"])
+        self.assertEqual(result["symptom_dimensions"], ["恶心暑湿"])
+        self.assertEqual(result["follow_up_question"], "有没有恶心或腹泻？")
+
+    def test_compact_local_schema_accepts_small_model_object_variants(self) -> None:
+        result = AiService._expand_local_inquiry(
+            {"d": [{"c": "allergy", "u": "对头孢过敏"}], "n": "ask"}
+        )
+
+        self.assertEqual(result["allergy_or_contraindication"], "对头孢过敏")
+        self.assertEqual(result["symptom_dimensions"], [])
 
 
 if __name__ == "__main__":

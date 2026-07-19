@@ -91,6 +91,18 @@ class RealtimeAudioTest(unittest.TestCase):
 
 
 class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
+    async def test_local_audio_collection_stops_without_waiting_for_stream_eof(self) -> None:
+        microphone = asyncio.StreamReader()
+        microphone.feed_data(struct.pack("<hhhh", -1000, 0, 1000, 2000))
+        stopped = asyncio.Event()
+
+        collect = asyncio.create_task(LocalAsrClient._collect_audio(microphone, stopped))
+        await asyncio.sleep(0)
+        stopped.set()
+
+        pcm = await asyncio.wait_for(collect, timeout=0.5)
+        self.assertEqual(pcm, struct.pack("<hhhh", -1000, 0, 1000, 2000))
+
     async def test_local_paraformer_uploads_one_complete_utterance(self) -> None:
         class Upstream:
             def __init__(self) -> None:

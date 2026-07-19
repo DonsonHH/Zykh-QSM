@@ -73,6 +73,45 @@ class NetworkSignalTest(unittest.TestCase):
         self.assertEqual(first, second)
         probe.assert_called_once_with()
 
+    def test_qsm_modem_is_not_reported_as_host_sim_without_tether(self) -> None:
+        service = NetworkService()
+        with (
+            patch("app.services.network_service.db.get_setting", return_value="sim"),
+            patch("app.services.network_service.db.set_setting"),
+            patch.object(service, "_interface_ipv4", return_value=""),
+            patch.object(service, "_default_interface", return_value=""),
+            patch.object(service, "_wifi_status", return_value={
+                "wifi_connected": False,
+                "wifi_signal": "none",
+                "wifi_ssid": "",
+                "wifi_interface": "",
+                "wifi_signal_dbm": None,
+                "wifi_signal_percent": 0,
+                "wifi_signal_bars": 0,
+                "wifi_signal_level": "none",
+            }),
+            patch.object(service, "_host_tether_ready", return_value=False),
+            patch.object(service, "_qsm_network_status", return_value={
+                "ok": True,
+                "connected": True,
+                "sim_present": True,
+                "signal_csq": 27,
+            }),
+            patch.object(service, "_sim_identity", return_value={
+                "sim_operator": "中国移动",
+                "sim_operator_code": "46000",
+                "sim_phone_number": "",
+            }),
+            patch("app.services.network_service.LocalAiClient.status", return_value={"ready": False}),
+        ):
+            status = service.status()
+
+        self.assertEqual(status["transport"], "local")
+        self.assertFalse(status["sim_connected"])
+        self.assertTrue(status["qsm_sim_connected"])
+        self.assertFalse(status["host_tether_ready"])
+        self.assertIn("主机备用通道未就绪", status["warnings"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

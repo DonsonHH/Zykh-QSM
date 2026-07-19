@@ -77,6 +77,17 @@ export function orderMedicationPlans(plans, reference = new Date()) {
     .map(({ plan }) => plan);
 }
 
+export function selectNearestMedicationPlans(plans, reference = new Date(), limit = 3) {
+  const nearest = orderMedicationPlans(plans, reference).slice(0, Math.max(0, limit));
+  return nearest
+    .map((plan, index) => ({ plan, score: chronologicalTaskScore(plan, reference, index) }))
+    .sort((left, right) => {
+      if (left.score[1] !== right.score[1]) return left.score[1] - right.score[1];
+      return left.score[2] - right.score[2];
+    })
+    .map(({ plan }) => plan);
+}
+
 function chronologicalTaskScore(plan, reference, originalIndex) {
   const completed = isMedicationPlanCompleted(plan) || plan.status === "已跳过";
   const dateKey = planDateKey(plan) || localDateKey(reference);

@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+INTERFACE="usb0"
+ADDRESS="192.168.77.2/24"
+GATEWAY="192.168.77.1"
+METRIC="700"
+
+require_interface() {
+  ip link show dev "$INTERFACE" >/dev/null 2>&1 \
+    || { echo "QSM 主机网络接口 $INTERFACE 不存在" >&2; exit 1; }
+}
+
+enable_tether() {
+  require_interface
+  ip link set dev "$INTERFACE" up
+  ip address replace "$ADDRESS" dev "$INTERFACE"
+  ip route replace default via "$GATEWAY" dev "$INTERFACE" metric "$METRIC"
+  if command -v resolvectl >/dev/null 2>&1; then
+    resolvectl dns "$INTERFACE" 223.5.5.5 114.114.114.114 8.8.8.8 >/dev/null 2>&1 || true
+    resolvectl default-route "$INTERFACE" yes >/dev/null 2>&1 || true
+  fi
+  echo "QSM_HOST_TETHER_READY interface=$INTERFACE gateway=$GATEWAY metric=$METRIC"
+}
+
+disable_tether() {
+  ip route del default via "$GATEWAY" dev "$INTERFACE" metric "$METRIC" >/dev/null 2>&1 || true
+  ip address del "$ADDRESS" dev "$INTERFACE" >/dev/null 2>&1 || true
+  if command -v resolvectl >/dev/null 2>&1; then
+    resolvectl revert "$INTERFACE" >/dev/null 2>&1 || true
+  fi
+  echo "QSM_HOST_TETHER_DISABLED interface=$INTERFACE"
+}
+
+status_tether() {
+  require_interface
+  ip -4 address show dev "$INTERFACE"
+  ip route show default dev "$INTERFACE"
+}
+
+case "${1:-}" in
+  enable) enable_tether ;;
+  disable) disable_tether ;;
+  status) status_tether ;;
+  *) echo "usage: $0 enable|disable|status" >&2; exit 2 ;;
+esac

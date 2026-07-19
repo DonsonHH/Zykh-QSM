@@ -19,6 +19,7 @@ export function StrokeDrawIcon({
   mode = "once",
   active = true,
   replayOnPointer = false,
+  replayKey = 0,
   pace = "standard",
   label
 }) {
@@ -161,7 +162,7 @@ export function StrokeDrawIcon({
       window.clearTimeout(timer);
       resetParts();
     };
-  }, [Icon, active, delay, mode, pace, replayToken]);
+  }, [Icon, active, delay, mode, pace, replayKey, replayToken]);
 
   return (
     <span

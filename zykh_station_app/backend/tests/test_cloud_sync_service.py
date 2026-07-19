@@ -121,6 +121,38 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertGreater(count, 0)
         self.assertTrue(any(action == "UPSERT_SNAPSHOT_BATCH" for action, _ in second.calls))
 
+    def test_snapshot_publishes_current_inquiry_sessions_for_miniprogram_history(self) -> None:
+        session = SimpleNamespace(
+            session_id="session-current",
+            user_id="user-zhangsan",
+            user_name="张三",
+            extracted_information=SimpleNamespace(symptoms_text="轻微头晕"),
+            title="张三头晕问询",
+            created_at="2026-07-19 08:00:00",
+            updated_at="2026-07-19 08:03:00",
+            model_dump=lambda mode: {
+                "session_id": "session-current",
+                "user_id": "user-zhangsan",
+                "user_name": "张三",
+                "title": "张三头晕问询",
+                "risk_level": "medium",
+                "messages": [{"role": "user", "content": "有些头晕"}],
+                "created_at": "2026-07-19 08:00:00",
+                "updated_at": "2026-07-19 08:03:00",
+            },
+        )
+        with patch("app.services.cloud_sync_service.InquiryRepository") as repository_class:
+            repository_class.return_value.list_sessions.return_value = [session]
+            repository_class.return_value.list_records.return_value = []
+
+            snapshot = CloudSyncWorker._build_snapshot()
+
+        row = snapshot["inquiries"][0]
+        self.assertEqual(row["inquiry_id"], "session-current")
+        self.assertEqual(row["target_user_name"], "张三")
+        self.assertEqual(row["symptoms_summary"], "轻微头晕")
+        self.assertEqual(row["updatedAt"], "2026-07-19 08:03:00")
+
     def test_ack_failure_never_reexecutes_completed_hardware_command(self) -> None:
         worker = AckFailureWorker()
         command = {"_id": "open-1", "type": "OPEN_CABINET", "payload": {}}
@@ -183,6 +215,36 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(request.slot, 8)
         self.assertTrue(request.confirmed_open)
         self.assertEqual(request.target_user_name, "张三")
+
+    def test_miniprogram_speak_command_announces_the_named_reminder(self) -> None:
+        worker = FakeCloudSyncWorker()
+        with patch("app.services.cloud_sync_service.QsmClient") as client_class:
+            client_class.return_value.audio_speak.return_value = {"ok": True, "detail": "played"}
+
+            result = worker._execute_command(
+                "AUDIO_SPEAK",
+                {
+                    "payload": {
+                        "target_user_name": "张三",
+                        "medicine_name": "藿香正气丸",
+                        "volume": 210,
+                    }
+                },
+            )
+
+        client_class.return_value.audio_speak.assert_called_once_with(
+            "张三，该服用藿香正气丸了。",
+            210,
+            speed=None,
+            tts_mode="auto",
+        )
+        self.assertTrue(result["ok"])
+
+    def test_miniprogram_speak_command_requires_text_or_a_person_name(self) -> None:
+        worker = FakeCloudSyncWorker()
+
+        with self.assertRaisesRegex(CloudSyncError, "播报内容"):
+            worker._execute_command("AUDIO_SPEAK", {"payload": {}})
 
 
 if __name__ == "__main__":

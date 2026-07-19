@@ -77,6 +77,25 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_VITALS_RETRY_ATTEMPTS` and `QSM_VITALS_RETRY_DELAY_SECONDS` for one automatic stabilization retry when temperature, heart rate or blood oxygen is incomplete. Concurrent UI requests share the same physical measurement instead of competing for UART.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_STATUS_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
+
+### 小程序服药提醒播报
+
+云端命令轮询支持 `AUDIO_SPEAK`。小程序无需访问终端局域网接口，只需沿用现有
+`CREATE_COMMAND` 下发命令；终端收到后通过 QSM 喇叭播报并回写命令结果：
+
+```json
+{
+  "type": "AUDIO_SPEAK",
+  "payload": {
+    "target_user_name": "张三",
+    "medicine_name": "藿香正气丸",
+    "volume": 230
+  }
+}
+```
+
+未传 `text` 时会生成“张三，该服用藿香正气丸了。”；也可直接传入不超过 240 字的
+`text`。云端轮询失败不会阻断终端本地功能，命令执行和确认仍保存在本地命令历史中。
 - `QSM_CAMERA_CAPTURE_PATH` and `QSM_CAMERA_STREAM_PATH` for QSM camera frames.
 - `QSM_FACE_*_PATH` for QSM-side identity status, matching, enrollment and listing.
 
@@ -161,6 +180,8 @@ The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway
 The speaker has two low-latency paths. Online Qwen realtime TTS writes 24 kHz PCM deltas to board port `19001` as they arrive. Offline TTS uses the resident VITS service on board loopback port `19002`, which avoids reloading the model and plays callback chunks during synthesis. Both paths return structured latency metrics and fall back without exposing transport details in the terminal UI.
 
 WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes from the QSM EC200A `AT+CSQ` response and is converted to dBm, percentage and 0-4 bars. The top bar therefore reflects each live link independently instead of assuming full signal.
+
+The host SIM fallback is a routed USB link rather than an ADB-forwarded HTTP request. QSM `usb0` is the EC200A WAN, QSM `usb1` is the RNDIS link to host `usb0`, and `qsm_gateway/start_host_tether.sh` enables forwarding and NAT. The root-owned host helper assigns `192.168.77.2/24` and a metric-700 default route through `192.168.77.1`; WiFi remains the preferred lower-metric route. Install the helper once with `sudo sh scripts/install_qsm_tether_helper.sh`. Settings refuses to disable WiFi when this route cannot be verified.
 
 By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues to the gateway dispense call after identity and optional today-plan ownership checks succeed. Successful real actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 

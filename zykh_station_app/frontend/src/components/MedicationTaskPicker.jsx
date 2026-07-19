@@ -5,8 +5,10 @@ import {
   medicationPlanTimeLabel,
   orderMedicationTaskPickerPlans
 } from "../utils/medicationPlans.js";
+import { useExitPresence } from "../hooks/useExitPresence.js";
 
 export function MedicationTaskPicker({ open, plans, busy, onClose, onPickPlan }) {
+  const { present, exiting } = useExitPresence(open);
   const taskRows = useMemo(
     () => orderMedicationTaskPickerPlans(plans),
     [open, plans]
@@ -27,10 +29,10 @@ export function MedicationTaskPicker({ open, plans, busy, onClose, onPickPlan })
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose, open]);
 
-  if (!open) return null;
+  if (!present) return null;
 
   return (
-    <div className="modal-layer home-task-picker-layer" onClick={onClose}>
+    <div className={`modal-layer home-task-picker-layer${exiting ? " is-exiting" : ""}`} onClick={open ? onClose : undefined}>
       <section
         className="home-task-picker"
         role="dialog"

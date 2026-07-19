@@ -1,7 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Fingerprint, LoaderCircle, ScanFace, X, XCircle } from "lucide-react";
+import { useExitPresence } from "../../hooks/useExitPresence.js";
 
-export function AdminBiometricDialog({ open, mode, user, onEnroll, onProgress, onClose, onComplete }) {
+export function AdminBiometricDialog({ open, mode, user: currentUser, onEnroll, onProgress, onClose, onComplete }) {
+  const userRef = useRef(currentUser);
+  if (currentUser) userRef.current = currentUser;
+  const user = currentUser || userRef.current;
+  const { present, exiting } = useExitPresence(Boolean(open && currentUser));
   const [phase, setPhase] = useState("preview");
   const [message, setMessage] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -21,9 +26,9 @@ export function AdminBiometricDialog({ open, mode, user, onEnroll, onProgress, o
     return () => {
       sessionRef.current += 1;
     };
-  }, [open, mode, user?.id]);
+  }, [open, mode, currentUser?.id]);
 
-  if (!open || !user) return null;
+  if (!present || !user) return null;
 
   async function startEnrollment() {
     const session = sessionRef.current;
@@ -71,7 +76,7 @@ export function AdminBiometricDialog({ open, mode, user, onEnroll, onProgress, o
 
   const canClose = phase !== "running";
   return (
-    <div className="admin-dialog-backdrop biometric" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && canClose && onClose()}>
+    <div className={`admin-dialog-backdrop biometric${exiting ? " is-exiting" : ""}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && open && canClose && onClose()}>
       <section className="admin-biometric-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-biometric-title">
         <header>
           <div>

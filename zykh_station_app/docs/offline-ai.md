@@ -80,7 +80,7 @@ LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_CHAT_PATH=/v1/chat/completions
 LOCAL_AI_HEALTH_PATH=/health
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
-LOCAL_AI_TIMEOUT_SECONDS=120
+LOCAL_AI_TIMEOUT_SECONDS=45
 LOCAL_AI_HEALTH_TIMEOUT_SECONDS=2
 ```
 
@@ -90,7 +90,7 @@ Modes:
 - `AI_MODE=local`: always use the QSM offline model.
 - `AI_MODE=cloud`: request cloud first, but still fail safely to the offline model if the request cannot complete.
 
-Public source labels are `cloud`, `local_llm`, `safety_rules` and `rules_fallback`. The UI renders them as 云通道, 离线模型 or 安全规则.
+Public source values remain `cloud`, `local_llm`, `safety_rules` and `rules_fallback`. The terminal UI represents them with accessible status icons instead of exposing technical channel names.
 
 ## Safety Boundary
 

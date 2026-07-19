@@ -123,6 +123,14 @@ class Settings:
     host_mic_device: str = _env("HOST_MIC_DEVICE", "qsm:FF Camera")
     network_preferred_mode: str = _env("NETWORK_PREFERRED_MODE", "sim").strip().lower()
     network_sim_interface: str = _env("NETWORK_SIM_INTERFACE", "usb0")
+    network_qsm_tether_script: str = _env(
+        "NETWORK_QSM_TETHER_SCRIPT", "/userdata/zykh_app/scripts/start_host_tether.sh"
+    )
+    network_host_tether_helper: str = _env(
+        "NETWORK_HOST_TETHER_HELPER", "/usr/local/sbin/zykh-qsm-tether"
+    )
+    network_host_tether_address: str = _env("NETWORK_HOST_TETHER_ADDRESS", "192.168.77.2")
+    network_host_tether_gateway: str = _env("NETWORK_HOST_TETHER_GATEWAY", "192.168.77.1")
     network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "false").strip().lower() in {
         "1",
         "true",
@@ -180,7 +188,7 @@ class Settings:
     local_ai_chat_path: str = _env("LOCAL_AI_CHAT_PATH", "/v1/chat/completions")
     local_ai_health_path: str = _env("LOCAL_AI_HEALTH_PATH", "/health")
     local_ai_model: str = _env("LOCAL_AI_MODEL", "Qwen3.5-0.8B-Q4_K_M")
-    local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "120"))
+    local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "45"))
     local_ai_health_timeout_seconds: float = float(_env("LOCAL_AI_HEALTH_TIMEOUT_SECONDS", "2"))
     dashscope_api_base: str = _env(
         "DASHSCOPE_API_BASE",

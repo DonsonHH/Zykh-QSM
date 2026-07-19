@@ -24,6 +24,10 @@ export function sendInquiryTurn(sessionId, transcript) {
   return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/turn`, { transcript });
 }
 
+export function reviseInquiryInformation(sessionId, payload) {
+  return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/information`, payload);
+}
+
 export function attachInquiryVitals(sessionId, payload) {
   return apiPost(`/api/inquiry/sessions/${encodeURIComponent(sessionId)}/vitals`, payload);
 }

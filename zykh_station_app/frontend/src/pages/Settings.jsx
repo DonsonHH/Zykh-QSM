@@ -42,7 +42,7 @@ const EDITABLE_KEYS = [
 const STATUS_KEYS = ["wifi_ssid", "sim_connected", "sim_operator", "sim_operator_code", "sim_phone_number", "microphone_available"];
 const AUTOSAVE_DELAY_MS = 900;
 
-function SettingsSwitch({ checked, onChange, label }) {
+function SettingsSwitch({ checked, onChange, label, disabled = false }) {
   return (
     <button
       className={`settings-switch ${checked ? "is-on" : ""}`}
@@ -50,6 +50,7 @@ function SettingsSwitch({ checked, onChange, label }) {
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
     >
       <span aria-hidden="true" />
@@ -57,14 +58,21 @@ function SettingsSwitch({ checked, onChange, label }) {
   );
 }
 
-function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange }) {
+function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange, disabled = false }) {
   return (
     <label className="basic-settings-range">
       <span className="basic-settings-range-label">
         <Icon size={24} aria-hidden="true" />
         <strong>{label}</strong>
       </span>
-      <input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
       <output>{value}{unit}</output>
     </label>
   );
@@ -80,6 +88,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const saveQueueRef = useRef(Promise.resolve());
   const saveTimerRef = useRef(0);
   const mountedRef = useRef(true);
+  const controlsLocked = loading || saveState === "saving";
 
   const networkDescription = useMemo(() => {
     if (values.network_mode === "local" || values.network_mode === "offline") {
@@ -110,7 +119,10 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         setValues(next);
         setSaveState("saved");
       })
-      .catch((error) => notify(error.message || "设置读取失败"))
+      .catch((error) => {
+        setSaveState("error");
+        notify(error.message || "设置读取失败");
+      })
       .finally(() => setLoading(false));
 
     return () => {
@@ -212,8 +224,8 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           <span>{loading ? "正在读取设备" : networkDescription}</span>
         </div>
         <span className={`settings-autosave-state ${saveState}`} role="status" aria-live="polite">
-          {saveState === "saving" ? <LoaderCircle size={18} className="spin" aria-hidden="true" /> : null}
-          {saveState === "pending" ? "等待自动保存" : saveState === "saving" ? "正在自动保存" : saveState === "error" ? "自动保存失败" : "已自动保存"}
+          {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={18} className="spin" aria-hidden="true" /> : null}
+          {saveState === "loading" ? "正在读取" : saveState === "pending" ? "等待自动保存" : saveState === "saving" ? "正在自动保存" : saveState === "error" ? "自动保存失败" : "已自动保存"}
         </span>
         <button className="admin-entry-button" type="button" onClick={() => onNavigate("admin")}>
           <Bug size={20} aria-hidden="true" />
@@ -221,7 +233,14 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         </button>
       </header>
 
-      <section className="basic-settings-grid" aria-busy={loading}>
+      <section className={`basic-settings-grid ${controlsLocked ? "is-loading" : ""}`} aria-busy={controlsLocked}>
+        {controlsLocked ? (
+          <div className="settings-loading-shield" role="status" aria-live="polite">
+            <LoaderCircle size={34} className="spin" aria-hidden="true" />
+            <strong>{loading ? "正在读取设备设置" : "正在应用设备设置"}</strong>
+            <span>{loading ? "读取完成后即可修改" : "完成后将自动恢复操作"}</span>
+          </div>
+        ) : null}
         <article className="basic-settings-panel network-panel">
           <header>
             <Wifi size={26} aria-hidden="true" />
@@ -232,7 +251,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
               <strong>Wi-Fi</strong>
               <span>{values.wifi_ssid || (values.wifi_enabled ? "已开启" : "已关闭")}</span>
             </div>
-            <SettingsSwitch checked={values.wifi_enabled} onChange={(next) => update("wifi_enabled", next)} label="切换 Wi-Fi" />
+            <SettingsSwitch checked={values.wifi_enabled} disabled={controlsLocked} onChange={(next) => update("wifi_enabled", next)} label="切换 Wi-Fi" />
           </div>
           <div className="basic-setting-toggle-row">
             <div>
@@ -240,12 +259,13 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
               <span>{!values.sim_enabled ? "已关闭" : values.sim_connected ? `${values.sim_operator || "移动网络"}已连接` : "等待数据网络"}</span>
               <small>{values.sim_phone_number || "模块未提供号码"}{values.sim_operator_code ? ` · ${values.sim_operator_code}` : ""}</small>
             </div>
-            <SettingsSwitch checked={values.sim_enabled} onChange={(next) => update("sim_enabled", next)} label="切换数据网络" />
+            <SettingsSwitch checked={values.sim_enabled} disabled={controlsLocked} onChange={(next) => update("sim_enabled", next)} label="切换数据网络" />
           </div>
           <div className="network-mode-control" aria-label="问询运行模式">
             <button
               type="button"
               className={values.network_mode === "sim" ? "active" : ""}
+              disabled={controlsLocked}
               onClick={() => update("network_mode", "sim")}
             >
               <RadioTower size={20} aria-hidden="true" />
@@ -254,6 +274,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
             <button
               type="button"
               className={values.network_mode !== "sim" ? "active" : ""}
+              disabled={controlsLocked}
               onClick={() => update("network_mode", "local")}
             >
               本地问询
@@ -273,6 +294,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
             min={0}
             max={255}
             unit=""
+            disabled={controlsLocked}
             onChange={(value) => update("speaker_volume", value)}
           />
           <RangeSetting
@@ -282,9 +304,10 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
             min={0}
             max={100}
             unit="%"
+            disabled={controlsLocked}
             onChange={(value) => update("microphone_volume", value)}
           />
-          <button className="settings-test-sound" type="button" onClick={testSpeaker} disabled={testing}>
+          <button className="settings-test-sound" type="button" onClick={testSpeaker} disabled={controlsLocked || testing}>
             <Volume2 size={21} aria-hidden="true" />
             {testing ? "正在播放" : "测试外放"}
           </button>
@@ -302,6 +325,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
             min={20}
             max={100}
             unit="%"
+            disabled={controlsLocked}
             onChange={(value) => update("display_brightness", value)}
           />
           <label className="idle-time-setting">
@@ -309,7 +333,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
               <Clock3 size={24} aria-hidden="true" />
               <strong>自动息屏</strong>
             </span>
-            <select value={values.idle_timeout_seconds} onChange={(event) => update("idle_timeout_seconds", Number(event.target.value))}>
+            <select disabled={controlsLocked} value={values.idle_timeout_seconds} onChange={(event) => update("idle_timeout_seconds", Number(event.target.value))}>
               <option value={30}>30 秒</option>
               <option value={60}>1 分钟</option>
               <option value={90}>1 分 30 秒</option>

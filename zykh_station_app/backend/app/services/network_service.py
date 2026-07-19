@@ -5,9 +5,10 @@ import re
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from .. import db
-from ..config import settings
+from ..config import APP_ROOT, settings
 from .local_ai_client import LocalAiClient
 from .qsm_client import QsmClient
 
@@ -28,7 +29,8 @@ class NetworkService:
         default_iface = self._default_interface()
         wifi = self._wifi_status(default_iface)
         sim_route = default_iface == interface
-        reachable = self._ping_target("223.5.5.5") if sim_ip else False
+        reachable = self._ping_target("223.5.5.5", interface) if sim_ip else False
+        host_tether_ready = self._host_tether_ready(interface)
         qsm_network = self._qsm_network_status()
         qsm_at = qsm_network.get("at") if isinstance(qsm_network.get("at"), dict) else {}
         qsm_sim_present = bool(qsm_network.get("sim_present") or qsm_network.get("connected"))
@@ -45,7 +47,10 @@ class NetworkService:
             "sim_signal_sample": sim_metrics["sample"],
             "sim_signal_sample_age_seconds": sim_metrics["sample_age_seconds"],
         }
-        sim_connected = bool(qsm_connected or (sim_ip and (sim_route or reachable)))
+        sim_connected = bool(
+            (qsm_connected and host_tether_ready)
+            or (sim_ip and sim_route and reachable)
+        )
         sim_present = bool(qsm_sim_present or sim_ip)
         local_ai = LocalAiClient().status()
         local_ai_ready = bool(local_ai.get("ready"))
@@ -71,6 +76,8 @@ class NetworkService:
                 **wifi,
                 "sim_present": sim_present,
                 "sim_connected": sim_connected,
+                "qsm_sim_connected": qsm_connected,
+                "host_tether_ready": host_tether_ready,
                 "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
                 "sim_enabled": sim_enabled,
                 **sim_identity,
@@ -95,16 +102,18 @@ class NetworkService:
                 **wifi,
                 "sim_present": sim_present,
                 "sim_connected": sim_connected,
+                "qsm_sim_connected": qsm_connected,
+                "host_tether_ready": host_tether_ready,
                 "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
                 "sim_enabled": sim_enabled,
                 **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "source": "host",
-                "warnings": [] if sim_connected else ["SIM 备用链路未连通。"],
+                "warnings": [] if (not sim_enabled or sim_connected) else ["SIM 备用链路未连通。"],
             }
 
-        if qsm_connected:
+        if qsm_connected and host_tether_ready:
             return {
                 "ok": True,
                 "mode": "sim",
@@ -120,6 +129,8 @@ class NetworkService:
                 **wifi,
                 "sim_present": sim_present,
                 "sim_connected": True,
+                "qsm_sim_connected": True,
+                "host_tether_ready": True,
                 "sim_signal": str(qsm_network.get("signal") or "good"),
                 "sim_enabled": sim_enabled,
                 **sim_identity,
@@ -146,13 +157,20 @@ class NetworkService:
                 **wifi,
                 "sim_present": True,
                 "sim_connected": False,
+                "qsm_sim_connected": qsm_connected,
+                "host_tether_ready": host_tether_ready,
                 "sim_signal": str(qsm_network.get("signal") or "weak"),
                 "sim_enabled": sim_enabled,
                 **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
                 "source": "qsm",
-                "warnings": ["外设已检测到 SIM 模块，但数据网络未连通。", *local_warnings],
+                "warnings": [
+                    "数据网络已连接，但主机备用通道未就绪。"
+                    if qsm_connected
+                    else "外设已检测到 SIM 模块，但数据网络未连通。",
+                    *local_warnings,
+                ],
             }
 
         if sim_ip and (sim_route or reachable):
@@ -171,6 +189,8 @@ class NetworkService:
                 **wifi,
                 "sim_present": True,
                 "sim_connected": True,
+                "qsm_sim_connected": qsm_connected,
+                "host_tether_ready": host_tether_ready,
                 "sim_signal": "good",
                 "sim_enabled": sim_enabled,
                 **sim_identity,
@@ -194,6 +214,8 @@ class NetworkService:
             **wifi,
             "sim_present": sim_present,
             "sim_connected": False,
+            "qsm_sim_connected": qsm_connected,
+            "host_tether_ready": host_tether_ready,
             "sim_signal": "none",
             "sim_enabled": sim_enabled,
             **sim_identity,
@@ -303,14 +325,89 @@ class NetworkService:
     def start_4g(self) -> dict[str, object]:
         db.set_setting("network_mode", "sim")
         result = QsmClient().start_4g_network()
+        tether = self._prepare_host_tether() if result.get("ok") else {
+            "ok": False,
+            "message": "QSM 数据网络尚未启动，未配置主机备用通道。",
+        }
         self.__class__._qsm_network_cache = None
         status = self.status()
         return {
-            "ok": bool(result.get("ok")) and bool(status.get("signal") == "good"),
-            "message": result.get("detail") or result.get("error_message") or "",
+            "ok": bool(result.get("ok")) and bool(tether.get("ok")),
+            "message": (
+                str(tether.get("message") or "")
+                or str(result.get("detail") or result.get("error_message") or "")
+            ),
             "raw": result,
+            "tether": tether,
             "network": status,
         }
+
+    def disable_host_tether(self) -> dict[str, object]:
+        helper = settings.network_host_tether_helper
+        if not Path(helper).is_file():
+            return {"ok": True, "message": "主机备用通道未安装，无需关闭。"}
+        result = self._run_command(["sudo", "-n", helper, "disable"], timeout=5)
+        if result is None or result.returncode != 0:
+            detail = ((result.stderr if result else "") or "").strip()
+            return {"ok": False, "message": detail or "主机备用通道未能关闭。"}
+        return {"ok": True, "message": (result.stdout or "").strip()}
+
+    def _prepare_host_tether(self) -> dict[str, object]:
+        remote_script = settings.network_qsm_tether_script
+        local_script = APP_ROOT / "qsm_gateway" / "start_host_tether.sh"
+        if not local_script.is_file():
+            return {"ok": False, "message": "缺少 QSM 主机网络共享脚本。"}
+
+        adb = self._adb_prefix()
+        remote_dir = remote_script.rsplit("/", 1)[0]
+        commands = (
+            [*adb, "shell", f"mkdir -p '{remote_dir}'"],
+            [*adb, "push", str(local_script), remote_script],
+            [*adb, "shell", f"chmod +x '{remote_script}'; sh '{remote_script}' start"],
+        )
+        for command in commands:
+            result = self._run_command(command, timeout=12)
+            if result is None or result.returncode != 0:
+                detail = ((result.stderr if result else "") or (result.stdout if result else "") or "").strip()
+                return {"ok": False, "message": f"QSM 网络共享准备失败：{detail[:180]}"}
+
+        helper = settings.network_host_tether_helper
+        if not Path(helper).is_file():
+            return {
+                "ok": False,
+                "message": "主机数据网络组件尚未安装，请重新运行启动脚本并完成一次管理员授权。",
+            }
+        result = self._run_command(["sudo", "-n", helper, "enable"], timeout=6)
+        if result is None or result.returncode != 0:
+            detail = ((result.stderr if result else "") or "").strip()
+            return {"ok": False, "message": detail or "主机数据网络备用路由未能启用。"}
+
+        for _ in range(10):
+            if self._host_tether_ready(settings.network_sim_interface):
+                return {"ok": True, "message": "数据网络备用通道已就绪。"}
+            time.sleep(0.2)
+        return {"ok": False, "message": "主机已配置备用路由，但未能连接 QSM 网关地址。"}
+
+    @staticmethod
+    def _adb_prefix() -> list[str]:
+        command = ["adb"]
+        serial = os.environ.get("ADB_SERIAL", "").strip()
+        if serial:
+            command.extend(["-s", serial])
+        return command
+
+    @staticmethod
+    def _run_command(command: list[str], timeout: float) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    def _host_tether_ready(self, interface: str) -> bool:
+        return (
+            self._interface_ipv4(interface) == settings.network_host_tether_address
+            and self._ping_target(settings.network_host_tether_gateway, interface)
+        )
 
     @staticmethod
     def _interface_ipv4(interface: str) -> str:
@@ -436,10 +533,14 @@ class NetworkService:
         return {**current, "sample": "unavailable", "sample_age_seconds": None}
 
     @staticmethod
-    def _ping_target(target: str) -> bool:
+    def _ping_target(target: str, interface: str = "") -> bool:
+        command = ["ping"]
+        if interface:
+            command.extend(["-I", interface])
+        command.extend(["-c", "1", "-W", "1", target])
         try:
             result = subprocess.run(
-                ["ping", "-c", "1", "-W", "1", target],
+                command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=2,

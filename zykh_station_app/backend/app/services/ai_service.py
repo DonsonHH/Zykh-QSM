@@ -15,6 +15,24 @@ from .local_ai_client import LocalAiClient
 
 
 class AiService:
+    LOCAL_INQUIRY_DIMENSIONS = {
+        "cold": "感冒鼻部症状",
+        "fever": "发热全身不适",
+        "cough": "咳嗽咳痰",
+        "throat": "咽喉口腔不适",
+        "summer": "恶心暑湿",
+        "diarrhea": "腹泻肠道不适",
+        "constipation": "便秘",
+        "stomach": "胃酸胃部不适",
+        "allergy": "过敏瘙痒",
+        "wound": "轻微外伤",
+        "fungus": "皮肤真菌不适",
+        "pain": "肌肉关节疼痛",
+        "eye": "干眼不适",
+        "rhinitis": "鼻炎过敏",
+        "supplement": "营养补充",
+        "chronic": "慢病既往用药",
+    }
     EMERGENCY_TERMS = (
         "胸痛",
         "呼吸困难",
@@ -59,14 +77,23 @@ class AiService:
             }
         result = self.local_client.chat(
             [
-                {"role": "system", "content": self._local_system_prompt()},
+                {"role": "system", "content": self._local_inquiry_system_prompt()},
                 {
                     "role": "user",
-                    "content": self._chat_user_prompt("请开始确认身份。", {}),
+                    "content": json.dumps(
+                        {
+                            "known": {"s": "symptoms", "t": 0, "d": [], "du": "", "u": "", "a": "", "v": False},
+                            "profile": {"age": 0, "history": "", "allergy": ""},
+                            "said": "你好",
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 },
             ],
             temperature=0.1,
             max_tokens=1,
+            response_format={"type": "json_object"},
         )
         return {
             "ok": bool(result.get("ok")),
@@ -228,14 +255,21 @@ class AiService:
             "恶心呕吐", "皮肤瘙痒", "皮肤破损", "伤口红肿渗液", "肌肉关节疼痛", "眼干眼涩",
         ]
         system_prompt = (
-            "你是家庭康护问询的信息提取器，不诊断、不分级、不推荐药品。"
-            "只提取用户原话直接支持的信息，并只输出 JSON。"
+            "你是家庭康护场景中的中文问询助手，不诊断、不分级、不推荐药品。"
+            "你既要理解本轮表达，也要像自然对话一样决定下一句最有价值的追问，并只输出 JSON。"
             "symptom_dimensions 只能从给定枚举中选择；dimension_evidence 必须逐字引用本轮用户原话。"
             "symptom_features 只能从给定特征枚举选择；feature_evidence 也必须逐字引用本轮原话。"
-            "信息没有明确表达时返回空字符串，不得猜测。每次最多给一个 follow_up_question。"
+            "信息没有明确表达时返回空字符串，不得猜测。follow_up_question 要自然、简短，"
+            "可以按当前语境选择最值得先问的一项，不必遵循固定字段顺序；每次最多问一件事。"
+            "提问前必须阅读 existing.conversation 的完整对话和已确认字段；用户已经回答过的问题绝不能换个说法再问。"
+            "用户回答‘没有’、‘未使用’等否定信息也算已经确认，不得因为回答简短而反复追问。"
+            "assistant_reply 是直接展示给用户的一句自然回复：先简短回应刚才内容，再接 follow_up_question；"
+            "不得像表格或字段提示。主诉、持续时间、已用药和过敏禁忌齐全且没有实质不确定性时，"
+            "action_intent 选 analyze，不再追问低价值生活方式细节。"
             "action_intent 只能是 ask、measure_vitals、analyze：信息不足选 ask；"
             "只有体温、心率或血氧会实质影响安全核验时才选 measure_vitals；信息足够时选 analyze。"
-            "reasoning_summary 只概括已获得的证据，不输出诊断推理；action_reason 简述动作理由。"
+            "reasoning_summary 用面向用户的自然口语概括已经确认的情况，不输出诊断推理；"
+            "action_reason 简述动作理由。"
             "不得输出药品编号、仓位、药名或任何硬件动作。"
         )
         user_prompt = json.dumps(
@@ -254,6 +288,7 @@ class AiService:
                     "used_medicines": "",
                     "allergy_or_contraindication": "",
                     "follow_up_question": "",
+                    "assistant_reply": "",
                     "reasoning_summary": "",
                     "action_intent": "ask",
                     "action_reason": "",
@@ -263,12 +298,12 @@ class AiService:
             ensure_ascii=False,
         )
         if settings.ai_mode == "local" or self._network_local_mode():
-            return self._extract_inquiry_local(system_prompt, user_prompt, "当前为离线模式。")
+            return self._extract_inquiry_local(transcript, existing, profile, "当前为离线模式。")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key:
-            return self._extract_inquiry_local(system_prompt, user_prompt, "未配置云端密钥。")
+            return self._extract_inquiry_local(transcript, existing, profile, "未配置云端密钥。")
         if settings.ai_mode == "auto" and not self._cloud_reachable():
-            return self._extract_inquiry_local(system_prompt, user_prompt, "云端网络不可用。")
+            return self._extract_inquiry_local(transcript, existing, profile, "云端网络不可用。")
 
         payload: dict[str, Any] = {
             "model": settings.ai_model,
@@ -276,7 +311,7 @@ class AiService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.0,
+            "temperature": 0.25,
             "max_tokens": 520,
             "stream": False,
             "response_format": {"type": "json_object"},
@@ -296,20 +331,263 @@ class AiService:
             with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            return self._extract_inquiry_local(system_prompt, user_prompt, f"云端提取失败：{exc}。")
+            return self._extract_inquiry_local(transcript, existing, profile, f"云端提取失败：{exc}。")
         parsed = self._parse_json_content(self._extract_message_text(data))
         if not isinstance(parsed, dict):
-            return self._extract_inquiry_local(system_prompt, user_prompt, "云端未返回有效结构。")
+            return self._extract_inquiry_local(transcript, existing, profile, "云端未返回有效结构。")
         return {"ok": True, "source": "cloud", **parsed}
 
-    def _extract_inquiry_local(self, system_prompt: str, user_prompt: str, reason: str) -> dict[str, Any]:
+    def generate_inquiry_recommendation(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Explain already-approved options without allowing the model to alter them."""
+        option_ids = [
+            str(option.get("option_id") or "").strip()
+            for option in context.get("options") or []
+            if isinstance(option, dict) and str(option.get("option_id") or "").strip()
+        ]
+        if not option_ids:
+            return {"ok": False, "source": "assistant"}
+
+        system_prompt = (
+            "你是家庭康护终端的中文沟通助手。候选方案已经由本地安全程序确定，你不能新增、删除、"
+            "替换或重新排序药品，也不能改变风险等级。请根据用户原话、体征和每个方案中已经给出的"
+            "药品说明，为用户写自然、易懂的推荐理由。不要复述程序字段，不要说‘覆盖症状’、‘库存核验’、"
+            "‘独立备选’或‘互斥方案’，不要声称诊断结果。summary 用一至两句概括当前情况；"
+            "option_reasons 必须逐个使用给定 option_id，每项一至两句，说明这个方案为什么更贴近当前情况、"
+            "与其他方案的侧重点有什么不同。不得使用‘见效快’、‘快速缓解’、‘一定有效’、‘可以治好’等疗效承诺；"
+            "用‘更贴近’、‘侧重于’或‘可对照说明’表达。只能输出 JSON。"
+        )
+        user_prompt = json.dumps(
+            {
+                "case": {
+                    "user_name": context.get("user_name") or "访客",
+                    "reasoning_summary": context.get("reasoning_summary") or "",
+                    "symptom_dimensions": context.get("symptom_dimensions") or [],
+                    "symptom_evidence": context.get("symptom_evidence") or {},
+                    "duration": context.get("duration") or "",
+                    "used_medicines": context.get("used_medicines") or "",
+                    "allergy_or_contraindication": context.get("allergy_or_contraindication") or "",
+                    "vitals": context.get("vitals") or {},
+                    "risk_level": context.get("risk_level") or "",
+                },
+                "options": context.get("options") or [],
+                "output": {
+                    "summary": "面向用户的一至两句自然概括",
+                    "option_reasons": {option_id: "该方案的自然推荐理由" for option_id in option_ids},
+                },
+            },
+            ensure_ascii=False,
+        )
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return self._generate_recommendation_local(system_prompt, user_prompt, option_ids, "")
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
+            return self._generate_recommendation_local(
+                system_prompt,
+                user_prompt,
+                option_ids,
+                "云端当前不可用。",
+            )
+
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.35,
+            "max_tokens": 420,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            parsed = self._parse_json_content(self._extract_message_text(data))
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return self._generate_recommendation_local(
+                system_prompt,
+                user_prompt,
+                option_ids,
+                f"云端说明生成失败：{exc}。",
+            )
+        return self._normalize_recommendation_language(parsed, option_ids, "cloud")
+
+    def _generate_recommendation_local(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        option_ids: list[str],
+        reason: str,
+    ) -> dict[str, Any]:
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.25,
+            max_tokens=240,
+            response_format={"type": "json_object"},
+        )
+        if not result.get("ok"):
+            return {"ok": False, "source": "assistant", "message": reason}
+        parsed = self._parse_json_content(str(result.get("reply") or ""))
+        normalized = self._normalize_recommendation_language(parsed, option_ids, "local_llm")
+        if reason:
+            normalized["fallback_reason"] = reason
+        return normalized
+
+    @classmethod
+    def _normalize_recommendation_language(
+        cls,
+        payload: dict[str, Any] | None,
+        option_ids: list[str],
+        source: str,
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {"ok": False, "source": "assistant"}
+        raw_reasons = payload.get("option_reasons")
+        raw_reasons = raw_reasons if isinstance(raw_reasons, dict) else {}
+        reasons = {
+            option_id: cls._sanitize_recommendation_text(raw_reasons.get(option_id), 120)
+            for option_id in option_ids
+            if cls._sanitize_recommendation_text(raw_reasons.get(option_id), 120)
+        }
+        summary = cls._sanitize_recommendation_text(payload.get("summary"), 180)
+        if not summary and not reasons:
+            return {"ok": False, "source": "assistant"}
+        return {
+            "ok": True,
+            "source": source,
+            "summary": summary,
+            "option_reasons": reasons,
+        }
+
+    @staticmethod
+    def _compact_text(value: object, limit: int) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        return text[:limit]
+
+    @classmethod
+    def _sanitize_recommendation_text(cls, value: object, limit: int) -> str:
+        text = cls._compact_text(value, limit * 2)
+        replacements = {
+            "见效快": "更便于对照当前不适",
+            "快速缓解": "侧重缓解",
+            "一定有效": "可结合说明书核对",
+            "可以治好": "可用于缓解相关不适",
+            "保证有效": "可结合说明书核对",
+        }
+        for unsafe, neutral in replacements.items():
+            text = text.replace(unsafe, neutral)
+        return cls._compact_text(text, limit)
+
+    def generate_inquiry_opening(self, user_name: str, has_profile: bool) -> dict[str, Any]:
+        """Generate one conversational opening without letting the model control workflow."""
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return {"ok": False, "source": "assistant"}
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        if not key or not self._cloud_reachable():
+            return {"ok": False, "source": "assistant"}
+
+        system_prompt = (
+            "你是家庭康护终端的中文问询助手。只生成一句自然、温和的开场问句，"
+            "邀请用户说出今天哪里不舒服。不要说已读取资料，不要诊断、推荐药品或解释规则；"
+            "不要 Markdown，不超过45个中文字符。"
+        )
+        user_prompt = json.dumps(
+            {"称呼": user_name if user_name != "访客" else "", "已有基础档案": bool(has_profile)},
+            ensure_ascii=False,
+        )
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.45,
+            "max_tokens": 80,
+            "stream": False,
+        }
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=min(float(settings.ai_inquiry_timeout_seconds), 3.2)) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+            return {"ok": False, "source": "assistant"}
+
+        reply = re.sub(r"[\r\n\"“”]", "", self._extract_message_text(data)).strip()
+        if (
+            not reply
+            or len(reply) > 72
+            or not any(term in reply for term in ("不舒服", "哪里", "哪儿", "感觉"))
+            or any(term in reply for term in ("诊断", "处方", "推荐药", "已读取"))
+        ):
+            return {"ok": False, "source": "assistant"}
+        return {"ok": True, "source": "cloud", "reply": reply}
+
+    def _extract_inquiry_local(
+        self,
+        transcript: str,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+        reason: str,
+    ) -> dict[str, Any]:
+        system_prompt = self._local_inquiry_system_prompt()
+        compact_existing = {
+            "s": str(existing.get("current_stage") or ""),
+            "t": int(existing.get("conversation_turns") or 0),
+            "d": list(existing.get("symptom_dimensions") or []),
+            "du": str(existing.get("duration") or ""),
+            "u": str(existing.get("used_medicines") or ""),
+            "a": str(existing.get("allergy_or_contraindication") or ""),
+            "v": bool(existing.get("vitals")),
+            "c": [
+                {
+                    "r": str(message.get("role") or "")[:1],
+                    "x": str(message.get("content") or "")[:100],
+                }
+                for message in existing.get("conversation") or []
+                if isinstance(message, dict)
+            ],
+        }
+        compact_profile = {
+            "age": profile.get("age") or 0,
+            "history": str(profile.get("profile") or "")[:80],
+            "allergy": str(profile.get("allergies") or "")[:60],
+        }
+        user_prompt = json.dumps(
+            {"known": compact_existing, "profile": compact_profile, "said": transcript},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         result = self.local_client.chat(
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=460,
+            max_tokens=96,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
@@ -317,7 +595,71 @@ class AiService:
         parsed = self._parse_json_content(str(result.get("reply") or ""))
         if not isinstance(parsed, dict):
             return {"ok": False, "source": "rules_fallback", "message": reason}
-        return {"ok": True, "source": "local_llm", **parsed}
+        return {"ok": True, "source": "local_llm", **self._expand_local_inquiry(parsed)}
+
+    @classmethod
+    def _local_inquiry_system_prompt(cls) -> str:
+        dimension_codes = ",".join(cls.LOCAL_INQUIRY_DIMENSIONS)
+        return (
+            "你是家庭健康问询助手，只做信息理解和自然追问，不诊断、不选药。"
+            "仅输出单行JSON：d=[[分类码,本轮原话]],du=持续时间原话,u=已用药原话,"
+            "a=过敏禁忌原话,q=下一句自然追问,n=ask|measure_vitals|analyze,"
+            "r=给用户看的简短情况概括,c=0到1。q需要先自然回应本轮内容再问一个问题。没有信息用空值。"
+            f"分类码只能是:{dimension_codes}。d中的原话必须来自本轮输入。"
+            "每轮只问一个最有价值的问题；先阅读known.c，绝不重复已经问过或已回答的问题，否定回答也算已确认；"
+            "基础信息齐全且无实质不确定性时n=analyze且q为空。"
+        )
+
+    @classmethod
+    def _expand_local_inquiry(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # Keep accepting the earlier long schema so deployed model caches and tests remain compatible.
+        if "symptom_dimensions" in payload:
+            return payload
+        dimensions: list[str] = []
+        evidence: dict[str, str] = {}
+        allergy_value = str(payload.get("a") or "").strip()
+        raw_dimensions = payload.get("d") if isinstance(payload.get("d"), list) else []
+        for item in raw_dimensions:
+            if isinstance(item, dict):
+                code = str(item.get("code") or item.get("c") or "").strip()
+                quote = str(
+                    item.get("evidence")
+                    or item.get("quote")
+                    or item.get("value")
+                    or item.get("u")
+                    or ""
+                ).strip()
+            elif isinstance(item, list) and item:
+                code = str(item[0] or "").strip()
+                quote = str(item[1] if len(item) > 1 else "").strip()
+            else:
+                code = str(item or "").strip()
+                quote = ""
+            if code == "allergy" and quote and not any(
+                term in quote for term in ("皮肤痒", "瘙痒", "皮疹", "鼻痒", "喷嚏")
+            ):
+                allergy_value = quote
+                continue
+            dimension = cls.LOCAL_INQUIRY_DIMENSIONS.get(code, "")
+            if not dimension:
+                continue
+            dimensions.append(dimension)
+            if quote:
+                evidence[dimension] = quote
+        return {
+            "symptom_dimensions": list(dict.fromkeys(dimensions)),
+            "dimension_evidence": evidence,
+            "symptom_features": [],
+            "feature_evidence": {},
+            "duration": str(payload.get("du") or "").strip(),
+            "used_medicines": str(payload.get("u") or "").strip(),
+            "allergy_or_contraindication": allergy_value,
+            "follow_up_question": str(payload.get("q") or "").strip(),
+            "assistant_reply": str(payload.get("q") or "").strip(),
+            "reasoning_summary": str(payload.get("r") or "").strip(),
+            "action_intent": str(payload.get("n") or "ask").strip(),
+            "confidence": payload.get("c") or 0,
+        }
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
         """Generate structured reference text without presenting it as verified prescribing data."""
