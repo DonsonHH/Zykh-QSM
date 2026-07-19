@@ -15,7 +15,6 @@ from app import db  # noqa: E402
 from app.schemas.dispense import DispenseConfirmResponse  # noqa: E402
 from app.schemas.inquiry import (  # noqa: E402
     InquiryInformationRevisionRequest,
-    InquiryMeasurementRequest,
     InquiryObservation,
     InquirySessionCreateRequest,
     InquiryTreatmentConfirmRequest,
@@ -37,7 +36,6 @@ def case(
     used: str = "",
     allergy: str = "",
     risk: str = "low",
-    measurement_reason: str = "",
 ) -> SymptomInterpretation:
     return SymptomInterpretation(
         case_summary=f"用户描述{evidence}。",
@@ -58,15 +56,6 @@ def case(
         reasoning_summary=f"已确认{evidence}。",
         action_intent=action,
         action_reason="由当前病例信息决定下一步",
-        measurement_request=(
-            InquiryMeasurementRequest(
-                reason=measurement_reason,
-                goal="确认额温、心率和血氧是否稳定",
-                required_core_metrics=["temperature", "heart_rate", "spo2"],
-            )
-            if measurement_reason
-            else None
-        ),
         ai_risk_level=risk,
         confidence=0.9,
         source="cloud",
@@ -276,7 +265,6 @@ class InquiryOrchestratorTest(unittest.TestCase):
                     reply="请先测量额温、心率和血氧。",
                     used="未使用",
                     allergy="无",
-                    measurement_reason="头晕时需要结合核心体征进一步判断",
                 ),
                 case(
                     action="ask",
@@ -297,160 +285,12 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         resumed = service.attach_vitals(
             session.session_id,
-            InquiryVitalsRequest(
-                temperature=36.5,
-                heart_rate=76,
-                spo2=98,
-                quality="stable",
-                finger_detected=True,
-                heart_rate_frame_count=4,
-                spo2_frame_count=4,
-            ),
+            InquiryVitalsRequest(temperature=36.5, heart_rate=76, spo2=98),
         )
 
         self.assertEqual(resumed.next_action, "ask")
-        self.assertEqual(resumed.vitals["core"]["spo2"]["value"], 98)
-        self.assertTrue(resumed.vitals["core"]["spo2"]["usable"])
-        self.assertEqual(
-            interpreter.contexts[-1]["vitals"]["core"]["heart_rate"]["value"],
-            76,
-        )
-        self.assertEqual(
-            pending.extracted_information.measurement_request.reason,
-            "头晕时需要结合核心体征进一步判断",
-        )
-
-    def test_unreliable_low_spo2_returns_to_ai_without_false_emergency(self) -> None:
-        service, interpreter = self.service(
-            [
-                case(
-                    action="measure_vitals",
-                    evidence="有点头晕",
-                    used="未使用",
-                    allergy="无",
-                    measurement_reason="需要确认核心体征",
-                ),
-                case(
-                    action="ask",
-                    evidence="有点头晕",
-                    reply="这次信号不稳定。头晕时是否伴有胸痛或呼吸困难？",
-                    used="未使用",
-                    allergy="无",
-                ),
-            ]
-        )
-        session = self.create(service)
-        service.process_turn(
-            session.session_id,
-            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
-        )
-
-        result = service.attach_vitals(
-            session.session_id,
-            InquiryVitalsRequest(
-                temperature=36.5,
-                heart_rate=76,
-                spo2=88,
-                quality="no_finger",
-                finger_detected=False,
-                heart_rate_frame_count=0,
-                spo2_frame_count=0,
-                partial=True,
-            ),
-        )
-
-        self.assertEqual(result.next_action, "ask")
-        self.assertNotEqual(result.risk_level, "emergency")
-        self.assertFalse(result.vitals["core"]["spo2"]["usable"])
-        self.assertEqual(len(interpreter.contexts), 2)
-
-    def test_reliable_low_spo2_is_blocked_before_ai_resume(self) -> None:
-        service, interpreter = self.service(
-            [
-                case(
-                    action="measure_vitals",
-                    evidence="有点头晕",
-                    used="未使用",
-                    allergy="无",
-                    measurement_reason="需要确认核心体征",
-                )
-            ]
-        )
-        session = self.create(service)
-        service.process_turn(
-            session.session_id,
-            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
-        )
-
-        result = service.attach_vitals(
-            session.session_id,
-            InquiryVitalsRequest(
-                temperature=36.5,
-                heart_rate=76,
-                spo2=88,
-                quality="stable",
-                finger_detected=True,
-                heart_rate_frame_count=4,
-                spo2_frame_count=4,
-            ),
-        )
-
-        self.assertEqual(result.next_action, "escalate")
-        self.assertEqual(result.risk_level, "emergency")
-        self.assertEqual(len(interpreter.contexts), 1)
-
-    def test_vitals_measurement_cannot_loop_more_than_twice(self) -> None:
-        service, _ = self.service(
-            [
-                case(
-                    action="measure_vitals",
-                    used="未使用",
-                    allergy="无",
-                    measurement_reason="需要第一次测量",
-                ),
-                case(
-                    action="measure_vitals",
-                    used="未使用",
-                    allergy="无",
-                    measurement_reason="需要复测",
-                ),
-                case(
-                    action="measure_vitals",
-                    used="未使用",
-                    allergy="无",
-                    measurement_reason="仍想继续复测",
-                ),
-            ]
-        )
-        session = self.create(service)
-        first = service.process_turn(
-            session.session_id,
-            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
-        )
-        self.assertEqual(first.extracted_information.vitals_measurement_attempts, 1)
-        second = service.attach_vitals(
-            session.session_id,
-            InquiryVitalsRequest(
-                status="failed",
-                quality="no_finger",
-                error_message="没有检测到手指",
-            ),
-        )
-        self.assertEqual(second.next_action, "measure_vitals")
-        self.assertEqual(second.extracted_information.vitals_measurement_attempts, 2)
-
-        stopped = service.attach_vitals(
-            session.session_id,
-            InquiryVitalsRequest(
-                status="failed",
-                quality="poor_signal",
-                error_message="信号不稳定",
-            ),
-        )
-
-        self.assertEqual(stopped.next_action, "ask")
-        self.assertEqual(stopped.extracted_information.vitals_measurement_attempts, 2)
-        self.assertIsNone(stopped.extracted_information.measurement_request)
+        self.assertEqual(resumed.vitals["spo2"], 98)
+        self.assertEqual(interpreter.contexts[-1]["vitals"]["heart_rate"], 76)
 
     def test_ai_unavailable_never_generates_a_keyword_recommendation(self) -> None:
         unavailable = SymptomInterpretation(

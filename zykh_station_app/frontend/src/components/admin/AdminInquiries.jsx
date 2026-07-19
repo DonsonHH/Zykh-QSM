@@ -96,17 +96,6 @@ function Fact({ label, value }) {
 }
 
 function formatVitals(vitals) {
-  const core = vitals.core || vitals;
-  const temperature = usableValue(core.temperature);
-  const heartRate = usableValue(core.heart_rate);
-  const spo2 = usableValue(core.spo2);
-  if (!temperature || !heartRate || !spo2) return "未完成";
-  return `${temperature}℃ · ${heartRate}次/分 · ${spo2}%`;
-}
-
-function usableValue(metric) {
-  if (metric && typeof metric === "object") {
-    return metric.usable === true ? metric.value : null;
-  }
-  return metric;
+  if (!vitals.temperature || !vitals.heart_rate || !vitals.spo2) return "未完成";
+  return `${vitals.temperature}℃ · ${vitals.heart_rate}次/分 · ${vitals.spo2}%`;
 }

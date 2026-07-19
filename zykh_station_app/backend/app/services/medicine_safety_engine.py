@@ -91,17 +91,8 @@ class MedicineSafetyEngine:
     def _vital_number(vitals: dict[str, Any] | None, key: str) -> float | None:
         if not vitals:
             return None
-        core = vitals.get("core")
-        if isinstance(core, dict):
-            metric = core.get(key)
-            if not isinstance(metric, dict) or metric.get("usable") is not True:
-                return None
-            raw_value = metric.get("value")
-        else:
-            # Compatibility for sessions saved before normalized evidence was introduced.
-            raw_value = vitals.get(key)
         try:
-            value = float(raw_value)
+            value = float(vitals.get(key))
         except (TypeError, ValueError):
             return None
         return value if value > 0 else None

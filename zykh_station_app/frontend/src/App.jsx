@@ -66,7 +66,7 @@ export function App() {
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
-  const [vitalsContext, setVitalsContext] = useState({ returnTo: "home" });
+  const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [networkStatus, setNetworkStatus] = useState(null);
   const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
   const [idleSeconds, setIdleSeconds] = useState(Number.isFinite(configuredIdleSeconds) ? Math.max(0, configuredIdleSeconds) : 90);
@@ -171,13 +171,7 @@ export function App() {
     }
     const applyNavigation = () => {
       if (nextPage === "vitals") {
-        setVitalsContext({
-          returnTo: options.returnTo || page || "home",
-          inquirySessionId: options.inquirySessionId || "",
-          reason: options.reason || "",
-          goal: options.goal || "",
-          autoStart: Boolean(options.autoStart)
-        });
+        setVitalsReturnPage(options.returnTo || page || "home");
       }
       if (nextPage === "medicines" && (options.medicineId || options.category)) {
         setMedicineFocus({ medicineId: options.medicineId || null, category: options.category || null });
@@ -250,7 +244,7 @@ export function App() {
         ) : page === "scan" ? (
           <Scan notify={notify} onNavigate={handleNav} />
         ) : page === "vitals" ? (
-          <Vitals notify={notify} onNavigate={handleNav} context={vitalsContext} />
+          <Vitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
         ) : page === "settings" ? (
           <Settings
             notify={notify}

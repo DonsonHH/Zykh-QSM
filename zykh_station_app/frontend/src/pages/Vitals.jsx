@@ -15,23 +15,18 @@ import {
   Wind
 } from "lucide-react";
 import { cancelVitalsSession, loadVitalsSession, startVitalsSession } from "../api/qsm.js";
-import { attachInquiryVitals } from "../api/inquiry.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const activePhases = new Set(["starting", "waiting_finger", "stabilizing"]);
 const baseMeasurementSeconds = 18;
 const extendedMeasurementSeconds = 30;
 
-export function Vitals({ onNavigate, context = {}, notify }) {
+export function Vitals({ onNavigate, returnPage = "home", notify }) {
   const [phase, setPhase] = useState("idle");
   const [sessionId, setSessionId] = useState("");
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [returningToInquiry, setReturningToInquiry] = useState(false);
   const requestIdRef = useRef(0);
-  const attachedResultRef = useRef("");
-  const autoStartedRef = useRef(false);
-  const returnPage = context.returnTo || "home";
   const measuring = activePhases.has(phase);
   const elapsedSeconds = Number(result?.elapsed_seconds || 0);
 
@@ -53,20 +48,11 @@ export function Vitals({ onNavigate, context = {}, notify }) {
         applySession(data);
         if (activePhases.has(data.status)) {
           timer = window.setTimeout(poll, 420);
-        } else if (isTerminalPhase(data.status)) {
-          await attachResultToInquiry(data);
         }
       } catch (error) {
         if (disposed) return;
-        const message = error.message || "体征设备状态读取失败，请重新测量。";
-        setErrorMessage(message);
+        setErrorMessage(error.message || "体征设备状态读取失败，请重新测量。");
         setPhase("failed");
-        await attachResultToInquiry({
-          status: "failed",
-          session_id: sessionId,
-          error_message: message,
-          measured_at: new Date().toISOString()
-        });
       }
     };
     timer = window.setTimeout(poll, 260);
@@ -76,19 +62,17 @@ export function Vitals({ onNavigate, context = {}, notify }) {
     };
   }, [phase, sessionId]);
 
-  useEffect(() => {
-    if (!context.autoStart || !context.inquirySessionId || autoStartedRef.current) {
-      return undefined;
-    }
-    autoStartedRef.current = true;
-    const timer = window.setTimeout(() => handleMeasure(), 240);
-    return () => window.clearTimeout(timer);
-  }, [context.autoStart, context.inquirySessionId]);
-
   function applySession(data) {
     setResult(data);
     setPhase(data.status || "failed");
     setErrorMessage(data.error_message || "");
+    if (data.status === "complete" && hasCoreVitals(data)) {
+      try {
+        window.sessionStorage.setItem("zykh-latest-vitals", JSON.stringify(data));
+      } catch {
+        // Session storage is optional.
+      }
+    }
   }
 
   async function handleMeasure() {
@@ -106,53 +90,32 @@ export function Vitals({ onNavigate, context = {}, notify }) {
       }
       setSessionId(data.session_id);
       applySession(data);
-      if (isTerminalPhase(data.status)) {
-        await attachResultToInquiry(data);
-      }
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
       const message = error.message || "体征设备暂不可用，可稍后重试。";
       setErrorMessage(message);
       setPhase("failed");
       notify?.(message);
-      await attachResultToInquiry({
-        status: "failed",
-        session_id: sessionId,
-        error_message: message,
-        measured_at: new Date().toISOString()
-      });
     }
   }
 
   async function handleCancel() {
     requestIdRef.current += 1;
     const currentSession = sessionId;
-    let cancelled = {
-      status: "cancelled",
-      session_id: currentSession,
-      error_message: "用户取消了本次体征测量。",
-      measured_at: new Date().toISOString()
-    };
-    if (currentSession) {
-      cancelled = await cancelVitalsSession(currentSession).catch(() => cancelled);
-    }
     setPhase("cancelled");
+    if (currentSession) {
+      cancelVitalsSession(currentSession).catch(() => undefined);
+    }
     setSessionId("");
-    setResult(cancelled);
-    setErrorMessage(cancelled.error_message || "");
-    await attachResultToInquiry(cancelled);
+    setResult(null);
+    setErrorMessage("");
   }
 
   function handleBack() {
-    if (measuring) {
-      handleCancel();
-      return;
-    }
     onNavigate(returnPage === "inquiry" ? "inquiry" : "home");
   }
 
   function handlePrimaryAction() {
-    if (returningToInquiry) return;
     if (measuring) {
       handleCancel();
       return;
@@ -170,47 +133,6 @@ export function Vitals({ onNavigate, context = {}, notify }) {
       ? returnPage === "inquiry" ? "返回问询" : "返回上一页"
       : phase === "failed" || phase === "cancelled" ? "重新测量" : "开始测量";
 
-  async function attachResultToInquiry(data) {
-    if (!context.inquirySessionId) return false;
-    const status = normalizeInquiryMeasurementStatus(data);
-    const key = `${data?.session_id || "no-session"}:${status}`;
-    if (attachedResultRef.current === key) return true;
-    attachedResultRef.current = key;
-    setReturningToInquiry(true);
-    try {
-      const updated = await attachInquiryVitals(
-        context.inquirySessionId,
-        buildInquiryVitalsPayload(data, status)
-      );
-      if (updated.next_action === "measure_vitals" && status !== "cancelled") {
-        notify?.("本次信号未稳定，正在按问询需要重新测量");
-        attachedResultRef.current = "";
-        setReturningToInquiry(false);
-        setSessionId("");
-        setResult(null);
-        setErrorMessage("");
-        setPhase("idle");
-        window.setTimeout(() => handleMeasure(), 760);
-        return true;
-      }
-      notify?.(
-        status === "complete"
-          ? "体征结果已合并到本次问询"
-          : "本次测量情况已返回问询，可继续说明症状"
-      );
-      window.setTimeout(() => onNavigate("inquiry", { transition: "backward" }), 420);
-      return true;
-    } catch (error) {
-      attachedResultRef.current = "";
-      const message = error.message || "体征信息未能写入本次问询，请重试";
-      setErrorMessage(message);
-      setPhase("failed");
-      setReturningToInquiry(false);
-      notify?.(message);
-      return false;
-    }
-  }
-
   return (
     <main className="vitals-page" id="main-content">
       <section className="vitals-guide-panel">
@@ -219,12 +141,6 @@ export function Vitals({ onNavigate, context = {}, notify }) {
             <ArrowLeft size={25} aria-hidden="true" />
           </button>
           <h2>{measuring ? status.title : phase === "complete" ? "测量结果" : "身体状态测量"}</h2>
-          {context.reason ? (
-            <div className="vitals-inquiry-purpose" role="note">
-              <ShieldCheck size={20} aria-hidden="true" />
-              <span><strong>本次测量</strong>{context.reason}</span>
-            </div>
-          ) : null}
         </div>
 
         <div className={`vitals-visual-guide ${measuring ? "measuring" : phase}`}>
@@ -252,12 +168,12 @@ export function Vitals({ onNavigate, context = {}, notify }) {
         </div>
 
         <div className="vitals-action-row">
-          <button className={`primary-action vitals-primary-action ${measuring ? "cancel" : ""}`} type="button" onClick={handlePrimaryAction} disabled={returningToInquiry}>
+          <button className={`primary-action vitals-primary-action ${measuring ? "cancel" : ""}`} type="button" onClick={handlePrimaryAction}>
             {measuring ? <Square size={22} fill="currentColor" aria-hidden="true" />
               : phase === "complete" && coreComplete ? <ArrowLeft size={24} aria-hidden="true" />
                 : phase === "failed" || phase === "cancelled" ? <RotateCcw size={24} aria-hidden="true" />
                   : <Activity size={24} aria-hidden="true" />}
-            <span>{returningToInquiry ? "正在返回问询" : actionLabel}</span>
+            <span>{actionLabel}</span>
           </button>
         </div>
       </section>
@@ -395,47 +311,4 @@ function hasReading(value) {
 
 function hasCoreVitals(result) {
   return hasReading(result?.heart_rate) && hasReading(result?.spo2) && hasReading(result?.temperature);
-}
-
-function isTerminalPhase(phase) {
-  return ["complete", "failed", "cancelled"].includes(phase);
-}
-
-function normalizeInquiryMeasurementStatus(data) {
-  if (data?.status === "cancelled") return "cancelled";
-  if (data?.status === "failed" || data?.ok === false) return "failed";
-  return hasCoreVitals(data) && !data?.partial ? "complete" : "partial";
-}
-
-function buildInquiryVitalsPayload(data, status) {
-  return {
-    measurement_session_id: data?.session_id || "",
-    status,
-    temperature: data?.temperature ?? null,
-    heart_rate: data?.heart_rate ?? null,
-    spo2: data?.spo2 ?? null,
-    body_temperature: data?.body_temperature ?? null,
-    systolic_pressure: data?.systolic_pressure ?? null,
-    diastolic_pressure: data?.diastolic_pressure ?? null,
-    respiratory_rate: data?.respiratory_rate ?? null,
-    hrv_sdnn: data?.hrv_sdnn ?? null,
-    hrv_rmssd: data?.hrv_rmssd ?? null,
-    rr_interval: data?.rr_interval ?? null,
-    microcirculation: data?.microcirculation ?? null,
-    fatigue: data?.fatigue ?? null,
-    ambient_temperature: data?.ambient_temperature ?? null,
-    quality: data?.quality || "",
-    reference_ready: data?.reference_ready ?? null,
-    finger_detected: data?.finger_detected ?? null,
-    sample_count: data?.sample_count ?? null,
-    valid_frame_count: data?.valid_frame_count ?? null,
-    contact_frame_count: data?.contact_frame_count ?? null,
-    heart_rate_frame_count: data?.heart_rate_frame_count ?? null,
-    spo2_frame_count: data?.spo2_frame_count ?? null,
-    stabilization_extended: data?.stabilization_extended ?? null,
-    partial: status === "partial",
-    source: data?.source || "",
-    error_message: data?.error_message || "",
-    measured_at: data?.measured_at || data?.updated_at || new Date().toISOString()
-  };
 }

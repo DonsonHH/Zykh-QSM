@@ -13,6 +13,7 @@ import {
   UserRound
 } from "lucide-react";
 import {
+  attachInquiryVitals,
   confirmInquiryTreatment,
   createInquirySession,
   loadInquirySession,
@@ -28,7 +29,8 @@ import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
-  INQUIRY_DRAFT_KEY
+  INQUIRY_DRAFT_KEY,
+  INQUIRY_VITALS_AWAITING_KEY
 } from "../utils/inquirySession.js";
 import "../styles/inquiry-actions.css";
 
@@ -116,10 +118,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     const concepts = observations
       .map((item) => item.concept)
       .filter(Boolean);
-    const vitals = session?.vitals?.core || {};
-    const temperature = formatCoreVital(vitals.temperature, "℃", 1);
-    const heartRate = formatCoreVital(vitals.heart_rate, "", 0);
-    const spo2 = formatCoreVital(vitals.spo2, "%", 0);
+    const vitals = session?.vitals || {};
+    const temperature = Number(vitals.temperature) > 0 ? `${Number(vitals.temperature).toFixed(1)}℃` : "待测";
+    const heartRate = Number(vitals.heart_rate) > 0 ? `${Number(vitals.heart_rate)}` : "待测";
+    const spo2 = Number(vitals.spo2) > 0 ? `${Number(vitals.spo2)}%` : "待测";
     const allergy = extracted.allergy_or_contraindication || displayedUser?.allergies || "";
     const medicineText = extracted.used_medicines === "未使用"
       ? "本次未用药"
@@ -200,6 +202,27 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       });
   }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    const awaiting = window.sessionStorage.getItem(INQUIRY_VITALS_AWAITING_KEY);
+    const vitals = readJson("zykh-latest-vitals");
+    if (awaiting !== sessionId || !vitals || vitals.status !== "complete") return;
+    window.sessionStorage.removeItem(INQUIRY_VITALS_AWAITING_KEY);
+    attachInquiryVitals(sessionId, {
+      temperature: vitals.temperature,
+      heart_rate: vitals.heart_rate,
+      spo2: vitals.spo2,
+      systolic_pressure: vitals.systolic_pressure || null,
+      diastolic_pressure: vitals.diastolic_pressure || null,
+      respiratory_rate: vitals.respiratory_rate || null,
+      hrv_sdnn: vitals.hrv_sdnn || null,
+      hrv_rmssd: vitals.hrv_rmssd || null,
+      measured_at: vitals.measured_at || new Date().toISOString()
+    })
+      .then(handleSessionUpdate)
+      .catch((error) => notify(error.message || "体征信息未能写入本次问询"));
+  }, [sessionId]);
+
   function refreshUsers() {
     return loadServiceUsers().then((data) => setServiceUsers(data.users || [])).catch(() => setServiceUsers([]));
   }
@@ -252,22 +275,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       setManualReviewOpen(false);
     }
     if (data.next_action === "measure_vitals") {
-      openInquiryVitals(data, 700);
+      window.sessionStorage.removeItem("zykh-latest-vitals");
+      window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, data.session_id);
+      window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 700);
     }
-  }
-
-  function openInquiryVitals(data, delay = 0) {
-    const measurement = data?.extracted_information?.measurement_request || {};
-    window.setTimeout(
-      () => onNavigate("vitals", {
-        returnTo: "inquiry",
-        inquirySessionId: data.session_id,
-        reason: measurement.reason || data.action_reason || "",
-        goal: measurement.goal || "",
-        autoStart: true
-      }),
-      delay
-    );
   }
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
@@ -338,7 +349,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         setRevisingResult(false);
         setResultConfirmed(updated.stage === "result");
         if (updated.next_action === "measure_vitals") {
-          openInquiryVitals(updated, 500);
+          window.sessionStorage.removeItem("zykh-latest-vitals");
+          window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, updated.session_id);
+          window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 500);
         } else if (updated.stage !== "result") {
           notify("修正内容已保存，请继续问询");
         }
@@ -460,14 +473,6 @@ const symptomDimensionLabels = {
   "营养补充": "营养补充",
   "慢病既往用药": "慢病既往用药"
 };
-
-function formatCoreVital(metric, unit, fractionDigits) {
-  if (!metric || metric.usable !== true) return "待测";
-  const value = Number(metric.value);
-  return Number.isFinite(value) && value > 0
-    ? `${value.toFixed(fractionDigits)}${unit}`
-    : "待测";
-}
 
 function symptomDimensionLabel(value) {
   const normalized = String(value || "").trim();

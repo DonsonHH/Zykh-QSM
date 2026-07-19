@@ -95,58 +95,15 @@ class InquiryInformationRevisionRequest(BaseModel):
     finalize: bool = True
 
 
-class InquiryMeasurementRequest(BaseModel):
-    reason: str = Field(default="", max_length=240)
-    goal: str = Field(default="", max_length=240)
-    required_core_metrics: list[str] = Field(default_factory=list)
-
-
-class InquiryVitalsMetric(BaseModel):
-    value: float | str
-    unit: str
-    usable: bool
-    quality: str
-
-
-class InquiryVitalsEvidence(BaseModel):
-    measurement_session_id: str = ""
-    measurement_status: Literal["complete", "partial", "failed", "cancelled"] = "complete"
-    core: dict[str, InquiryVitalsMetric] = Field(default_factory=dict)
-    reference: dict[str, InquiryVitalsMetric] = Field(default_factory=dict)
-    quality: dict[str, Any] = Field(default_factory=dict)
-    reliability_notes: list[str] = Field(default_factory=list)
-    error_message: str = ""
-    measured_at: str = ""
-
-
 class InquiryVitalsRequest(BaseModel):
-    measurement_session_id: str = ""
-    status: Literal["complete", "partial", "failed", "cancelled"] = "complete"
-    temperature: float | None = Field(default=None, gt=0, lt=50)
-    heart_rate: int | None = Field(default=None, gt=0, lt=260)
-    spo2: int | None = Field(default=None, gt=0, le=100)
-    body_temperature: float | None = None
+    temperature: float = Field(gt=0, lt=50)
+    heart_rate: int = Field(gt=0, lt=260)
+    spo2: int = Field(gt=0, le=100)
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None
     hrv_sdnn: int | None = None
     hrv_rmssd: int | None = None
-    rr_interval: int | None = None
-    microcirculation: int | None = None
-    fatigue: int | None = None
-    ambient_temperature: float | None = None
-    quality: str = ""
-    reference_ready: bool | None = None
-    finger_detected: bool | None = None
-    sample_count: int | None = Field(default=None, ge=0)
-    valid_frame_count: int | None = Field(default=None, ge=0)
-    contact_frame_count: int | None = Field(default=None, ge=0)
-    heart_rate_frame_count: int | None = Field(default=None, ge=0)
-    spo2_frame_count: int | None = Field(default=None, ge=0)
-    stabilization_extended: bool | None = None
-    partial: bool = False
-    source: str = ""
-    error_message: str = ""
     measured_at: str = ""
 
 
@@ -173,27 +130,6 @@ class InquiryHistoryRelationship(BaseModel):
     should_reuse_previous_conclusion: bool = False
 
 
-class InquiryVitalsAssessment(BaseModel):
-    core_findings: list[str] = Field(default_factory=list)
-    reference_findings: list[str] = Field(default_factory=list)
-    quality_notes: list[str] = Field(default_factory=list)
-    answered_uncertainties: list[str] = Field(default_factory=list)
-
-
-class InquiryCaseDocument(BaseModel):
-    chief_complaint: str = ""
-    course: str = ""
-    positive_findings: list[str] = Field(default_factory=list)
-    negative_findings: list[str] = Field(default_factory=list)
-    remaining_uncertainties: list[str] = Field(default_factory=list)
-    used_medicines: str = ""
-    allergy_or_contraindication: str = ""
-    core_vitals: list[str] = Field(default_factory=list)
-    reference_vitals: list[str] = Field(default_factory=list)
-    vitals_quality_notes: list[str] = Field(default_factory=list)
-    integrated_summary: str = ""
-
-
 class InquiryExtractedInformation(BaseModel):
     case_summary: str = ""
     observations: list[InquiryObservation] = Field(default_factory=list)
@@ -202,11 +138,6 @@ class InquiryExtractedInformation(BaseModel):
     ai_risk_level: RiskLevel | None = None
     ai_risk_reasons: list[str] = Field(default_factory=list)
     ai_available: bool = True
-    measurement_request: InquiryMeasurementRequest | None = None
-    vitals_assessment: InquiryVitalsAssessment | None = None
-    case_document: InquiryCaseDocument | None = None
-    vitals_measurement_attempts: int = Field(default=0, ge=0)
-    vitals_measurement_status: str = "not_requested"
     symptom_dimensions: list[str] = Field(default_factory=list)
     dimension_evidence: dict[str, str] = Field(default_factory=dict)
     symptom_features: list[str] = Field(default_factory=list)

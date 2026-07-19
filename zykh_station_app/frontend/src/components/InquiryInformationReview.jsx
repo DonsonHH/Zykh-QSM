@@ -24,7 +24,7 @@ export function InquiryInformationReview({ session, ready, saving = false, onCon
   confirmRef.current = onConfirm;
   draftRef.current = draft;
   const extracted = session?.extracted_information || {};
-  const vitals = session?.vitals?.core || session?.vitals || {};
+  const vitals = session?.vitals || {};
   const autoActive = ready && !interacted && !saving;
 
   useEffect(() => {
@@ -89,9 +89,9 @@ export function InquiryInformationReview({ session, ready, saving = false, onCon
       </div>
 
       <section className="review-vitals-row" aria-label="本次体征">
-        <ReviewVital icon={HeartPulse} label="心率" value={metric(vitalValue(vitals.heart_rate), "次/分")} />
-        <ReviewVital icon={Droplets} label="血氧" value={metric(vitalValue(vitals.spo2), "%")} />
-        <ReviewVital icon={Thermometer} label="额温" value={temperature(vitalValue(vitals.temperature))} />
+        <ReviewVital icon={HeartPulse} label="心率" value={metric(vitals.heart_rate, "次/分")} />
+        <ReviewVital icon={Droplets} label="血氧" value={metric(vitals.spo2, "%")} />
+        <ReviewVital icon={Thermometer} label="额温" value={temperature(vitals.temperature)} />
       </section>
 
       <footer className="review-actions">
@@ -144,13 +144,6 @@ function ReviewVital({ icon: Icon, label, value }) {
       <strong>{value}</strong>
     </span>
   );
-}
-
-function vitalValue(metricValue) {
-  if (metricValue && typeof metricValue === "object") {
-    return metricValue.usable === true ? metricValue.value : null;
-  }
-  return metricValue;
 }
 
 function buildFacts(extracted) {

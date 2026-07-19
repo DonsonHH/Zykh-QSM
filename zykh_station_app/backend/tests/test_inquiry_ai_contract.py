@@ -37,8 +37,6 @@ class InquiryAiContractTest(unittest.TestCase):
                 "reply": (
                     '{"s":"起身时眼前发黑","f":[["体位变化相关不适","present",'
                     '"起身时眼前发黑",2,0.9]],"u":["是否心悸"],'
-                    '"z":{"reason":"确认头晕时核心体征","goal":"读取额温心率血氧",'
-                    '"required_core_metrics":["temperature","heart_rate","spo2"]},'
                     '"n":"measure_vitals","q":"","r":"需要结合体征","k":"medium","c":0.9}'
                 ),
             }
@@ -53,7 +51,6 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["observations"][0]["concept"], "体位变化相关不适")
         self.assertEqual(result["next_action"], "measure_vitals")
-        self.assertEqual(result["measurement_request"]["required_core_metrics"][1], "heart_rate")
         self.assertNotIn("分类码", client.last_messages[0]["content"])
         self.assertNotIn("allowed_dimensions", client.last_messages[1]["content"])
 
@@ -65,46 +62,6 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertNotIn("slot-14-oseltamivir", ids)
         self.assertNotIn("slot-21-amlodipine", ids)
         self.assertTrue(ids)
-
-    @patch("app.services.ai_service.settings")
-    def test_local_model_can_return_dedicated_vitals_fusion_contract(self, mocked_settings) -> None:
-        mocked_settings.ai_mode = "local"
-        client = FakeLocalClient(
-            {
-                "ok": True,
-                "reply": (
-                    '{"s":"头晕半天，核心体征稳定","f":[],"u":["是否与起身有关"],'
-                    '"n":"ask","q":"起身时更明显吗？","r":"体征已记录。起身时更明显吗？",'
-                    '"k":"low","c":0.88,'
-                    '"va":{"core_findings":["额温36.5℃","心率76次/分","血氧98%"],'
-                    '"reference_findings":["指温仅供参考"],"quality_notes":["信号稳定"]},'
-                    '"cd":{"chief_complaint":"头晕","course":"半天",'
-                    '"core_vitals":["额温36.5℃","心率76次/分","血氧98%"],'
-                    '"reference_vitals":["指温33.1℃（仅供参考）"],'
-                    '"integrated_summary":"头晕半天，本次核心体征稳定"}}'
-                ),
-            }
-        )
-
-        result = AiService(local_client=client).integrate_inquiry_vitals(
-            {"case_summary": "头晕半天"},
-            {"name": "张三"},
-            {
-                "core": {
-                    "spo2": {
-                        "value": 98,
-                        "unit": "%",
-                        "usable": True,
-                        "quality": "measured",
-                    }
-                }
-            },
-        )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["source"], "local_llm")
-        self.assertEqual(result["vitals_assessment"]["core_findings"][2], "血氧98%")
-        self.assertIn("核心体征稳定", result["case_document"]["integrated_summary"])
 
     def test_ai_selection_is_limited_to_the_safe_pool_and_two_options(self) -> None:
         knowledge = MedicineKnowledgeRepository()

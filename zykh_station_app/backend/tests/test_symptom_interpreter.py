@@ -44,11 +44,6 @@ class OpenCaseAiService:
             "used_medicines": "未使用",
             "allergy_or_contraindication": "头孢过敏",
             "next_action": "measure_vitals",
-            "measurement_request": {
-                "reason": "头晕可能与体征变化有关",
-                "goal": "确认额温、心率和血氧是否稳定",
-                "required_core_metrics": ["temperature", "heart_rate", "spo2"],
-            },
             "next_question": "",
             "assistant_reply": "起身时眼前发黑需要结合体征再判断，请先测量额温、心率和血氧。",
             "reason": "体位变化与循环状态可能相关",
@@ -104,41 +99,6 @@ class InvalidActionAiService:
         }
 
 
-class VitalsFusionAiService:
-    def integrate_inquiry_vitals(self, _existing, _profile, evidence):
-        return {
-            "ok": True,
-            "source": "cloud",
-            "case_summary": "头晕半天，核心体征稳定。",
-            "observations": [],
-            "uncertainties": ["是否与体位变化有关"],
-            "next_action": "ask",
-            "next_question": "头晕在起身时会不会更明显？",
-            "assistant_reply": "体征已经记录。头晕在起身时会不会更明显？",
-            "risk_level": "low",
-            "confidence": 0.9,
-            "vitals_assessment": {
-                "core_findings": ["额温36.5℃、心率76次/分、血氧98%"],
-                "reference_findings": ["指温仅作参考"],
-                "quality_notes": ["核心体征信号稳定"],
-                "answered_uncertainties": ["当前未见核心体征异常"],
-            },
-            "case_document": {
-                "chief_complaint": "头晕",
-                "course": "持续半天",
-                "positive_findings": ["头晕"],
-                "negative_findings": [],
-                "remaining_uncertainties": ["是否与体位变化有关"],
-                "used_medicines": "未使用",
-                "allergy_or_contraindication": "无",
-                "core_vitals": ["额温36.5℃", "心率76次/分", "血氧98%"],
-                "reference_vitals": ["指温33.1℃（仅供参考）"],
-                "vitals_quality_notes": ["信号稳定"],
-                "integrated_summary": "头晕持续半天，本次核心体征稳定，仍需确认是否与起身有关。",
-            },
-        }
-
-
 class SymptomInterpreterTest(unittest.TestCase):
     def test_open_case_keeps_a_concept_outside_any_fixed_symptom_whitelist(self) -> None:
         result = SymptomInterpreter(ai_service=OpenCaseAiService()).interpret(
@@ -153,7 +113,6 @@ class SymptomInterpreterTest(unittest.TestCase):
         self.assertEqual(result.action_intent, "measure_vitals")
         self.assertEqual(result.ai_risk_level, "medium")
         self.assertTrue(result.history_relationship.related)
-        self.assertEqual(result.measurement_request.required_core_metrics[2], "spo2")
 
     def test_semantic_concept_does_not_need_to_be_an_exact_transcript_substring(self) -> None:
         result = SymptomInterpreter(ai_service=SemanticEvidenceAiService()).interpret(
@@ -182,30 +141,6 @@ class SymptomInterpreterTest(unittest.TestCase):
 
         self.assertEqual(result.action_intent, "ask")
         self.assertNotIn("打开药柜", result.assistant_reply)
-
-    def test_vitals_are_integrated_with_quality_and_case_document(self) -> None:
-        evidence = {
-            "core": {
-                "spo2": {"value": 98, "unit": "%", "usable": True, "quality": "measured"}
-            },
-            "reference": {
-                "body_temperature": {
-                    "value": 33.1,
-                    "unit": "℃",
-                    "usable": True,
-                    "quality": "reference_only",
-                }
-            },
-        }
-        result = SymptomInterpreter(ai_service=VitalsFusionAiService()).resume_after_vitals(
-            {"conversation_turns": 3, "vitals": evidence},
-            {"name": "张三"},
-        )
-
-        self.assertEqual(result.action_intent, "ask")
-        self.assertEqual(result.vitals_assessment.core_findings[0], "额温36.5℃、心率76次/分、血氧98%")
-        self.assertIn("仅作参考", result.vitals_assessment.reference_findings[0])
-        self.assertIn("核心体征稳定", result.case_document.integrated_summary)
 
     def test_short_spoken_answers_remain_available_for_review_edits(self) -> None:
         self.assertEqual(SymptomInterpreter.duration_answer("已经两天半了"), "两天半")
