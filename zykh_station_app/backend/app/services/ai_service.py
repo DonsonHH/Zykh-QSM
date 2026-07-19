@@ -254,6 +254,8 @@ class AiService:
             "next_action 只能是 ask、measure_vitals、analyze、escalate、end。"
             "需要额温、心率、血氧才能判断时选择 measure_vitals；信息足够时选择 analyze；"
             "出现明显危险信号时选择 escalate。risk_level 只能是 low、medium、high、emergency。"
+            "选择 measure_vitals 时必须填写 measurement_request.reason、goal 和 required_core_metrics，"
+            "向用户说明为什么测、需要额温/心率/血氧中的哪些信息；不需要测量时返回 null。"
             "assistant_reply 是直接给用户的一句自然回应；ask 时包含一个问题，其他动作不强行追问。"
             "history_relationship.should_reuse_previous_conclusion 必须为 false。"
         )
@@ -284,6 +286,7 @@ class AiService:
                     "used_medicines": "",
                     "allergy_or_contraindication": "",
                     "next_action": "ask",
+                    "measurement_request": None,
                     "next_question": "",
                     "assistant_reply": "",
                     "reason": "",
@@ -334,6 +337,211 @@ class AiService:
             return self._extract_inquiry_local(transcript, existing, profile, "云端未返回有效结构。")
         return {"ok": True, "source": "cloud", **parsed}
 
+    def integrate_inquiry_vitals(
+        self,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fuse normalized device evidence into the same inquiry case state."""
+        system_prompt = (
+            "你是家庭康护终端的中文问询医师助理。现在需要把一次体征测量结果合并到正在进行的问询。"
+            "不能诊断、不能选择药品、不能控制硬件，只输出一个 JSON 对象。"
+            "evidence.core 中仅 usable=true 的额温、心率、血氧可作为核心判断依据；"
+            "evidence.reference 中的指温、血压、呼吸频率、HRV、RR、微循环、疲劳和环境温度"
+            "只能标注为辅助参考，不能单独升高风险或成为推荐依据。"
+            "必须保留测量失败、取消、缺少手指或信号不稳等质量事实，不得补造缺失数值。"
+            "结合 conversation、profile、recent_history 和测量前的 measurement_request，"
+            "更新病例摘要、体征评估和病例文档。每次最多只问一个仍会影响判断的问题。"
+            "next_action 只能是 ask、measure_vitals、analyze、escalate、end；"
+            "只有确实需要且尝试次数少于 2 时才可再次 measure_vitals。"
+            "出现危险信号时 escalate；信息足够时 analyze。"
+            "risk_level 只能是 low、medium、high、emergency。"
+            "measurement_request 仅在需要复测时填写，否则返回 null。"
+            "assistant_reply 使用自然、简短的中文，不展示内部字段或规则。"
+        )
+        user_prompt = json.dumps(
+            {
+                "case_state": existing,
+                "person": profile,
+                "vitals_evidence": evidence,
+                "output_contract": {
+                    "case_summary": "",
+                    "observations": [],
+                    "uncertainties": [],
+                    "history_relationship": {
+                        "related": False,
+                        "similarities": [],
+                        "important_changes": [],
+                        "should_reuse_previous_conclusion": False,
+                    },
+                    "duration": "",
+                    "used_medicines": "",
+                    "allergy_or_contraindication": "",
+                    "next_action": "ask",
+                    "measurement_request": None,
+                    "next_question": "",
+                    "assistant_reply": "",
+                    "reason": "",
+                    "risk_level": "low",
+                    "risk_signals": [],
+                    "confidence": 0.0,
+                    "vitals_assessment": {
+                        "core_findings": [],
+                        "reference_findings": [],
+                        "quality_notes": [],
+                        "answered_uncertainties": [],
+                    },
+                    "case_document": {
+                        "chief_complaint": "",
+                        "course": "",
+                        "positive_findings": [],
+                        "negative_findings": [],
+                        "remaining_uncertainties": [],
+                        "used_medicines": "",
+                        "allergy_or_contraindication": "",
+                        "core_vitals": [],
+                        "reference_vitals": [],
+                        "vitals_quality_notes": [],
+                        "integrated_summary": "",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        )
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return self._integrate_inquiry_vitals_local(
+                existing,
+                profile,
+                evidence,
+                "当前为离线模式。",
+            )
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        if not key:
+            return self._integrate_inquiry_vitals_local(
+                existing,
+                profile,
+                evidence,
+                "未配置云端密钥。",
+            )
+        if settings.ai_mode == "auto" and not self._cloud_reachable():
+            return self._integrate_inquiry_vitals_local(
+                existing,
+                profile,
+                evidence,
+                "云端网络不可用。",
+            )
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.15,
+            "max_tokens": 760,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return self._integrate_inquiry_vitals_local(
+                existing,
+                profile,
+                evidence,
+                f"云端体征融合失败：{exc}。",
+            )
+        parsed = self._parse_json_content(self._extract_message_text(data))
+        if not isinstance(parsed, dict):
+            return self._integrate_inquiry_vitals_local(
+                existing,
+                profile,
+                evidence,
+                "云端体征融合未返回有效结构。",
+            )
+        return {"ok": True, "source": "cloud", **parsed}
+
+    def _integrate_inquiry_vitals_local(
+        self,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+        evidence: dict[str, Any],
+        reason: str,
+    ) -> dict[str, Any]:
+        system_prompt = (
+            "你是家庭健康问询助手，负责把设备体征合并到当前病例，不诊断、不选药、不控制硬件。"
+            "core中仅usable=true可正式使用；reference全部仅供参考，不得单独升风险或选药。"
+            "保留失败、取消和质量不足，不补造数值。仅输出单行JSON："
+            "s=融合病例摘要；f=观察数组；u=不确定项；du=持续时间；m=已用药；a=过敏禁忌；"
+            "n=ask|measure_vitals|analyze|escalate|end；q=下一问；r=自然回复；"
+            "k=low|medium|high|emergency；g=风险信号；c=0到1；"
+            "va={core_findings,reference_findings,quality_notes,answered_uncertainties}；"
+            "cd={chief_complaint,course,positive_findings,negative_findings,remaining_uncertainties,"
+            "used_medicines,allergy_or_contraindication,core_vitals,reference_vitals,"
+            "vitals_quality_notes,integrated_summary}。"
+            "只有确有必要且known.attempts小于2时才再次measure_vitals，每轮最多问一个问题。"
+        )
+        compact_existing = {
+            "summary": str(existing.get("case_summary") or "")[:180],
+            "facts": list(existing.get("observations") or [])[:12],
+            "uncertainties": list(existing.get("uncertainties") or [])[:6],
+            "duration": str(existing.get("duration") or "")[:60],
+            "medicines": str(existing.get("used_medicines") or "")[:80],
+            "allergy": str(existing.get("allergy_or_contraindication") or "")[:80],
+            "attempts": int(existing.get("vitals_measurement_attempts") or 0),
+            "measurement_request": existing.get("measurement_request"),
+            "conversation": [
+                {
+                    "role": str(message.get("role") or "")[:10],
+                    "content": str(message.get("content") or "")[:120],
+                }
+                for message in (existing.get("conversation") or [])[-6:]
+                if isinstance(message, dict)
+            ],
+        }
+        compact_profile = {
+            "name": str(profile.get("name") or "")[:40],
+            "age": profile.get("age") or 0,
+            "history": str(profile.get("profile") or "")[:100],
+            "allergy": str(profile.get("allergies") or "")[:80],
+        }
+        user_prompt = json.dumps(
+            {
+                "known": compact_existing,
+                "profile": compact_profile,
+                "vitals": evidence,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=360,
+            response_format={"type": "json_object"},
+        )
+        if not result.get("ok"):
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
+        parsed = self._parse_json_content(str(result.get("reply") or ""))
+        if not isinstance(parsed, dict):
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
+        return {"ok": True, "source": "local_llm", **self._expand_local_inquiry(parsed)}
+
     def rank_inquiry_candidates(
         self,
         context: dict[str, Any],
@@ -346,6 +554,8 @@ class AiService:
             "你是家庭康护问询的候选药品排序助手。程序已完成库存、有效期、OTC资格和绝对禁忌过滤。"
             "你只能从 candidates 中选择，不能新增药品、改变字段或控制药柜。"
             "结合病例、个人信息、体征和药品说明决定是否存在合适候选；不合适可返回空 options。"
+            "体征证据中只有 core 且 usable=true 的指标可用于判断；reference 指标仅作背景参考，"
+            "不能单独成为选择某个候选的理由。"
             "最多输出一个主方案和一个备选方案，备选不是联合服用；证据明确时只给主方案。"
             "每个方案最多三个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
             "reason 用一至两句自然中文说明推荐原因，不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
@@ -706,6 +916,7 @@ class AiService:
             "你是家庭健康问询助手，不诊断、不选药、不控制硬件。仅输出单行JSON："
             "s=病例摘要；f=[[自由概念,present|absent|uncertain,用户原话,轮次,置信度]]；"
             "u=不确定项数组；du=持续时间；m=已用药；a=过敏禁忌；"
+            "z=测量请求对象{reason,goal,required_core_metrics}，无需测量时为null；"
             "n=ask|measure_vitals|analyze|escalate|end；q=下一问；r=给用户的自然回复；"
             "k=low|medium|high|emergency；g=风险信号数组；c=0到1。"
             "先读known.c和known.h，不重复已回答问题；每轮最多问一件真正影响安全或理解的事。"
@@ -752,6 +963,11 @@ class AiService:
             "duration": str(payload.get("du") or "").strip(),
             "used_medicines": str(payload.get("m") or "").strip(),
             "allergy_or_contraindication": str(payload.get("a") or "").strip(),
+            "measurement_request": (
+                payload.get("z")
+                if isinstance(payload.get("z"), dict)
+                else payload.get("measurement_request")
+            ),
             "next_question": str(payload.get("q") or "").strip(),
             "assistant_reply": str(payload.get("r") or payload.get("q") or "").strip(),
             "reason": str(payload.get("x") or "").strip(),
@@ -759,6 +975,20 @@ class AiService:
             "risk_level": str(payload.get("k") or "low").strip(),
             "risk_signals": payload.get("g") if isinstance(payload.get("g"), list) else [],
             "confidence": payload.get("c") or 0,
+            "vitals_assessment": (
+                payload.get("va")
+                if isinstance(payload.get("va"), dict)
+                else payload.get("vitals_assessment")
+                if isinstance(payload.get("vitals_assessment"), dict)
+                else None
+            ),
+            "case_document": (
+                payload.get("cd")
+                if isinstance(payload.get("cd"), dict)
+                else payload.get("case_document")
+                if isinstance(payload.get("case_document"), dict)
+                else None
+            ),
         }
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:

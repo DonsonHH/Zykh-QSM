@@ -121,6 +121,7 @@ export function InquiryResultStep({
         </span>
         <div>
           <h2>{highRisk ? "请优先联系专业人员" : "请选择一个方案"}</h2>
+          {resultSummary(result) ? <span>{resultSummary(result)}</span> : null}
         </div>
         <div className="treatment-result-meta">
           <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
@@ -255,6 +256,11 @@ function optionDescription(option, index) {
   return index === 0
     ? `${medicine}更贴近你这次描述的主要不适，可先对照药品说明。`
     : `${medicine}的侧重点不同，如果更符合你最明显的不适，可对照这一方案。`;
+}
+
+function resultSummary(result) {
+  const documentSummary = result?.extracted_information?.case_document?.integrated_summary;
+  return String(documentSummary || result?.reasoning_summary || "").trim();
 }
 
 async function playResultSpeech(text, networkStatus, playbackGenerationRef) {

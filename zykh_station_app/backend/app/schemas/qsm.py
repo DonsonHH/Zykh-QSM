@@ -73,6 +73,7 @@ class VitalsSessionResponse(BaseModel):
     quality: str | None = None
     message: str | None = None
     sample_count: int | None = None
+    partial: bool | None = None
     valid_frame_count: int | None = None
     contact_frame_count: int | None = None
     heart_rate_frame_count: int | None = None

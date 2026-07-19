@@ -22,10 +22,12 @@ from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryServic
 from .inquiry_guest_archive_service import InquiryGuestArchiveService
 from .medicine_safety_engine import MedicineSafetyEngine
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
+from .vitals_evidence_service import VitalsEvidenceService
 
 
 class InquiryOrchestrator:
     _treatment_action_lock = threading.Lock()
+    _max_vitals_measurement_attempts = 2
 
     def __init__(
         self,
@@ -35,6 +37,7 @@ class InquiryOrchestrator:
         dispense_service: DispenseService | None = None,
         history_service: InquiryHistoryService | None = None,
         guest_archive_service: InquiryGuestArchiveService | None = None,
+        vitals_evidence_service: VitalsEvidenceService | None = None,
     ) -> None:
         self.repository = repository or InquiryRepository()
         self.interpreter = interpreter or SymptomInterpreter()
@@ -42,6 +45,7 @@ class InquiryOrchestrator:
         self.dispense_service = dispense_service or DispenseService()
         self.history_service = history_service or InquiryHistoryService(self.repository)
         self.guest_archive_service = guest_archive_service or InquiryGuestArchiveService()
+        self.vitals_evidence_service = vitals_evidence_service or VitalsEvidenceService()
 
     def create_session(self, request: InquirySessionCreateRequest) -> InquirySessionResponse:
         user = self._load_user(request.service_user_id)
@@ -128,7 +132,13 @@ class InquiryOrchestrator:
 
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
-        session.vitals = request.model_dump(exclude_none=True)
+        evidence = self.vitals_evidence_service.build(request)
+        session.vitals = evidence.model_dump()
+        session.extracted_information.vitals_measurement_attempts = max(
+            session.extracted_information.vitals_measurement_attempts,
+            1,
+        )
+        session.extracted_information.vitals_measurement_status = evidence.measurement_status
         immediate = self.safety_engine.assess_guardrails(
             session.extracted_information,
             session.vitals,
@@ -206,6 +216,21 @@ class InquiryOrchestrator:
             used_medicines=used_medicines,
             allergy_or_contraindication=allergy,
             confidence=interpretation.confidence,
+            measurement_request=interpretation.measurement_request,
+            vitals_assessment=(
+                interpretation.vitals_assessment
+                or session.extracted_information.vitals_assessment
+            ),
+            case_document=(
+                interpretation.case_document
+                or session.extracted_information.case_document
+            ),
+            vitals_measurement_attempts=(
+                session.extracted_information.vitals_measurement_attempts
+            ),
+            vitals_measurement_status=(
+                session.extracted_information.vitals_measurement_status
+            ),
         )
         session.extracted_information = extracted
         session.source = interpretation.source
@@ -419,7 +444,25 @@ class InquiryOrchestrator:
             session.reply = interpretation.assistant_reply
             self._clear_decision(session)
             return self._commit(session)
-        if interpretation.action_intent == "measure_vitals" and not session.vitals:
+        if interpretation.action_intent == "measure_vitals":
+            attempts = extracted.vitals_measurement_attempts
+            if attempts >= self._max_vitals_measurement_attempts:
+                session.stage = "clarification"
+                session.next_action = "ask"
+                session.reply = (
+                    "体征连续两次没有取得完整可靠的数据。"
+                    "可以继续告诉我现在最明显的不舒服，或联系医生协助测量。"
+                )
+                session.extracted_information.measurement_request = None
+                self._clear_decision(session)
+                return self._commit(session)
+            extracted.vitals_measurement_attempts = attempts + 1
+            extracted.vitals_measurement_status = "requested"
+            extracted.measurement_request = (
+                interpretation.measurement_request
+                or extracted.measurement_request
+            )
+            session.extracted_information = extracted
             session.stage = "vitals"
             session.next_action = "measure_vitals"
             session.reply = (
@@ -609,13 +652,18 @@ class InquiryOrchestrator:
     ) -> dict:
         return {
             "person": self._model_profile(session),
+            "case_document": (
+                extracted.case_document.model_dump()
+                if extracted.case_document
+                else {}
+            ),
             "case_summary": extracted.case_summary,
             "observations": [value.model_dump() for value in extracted.observations],
             "uncertainties": extracted.uncertainties,
             "duration": extracted.duration,
             "used_medicines": extracted.used_medicines,
             "allergy_or_contraindication": extracted.allergy_or_contraindication,
-            "vitals": session.vitals or {},
+            "vitals_evidence": session.vitals or {},
             "risk_level": guard.risk_level,
             "risk_reasons": guard.risk_reasons,
             "history_relationship": extracted.history_relationship.model_dump(),
@@ -716,6 +764,14 @@ class InquiryOrchestrator:
             ai_risk_level=interpretation.ai_risk_level or current.ai_risk_level,
             ai_risk_reasons=list(dict.fromkeys(interpretation.risk_signals)),
             ai_available=interpretation.available,
+            measurement_request=interpretation.measurement_request,
+            vitals_assessment=(
+                interpretation.vitals_assessment
+                or current.vitals_assessment
+            ),
+            case_document=interpretation.case_document or current.case_document,
+            vitals_measurement_attempts=current.vitals_measurement_attempts,
+            vitals_measurement_status=current.vitals_measurement_status,
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
             symptom_features=[],

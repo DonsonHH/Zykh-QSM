@@ -108,7 +108,9 @@ conversation, profile, vitals and recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
 fixed symptom taxonomy or fixed field order. A `measure_vitals` action opens the
-existing vitals subpage and then resumes the same model conversation.
+existing vitals subpage and includes a model-generated measurement reason, goal
+and required core metrics. The subpage starts automatically, writes the result
+directly to the persisted session, and then resumes the same model conversation.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool filtered by stock, expiry, OTC eligibility and
@@ -119,7 +121,24 @@ no candidate and does not imitate a model response with keyword rules.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
-Attaches required `temperature`, `heart_rate` and `spo2` to the same inquiry session. Optional blood-pressure, respiratory-rate and HRV values do not block completion.
+Attaches a completed, partial, failed or cancelled measurement to the same
+inquiry session. `temperature`, `heart_rate` and `spo2` are optional in the
+request so device failure can still be recorded. The service normalizes the
+payload into:
+
+- `core`: forehead temperature, heart rate and SpO2, each with `usable` and
+  quality metadata;
+- `reference`: finger temperature, estimated blood pressure, respiratory rate,
+  HRV, RR interval, microcirculation, fatigue and ambient temperature, explicitly
+  marked as reference-only;
+- `quality`: finger contact, sample/frame counts, extension state, source and
+  partial status.
+
+Only usable core values can trigger numeric hard-risk thresholds. Reference
+values never independently block a session or select a medicine. A dedicated
+cloud/local model pass merges the evidence into `vitals_assessment` and
+`case_document`, then chooses whether to ask, analyze, escalate or repeat the
+measurement. Automatic measurement is limited to two attempts.
 
 ### POST /api/inquiry/sessions/{session_id}/treatment/confirm
 

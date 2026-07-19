@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
-from ..schemas.inquiry import InquiryHistoryRelationship, InquiryObservation, RiskLevel
+from ..schemas.inquiry import (
+    InquiryCaseDocument,
+    InquiryHistoryRelationship,
+    InquiryMeasurementRequest,
+    InquiryObservation,
+    InquiryVitalsAssessment,
+    RiskLevel,
+)
 from .ai_service import AiService
 
 
@@ -27,6 +34,9 @@ class SymptomInterpretation:
     reasoning_summary: str = ""
     action_intent: str = "ask"
     action_reason: str = ""
+    measurement_request: InquiryMeasurementRequest | None = None
+    vitals_assessment: InquiryVitalsAssessment | None = None
+    case_document: InquiryCaseDocument | None = None
     ai_risk_level: RiskLevel | None = None
     risk_signals: list[str] = field(default_factory=list)
     confidence: float = 0.0
@@ -93,7 +103,23 @@ class SymptomInterpreter:
         existing: dict[str, Any],
         profile: dict[str, Any],
     ) -> SymptomInterpretation:
-        return self.interpret("体征测量已经完成，请结合本次结果继续问询。", existing, profile)
+        integrator = getattr(self.ai_service, "integrate_inquiry_vitals", None)
+        if not callable(integrator):
+            return self.interpret("体征测量已经完成，请结合本次结果继续问询。", existing, profile)
+        payload = integrator(existing, profile, existing.get("vitals") or {})
+        if not payload.get("ok"):
+            return SymptomInterpretation(
+                assistant_reply=(
+                    "体征结果已经保留，但智能分析当前暂不可用。"
+                    "本次不会生成用药候选，请联系医生或家人协助。"
+                ),
+                reasoning_summary=str(payload.get("message") or "体征融合模型未返回有效内容。")[:180],
+                action_intent="escalate",
+                action_reason="体征融合服务不可用",
+                source="ai_unavailable",
+                available=False,
+            )
+        return self._validated_model_result(payload, existing)
 
     def rank_candidates(self, context: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
         ranker = getattr(self.ai_service, "rank_inquiry_candidates", None)
@@ -175,6 +201,77 @@ class SymptomInterpreter:
         except (TypeError, ValueError):
             confidence = 0.0
         case_summary = cls._short_text(payload.get("case_summary"), 260)
+        raw_measurement = payload.get("measurement_request")
+        measurement_request = None
+        if isinstance(raw_measurement, dict):
+            reason = cls._short_text(raw_measurement.get("reason"), 240)
+            goal = cls._short_text(raw_measurement.get("goal"), 240)
+            required = cls._text_list(raw_measurement.get("required_core_metrics"), 3, 40)
+            if reason or goal or required:
+                measurement_request = InquiryMeasurementRequest(
+                    reason=reason,
+                    goal=goal,
+                    required_core_metrics=required,
+                )
+        raw_assessment = payload.get("vitals_assessment")
+        vitals_assessment = (
+            InquiryVitalsAssessment(
+                core_findings=cls._text_list(raw_assessment.get("core_findings"), 6, 120),
+                reference_findings=cls._text_list(raw_assessment.get("reference_findings"), 8, 120),
+                quality_notes=cls._text_list(raw_assessment.get("quality_notes"), 6, 120),
+                answered_uncertainties=cls._text_list(
+                    raw_assessment.get("answered_uncertainties"),
+                    6,
+                    120,
+                ),
+            )
+            if isinstance(raw_assessment, dict)
+            else None
+        )
+        raw_case_document = payload.get("case_document")
+        case_document = (
+            InquiryCaseDocument(
+                chief_complaint=cls._short_text(raw_case_document.get("chief_complaint"), 180),
+                course=cls._short_text(raw_case_document.get("course"), 180),
+                positive_findings=cls._text_list(
+                    raw_case_document.get("positive_findings"),
+                    10,
+                    120,
+                ),
+                negative_findings=cls._text_list(
+                    raw_case_document.get("negative_findings"),
+                    10,
+                    120,
+                ),
+                remaining_uncertainties=cls._text_list(
+                    raw_case_document.get("remaining_uncertainties"),
+                    8,
+                    120,
+                ),
+                used_medicines=cls._short_text(raw_case_document.get("used_medicines"), 180),
+                allergy_or_contraindication=cls._short_text(
+                    raw_case_document.get("allergy_or_contraindication"),
+                    180,
+                ),
+                core_vitals=cls._text_list(raw_case_document.get("core_vitals"), 6, 120),
+                reference_vitals=cls._text_list(
+                    raw_case_document.get("reference_vitals"),
+                    8,
+                    120,
+                ),
+                vitals_quality_notes=cls._text_list(
+                    raw_case_document.get("vitals_quality_notes"),
+                    6,
+                    120,
+                ),
+                integrated_summary=cls._short_text(
+                    raw_case_document.get("integrated_summary"),
+                    320,
+                ),
+            )
+            if isinstance(raw_case_document, dict)
+            else None
+        )
         return SymptomInterpretation(
             case_summary=case_summary,
             observations=observations,
@@ -194,6 +291,9 @@ class SymptomInterpreter:
             reasoning_summary=case_summary or cls._short_text(payload.get("reason"), 180),
             action_intent=action,
             action_reason=cls._short_text(payload.get("reason"), 160),
+            measurement_request=measurement_request,
+            vitals_assessment=vitals_assessment,
+            case_document=case_document,
             ai_risk_level=ai_risk_level,
             risk_signals=cls._text_list(payload.get("risk_signals"), 8, 100),
             confidence=confidence,
