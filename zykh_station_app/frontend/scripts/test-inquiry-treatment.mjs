@@ -19,9 +19,16 @@ const recommendationSpeech = speech.buildRecommendationSpeech(
     extracted_information: { dimension_evidence: { "恶心暑湿": "头重胸闷" } }
   },
   {
-    medicines: [{ name: "藿香正气丸", dosage: "口服，一次1丸，一日2次。" }]
+    option_id: "A",
+    when: "更贴近本次暑湿不适。",
+    medicines: [{
+      name: "藿香正气丸",
+      dosage: "口服，一次1丸，一日2次。",
+      recommended_usage: "本次口服，一次1丸，一日2次"
+    }]
   }
 );
+const reviewSpeech = speech.buildInformationReviewSpeech({ user_name: "张三" });
 
 const checks = [
   [api.includes("/treatment/confirm"), "missing treatment confirmation endpoint"],
@@ -48,6 +55,11 @@ const checks = [
   [chat.match(/async function startVoice\(\)\s*\{\s*interruptPlayback\(\)/), "voice input must interrupt TTS before microphone startup"],
   [result.includes("buildRecommendationSpeech"), "result does not announce the recommendation"],
   [recommendationSpeech.includes("藿香正气丸") && recommendationSpeech.includes("一次1丸"), "recommendation speech omits medicine or dosage"],
+  [recommendationSpeech.includes("更贴近本次暑湿不适"), "recommendation speech omits the selected option reason"],
+  [reviewSpeech.includes("张三") && reviewSpeech.includes("请核对"), "information review speech is incomplete"],
+  [review.includes("buildInformationReviewSpeech") && review.includes("speakText("), "information review does not trigger TTS"],
+  [page.match(/InquiryInformationReview[\s\S]{0,300}networkStatus=\{networkStatus\}/), "information review does not receive the active network mode"],
+  [result.includes("selectedOption?.option_id || \"none\"") && result.includes("lastRecommendationKeyRef"), "switching treatment options does not trigger the selected plan speech"],
   [page.includes("主要不适") && page.includes("持续时间") && page.includes("体征信息"), "live inquiry summary wording is incomplete"],
   [page.includes("chiefComplaint({"), "live complaint must use the concise chief complaint formatter"],
   [page.includes("symptomDimensionLabel(value)"), "live complaint must use normalized symptom dimensions"],
@@ -56,7 +68,7 @@ const checks = [
   [review.includes("AUTO_CONFIRM_SECONDS = 10") && review.includes("confirmRef.current("), "information review must auto-confirm after ten seconds"],
   [review.includes("主要不适") && review.includes("已经用药") && review.includes("过敏与禁忌"), "information review omits key case facts"],
   [review.includes("data-touch-editable") && review.includes("main_complaint"), "review facts must be editable on the touchscreen"],
-  [result.includes("medicine.dosage"), "treatment option omits medicine dosage"],
+  [result.includes("medicine.recommended_usage || medicine.dosage"), "treatment option omits contextual usage or label fallback"],
   [!result.includes("本次分析") && !result.includes("treatment-evidence-line"), "result still renders the redundant analysis strip"],
   [!result.includes("点击确认即表示已核对"), "result still exposes legalistic confirmation copy"],
   [result.includes("compact-result-action") && result.includes("aria-label=\"重新问询\"") && result.includes("aria-label=\"返回首页\""), "result footer actions are not compact icon controls"],

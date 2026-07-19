@@ -34,6 +34,7 @@ class CandidateMedicine(BaseModel):
 class TreatmentMedicine(CandidateMedicine):
     role: str = "主要对症"
     covered_symptoms: list[str] = Field(default_factory=list)
+    recommended_usage: str = ""
 
 
 class TreatmentOption(BaseModel):

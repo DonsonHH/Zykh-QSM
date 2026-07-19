@@ -61,22 +61,23 @@ export function InquiryResultStep({
   const requiresExistingDirection = Boolean(
     selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
   );
-  const spokenKeysRef = useRef(new Set());
+  const lastRecommendationKeyRef = useRef("");
+  const spokenActionKeysRef = useRef(new Set());
   const playbackGenerationRef = useRef(0);
 
   useEffect(() => {
     if (!result?.session_id) return;
-    const key = `recommendation:${result.session_id}`;
-    if (spokenKeysRef.current.has(key)) return;
-    spokenKeysRef.current.add(key);
+    const key = `recommendation:${result.session_id}:${selectedOption?.option_id || "none"}`;
+    if (lastRecommendationKeyRef.current === key) return;
+    lastRecommendationKeyRef.current = key;
     playResultSpeech(buildRecommendationSpeech(result, selectedOption), networkStatus, playbackGenerationRef);
-  }, [canProceed, highRisk, networkStatus, result?.session_id, selectedOption]);
+  }, [networkStatus, result, selectedOption]);
 
   useEffect(() => {
     if (!actionFinished || !actionMessage) return;
     const key = `action:${result?.session_id}:${actionStatus}`;
-    if (spokenKeysRef.current.has(key)) return;
-    spokenKeysRef.current.add(key);
+    if (spokenActionKeysRef.current.has(key)) return;
+    spokenActionKeysRef.current.add(key);
     playResultSpeech(buildActionSpeech(actionMessage), networkStatus, playbackGenerationRef);
   }, [actionFinished, actionMessage, actionStatus, networkStatus, result?.session_id]);
 
@@ -145,7 +146,7 @@ export function InquiryResultStep({
                 />
                 <span className="option-choice-mark">{selected ? <Check size={18} /> : optionIndex + 1}</span>
                 <span className="option-heading">
-                  <strong>{optionIndex === 0 ? "推荐方案" : `备选方案${optionIndex}`}</strong>
+                  <strong>{optionIndex === 0 ? "推荐方案" : "备选方案"}</strong>
                   {optionIndex === 0 ? <em>优先推荐</em> : null}
                   <small>{optionDescription(option, optionIndex)}</small>
                 </span>
@@ -156,7 +157,7 @@ export function InquiryResultStep({
                       <span>
                         <strong>{medicine.name}</strong>
                         <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
-                          {medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
+                          {medicine.recommended_usage || medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
                         </small>
                       </span>
                       <em>{medicine.slot}号柜</em>

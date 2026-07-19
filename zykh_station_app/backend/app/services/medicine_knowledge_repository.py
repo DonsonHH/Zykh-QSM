@@ -80,6 +80,8 @@ class MedicineKnowledgeRepository:
                 "请结合当前不适和药品说明核对这一选择。",
                 120,
             )
+            raw_usage = raw.get("usage_by_medicine")
+            usage_by_medicine = raw_usage if isinstance(raw_usage, dict) else {}
             options.append(
                 TreatmentOption(
                     option_id=option_id,
@@ -90,6 +92,10 @@ class MedicineKnowledgeRepository:
                             **candidate.model_dump(),
                             role="主要选择" if index == 0 else "按顺序配合",
                             covered_symptoms=[],
+                            recommended_usage=self._safe_recommended_usage(
+                                usage_by_medicine.get(candidate.id),
+                                candidate.dosage,
+                            ),
                         )
                         for index, candidate in enumerate(selected)
                     ],
@@ -103,6 +109,31 @@ class MedicineKnowledgeRepository:
         for phrase in ("覆盖症状", "库存核验", "独立备选", "互斥方案"):
             text = text.replace(phrase, "")
         return (text or fallback)[:limit]
+
+    @classmethod
+    def _safe_recommended_usage(cls, value: object, label_dosage: str) -> str:
+        """Keep model wording only when its quantities stay within the label text."""
+        text = re.sub(r"\s+", " ", str(value or "")).strip(" ，。；;")
+        if not text:
+            return label_dosage
+        if any(
+            phrase in text
+            for phrase in ("加倍", "增加剂量", "超过说明", "多服", "自行调整", "替代医嘱")
+        ):
+            return label_dosage
+        label_numbers = cls._number_tokens(label_dosage)
+        suggested_numbers = cls._number_tokens(text)
+        if any(number not in label_numbers for number in suggested_numbers):
+            return label_dosage
+        return text[:120]
+
+    @staticmethod
+    def _number_tokens(value: str) -> set[str]:
+        translations = str.maketrans({"两": "二", "俩": "二"})
+        return {
+            token.translate(translations)
+            for token in re.findall(r"\d+(?:\.\d+)?|[零一二两俩三四五六七八九十百半]+", value or "")
+        }
 
     @staticmethod
     def _eligible(medicine: Medicine, context_text: str) -> bool:

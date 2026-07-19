@@ -11,17 +11,29 @@ import {
   Thermometer,
   UserRound
 } from "lucide-react";
+import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
+import { isLocalNetworkMode } from "../utils/network.js";
+import { buildInformationReviewSpeech } from "../utils/inquirySpeech.js";
 
 const AUTO_CONFIRM_SECONDS = 10;
 
-export function InquiryInformationReview({ session, ready, saving = false, onConfirm, onContinue }) {
+export function InquiryInformationReview({
+  session,
+  ready,
+  saving = false,
+  onConfirm,
+  onContinue,
+  networkStatus
+}) {
   const [remainingMs, setRemainingMs] = useState(ready ? AUTO_CONFIRM_SECONDS * 1000 : null);
   const [interacted, setInteracted] = useState(false);
   const [draft, setDraft] = useState(() => buildFacts(session?.extracted_information || {}));
   const confirmRef = useRef(onConfirm);
   const draftRef = useRef(draft);
   const initialRef = useRef(draft);
+  const spokenKeyRef = useRef("");
+  const playbackGenerationRef = useRef(0);
   confirmRef.current = onConfirm;
   draftRef.current = draft;
   const extracted = session?.extracted_information || {};
@@ -35,6 +47,24 @@ export function InquiryInformationReview({ session, ready, saving = false, onCon
     setDraft(facts);
     setInteracted(false);
   }, [session?.session_id, session?.updated_at]);
+
+  useEffect(() => {
+    if (!session?.session_id) return;
+    const key = `${session.session_id}:${ready ? "ready" : "review"}`;
+    if (spokenKeyRef.current === key) return;
+    spokenKeyRef.current = key;
+    playReviewSpeech(
+      buildInformationReviewSpeech(session),
+      networkStatus,
+      playbackGenerationRef
+    );
+  }, [networkStatus, ready, session]);
+
+  useEffect(() => () => {
+    playbackGenerationRef.current += 1;
+    window.speechSynthesis?.cancel();
+    stopAudioPlayback().catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (!autoActive) {
@@ -112,6 +142,28 @@ export function InquiryInformationReview({ session, ready, saving = false, onCon
   function updateDraft(field, value) {
     setInteracted(true);
     setDraft((current) => ({ ...current, [field]: value }));
+  }
+}
+
+async function playReviewSpeech(text, networkStatus, playbackGenerationRef) {
+  if (!text) return;
+  const generation = playbackGenerationRef.current + 1;
+  playbackGenerationRef.current = generation;
+  window.speechSynthesis?.cancel();
+  await stopAudioPlayback().catch(() => null);
+  if (generation !== playbackGenerationRef.current) return;
+  try {
+    await speakText(text, undefined, 1.12, isLocalNetworkMode(networkStatus) ? "offline" : "auto");
+  } catch {
+    if (
+      !window.speechSynthesis
+      || typeof SpeechSynthesisUtterance === "undefined"
+      || generation !== playbackGenerationRef.current
+    ) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 1.08;
+    window.speechSynthesis.speak(utterance);
   }
 }
 

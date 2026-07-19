@@ -355,11 +355,18 @@ class AiService:
             "浅表擦伤、已经止血的轻微刀伤等场景，可把碘伏、棉签、纱布、创口贴等外伤护理用品"
             "按实际清洁、消毒、覆盖顺序组成一个方案；不要为了凑方案加入无关口服药。"
             "只有所有候选均与当前情况无关，或病例需要先由专业人员处理时，才返回空 options。"
-            "最多输出一个主方案和一个备选方案，备选不是联合服用；证据明确时只给主方案。"
+            "最多输出一个主方案和一个备选方案，两个方案均必须完整、可单独选择，备选不是联合服用。"
+            "如果候选中存在用途侧重不同、同样符合当前情况的第二种安全选择，应输出备选方案；"
+            "只有确实没有合理第二选择时才只给主方案，不要把同一护理流程强行拆成两个方案。"
             "每个方案最多三个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
             "reason 用一至两句自然中文说明推荐原因，不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
+            "不得声称已经诊断，不得使用‘一定有效、保证有效、可以治好’等疗效承诺。"
+            "usage_by_medicine 必须逐项使用 medicine_id 作为键，结合本次症状轻重写出简短、可播报的使用顺序和用法。"
+            "外用护理用品可以写‘先、再、最后’的操作顺序；口服或局部药品只能在候选 dosage 的剂量、"
+            "频次、疗程和适用年龄范围内取值，不得增加剂量、频次或疗程，不确定时原样使用 dosage。"
             "只输出 JSON：{\"summary\":\"\",\"options\":[{\"option_id\":\"primary\","
-            "\"label\":\"主方案\",\"reason\":\"\",\"medicine_ids\":[\"\"]}]}。"
+            "\"label\":\"主方案\",\"reason\":\"\",\"medicine_ids\":[\"\"],"
+            "\"usage_by_medicine\":{\"medicine-id\":\"本次建议用法\"}}]}。"
         )
         user_prompt = json.dumps(
             {"case": context, "candidates": candidates},
@@ -381,7 +388,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
-            "max_tokens": 700,
+            "max_tokens": 900,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
@@ -413,7 +420,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=320,
+            max_tokens=520,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):

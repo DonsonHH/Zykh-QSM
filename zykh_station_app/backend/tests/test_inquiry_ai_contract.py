@@ -206,12 +206,18 @@ class InquiryAiContractTest(unittest.TestCase):
                         "label": "主方案",
                         "reason": "更贴近当前的暑湿和胃肠不适。",
                         "medicine_ids": ["slot-08-huoxiang-zhengqi", "slot-04-amoxicillin"],
+                        "usage_by_medicine": {
+                            "slot-08-huoxiang-zhengqi": "口服，一次1丸，一日2次。",
+                        },
                     },
                     {
                         "option_id": "alternative",
                         "label": "备选",
                         "reason": "如果主要表现为胃部不适，可对照这一选择。",
                         "medicine_ids": ["slot-12-hydrotalcite"],
+                        "usage_by_medicine": {
+                            "slot-12-hydrotalcite": "一次3片，一日4次。",
+                        },
                     },
                     {
                         "option_id": "ignored",
@@ -227,6 +233,11 @@ class InquiryAiContractTest(unittest.TestCase):
         selected_ids = {medicine.id for option in options for medicine in option.medicines}
         self.assertNotIn("slot-04-amoxicillin", selected_ids)
         self.assertEqual(options[0].label, "主方案")
+        self.assertEqual(options[0].medicines[0].recommended_usage, "口服，一次1丸，一日2次")
+        self.assertEqual(
+            options[1].medicines[0].recommended_usage,
+            options[1].medicines[0].dosage,
+        )
 
     @patch("app.services.ai_service.settings")
     def test_candidate_ranking_prompt_treats_first_aid_supplies_as_valid_options(
@@ -246,6 +257,10 @@ class InquiryAiContractTest(unittest.TestCase):
                                 "label": "清洁与覆盖",
                                 "reason": "可先清洁伤口并覆盖保护。",
                                 "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
+                                "usage_by_medicine": {
+                                    "slot-17-iodophor": "先用碘伏消毒液清洁伤口",
+                                    "slot-10-gauze": "最后用医用纱布覆盖保护",
+                                },
                             }
                         ],
                     },
@@ -280,6 +295,8 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("外伤护理用品", client.last_messages[0]["content"])
         self.assertIn("不应仅因不需要口服药", client.last_messages[0]["content"])
+        self.assertIn("同样符合当前情况的第二种安全选择", client.last_messages[0]["content"])
+        self.assertIn("usage_by_medicine", client.last_messages[0]["content"])
         self.assertEqual(result["options"][0]["medicine_ids"], ["slot-17-iodophor", "slot-10-gauze"])
 
 

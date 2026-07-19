@@ -759,6 +759,57 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(response.status, "complete")
         self.assertEqual(dispense.requests[0].medicine_id, "slot-08-huoxiang-zhengqi")
 
+    def test_alternative_option_can_be_selected_and_opened(self) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "options": [
+                {
+                    "medicine_ids": ["slot-08-huoxiang-zhengqi"],
+                    "label": "主方案",
+                    "reason": "更贴近暑湿不适。",
+                },
+                {
+                    "medicine_ids": ["slot-12-hydrotalcite"],
+                    "label": "备选方案",
+                    "reason": "如果胃部不适更明显，可对照这一选择。",
+                },
+            ],
+        }
+        dispense = FakeDispenseService()
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="暑湿胃部不适",
+                    evidence="头晕并伴有胃部不适",
+                    duration="半天",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+            dispense=dispense,
+        )
+        session = self.create(service)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="头晕并伴有胃部不适半天，没用药，没有过敏"),
+        )
+
+        self.assertEqual(len(result.treatment_options), 2)
+        response = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id="B",
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+
+        self.assertTrue(response.ok)
+        self.assertEqual(dispense.requests[0].medicine_id, "slot-12-hydrotalcite")
+
     def test_previous_sessions_are_passed_as_natural_history_not_tag_counts(self) -> None:
         first_service, _ = self.service(
             [

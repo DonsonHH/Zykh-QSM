@@ -1,5 +1,11 @@
 const MAX_SPEECH_LENGTH = 260;
 
+export function buildInformationReviewSpeech(result) {
+  const userName = String(result?.user_name || "").trim();
+  const greeting = userName && userName !== "访客" ? `${userName}，` : "";
+  return `${greeting}请核对屏幕上的主要不适、持续时间、本次用药和过敏禁忌。信息无误请点击确认，需要修改可直接点选对应内容。`;
+}
+
 export function buildRecommendationSpeech(result, selectedOption) {
   if (!result) return "";
   if (["high", "emergency"].includes(result.risk_level)) {
@@ -8,20 +14,18 @@ export function buildRecommendationSpeech(result, selectedOption) {
   const medicines = selectedOption?.medicines || [];
   if (!medicines.length) return result.reply || "当前没有通过安全核验的候选方案。";
 
-  const evidence = Object.values(result.extracted_information?.dimension_evidence || {})
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .join("、");
-  const medicineNames = medicines.map((medicine) => medicine.name).join("和");
-  const dosage = medicines
-    .map((medicine) => medicine.dosage ? `${medicine.name}说明用法为${medicine.dosage}` : "")
+  const medicineNames = medicines.map((medicine) => medicine.name).join("、");
+  const usage = medicines
+    .map((medicine) => {
+      const instruction = medicine.recommended_usage || medicine.dosage;
+      return instruction ? `${medicine.name}：${instruction}` : "";
+    })
     .filter(Boolean)
     .join("；");
-  const opening = evidence
-    ? `根据你描述的${evidence}和本次安全核验，目前信息更接近轻症对症处理范围。`
-    : "本次用药安全核验已经完成。";
-  const instruction = dosage || "具体用法请核对屏幕和药品实物说明。";
-  return `${opening}优先方案是${medicineNames}。${instruction}。请核对过敏禁忌并只选择一个方案，确认后系统才会打开对应药柜。`
+  const label = selectedOption?.option_id === "A" ? "推荐方案" : "当前备选方案";
+  const reason = String(selectedOption?.when || "").trim();
+  const instruction = usage || "具体用法请核对屏幕和药品实物说明。";
+  return `${label}包含${medicineNames}。${reason}${instruction}。请确认所选方案，确认后系统会依次打开对应药柜。`
     .slice(0, MAX_SPEECH_LENGTH);
 }
 

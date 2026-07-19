@@ -474,6 +474,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             saving={savingReview}
             onConfirm={confirmInformationReview}
             onContinue={continueInquiryFromReview}
+            networkStatus={networkStatus}
           />
         ) : showResult ? (
           <InquiryResultStep
