@@ -55,11 +55,24 @@ Phase eight switches the runtime defaults to real-device first:
 - medicine scan requires barcode decode, visual recognition or manual confirmation;
 - records and dashboard values come from SQLite instead of fixed page constants;
 - sync reports `未配置` until a real cloud endpoint is configured;
-- cloud AI uses a DeepSeek-compatible endpoint when reachable; failures route to the real QSM Qwen3.5 model, then to deterministic safety rules only if the model process is also unavailable.
+- inquiry uses a DeepSeek-compatible endpoint when reachable and routes failures
+  to the real QSM Qwen3.5 model. If both models are unavailable, the inquiry is
+  marked unavailable and cannot generate a medicine candidate.
 
 ## AI routing
 
-`services/ai_service.py` owns cloud-first routing, true SSE forwarding and output guards. Cloud thinking can improve answer selection, but reasoning tokens are never exposed to the UI. `services/local_ai_client.py` is the narrow OpenAI-compatible streaming adapter for QSM llama.cpp; startup prewarming primes its stable short prompt prefix. The deterministic `rules_engine.py` remains authoritative for emergency interception, final risk escalation, contraindications and dispense eligibility. Model output may add a summary or follow-up, but cannot lower rule risk or assert that medicine use is safe.
+`services/ai_service.py` owns cloud-first routing, open case extraction,
+conversation actions and candidate ranking. `services/local_ai_client.py` is the
+narrow OpenAI-compatible adapter for QSM llama.cpp. The model decides how to
+describe the case, what single question to ask next, whether vitals are needed
+and whether recent history is semantically related. It can rank only IDs admitted
+by the hard-safe pool and may return no candidate.
+
+Deterministic code is deliberately narrower: it intercepts non-negotiable danger
+signals, may raise but never lower model risk, excludes expired, unavailable,
+non-OTC or contraindicated medicines, and revalidates the selected option before
+the existing dispense service runs. There is no fixed symptom taxonomy, fixed
+question table or rule-generated medicine ranking in the session workflow.
 
 Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.md).
 

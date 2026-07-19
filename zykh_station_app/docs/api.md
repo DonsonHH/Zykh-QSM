@@ -89,7 +89,9 @@ Returns local dispense confirmation records.
 
 ### POST /api/inquiry/evaluate
 
-Runs rules fallback for AI应急问询, risk prompts, medicine category matching and contraindication checks.
+Compatibility entry for one-shot AI inquiry. It reuses the model-led case
+interpreter, deterministic hard-risk guardrails and the hard-safe medicine pool
+used by the session API.
 
 ### POST /api/inquiry/sessions
 
@@ -101,7 +103,19 @@ Restores one inquiry session with messages, identity, vitals snapshot and result
 
 ### POST /api/inquiry/sessions/{session_id}/turn
 
-Adds one speech transcript. The model can only extract evidence-backed symptom dimensions, one follow-up question and a constrained `ask|measure_vitals|analyze` action intent. Deterministic local rules can override that intent and exclusively own risk classification, inventory filtering and treatment-option construction. A `measure_vitals` response causes the terminal to open the existing vitals subpage automatically.
+Adds one speech transcript. The selected cloud or local model reads the full
+conversation, profile, vitals and recent natural-language case summaries. It
+returns open evidence-backed observations, a natural response, semantic risk
+signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
+fixed symptom taxonomy or fixed field order. A `measure_vitals` action opens the
+existing vitals subpage and then resumes the same model conversation.
+
+Before recommendation, deterministic code can only raise risk for non-negotiable
+danger signals and builds a pool filtered by stock, expiry, OTC eligibility and
+absolute contraindications. The model may choose at most one primary and one
+alternative from that pool, or choose none. If both model routes are unavailable
+or return invalid structure, the session reports `source=ai_unavailable`, returns
+no candidate and does not imitate a model response with keyword rules.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
@@ -288,6 +302,10 @@ Calls the QSM beep path.
 ### POST /api/ai/chat
 
 Uses the configured cloud endpoint first in `AI_MODE=auto`. A missing key, failed connectivity probe or cloud request error automatically routes the request to the QSM llama.cpp endpoint. Response sources are `cloud`, `local_llm`, `safety_rules` or `rules_fallback`; only the last source means that both model routes were unavailable.
+
+This generic chat compatibility endpoint retains its concise safety-text
+fallback. The model-led `/api/inquiry/sessions/*` workflow instead returns
+`ai_unavailable` with no recommendation when both model routes fail.
 
 ### GET /api/ai/status
 

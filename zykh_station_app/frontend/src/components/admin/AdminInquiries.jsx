@@ -68,7 +68,10 @@ function InquiryDebugDetail({ session }) {
         <em className={session.risk_level || "pending"}>{session.risk_level || "pending"}</em>
       </header>
       <div className="admin-inquiry-facts">
-        <Fact label="症状维度" value={(extracted.symptom_dimensions || []).join("、") || "未提取"} />
+        <Fact
+          label="病例观察"
+          value={(extracted.observations || []).filter((item) => item.status === "present").map((item) => item.concept).join("、") || "未提取"}
+        />
         <Fact label="持续时间" value={extracted.duration || "未确认"} />
         <Fact label="已用药" value={extracted.used_medicines || "未确认"} />
         <Fact label="过敏禁忌" value={extracted.allergy_or_contraindication || "未确认"} />

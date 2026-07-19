@@ -37,6 +37,13 @@ class InquiryService:
         )
         interpretation = self.interpreter.interpret(transcript, {}, {})
         extracted = InquiryExtractedInformation(
+            case_summary=interpretation.case_summary,
+            observations=interpretation.observations,
+            uncertainties=interpretation.uncertainties,
+            history_relationship=interpretation.history_relationship,
+            ai_risk_level=interpretation.ai_risk_level,
+            ai_risk_reasons=interpretation.risk_signals,
+            ai_available=interpretation.available,
             symptom_dimensions=interpretation.symptom_dimensions,
             dimension_evidence=interpretation.dimension_evidence,
             symptoms_text=request.symptoms_text,
@@ -47,9 +54,41 @@ class InquiryService:
             ),
             confidence=interpretation.confidence,
         )
-        decision = self.safety_engine.assess(extracted, None)
-        candidates = [candidate for candidate in (decision.primary_candidate, decision.alternative_candidate) if candidate]
-        can_view = decision.risk_level in {"low", "medium"} and bool(candidates)
+        guard = self.safety_engine.assess_guardrails(
+            extracted,
+            None,
+            ai_risk_level=interpretation.ai_risk_level,
+            ai_risk_reasons=interpretation.risk_signals,
+        )
+        options = []
+        if (
+            guard.risk_level in {"low", "medium"}
+            and interpretation.available
+            and extracted.used_medicines not in {"", "不确定"}
+            and extracted.allergy_or_contraindication not in {"", "不确定"}
+        ):
+            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
+                extracted.allergy_or_contraindication
+            )
+            ranking = self.interpreter.rank_candidates(
+                {
+                    "case_summary": extracted.case_summary,
+                    "observations": [value.model_dump() for value in extracted.observations],
+                    "duration": extracted.duration,
+                    "used_medicines": extracted.used_medicines,
+                    "allergy_or_contraindication": extracted.allergy_or_contraindication,
+                    "risk_level": guard.risk_level,
+                },
+                [candidate.model_dump() for candidate in safe_pool],
+            )
+            if ranking.get("ok"):
+                options = self.safety_engine.knowledge.options_from_ai_selection(ranking, safe_pool)
+        candidates = [
+            medicine
+            for option in options[:2]
+            for medicine in option.medicines[:1]
+        ]
+        can_view = guard.risk_level in {"low", "medium"} and bool(candidates)
         categories = list(dict.fromkeys(candidate.category for candidate in candidates))
         warnings = []
         allergy = extracted.allergy_or_contraindication.strip()
@@ -60,11 +99,11 @@ class InquiryService:
             "medium": "中风险",
             "high": "高风险",
             "emergency": "紧急风险",
-        }[decision.risk_level]
-        if decision.risk_level == "emergency":
+        }[guard.risk_level]
+        if guard.risk_level == "emergency":
             notice = "存在紧急危险信号，请立即联系医生或救援人员。"
             steps = ["停止自行取药", "立即联系医生或救援人员", "保持有人陪同"]
-        elif decision.risk_level == "high":
+        elif guard.risk_level == "high":
             notice = "存在高风险信号，本次不展示候选药品。"
             steps = ["尽快联系医生或现场协助人员", "不要自行新增用药"]
         elif can_view:
@@ -75,7 +114,7 @@ class InquiryService:
             steps = ["补充信息或联系医生"]
         result = InquiryResult(
             inquiry_id=f"inquiry-{uuid4().hex[:12]}",
-            risk_level=decision.risk_level,
+            risk_level=guard.risk_level,
             risk_label=risk_label,
             symptoms_summary=transcript,
             suggested_categories=categories,
@@ -86,7 +125,7 @@ class InquiryService:
             can_proceed_to_dispense=can_view,
             created_at=now_text(),
             ai_source=interpretation.source,
-            ai_message="模型仅提取症状证据，风险与候选由本地规则核验。",
+            ai_message="问询模型整理病例；硬性风险、库存、有效期和禁忌由本地程序复核。",
         )
         return self.repository.append(result)
 

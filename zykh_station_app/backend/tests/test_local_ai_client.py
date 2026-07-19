@@ -253,12 +253,21 @@ class AiServiceOfflineTest(unittest.TestCase):
                 "ok": True,
                 "reply": json.dumps(
                     {
-                        "symptom_dimensions": ["感冒鼻部症状"],
-                        "dimension_evidence": {"感冒鼻部症状": "轻微流涕"},
+                        "case_summary": "轻微流涕。",
+                        "observations": [
+                            {
+                                "concept": "轻微流涕",
+                                "status": "present",
+                                "evidence": "轻微流涕",
+                                "source_turn": 1,
+                                "confidence": 0.9,
+                            }
+                        ],
                         "duration": "",
                         "used_medicines": "",
                         "allergy_or_contraindication": "",
-                        "follow_up_question": "这种情况持续多久了？",
+                        "next_question": "这种情况持续多久了？",
+                        "next_action": "ask",
                         "confidence": 0.9,
                     },
                     ensure_ascii=False,
@@ -271,7 +280,7 @@ class AiServiceOfflineTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["source"], "local_llm")
-        self.assertEqual(result["symptom_dimensions"], ["感冒鼻部症状"])
+        self.assertEqual(result["observations"][0]["concept"], "轻微流涕")
         self.assertNotIn("risk_level", result)
 
     @patch("app.services.ai_service.settings")
@@ -284,9 +293,10 @@ class AiServiceOfflineTest(unittest.TestCase):
                 "ok": True,
                 "reply": json.dumps(
                     {
-                        "d": [["summer", "头晕"]],
+                        "s": "头晕持续半天。",
+                        "f": [["暑热后头晕", "present", "头晕", 1, 0.86]],
                         "du": "半天",
-                        "u": "未使用",
+                        "m": "未使用",
                         "a": "无",
                         "q": "有没有恶心或腹泻？",
                         "n": "ask",
@@ -306,17 +316,22 @@ class AiServiceOfflineTest(unittest.TestCase):
 
         self.assertEqual(client.last_kwargs["max_tokens"], 96)
         self.assertLess(len(client.last_messages[0]["content"]), 520)
-        self.assertIn('"s"', client.last_messages[1]["content"])
-        self.assertEqual(result["symptom_dimensions"], ["恶心暑湿"])
-        self.assertEqual(result["follow_up_question"], "有没有恶心或腹泻？")
+        self.assertIn('"f"', client.last_messages[1]["content"])
+        self.assertEqual(result["observations"][0]["concept"], "暑热后头晕")
+        self.assertEqual(result["next_question"], "有没有恶心或腹泻？")
 
     def test_compact_local_schema_accepts_small_model_object_variants(self) -> None:
         result = AiService._expand_local_inquiry(
-            {"d": [{"c": "allergy", "u": "对头孢过敏"}], "n": "ask"}
+            {
+                "s": "用户明确提到头孢过敏。",
+                "f": [["药物过敏史", "present", "对头孢过敏", 1, 0.98]],
+                "a": "对头孢过敏",
+                "n": "ask",
+            }
         )
 
         self.assertEqual(result["allergy_or_contraindication"], "对头孢过敏")
-        self.assertEqual(result["symptom_dimensions"], [])
+        self.assertEqual(result["observations"][0]["concept"], "药物过敏史")
 
 
 if __name__ == "__main__":

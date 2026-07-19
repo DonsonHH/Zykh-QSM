@@ -2,14 +2,19 @@
 
 ## Purpose
 
-The terminal uses a real offline language model for AI inquiry when the cloud route is unavailable or the operator selects local mode. The model runs on QSM; FastAPI calls it through an ADB-forwarded OpenAI-compatible endpoint. Safety rules remain authoritative for emergency interception, risk escalation, contraindication checks and whether the user may continue to medicine confirmation.
+The terminal uses a real offline language model for AI inquiry when the cloud
+route is unavailable or the operator selects local mode. The model runs on QSM;
+FastAPI calls it through an ADB-forwarded OpenAI-compatible endpoint. The model
+owns open case understanding, natural follow-up and semantic risk judgment.
+Deterministic code retains only non-negotiable danger interception and medicine
+safety constraints.
 
 ```text
 React inquiry UI
   -> FastAPI AiService
      -> cloud Chat Completions when reachable
      -> QSM llama.cpp when cloud is unavailable
-     -> deterministic safety rules only when both model routes fail
+     -> explicit ai_unavailable with no candidate when both model routes fail
 ```
 
 ## Runtime
@@ -90,18 +95,25 @@ Modes:
 - `AI_MODE=local`: always use the QSM offline model.
 - `AI_MODE=cloud`: request cloud first, but still fail safely to the offline model if the request cannot complete.
 
-Public source values remain `cloud`, `local_llm`, `safety_rules` and `rules_fallback`. The terminal UI represents them with accessible status icons instead of exposing technical channel names.
+Inquiry-session source values are `cloud`, `local_llm`, `safety_rules` and
+`ai_unavailable`. The terminal UI represents them with accessible status icons
+instead of exposing technical channel names. The generic `/api/ai/chat`
+compatibility endpoint may still return `rules_fallback`, but that text fallback
+does not create an inquiry result or medicine candidate.
 
 ## Safety Boundary
 
-The language model is advisory, not the final decision-maker. Before and after inference, the backend enforces:
+Before and after inference, the backend enforces only hard boundaries:
 
 - deterministic emergency keyword interception;
 - negation-aware handling such as “没有胸痛”;
 - no direct medication instruction or diagnostic claim;
-- rules-engine ownership of final risk and dispense eligibility;
-- rejection of overconfident model notices such as “无禁忌” or “可以服用”;
-- structured fallback when the local process is stopped or returns invalid JSON.
+- program risk may raise but never lower the model risk;
+- stock, expiry, OTC eligibility and absolute-contraindication filtering before ranking;
+- model selection restricted to IDs in that filtered pool;
+- current-state revalidation before the existing dispense service runs;
+- explicit unavailability and zero candidates when the local process is stopped
+  or returns invalid JSON.
 
 ## Verified Performance
 
@@ -119,4 +131,7 @@ curl -X POST http://127.0.0.1:8000/api/ai/chat \
   -d '{"messages":[{"role":"user","content":"我有轻微头晕，请先问一个关键问题"}]}'
 ```
 
-Expected chat source is `local_llm`. To verify the final safety tier, stop the local model and repeat the request; the endpoint must stay available and return `rules_fallback` rather than HTTP 500.
+Expected session source is `local_llm`. To verify failure handling, stop the
+local model and repeat an `/api/inquiry/sessions/{id}/turn` request; the endpoint
+must stay available, return `source=ai_unavailable`, and return no medicine
+candidate rather than HTTP 500.

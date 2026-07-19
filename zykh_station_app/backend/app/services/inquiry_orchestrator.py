@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from difflib import SequenceMatcher
-import re
 import threading
 from uuid import uuid4
 
@@ -24,21 +22,6 @@ from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryServic
 from .inquiry_guest_archive_service import InquiryGuestArchiveService
 from .medicine_safety_engine import MedicineSafetyEngine
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
-
-
-VITALS_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
-MODEL_LED_SOURCES = {"cloud", "local_llm"}
-
-CLARIFICATION_QUESTIONS = {
-    "history_change": "你以前有过相似情况。这次和上次相比，是更重、更轻，还是表现不一样？",
-    "nasal_discharge": "鼻部不适更接近哪一种：清稀鼻涕、黄稠鼻涕，还是鼻痒并连续打喷嚏？",
-    "systemic_pattern": "除了头痛或发热，现在更明显的是怕冷，还是口渴、咽喉疼痛？",
-    "cough_type": "这次主要是干咳，还是咳嗽时有痰？如果有痰，请说一下颜色。",
-    "throat_pattern": "口咽不适主要是咽喉疼痛，还是口腔溃疡？",
-    "summer_pattern": "头晕或暑热不适时，是否还伴有胸闷腹胀、恶心呕吐或腹泻？",
-    "wound_state": "伤口只是轻微破皮，还是已经出现红肿、渗液？",
-    "allergy_pattern": "过敏不适主要在鼻部，还是以皮肤瘙痒、皮疹为主？",
-}
 
 
 class InquiryOrchestrator:
@@ -116,128 +99,66 @@ class InquiryOrchestrator:
 
         emergency_extracted = session.extracted_information.model_copy(deep=True)
         emergency_extracted.symptoms_text = self._append_text(emergency_extracted.symptoms_text, transcript)
-        emergency = self.safety_engine.assess(
+        emergency = self.safety_engine.assess_guardrails(
             emergency_extracted,
             session.vitals,
-            self._profile_context(session),
         )
         if emergency.risk_level in {"high", "emergency"}:
             session.extracted_information = emergency_extracted
-            return self._finish(session, emergency_extracted, source="safety_rules")
+            return self._finish(
+                session,
+                emergency_extracted,
+                source="safety_rules",
+                forced_guard=emergency,
+            )
 
-        existing_context = session.extracted_information.model_dump()
-        existing_context["current_stage"] = session.stage
-        existing_context["conversation_turns"] = self._current_user_turn_count(session)
-        existing_context["conversation"] = [
-            {"role": message.role, "content": message.content}
-            for message in session.messages
-        ]
+        existing_context = self._model_context(session, include_current_transcript=transcript)
         interpretation = self.interpreter.interpret(
             transcript,
             existing_context,
-            {
-                "name": session.user_name,
-                "age": session.user_age,
-                "profile": session.user_profile,
-                "allergies": session.user_allergies,
-            },
+            self._model_profile(session),
         )
-        self._apply_contextual_answer(session.stage, transcript, interpretation)
         extracted = self._merge_interpretation(session, transcript, interpretation)
         session.extracted_information = extracted
         session.source = interpretation.source
         session.reasoning_summary = interpretation.reasoning_summary
         session.model_action_intent = interpretation.action_intent
         session.action_reason = interpretation.action_reason
-        model_led = interpretation.source in MODEL_LED_SOURCES
-        if model_led and extracted.pending_clarification:
-            extracted.pending_clarification = ""
-            session.extracted_information = extracted
-
-        if not session.vitals and self._should_measure_vitals_now(
-            transcript,
-            extracted,
-            interpretation,
-            model_led=model_led,
-        ):
-            session.stage = "vitals"
-            session.next_action = "measure_vitals"
-            session.reply = "这项信息现在会影响安全判断。请测量额温、心率和血氧，完成后我会接着询问尚未确认的内容。"
-            self._clear_decision(session)
-            return self._commit(session)
-
-        history = self._history_context(session, extracted)
-        if model_led:
-            missing = self._missing_field(extracted)
-            if interpretation.follow_up_question and (
-                missing
-                or interpretation.action_intent == "ask"
-            ):
-                if self._repeats_answered_question(session, interpretation):
-                    if missing:
-                        self._ask_for_missing(session, missing, "")
-                        return self._commit(session)
-                    return self._finish(session, extracted, source=interpretation.source)
-                self._ask_model_followup(
-                    session,
-                    interpretation.assistant_reply,
-                    interpretation.follow_up_question,
-                    missing,
-                )
-                return self._commit(session)
-            if missing:
-                self._ask_for_missing(session, missing, "")
-                return self._commit(session)
-            if self._requires_vitals(extracted, interpretation) and not session.vitals:
-                session.stage = "vitals"
-                session.next_action = "measure_vitals"
-                session.reply = "为了确认当前状态，请测量额温、心率和血氧。完成后我会接着整理结果。"
-                return self._commit(session)
-            return self._finish(session, extracted, source=interpretation.source)
-
-        if extracted.pending_clarification:
-            self._repeat_pending_clarification(session, extracted.pending_clarification)
-            return self._commit(session)
-        clarification = self._next_clarification(extracted, history)
-        if clarification:
-            self._ask_clarification(session, *clarification)
-            return self._commit(session)
-
-        missing = self._missing_field(extracted)
-        if missing:
-            self._ask_for_missing(session, missing, interpretation.follow_up_question)
-            return self._commit(session)
-
-        if self._requires_vitals(extracted, interpretation) and not session.vitals:
-            session.stage = "vitals"
-            session.next_action = "measure_vitals"
-            session.reply = "为了让安全判断更准确，接下来测一下额温、心率和血氧。完成后会自动回到这里继续。"
-            return self._commit(session)
-
-        return self._finish(session, extracted, source=interpretation.source)
+        return self._advance_from_interpretation(session, extracted, interpretation)
 
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
         session.vitals = request.model_dump(exclude_none=True)
-        history = self._history_context(session, session.extracted_information)
-        immediate = self.safety_engine.assess(
+        immediate = self.safety_engine.assess_guardrails(
             session.extracted_information,
             session.vitals,
-            self._profile_context(session),
-            history.medicine_counts,
         )
         if immediate.risk_level in {"high", "emergency"}:
-            return self._finish(session, session.extracted_information, source="safety_rules")
-        if session.source not in MODEL_LED_SOURCES:
-            clarification = self._next_clarification(session.extracted_information, history)
-            if clarification:
-                self._ask_clarification(session, *clarification)
-                return self._commit(session)
-        missing = self._missing_field(session.extracted_information)
-        if missing:
-            self._ask_for_missing(session, missing, "")
-            return self._commit(session)
-        return self._finish(session, session.extracted_information, source=session.source)
+            return self._finish(
+                session,
+                session.extracted_information,
+                source="safety_rules",
+                forced_guard=immediate,
+            )
+        existing = self._model_context(session)
+        existing["vitals"] = session.vitals
+        resume = getattr(self.interpreter, "resume_after_vitals", None)
+        interpretation = (
+            resume(existing, self._model_profile(session))
+            if callable(resume)
+            else self.interpreter.interpret(
+                "体征测量已经完成，请结合本次结果继续问询。",
+                existing,
+                self._model_profile(session),
+            )
+        )
+        extracted = self._merge_interpretation(session, "", interpretation)
+        session.extracted_information = extracted
+        session.source = interpretation.source
+        session.reasoning_summary = interpretation.reasoning_summary or extracted.case_summary
+        session.model_action_intent = interpretation.action_intent
+        session.action_reason = interpretation.action_reason
+        return self._advance_from_interpretation(session, extracted, interpretation)
 
     def revise_information(
         self,
@@ -253,19 +174,29 @@ class InquiryOrchestrator:
         interpretation = self.interpreter.interpret(
             complaint,
             {
+                **session.extracted_information.model_dump(),
                 "duration": duration,
                 "used_medicines": used_medicines,
                 "allergy_or_contraindication": allergy,
                 "current_stage": "review",
+                "conversation_turns": self._current_user_turn_count(session),
+                "conversation": [
+                    {"role": message.role, "content": message.content}
+                    for message in session.messages
+                ],
+                "recent_history": self._history_context(session).model_context(),
+                "vitals": session.vitals or {},
             },
-            {
-                "name": session.user_name,
-                "age": session.user_age,
-                "profile": session.user_profile,
-                "allergies": session.user_allergies,
-            },
+            self._model_profile(session),
         )
         extracted = InquiryExtractedInformation(
+            case_summary=interpretation.case_summary,
+            observations=interpretation.observations,
+            uncertainties=interpretation.uncertainties,
+            history_relationship=interpretation.history_relationship,
+            ai_risk_level=interpretation.ai_risk_level,
+            ai_risk_reasons=interpretation.risk_signals,
+            ai_available=interpretation.available,
             symptom_dimensions=interpretation.symptom_dimensions,
             dimension_evidence=interpretation.dimension_evidence,
             symptom_features=interpretation.symptom_features,
@@ -282,22 +213,13 @@ class InquiryOrchestrator:
             interpretation.reasoning_summary
             or "已根据核对后的主诉、持续时间、用药和禁忌信息重新整理。"
         )
-        session.model_action_intent = "analyze"
-        session.action_reason = "用户已在信息核对页确认或修正本次情况"
+        session.model_action_intent = interpretation.action_intent
+        session.action_reason = interpretation.action_reason or "用户已核对本次信息"
         self._clear_decision(session)
 
         if not request.finalize:
-            missing = self._missing_field(extracted)
-            if missing:
-                self._ask_for_missing(session, missing, "")
-                return self._commit(session)
-            if self._requires_vitals(extracted, interpretation) and not session.vitals:
-                session.stage = "vitals"
-                session.next_action = "measure_vitals"
-                session.reply = "修正内容已保存。为了完成安全核验，请测量额温、心率和血氧。"
-                return self._commit(session)
-
-        return self._finish(session, extracted, source=interpretation.source)
+            return self._advance_from_interpretation(session, extracted, interpretation)
+        return self._advance_from_interpretation(session, extracted, interpretation)
 
     def confirm_treatment(
         self,
@@ -321,21 +243,30 @@ class InquiryOrchestrator:
             if displayed_option is None:
                 raise DispenseError("未找到所选方案，请重新选择。")
 
-            history = self._history_context(session, session.extracted_information)
-            decision = self.safety_engine.assess(
+            guard = self.safety_engine.assess_guardrails(
                 session.extracted_information,
                 session.vitals,
-                self._profile_context(session),
-                history.medicine_counts,
+                ai_risk_level=session.extracted_information.ai_risk_level,
+                ai_risk_reasons=session.extracted_information.ai_risk_reasons,
             )
-            if decision.risk_level not in {"low", "medium"}:
-                self._replace_with_fresh_decision(session, decision)
+            if guard.risk_level not in {"low", "medium"}:
+                self._replace_with_guard_failure(session, guard)
                 self._commit(session)
                 raise DispenseError("安全状态已经变化，本次不再执行开柜。", status_code=409)
 
-            fresh_option = self._option(decision.treatment_options, request.option_id)
-            if fresh_option is None or self._option_medicine_ids(fresh_option) != self._option_medicine_ids(displayed_option):
-                self._replace_with_fresh_decision(session, decision)
+            if not self._medicine_information_confirmed(session.extracted_information):
+                raise DispenseError("用药和过敏信息尚未确认，不能执行开柜。", status_code=409)
+            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
+                self._candidate_context(session)
+            )
+            allowed_ids = {candidate.id for candidate in safe_pool}
+            fresh_option = displayed_option
+            if any(medicine.id not in allowed_ids for medicine in displayed_option.medicines):
+                session.treatment_options = []
+                session.can_view_medicines = False
+                session.action_status = "idle"
+                session.next_action = "escalate"
+                session.reply = "库存、有效期或安全信息已经变化，请重新开始问询。"
                 self._commit(session)
                 raise DispenseError("库存或安全信息已经变化，请重新核对方案。", status_code=409)
 
@@ -463,29 +394,137 @@ class InquiryOrchestrator:
                 session=committed,
             )
 
+    def _advance_from_interpretation(
+        self,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+        interpretation: SymptomInterpretation,
+    ) -> InquirySessionResponse:
+        guard = self.safety_engine.assess_guardrails(
+            extracted,
+            session.vitals,
+            ai_risk_level=interpretation.ai_risk_level,
+            ai_risk_reasons=interpretation.risk_signals,
+        )
+        if guard.risk_level in {"high", "emergency"}:
+            return self._finish(
+                session,
+                extracted,
+                source="safety_rules",
+                forced_guard=guard,
+            )
+        if not interpretation.available:
+            session.stage = "escalated"
+            session.next_action = "escalate"
+            session.reply = interpretation.assistant_reply
+            self._clear_decision(session)
+            return self._commit(session)
+        if interpretation.action_intent == "measure_vitals" and not session.vitals:
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.reply = (
+                interpretation.assistant_reply
+                or "这项信息会影响本次判断，请先测量额温、心率和血氧。"
+            )
+            self._clear_decision(session)
+            return self._commit(session)
+        if interpretation.action_intent == "ask":
+            session.stage = "clarification"
+            session.next_action = "ask"
+            session.reply = (
+                interpretation.assistant_reply
+                or interpretation.follow_up_question
+                or "请再说说目前最明显的变化。"
+            )
+            self._clear_decision(session)
+            return self._commit(session)
+        if interpretation.action_intent == "escalate":
+            return self._finish(
+                session,
+                extracted,
+                source=interpretation.source,
+                allow_candidates=False,
+                empty_message=(
+                    interpretation.assistant_reply
+                    or "当前情况需要医生或现场人员进一步确认，本次不展示家庭药品候选。"
+                ),
+            )
+        if interpretation.action_intent == "end":
+            session.extracted_information = extracted
+            session.risk_level = guard.risk_level
+            session.risk_reasons = guard.risk_reasons
+            session.stage = "result"
+            session.next_action = "complete"
+            session.reply = interpretation.assistant_reply or "本次问询已结束。"
+            session.source = interpretation.source
+            session.reasoning_summary = extracted.case_summary or session.reasoning_summary
+            session.title = self._title(session)
+            self._clear_decision(session)
+            return self._commit(session)
+        return self._finish(session, extracted, source=interpretation.source)
+
     def _finish(
         self,
         session: InquirySessionResponse,
         extracted: InquiryExtractedInformation,
         *,
         source: str,
+        forced_guard=None,
+        allow_candidates: bool = True,
+        empty_message: str = "",
     ) -> InquirySessionResponse:
-        history = self._history_context(session, extracted)
-        decision = self.safety_engine.assess(
+        guard = forced_guard or self.safety_engine.assess_guardrails(
             extracted,
             session.vitals,
-            self._profile_context(session),
-            history.medicine_counts,
+            ai_risk_level=extracted.ai_risk_level,
+            ai_risk_reasons=extracted.ai_risk_reasons,
         )
+        options = []
+        rank_source = source
+        rank_message = ""
+        rank_failed = False
+        if (
+            allow_candidates
+            and guard.risk_level in {"low", "medium"}
+            and self._medicine_information_confirmed(extracted)
+        ):
+            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
+                self._candidate_context(session)
+            )
+            ranker = getattr(self.interpreter, "rank_candidates", None)
+            if callable(ranker):
+                ranking = ranker(
+                    self._ranking_context(session, extracted, guard),
+                    [candidate.model_dump() for candidate in safe_pool],
+                )
+                rank_source = str(ranking.get("source") or source)
+                rank_message = str(ranking.get("message") or "")
+                if ranking.get("ok"):
+                    options = self.safety_engine.knowledge.options_from_ai_selection(
+                        ranking,
+                        safe_pool,
+                    )
+                else:
+                    rank_failed = True
+            else:
+                rank_failed = True
         session.extracted_information = extracted
-        session.risk_level = decision.risk_level
-        session.risk_reasons = decision.risk_reasons
-        session.primary_candidate = decision.primary_candidate
-        session.alternative_candidate = decision.alternative_candidate
-        session.treatment_options = decision.treatment_options
-        session.source = source
+        session.risk_level = guard.risk_level
+        session.risk_reasons = guard.risk_reasons
+        session.treatment_options = options
+        session.primary_candidate = (
+            self._candidate_from_treatment(options[0].medicines[0])
+            if options and options[0].medicines
+            else None
+        )
+        session.alternative_candidate = (
+            self._candidate_from_treatment(options[1].medicines[0])
+            if len(options) > 1 and options[1].medicines
+            else None
+        )
+        session.source = rank_source
         session.can_view_medicines = bool(
-            decision.risk_level in {"low", "medium"} and bool(decision.treatment_options)
+            guard.risk_level in {"low", "medium"} and bool(options)
         )
         session.selected_option_id = ""
         session.action_status = "ready" if session.can_view_medicines else "idle"
@@ -493,31 +532,35 @@ class InquiryOrchestrator:
         session.action_progress_index = 0
         session.action_total_items = 0
         session.action_items = []
-        if history.has_similar_history:
-            history_note = f"已参考 {history.similar_session_count} 次相似历史，仅用于当前合格候选的排序。"
-            session.reasoning_summary = "".join(
-                part for part in (session.reasoning_summary, history_note) if part
-            )
-        self._apply_recommendation_language(session, decision)
+        session.reasoning_summary = extracted.case_summary or session.reasoning_summary
         session.title = self._title(session)
-        if decision.risk_level in {"high", "emergency"}:
+        if guard.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
             session.next_action = "escalate"
             session.reply = (
                 "检测到需要立即处理的危险信号，请停止自行取药并立即联系医生或救援人员。"
-                if decision.risk_level == "emergency"
+                if guard.risk_level == "emergency"
                 else "当前存在高风险信号，本次不展示候选药品，请尽快联系医生或现场协助人员。"
             )
-        elif decision.primary_candidate is None:
+        elif not self._medicine_information_confirmed(extracted):
             session.stage = "result"
             session.next_action = "escalate"
-            session.reply = "当前库存中没有通过禁忌、有效期和适用信息核验的候选药品，请联系医生或家人协助。"
+            session.reply = "本次用药或过敏信息尚未确认，可以继续查看健康提示，但暂不生成取药候选。"
+        elif not options:
+            session.stage = "result"
+            session.next_action = "escalate"
+            if empty_message:
+                session.reply = empty_message
+            elif rank_failed or rank_message or not extracted.ai_available:
+                session.reply = "智能问询当前暂不可用，本次不会生成取药候选。"
+            else:
+                session.reply = "当前没有适合这次情况的家庭药品候选，请联系医生或家人协助。"
         else:
             session.stage = "result"
             session.next_action = "show_recommendation"
-            option_count = len(decision.treatment_options)
+            option_count = len(options)
             option_text = (
-                f"结合这些信息，我整理了 {option_count} 个不同侧重点的选择，你可以对照原因和用法选一项。"
+                "我整理了一个主方案和一个备选，你只需要选择其中一项。"
                 if option_count > 1
                 else "结合这些信息，我整理了一个更贴近当前情况的选择。"
             )
@@ -525,49 +568,98 @@ class InquiryOrchestrator:
             session.reply = f"{natural_summary}{option_text}"
         return self._commit(session)
 
-    def _apply_recommendation_language(self, session: InquirySessionResponse, decision) -> None:
-        if decision.risk_level not in {"low", "medium"} or not decision.treatment_options:
-            return
-        context = {
-            "user_name": session.user_name,
-            "reasoning_summary": session.reasoning_summary,
-            "symptom_dimensions": session.extracted_information.symptom_dimensions,
-            "symptom_evidence": session.extracted_information.dimension_evidence,
-            "duration": session.extracted_information.duration,
-            "used_medicines": session.extracted_information.used_medicines,
-            "allergy_or_contraindication": session.extracted_information.allergy_or_contraindication,
-            "vitals": session.vitals or {},
-            "risk_level": decision.risk_level,
-            "options": [
-                {
-                    "option_id": option.option_id,
-                    "medicines": [
-                        {
-                            "name": medicine.name,
-                            "indications": medicine.indications,
-                            "dosage": medicine.dosage,
-                            "role": medicine.role,
-                            "covered_symptoms": medicine.covered_symptoms,
-                        }
-                        for medicine in option.medicines
-                    ],
-                }
-                for option in decision.treatment_options
-            ],
+    def _model_context(
+        self,
+        session: InquirySessionResponse,
+        *,
+        include_current_transcript: str = "",
+    ) -> dict:
+        messages = [
+            {"role": message.role, "content": message.content}
+            for message in session.messages
+        ]
+        if include_current_transcript:
+            messages.append({"role": "user", "content": include_current_transcript})
+        context = session.extracted_information.model_dump()
+        context.update(
+            {
+                "current_stage": session.stage,
+                "conversation_turns": self._current_user_turn_count(session),
+                "conversation": messages,
+                "vitals": session.vitals or {},
+                "recent_history": self._history_context(session).model_context(),
+            }
+        )
+        return context
+
+    @staticmethod
+    def _model_profile(session: InquirySessionResponse) -> dict[str, object]:
+        return {
+            "name": session.user_name,
+            "age": session.user_age,
+            "profile": session.user_profile,
+            "allergies": session.user_allergies,
         }
-        narrator = getattr(self.interpreter, "explain_recommendation", None)
-        language = narrator(context) if callable(narrator) else {"ok": False}
-        if not language.get("ok"):
-            return
-        summary = str(language.get("summary") or "").strip()
-        if summary:
-            session.reasoning_summary = summary
-        reasons = language.get("option_reasons")
-        reasons = reasons if isinstance(reasons, dict) else {}
-        for option in decision.treatment_options:
-            reason = str(reasons.get(option.option_id) or "").strip()
-            if reason:
-                option.when = reason[:120]
+
+    def _ranking_context(
+        self,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+        guard,
+    ) -> dict:
+        return {
+            "person": self._model_profile(session),
+            "case_summary": extracted.case_summary,
+            "observations": [value.model_dump() for value in extracted.observations],
+            "uncertainties": extracted.uncertainties,
+            "duration": extracted.duration,
+            "used_medicines": extracted.used_medicines,
+            "allergy_or_contraindication": extracted.allergy_or_contraindication,
+            "vitals": session.vitals or {},
+            "risk_level": guard.risk_level,
+            "risk_reasons": guard.risk_reasons,
+            "history_relationship": extracted.history_relationship.model_dump(),
+        }
+
+    def _candidate_context(self, session: InquirySessionResponse) -> str:
+        return "；".join(
+            value.strip()
+            for value in (
+                session.user_profile,
+                session.user_allergies,
+                session.extracted_information.allergy_or_contraindication,
+            )
+            if value and value.strip()
+        )
+
+    @staticmethod
+    def _medicine_information_confirmed(extracted: InquiryExtractedInformation) -> bool:
+        used = extracted.used_medicines.strip()
+        allergy = extracted.allergy_or_contraindication.strip()
+        return bool(
+            used
+            and allergy
+            and used != "不确定"
+            and allergy != "不确定"
+        )
+
+    @staticmethod
+    def _candidate_from_treatment(value):
+        from ..schemas.inquiry import CandidateMedicine
+
+        return CandidateMedicine(
+            id=value.id,
+            name=value.name,
+            category=value.category,
+            slot=value.slot,
+            stock=value.stock,
+            unit=value.unit,
+            safety_note=value.safety_note,
+            indications=value.indications,
+            dosage=value.dosage,
+            match_reason=value.match_reason,
+            requires_existing_direction=value.requires_existing_direction,
+        )
 
     def _commit(self, session: InquirySessionResponse) -> InquirySessionResponse:
         session.updated_at = db.now_text()
@@ -600,36 +692,42 @@ class InquiryOrchestrator:
         interpretation: SymptomInterpretation,
     ) -> InquiryExtractedInformation:
         current = session.extracted_information
-        dimensions = list(dict.fromkeys([*current.symptom_dimensions, *interpretation.symptom_dimensions]))
-        evidence = {**current.dimension_evidence, **interpretation.dimension_evidence}
-        features = list(dict.fromkeys([*current.symptom_features, *interpretation.symptom_features]))
-        feature_evidence = {
-            **current.feature_evidence,
-            **interpretation.feature_evidence,
+        observation_map = {item.concept: item for item in current.observations}
+        for item in interpretation.observations:
+            observation_map[item.concept] = item
+        observations = list(observation_map.values())
+        dimensions = list(
+            dict.fromkeys(
+                item.concept
+                for item in observations
+                if item.status == "present"
+            )
+        )
+        evidence = {
+            item.concept: item.evidence
+            for item in observations
+            if item.status == "present" and item.evidence
         }
-        clarification_answers = dict(current.clarification_answers)
-        pending_clarification = current.pending_clarification
-        if pending_clarification:
-            contextual_features = InquiryOrchestrator._clarification_features(pending_clarification, transcript)
-            if InquiryOrchestrator._valid_clarification_answer(
-                pending_clarification,
-                transcript,
-                contextual_features,
-            ):
-                clarification_answers[pending_clarification] = transcript[:160]
-                pending_clarification = ""
-            features = list(dict.fromkeys([*features, *contextual_features]))
-            for feature in contextual_features:
-                feature_evidence[feature] = transcript[:120]
         return InquiryExtractedInformation(
+            case_summary=interpretation.case_summary or current.case_summary,
+            observations=observations,
+            uncertainties=interpretation.uncertainties,
+            history_relationship=interpretation.history_relationship,
+            ai_risk_level=interpretation.ai_risk_level or current.ai_risk_level,
+            ai_risk_reasons=list(dict.fromkeys(interpretation.risk_signals)),
+            ai_available=interpretation.available,
             symptom_dimensions=dimensions,
             dimension_evidence=evidence,
-            symptom_features=features,
-            feature_evidence=feature_evidence,
-            clarification_answers=clarification_answers,
-            asked_clarifications=list(current.asked_clarifications),
-            pending_clarification=pending_clarification,
-            symptoms_text=InquiryOrchestrator._append_text(current.symptoms_text, transcript),
+            symptom_features=[],
+            feature_evidence={},
+            clarification_answers={},
+            asked_clarifications=[],
+            pending_clarification="",
+            symptoms_text=(
+                InquiryOrchestrator._append_text(current.symptoms_text, transcript)
+                if transcript
+                else current.symptoms_text
+            ),
             duration=interpretation.duration or current.duration,
             used_medicines=interpretation.used_medicines or current.used_medicines,
             allergy_or_contraindication=(
@@ -639,249 +737,6 @@ class InquiryOrchestrator:
             ),
             confidence=max(current.confidence, interpretation.confidence),
         )
-
-    @staticmethod
-    def _missing_field(extracted: InquiryExtractedInformation) -> str:
-        if not extracted.symptom_dimensions:
-            return "symptoms"
-        if not extracted.duration:
-            return "duration"
-        if not extracted.used_medicines:
-            return "used_medicines"
-        if not extracted.allergy_or_contraindication:
-            return "allergies"
-        return ""
-
-    @staticmethod
-    def _follow_up(missing: str, model_question: str) -> tuple[str, str]:
-        questions = {
-            "symptoms": ("symptoms", "先说说现在最难受的感觉，比如头痛、头晕、咳嗽或胃不舒服。"),
-            "duration": ("duration", "这种不舒服大概从什么时候开始，是刚开始还是已经持续一段时间了？"),
-            "used_medicines": ("used_medicines", "这次不舒服以后，有没有吃过或用过药？直接说“没有”也可以。"),
-            "allergies": ("allergies", "有没有明确不能用或会过敏的药？没有就直接说“没有”。"),
-        }
-        question_terms = {
-            "symptoms": ("不舒服", "症状", "哪里", "感觉", "描述"),
-            "duration": ("多久", "多长时间", "几天", "什么时候开始", "持续"),
-            "used_medicines": ("用药", "什么药", "吃药", "服药", "使用过"),
-            "allergies": ("过敏", "禁忌", "不能用", "不能使用"),
-        }
-        stage, fallback = questions[missing]
-        proposed = model_question.strip()
-        question = proposed if proposed and any(term in proposed for term in question_terms[missing]) else fallback
-        return stage, question
-
-    @classmethod
-    def _ask_for_missing(
-        cls,
-        session: InquirySessionResponse,
-        missing: str,
-        model_question: str,
-    ) -> None:
-        stage, reply = cls._follow_up(missing, model_question)
-        prior_replies = {message.content for message in session.messages if message.role == "assistant"}
-        if reply in prior_replies:
-            alternatives = {
-                "symptoms": (
-                    "我还没有听清最明显的不适，请直接说头痛、胃痛、咳嗽或其他部位。",
-                    "请只说现在最难受的一项，我会接着往下问。",
-                ),
-                "duration": (
-                    "我还没听清开始时间，请说刚开始、半天、一天以上，或直接说不确定。",
-                    "请告诉我大约从哪一天或哪个时间开始，不清楚也可以直接说。",
-                ),
-                "used_medicines": (
-                    "我还没确认本次用药，请回答未用药、已用药或不确定。",
-                    "请只说这次不舒服后是否用过药；不记得也可以直接说。",
-                ),
-                "allergies": (
-                    "我还没确认过敏禁忌，请回答无、有或不确定。",
-                    "请说出不能使用的药名；如果记不清，请直接说不确定。",
-                ),
-            }[missing]
-            reply = next((value for value in alternatives if value not in prior_replies), alternatives[-1])
-        session.stage = stage
-        session.next_action = "ask"
-        session.reply = reply
-        cls._clear_decision(session)
-
-    @classmethod
-    def _ask_clarification(cls, session: InquirySessionResponse, topic: str, question: str) -> None:
-        extracted = session.extracted_information.model_copy(deep=True)
-        extracted.pending_clarification = topic
-        extracted.asked_clarifications = list(dict.fromkeys([*extracted.asked_clarifications, topic]))
-        session.extracted_information = extracted
-        session.stage = "clarification"
-        session.next_action = "ask"
-        session.reply = question
-        cls._clear_decision(session)
-
-    @classmethod
-    def _ask_model_followup(
-        cls,
-        session: InquirySessionResponse,
-        assistant_reply: str,
-        question: str,
-        missing: str,
-    ) -> None:
-        session.stage = cls._question_stage(question, missing)
-        session.next_action = "ask"
-        session.reply = assistant_reply.strip() or question.strip()
-        cls._clear_decision(session)
-
-    @classmethod
-    def _repeats_answered_question(
-        cls,
-        session: InquirySessionResponse,
-        interpretation: SymptomInterpretation,
-    ) -> bool:
-        candidate = cls._question_signature(
-            interpretation.follow_up_question or interpretation.assistant_reply
-        )
-        if len(candidate) < 4:
-            return False
-        prior_questions = [
-            cls._question_signature(message.content)
-            for message in session.messages
-            if message.role == "assistant" and ("?" in message.content or "？" in message.content)
-        ]
-        return any(
-            prior and (
-                candidate == prior
-                or candidate in prior
-                or prior in candidate
-                or SequenceMatcher(None, candidate, prior).ratio() >= 0.72
-            )
-            for prior in prior_questions
-        )
-
-    @staticmethod
-    def _question_signature(value: str) -> str:
-        text = str(value or "").strip()
-        question_parts = [part for part in re.split(r"[。！？!?]", text) if part.strip()]
-        if question_parts:
-            text = question_parts[-1]
-        text = re.sub(r"^(?:好的|明白了|我记下了|谢谢你说明|请问|那|那么|再确认一下)[，,：:\s]*", "", text)
-        text = re.sub(r"(?:请问|现在|目前|这次|一下|呢|吗|呀|啊)", "", text)
-        return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", text)
-
-    @staticmethod
-    def _question_stage(question: str, missing: str) -> str:
-        text = question.strip()
-        if any(term in text for term in ("多久", "多长时间", "什么时候", "持续", "开始")):
-            return "duration"
-        if any(term in text for term in ("吃过药", "用过药", "用药", "服药", "什么药")):
-            return "used_medicines"
-        if any(term in text for term in ("过敏", "禁忌", "不能用", "不能使用")):
-            return "allergies"
-        if missing in {"symptoms", "duration", "used_medicines", "allergies"}:
-            return missing
-        return "clarification"
-
-    @classmethod
-    def _repeat_pending_clarification(cls, session: InquirySessionResponse, topic: str) -> None:
-        session.stage = "clarification"
-        session.next_action = "ask"
-        session.reply = f"刚才这句我没听清。{CLARIFICATION_QUESTIONS.get(topic, '请换一种说法再告诉我。')}"
-        cls._clear_decision(session)
-
-    @staticmethod
-    def _next_clarification(
-        extracted: InquiryExtractedInformation,
-        history: InquiryHistoryContext,
-    ) -> tuple[str, str] | None:
-        if extracted.pending_clarification:
-            return None
-        asked = set(extracted.asked_clarifications)
-        dimensions = set(extracted.symptom_dimensions)
-        features = set(extracted.symptom_features)
-        if history.has_similar_history and "history_change" not in asked:
-            return "history_change", CLARIFICATION_QUESTIONS["history_change"]
-        rules = (
-            ("nasal_discharge", "感冒鼻部症状" in dimensions, {"清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏"}),
-            (
-                "systemic_pattern",
-                "发热全身不适" in dimensions,
-                {"明显畏寒", "明显口渴", "咽喉疼痛"},
-            ),
-            ("cough_type", "咳嗽咳痰" in dimensions, {"干咳", "有痰咳嗽", "黄痰"}),
-            ("throat_pattern", "咽喉口腔不适" in dimensions, {"咽喉疼痛", "口腔溃疡"}),
-            ("summer_pattern", "恶心暑湿" in dimensions, {"恶心呕吐", "腹泻"}),
-            ("wound_state", "轻微外伤" in dimensions, {"皮肤破损", "伤口红肿渗液"}),
-            (
-                "allergy_pattern",
-                bool({"过敏瘙痒", "鼻炎过敏"}.intersection(dimensions)),
-                {"鼻痒喷嚏", "皮肤瘙痒"},
-            ),
-        )
-        for topic, applies, resolved_features in rules:
-            if applies and topic not in asked and not features.intersection(resolved_features):
-                return topic, CLARIFICATION_QUESTIONS[topic]
-        return None
-
-    @staticmethod
-    def _clarification_features(topic: str, transcript: str) -> list[str]:
-        text = transcript.strip()
-        matches: list[str] = []
-
-        def has(*terms: str) -> bool:
-            return any(SymptomInterpreter._has_unnegated_term(text, term) for term in terms)
-
-        if topic == "nasal_discharge":
-            if has("黄", "黄稠", "黏稠"):
-                matches.append("黄稠鼻涕")
-            elif has("清", "清稀", "清水", "像水"):
-                matches.append("清稀鼻涕")
-            if has("鼻痒", "打喷嚏", "喷嚏"):
-                matches.append("鼻痒喷嚏")
-        elif topic == "systemic_pattern":
-            if has("怕冷", "畏寒", "恶寒"):
-                matches.append("明显畏寒")
-            if has("口渴", "口干"):
-                matches.append("明显口渴")
-            if has("咽痛", "喉咙痛", "嗓子痛"):
-                matches.append("咽喉疼痛")
-        elif topic == "cough_type":
-            if has("黄痰", "痰黄"):
-                matches.extend(["有痰咳嗽", "黄痰"])
-            elif has("有痰", "咳痰"):
-                matches.append("有痰咳嗽")
-            elif has("干咳", "无痰", "没有痰"):
-                matches.append("干咳")
-        elif topic == "throat_pattern":
-            if has("口腔溃疡", "嘴里溃疡"):
-                matches.append("口腔溃疡")
-            if has("咽痛", "喉咙痛", "嗓子痛"):
-                matches.append("咽喉疼痛")
-        elif topic == "summer_pattern":
-            if has("恶心", "呕吐", "想吐"):
-                matches.append("恶心呕吐")
-            if has("腹泻", "拉肚子", "水样便"):
-                matches.append("腹泻")
-        elif topic == "wound_state":
-            if has("红肿", "渗液", "化脓", "流脓"):
-                matches.append("伤口红肿渗液")
-            elif has("破皮", "擦破", "小伤口"):
-                matches.append("皮肤破损")
-        elif topic == "allergy_pattern":
-            if has("鼻痒", "打喷嚏", "鼻部"):
-                matches.append("鼻痒喷嚏")
-            if has("皮肤痒", "瘙痒", "皮疹"):
-                matches.append("皮肤瘙痒")
-        return list(dict.fromkeys(matches))
-
-    @staticmethod
-    def _valid_clarification_answer(topic: str, transcript: str, features: list[str]) -> bool:
-        text = transcript.strip()
-        if features:
-            return True
-        if any(term in text for term in ("不清楚", "不知道", "说不清", "不确定", "都没有", "没有这些", "都不是")):
-            return True
-        if topic == "history_change":
-            return any(term in text for term in ("更重", "重一些", "更轻", "轻一些", "一样", "差不多", "不同", "不一样", "没变化"))
-        if topic == "wound_state":
-            return any(term in text for term in ("只是", "轻微", "破皮", "没红肿", "没有红肿"))
-        return False
 
     @staticmethod
     def _clear_decision(session: InquirySessionResponse) -> None:
@@ -899,75 +754,14 @@ class InquiryOrchestrator:
         session.action_items = []
 
     @staticmethod
-    def _apply_contextual_answer(
-        stage: str,
-        transcript: str,
-        interpretation: SymptomInterpretation,
-    ) -> None:
-        if stage == "duration" and not interpretation.duration:
-            interpretation.duration = SymptomInterpreter.duration_answer(transcript)
-        elif stage == "used_medicines" and not interpretation.used_medicines:
-            interpretation.used_medicines = SymptomInterpreter.used_medicine_answer(
-                transcript,
-                allow_short_answer=True,
-            )
-        elif stage == "allergies" and not interpretation.allergy_or_contraindication:
-            interpretation.allergy_or_contraindication = SymptomInterpreter.allergy_answer(
-                transcript,
-                allow_short_answer=True,
-            )
-
-    @staticmethod
-    def _requires_vitals(
-        extracted: InquiryExtractedInformation,
-        interpretation: SymptomInterpretation,
-    ) -> bool:
-        return bool(
-            VITALS_DIMENSIONS.intersection(extracted.symptom_dimensions)
-            or interpretation.action_intent == "measure_vitals"
-        )
-
-    @classmethod
-    def _should_measure_vitals_now(
-        cls,
-        transcript: str,
-        extracted: InquiryExtractedInformation,
-        interpretation: SymptomInterpretation,
-        *,
-        model_led: bool = False,
-    ) -> bool:
-        explicit_request = any(
-            term in transcript
-            for term in ("测体征", "测一下体征", "测量体征", "读取体征", "身体体征", "量一下体温")
-        )
-        if explicit_request:
-            return True
-        if model_led:
-            return interpretation.action_intent == "measure_vitals"
-        return cls._requires_vitals(extracted, interpretation)
-
-    @staticmethod
-    def _profile_context(session: InquirySessionResponse) -> str:
-        return "；".join(
-            value.strip()
-            for value in (session.user_profile, session.user_allergies)
-            if value and value.strip()
-        )
-
-    @staticmethod
     def _current_user_turn_count(session: InquirySessionResponse) -> int:
         # The current transcript is persisted before this in-memory session is refreshed.
         return sum(1 for message in session.messages if message.role == "user") + 1
 
-    def _history_context(
-        self,
-        session: InquirySessionResponse,
-        extracted: InquiryExtractedInformation,
-    ) -> InquiryHistoryContext:
+    def _history_context(self, session: InquirySessionResponse) -> InquiryHistoryContext:
         return self.history_service.context_for(
             session.user_id,
             session.session_id,
-            extracted.symptom_dimensions,
         )
 
     @staticmethod
@@ -975,36 +769,21 @@ class InquiryOrchestrator:
         return next((option for option in options if option.option_id == option_id), None)
 
     @staticmethod
-    def _option_medicine_ids(option) -> tuple[str, ...]:
-        return tuple(medicine.id for medicine in option.medicines)
-
-    @staticmethod
-    def _replace_with_fresh_decision(session: InquirySessionResponse, decision) -> None:
-        session.risk_level = decision.risk_level
-        session.risk_reasons = decision.risk_reasons
-        session.primary_candidate = decision.primary_candidate
-        session.alternative_candidate = decision.alternative_candidate
-        session.treatment_options = decision.treatment_options
-        session.can_view_medicines = bool(
-            decision.risk_level in {"low", "medium"} and decision.treatment_options
-        )
+    def _replace_with_guard_failure(session: InquirySessionResponse, guard) -> None:
+        session.risk_level = guard.risk_level
+        session.risk_reasons = guard.risk_reasons
+        session.primary_candidate = None
+        session.alternative_candidate = None
+        session.treatment_options = []
+        session.can_view_medicines = False
         session.selected_option_id = ""
-        session.action_status = "ready" if session.can_view_medicines else "idle"
+        session.action_status = "idle"
         session.action_progress_index = 0
         session.action_total_items = 0
         session.action_items = []
-        if decision.risk_level in {"high", "emergency"}:
-            session.stage = "escalated"
-            session.next_action = "escalate"
-            session.action_message = "安全状态已经变化，本次不再执行开柜。"
-        elif session.can_view_medicines:
-            session.stage = "result"
-            session.next_action = "show_recommendation"
-            session.action_message = "安全信息已更新，请重新核对方案。"
-        else:
-            session.stage = "result"
-            session.next_action = "escalate"
-            session.action_message = "当前没有通过即时核验的候选方案。"
+        session.stage = "escalated"
+        session.next_action = "escalate"
+        session.action_message = "安全状态已经变化，本次不再执行开柜。"
         session.reply = session.action_message
 
     @staticmethod

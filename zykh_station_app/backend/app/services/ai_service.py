@@ -242,56 +242,53 @@ class AiService:
         existing: dict[str, Any],
         profile: dict[str, Any],
     ) -> dict[str, Any]:
-        """Extract evidence-backed facts; risk and medicine choice stay local."""
-        allowed = [
-            "感冒鼻部症状", "发热全身不适", "咳嗽咳痰", "咽喉口腔不适", "恶心暑湿",
-            "腹泻肠道不适", "便秘", "胃酸胃部不适", "过敏瘙痒", "轻微外伤",
-            "皮肤真菌不适", "肌肉关节疼痛", "干眼不适", "鼻炎过敏", "营养补充",
-            "慢病既往用药",
-        ]
-        allowed_features = [
-            "清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏", "明显畏寒", "明显口渴", "咽喉疼痛",
-            "干咳", "有痰咳嗽", "黄痰", "口腔溃疡", "腹泻", "便秘", "反酸烧心",
-            "恶心呕吐", "皮肤瘙痒", "皮肤破损", "伤口红肿渗液", "肌肉关节疼痛", "眼干眼涩",
-        ]
+        """Build an open, evidence-grounded case state without choosing medicine."""
         system_prompt = (
-            "你是家庭康护场景中的中文问询助手，不诊断、不分级、不推荐药品。"
-            "你既要理解本轮表达，也要像自然对话一样决定下一句最有价值的追问，并只输出 JSON。"
-            "symptom_dimensions 只能从给定枚举中选择；dimension_evidence 必须逐字引用本轮用户原话。"
-            "symptom_features 只能从给定特征枚举选择；feature_evidence 也必须逐字引用本轮原话。"
-            "信息没有明确表达时返回空字符串，不得猜测。follow_up_question 要自然、简短，"
-            "可以按当前语境选择最值得先问的一项，不必遵循固定字段顺序；每次最多问一件事。"
-            "提问前必须阅读 existing.conversation 的完整对话和已确认字段；用户已经回答过的问题绝不能换个说法再问。"
-            "用户回答‘没有’、‘未使用’等否定信息也算已经确认，不得因为回答简短而反复追问。"
-            "assistant_reply 是直接展示给用户的一句自然回复：先简短回应刚才内容，再接 follow_up_question；"
-            "不得像表格或字段提示。主诉、持续时间、已用药和过敏禁忌齐全且没有实质不确定性时，"
-            "action_intent 选 analyze，不再追问低价值生活方式细节。"
-            "action_intent 只能是 ask、measure_vitals、analyze：信息不足选 ask；"
-            "只有体温、心率或血氧会实质影响安全核验时才选 measure_vitals；信息足够时选 analyze。"
-            "reasoning_summary 用面向用户的自然口语概括已经确认的情况，不输出诊断推理；"
-            "action_reason 简述动作理由。"
-            "不得输出药品编号、仓位、药名或任何硬件动作。"
+            "你是家庭康护终端的中文问询医师助理。你负责自然问询、病例理解和语义风险判断，"
+            "但不能替代医生诊断或处方，不能选择药品、仓位或控制任何硬件。只输出一个 JSON 对象。"
+            "不要套用症状分类白名单；observations.concept 应按用户真实表达自由概括。"
+            "每条 observation 必须含 status=present|absent|uncertain、用户原话 evidence、"
+            "原话所在 source_turn 和 confidence。不得把否定表达写成 present。"
+            "完整阅读 conversation、profile、vitals 和 recent_history；历史只用于比较，"
+            "不得直接复用上次结论。每轮只问一个真正影响理解或安全的缺失信息，禁止固定字段顺序和重复追问。"
+            "next_action 只能是 ask、measure_vitals、analyze、escalate、end。"
+            "需要额温、心率、血氧才能判断时选择 measure_vitals；信息足够时选择 analyze；"
+            "出现明显危险信号时选择 escalate。risk_level 只能是 low、medium、high、emergency。"
+            "assistant_reply 是直接给用户的一句自然回应；ask 时包含一个问题，其他动作不强行追问。"
+            "history_relationship.should_reuse_previous_conclusion 必须为 false。"
         )
         user_prompt = json.dumps(
             {
-                "allowed_dimensions": allowed,
-                "allowed_features": allowed_features,
-                "transcript": transcript,
-                "existing": existing,
-                "profile": profile,
-                "output": {
-                    "symptom_dimensions": [],
-                    "dimension_evidence": {},
-                    "symptom_features": [],
-                    "feature_evidence": {},
+                "current_utterance": transcript,
+                "case_state": existing,
+                "person": profile,
+                "output_contract": {
+                    "case_summary": "",
+                    "observations": [
+                        {
+                            "concept": "",
+                            "status": "present",
+                            "evidence": "",
+                            "source_turn": 1,
+                            "confidence": 0.0,
+                        }
+                    ],
+                    "uncertainties": [],
+                    "history_relationship": {
+                        "related": False,
+                        "similarities": [],
+                        "important_changes": [],
+                        "should_reuse_previous_conclusion": False,
+                    },
                     "duration": "",
                     "used_medicines": "",
                     "allergy_or_contraindication": "",
-                    "follow_up_question": "",
+                    "next_action": "ask",
+                    "next_question": "",
                     "assistant_reply": "",
-                    "reasoning_summary": "",
-                    "action_intent": "ask",
-                    "action_reason": "",
+                    "reason": "",
+                    "risk_level": "low",
+                    "risk_signals": [],
                     "confidence": 0.0,
                 },
             },
@@ -336,6 +333,101 @@ class AiService:
         if not isinstance(parsed, dict):
             return self._extract_inquiry_local(transcript, existing, profile, "云端未返回有效结构。")
         return {"ok": True, "source": "cloud", **parsed}
+
+    def rank_inquiry_candidates(
+        self,
+        context: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Let AI rank only IDs already admitted by the deterministic safety pool."""
+        if not candidates:
+            return {"ok": True, "source": "safety_pool", "options": []}
+        system_prompt = (
+            "你是家庭康护问询的候选药品排序助手。程序已完成库存、有效期、OTC资格和绝对禁忌过滤。"
+            "你只能从 candidates 中选择，不能新增药品、改变字段或控制药柜。"
+            "结合病例、个人信息、体征和药品说明决定是否存在合适候选；不合适可返回空 options。"
+            "最多输出一个主方案和一个备选方案，备选不是联合服用；证据明确时只给主方案。"
+            "每个方案最多三个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
+            "reason 用一至两句自然中文说明推荐原因，不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
+            "只输出 JSON：{\"summary\":\"\",\"options\":[{\"option_id\":\"primary\","
+            "\"label\":\"主方案\",\"reason\":\"\",\"medicine_ids\":[\"\"]}]}。"
+        )
+        user_prompt = json.dumps(
+            {"case": context, "candidates": candidates},
+            ensure_ascii=False,
+        )
+        if settings.ai_mode == "local" or self._network_local_mode():
+            return self._rank_inquiry_candidates_local(system_prompt, user_prompt, "")
+        key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
+            return self._rank_inquiry_candidates_local(
+                system_prompt,
+                user_prompt,
+                "云端排序不可用。",
+            )
+        payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 520,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        self._apply_provider_options(payload, enable_thinking=False)
+        request = Request(
+            settings.ai_api_base,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            parsed = self._parse_json_content(self._extract_message_text(data))
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return self._rank_inquiry_candidates_local(
+                system_prompt,
+                user_prompt,
+                f"云端排序失败：{exc}。",
+            )
+        return (
+            {"ok": True, "source": "cloud", **parsed}
+            if isinstance(parsed, dict)
+            else self._rank_inquiry_candidates_local(
+                system_prompt,
+                user_prompt,
+                "云端排序未返回有效结构。",
+            )
+        )
+
+    def _rank_inquiry_candidates_local(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=320,
+            response_format={"type": "json_object"},
+        )
+        if not result.get("ok"):
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
+        parsed = self._parse_json_content(str(result.get("reply") or ""))
+        if not isinstance(parsed, dict):
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
+        return {"ok": True, "source": "local_llm", **parsed}
 
     def generate_inquiry_recommendation(self, context: dict[str, Any]) -> dict[str, Any]:
         """Explain already-approved options without allowing the model to alter them."""
@@ -555,13 +647,24 @@ class AiService:
     ) -> dict[str, Any]:
         system_prompt = self._local_inquiry_system_prompt()
         compact_existing = {
-            "s": str(existing.get("current_stage") or ""),
             "t": int(existing.get("conversation_turns") or 0),
-            "d": list(existing.get("symptom_dimensions") or []),
-            "du": str(existing.get("duration") or ""),
-            "u": str(existing.get("used_medicines") or ""),
-            "a": str(existing.get("allergy_or_contraindication") or ""),
-            "v": bool(existing.get("vitals")),
+            "s": str(existing.get("case_summary") or "")[:140],
+            "f": [
+                {
+                    "c": str(item.get("concept") or "")[:40],
+                    "s": str(item.get("status") or "")[:10],
+                    "e": str(item.get("evidence") or "")[:70],
+                    "t": int(item.get("source_turn") or 0),
+                }
+                for item in existing.get("observations") or []
+                if isinstance(item, dict)
+            ][:12],
+            "u": list(existing.get("uncertainties") or [])[:6],
+            "du": str(existing.get("duration") or "")[:40],
+            "m": str(existing.get("used_medicines") or "")[:60],
+            "a": str(existing.get("allergy_or_contraindication") or "")[:60],
+            "v": existing.get("vitals") or {},
+            "h": list(existing.get("recent_history") or [])[:4],
             "c": [
                 {
                     "r": str(message.get("role") or "")[:1],
@@ -591,73 +694,70 @@ class AiService:
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
-            return {"ok": False, "source": "rules_fallback", "message": reason}
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
         parsed = self._parse_json_content(str(result.get("reply") or ""))
         if not isinstance(parsed, dict):
-            return {"ok": False, "source": "rules_fallback", "message": reason}
+            return {"ok": False, "source": "ai_unavailable", "message": reason}
         return {"ok": True, "source": "local_llm", **self._expand_local_inquiry(parsed)}
 
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
-        dimension_codes = ",".join(cls.LOCAL_INQUIRY_DIMENSIONS)
         return (
-            "你是家庭健康问询助手，只做信息理解和自然追问，不诊断、不选药。"
-            "仅输出单行JSON：d=[[分类码,本轮原话]],du=持续时间原话,u=已用药原话,"
-            "a=过敏禁忌原话,q=下一句自然追问,n=ask|measure_vitals|analyze,"
-            "r=给用户看的简短情况概括,c=0到1。q需要先自然回应本轮内容再问一个问题。没有信息用空值。"
-            f"分类码只能是:{dimension_codes}。d中的原话必须来自本轮输入。"
-            "每轮只问一个最有价值的问题；先阅读known.c，绝不重复已经问过或已回答的问题，否定回答也算已确认；"
-            "基础信息齐全且无实质不确定性时n=analyze且q为空。"
+            "你是家庭健康问询助手，不诊断、不选药、不控制硬件。仅输出单行JSON："
+            "s=病例摘要；f=[[自由概念,present|absent|uncertain,用户原话,轮次,置信度]]；"
+            "u=不确定项数组；du=持续时间；m=已用药；a=过敏禁忌；"
+            "n=ask|measure_vitals|analyze|escalate|end；q=下一问；r=给用户的自然回复；"
+            "k=low|medium|high|emergency；g=风险信号数组；c=0到1。"
+            "先读known.c和known.h，不重复已回答问题；每轮最多问一件真正影响安全或理解的事。"
+            "概念按用户实际表达自由概括，证据来自用户对话。历史只比较，不复用旧结论。"
         )
 
     @classmethod
     def _expand_local_inquiry(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        # Keep accepting the earlier long schema so deployed model caches and tests remain compatible.
-        if "symptom_dimensions" in payload:
+        if "observations" in payload:
             return payload
-        dimensions: list[str] = []
-        evidence: dict[str, str] = {}
-        allergy_value = str(payload.get("a") or "").strip()
-        raw_dimensions = payload.get("d") if isinstance(payload.get("d"), list) else []
-        for item in raw_dimensions:
+        observations: list[dict[str, Any]] = []
+        raw_facts = payload.get("f") if isinstance(payload.get("f"), list) else []
+        for item in raw_facts:
             if isinstance(item, dict):
-                code = str(item.get("code") or item.get("c") or "").strip()
-                quote = str(
-                    item.get("evidence")
-                    or item.get("quote")
-                    or item.get("value")
-                    or item.get("u")
-                    or ""
-                ).strip()
+                concept = str(item.get("concept") or item.get("c") or "").strip()
+                status = str(item.get("status") or item.get("s") or "uncertain").strip()
+                evidence = str(item.get("evidence") or item.get("e") or "").strip()
+                source_turn = item.get("source_turn") or item.get("t") or 0
+                confidence = item.get("confidence") or item.get("p") or 0
             elif isinstance(item, list) and item:
-                code = str(item[0] or "").strip()
-                quote = str(item[1] if len(item) > 1 else "").strip()
+                concept = str(item[0] or "").strip()
+                status = str(item[1] if len(item) > 1 else "uncertain").strip()
+                evidence = str(item[2] if len(item) > 2 else "").strip()
+                source_turn = item[3] if len(item) > 3 else 0
+                confidence = item[4] if len(item) > 4 else 0
             else:
-                code = str(item or "").strip()
-                quote = ""
-            if code == "allergy" and quote and not any(
-                term in quote for term in ("皮肤痒", "瘙痒", "皮疹", "鼻痒", "喷嚏")
-            ):
-                allergy_value = quote
                 continue
-            dimension = cls.LOCAL_INQUIRY_DIMENSIONS.get(code, "")
-            if not dimension:
+            if not concept:
                 continue
-            dimensions.append(dimension)
-            if quote:
-                evidence[dimension] = quote
+            observations.append(
+                {
+                    "concept": concept,
+                    "status": status,
+                    "evidence": evidence,
+                    "source_turn": source_turn,
+                    "confidence": confidence,
+                }
+            )
         return {
-            "symptom_dimensions": list(dict.fromkeys(dimensions)),
-            "dimension_evidence": evidence,
-            "symptom_features": [],
-            "feature_evidence": {},
+            "case_summary": str(payload.get("s") or "").strip(),
+            "observations": observations,
+            "uncertainties": payload.get("u") if isinstance(payload.get("u"), list) else [],
+            "history_relationship": payload.get("h") if isinstance(payload.get("h"), dict) else {},
             "duration": str(payload.get("du") or "").strip(),
-            "used_medicines": str(payload.get("u") or "").strip(),
-            "allergy_or_contraindication": allergy_value,
-            "follow_up_question": str(payload.get("q") or "").strip(),
-            "assistant_reply": str(payload.get("q") or "").strip(),
-            "reasoning_summary": str(payload.get("r") or "").strip(),
-            "action_intent": str(payload.get("n") or "ask").strip(),
+            "used_medicines": str(payload.get("m") or "").strip(),
+            "allergy_or_contraindication": str(payload.get("a") or "").strip(),
+            "next_question": str(payload.get("q") or "").strip(),
+            "assistant_reply": str(payload.get("r") or payload.get("q") or "").strip(),
+            "reason": str(payload.get("x") or "").strip(),
+            "next_action": str(payload.get("n") or "ask").strip(),
+            "risk_level": str(payload.get("k") or "low").strip(),
+            "risk_signals": payload.get("g") if isinstance(payload.get("g"), list) else [],
             "confidence": payload.get("c") or 0,
         }
 

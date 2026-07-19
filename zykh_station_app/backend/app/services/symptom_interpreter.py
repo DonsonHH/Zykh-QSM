@@ -4,86 +4,21 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from ..schemas.inquiry import InquiryHistoryRelationship, InquiryObservation, RiskLevel
 from .ai_service import AiService
 
 
-ALLOWED_DIMENSIONS = {
-    "感冒鼻部症状",
-    "发热全身不适",
-    "咳嗽咳痰",
-    "咽喉口腔不适",
-    "恶心暑湿",
-    "腹泻肠道不适",
-    "便秘",
-    "胃酸胃部不适",
-    "过敏瘙痒",
-    "轻微外伤",
-    "皮肤真菌不适",
-    "肌肉关节疼痛",
-    "干眼不适",
-    "鼻炎过敏",
-    "营养补充",
-    "慢病既往用药",
-}
-
-ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze"}
-VITALS_SENSITIVE_DIMENSIONS = {"发热全身不适", "咳嗽咳痰", "恶心暑湿"}
-
-ALLOWED_FEATURES = {
-    "清稀鼻涕", "黄稠鼻涕", "鼻痒喷嚏", "明显畏寒", "明显口渴", "咽喉疼痛",
-    "干咳", "有痰咳嗽", "黄痰", "口腔溃疡", "腹泻", "便秘", "反酸烧心",
-    "恶心呕吐", "皮肤瘙痒", "皮肤破损", "伤口红肿渗液", "肌肉关节疼痛", "眼干眼涩",
-}
-
-
-DIMENSION_KEYWORDS = {
-    "恶心暑湿": ("中暑", "暑湿", "恶心", "头晕", "胸闷腹胀"),
-    "感冒鼻部症状": ("流清鼻涕", "清鼻涕", "流鼻涕", "流涕", "鼻塞", "打喷嚏", "风寒"),
-    "发热全身不适": ("发热", "发烧", "头有点不舒服", "头不舒服", "头痛", "乏力", "身痛", "畏寒"),
-    "咳嗽咳痰": ("咳嗽", "咳痰", "痰多"),
-    "咽喉口腔不适": ("咽痛", "喉咙痛", "口腔溃疡", "咽喉"),
-    "腹泻肠道不适": ("腹泻", "拉肚子", "水样便"),
-    "便秘": ("便秘", "排便困难"),
-    "胃酸胃部不适": ("胃痛", "胃酸", "反酸", "烧心", "胃胀"),
-    "过敏瘙痒": ("皮肤过敏", "皮肤瘙痒", "瘙痒", "皮疹", "荨麻疹"),
-    "轻微外伤": ("擦伤", "破皮", "小伤口", "划伤"),
-    "皮肤真菌不适": ("脚气", "真菌", "癣"),
-    "肌肉关节疼痛": ("肌肉痛", "关节痛", "扭伤"),
-    "干眼不适": ("眼干", "干眼", "眼涩"),
-    "鼻炎过敏": ("鼻炎", "过敏性鼻炎"),
-    "营养补充": ("维生素", "营养补充"),
-    "慢病既往用药": ("高血压", "血压高", "降压药", "慢病用药", "长期用药"),
-}
-
-FEATURE_KEYWORDS = {
-    "清稀鼻涕": ("流清鼻涕", "清鼻涕", "清水鼻涕", "鼻涕清稀"),
-    "黄稠鼻涕": ("黄鼻涕", "鼻涕黄", "黄稠鼻涕", "鼻涕黏稠"),
-    "鼻痒喷嚏": ("鼻痒", "连续打喷嚏", "一直打喷嚏"),
-    "明显畏寒": ("怕冷", "畏寒", "恶寒"),
-    "明显口渴": ("口渴", "口干想喝水"),
-    "咽喉疼痛": ("咽痛", "喉咙痛", "嗓子痛"),
-    "干咳": ("干咳", "没有痰", "无痰"),
-    "有痰咳嗽": ("有痰", "咳痰", "痰多"),
-    "黄痰": ("黄痰", "痰黄"),
-    "口腔溃疡": ("口腔溃疡", "嘴里溃疡"),
-    "腹泻": ("腹泻", "拉肚子", "水样便"),
-    "便秘": ("便秘", "排便困难"),
-    "反酸烧心": ("反酸", "烧心", "胃酸"),
-    "恶心呕吐": ("恶心", "呕吐", "想吐"),
-    "皮肤瘙痒": ("皮肤痒", "瘙痒", "发痒"),
-    "皮肤破损": ("擦伤", "擦破", "破皮", "小伤口", "划伤"),
-    "伤口红肿渗液": ("红肿", "渗液", "流脓", "化脓"),
-    "肌肉关节疼痛": ("肌肉痛", "关节痛", "扭伤"),
-    "眼干眼涩": ("眼干", "眼涩", "干眼"),
-}
+ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze", "escalate", "end"}
+ALLOWED_RISK_LEVELS = {"low", "medium", "high", "emergency"}
+UNSAFE_HARDWARE_LANGUAGE = ("打开药柜", "开柜", "出药", "发药")
 
 
 @dataclass
 class SymptomInterpretation:
-    symptom_dimensions: list[str] = field(default_factory=list)
-    dimension_evidence: dict[str, str] = field(default_factory=dict)
-    symptom_features: list[str] = field(default_factory=list)
-    feature_evidence: dict[str, str] = field(default_factory=dict)
+    case_summary: str = ""
+    observations: list[InquiryObservation] = field(default_factory=list)
+    uncertainties: list[str] = field(default_factory=list)
+    history_relationship: InquiryHistoryRelationship = field(default_factory=InquiryHistoryRelationship)
     duration: str = ""
     used_medicines: str = ""
     allergy_or_contraindication: str = ""
@@ -92,8 +27,38 @@ class SymptomInterpretation:
     reasoning_summary: str = ""
     action_intent: str = "ask"
     action_reason: str = ""
+    ai_risk_level: RiskLevel | None = None
+    risk_signals: list[str] = field(default_factory=list)
     confidence: float = 0.0
-    source: str = "rules_fallback"
+    source: str = "ai_unavailable"
+    available: bool = True
+
+    @property
+    def symptom_dimensions(self) -> list[str]:
+        """Compatibility view for existing admin and inquiry presentation components."""
+        return list(
+            dict.fromkeys(
+                observation.concept
+                for observation in self.observations
+                if observation.status == "present"
+            )
+        )
+
+    @property
+    def dimension_evidence(self) -> dict[str, str]:
+        return {
+            observation.concept: observation.evidence
+            for observation in self.observations
+            if observation.status == "present" and observation.evidence
+        }
+
+    @property
+    def symptom_features(self) -> list[str]:
+        return []
+
+    @property
+    def feature_evidence(self) -> dict[str, str]:
+        return {}
 
 
 class SymptomInterpreter:
@@ -108,18 +73,33 @@ class SymptomInterpreter:
     ) -> SymptomInterpretation:
         existing = existing or {}
         profile = profile or {}
-        model = self.ai_service.extract_inquiry_information(transcript, existing, profile)
-        if model.get("ok"):
-            validated = self._validated_model_result(model, transcript)
-            if validated.source == "local_llm":
-                # The small offline model may omit optional JSON fields; keep its dialogue decision
-                # while the deterministic parser supplies only facts that are present verbatim.
-                return validated
-            if validated.symptom_dimensions or any(
-                (validated.duration, validated.used_medicines, validated.allergy_or_contraindication)
-            ) or validated.follow_up_question or validated.action_intent in {"measure_vitals", "analyze"}:
-                return validated
-        return self._rules_interpret(transcript)
+        payload = self.ai_service.extract_inquiry_information(transcript, existing, profile)
+        if not payload.get("ok"):
+            return SymptomInterpretation(
+                assistant_reply=(
+                    "智能问询当前暂不可用。本次不会生成用药候选；"
+                    "如有胸痛、呼吸困难、意识异常或明显加重，请立即联系医生。"
+                ),
+                reasoning_summary=str(payload.get("message") or "云端与本地问询模型均未返回有效内容。")[:180],
+                action_intent="escalate",
+                action_reason="智能问询服务不可用",
+                source="ai_unavailable",
+                available=False,
+            )
+        return self._validated_model_result(payload, existing)
+
+    def resume_after_vitals(
+        self,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+    ) -> SymptomInterpretation:
+        return self.interpret("体征测量已经完成，请结合本次结果继续问询。", existing, profile)
+
+    def rank_candidates(self, context: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        ranker = getattr(self.ai_service, "rank_inquiry_candidates", None)
+        if not callable(ranker):
+            return {"ok": False, "source": "ai_unavailable"}
+        return ranker(context, candidates)
 
     def opening_question(self, profile: dict[str, Any], fallback: str) -> tuple[str, str]:
         generator = getattr(self.ai_service, "generate_inquiry_opening", None)
@@ -139,130 +119,87 @@ class SymptomInterpreter:
             return {"ok": False, "source": "assistant"}
         return generator(context)
 
-    def _validated_model_result(self, payload: dict[str, Any], transcript: str) -> SymptomInterpretation:
-        rules = self._rules_interpret(transcript)
-        evidence = payload.get("dimension_evidence")
-        evidence = evidence if isinstance(evidence, dict) else {}
-        dimensions: list[str] = []
-        clean_evidence: dict[str, str] = {}
-        for raw_dimension in payload.get("symptom_dimensions") or []:
-            dimension = str(raw_dimension).strip()
-            quote = str(evidence.get(dimension) or "").strip()
-            if dimension not in ALLOWED_DIMENSIONS or not quote or quote not in transcript:
+    @classmethod
+    def _validated_model_result(
+        cls,
+        payload: dict[str, Any],
+        existing: dict[str, Any],
+    ) -> SymptomInterpretation:
+        max_turn = max(int(existing.get("conversation_turns") or 0), 1)
+        observations: list[InquiryObservation] = []
+        for raw in payload.get("observations") or []:
+            if not isinstance(raw, dict):
                 continue
-            if not self._evidence_is_positive(transcript, quote):
+            concept = cls._short_text(raw.get("concept"), 80)
+            status = str(raw.get("status") or "uncertain").strip()
+            evidence = cls._short_text(raw.get("evidence"), 180)
+            try:
+                source_turn = max(0, min(int(raw.get("source_turn") or max_turn), max_turn))
+                confidence = max(0.0, min(float(raw.get("confidence") or 0), 1.0))
+            except (TypeError, ValueError):
                 continue
-            dimensions.append(dimension)
-            clean_evidence[dimension] = quote
-        if not dimensions:
-            dimensions = list(rules.symptom_dimensions)
-            clean_evidence = dict(rules.dimension_evidence)
-        feature_evidence = payload.get("feature_evidence")
-        feature_evidence = feature_evidence if isinstance(feature_evidence, dict) else {}
-        features: list[str] = []
-        clean_feature_evidence: dict[str, str] = {}
-        for raw_feature in payload.get("symptom_features") or []:
-            feature = str(raw_feature).strip()
-            quote = str(feature_evidence.get(feature) or "").strip()
-            if feature not in ALLOWED_FEATURES or not quote or quote not in transcript:
+            if not concept or status not in {"present", "absent", "uncertain"}:
                 continue
-            if not self._evidence_is_positive(transcript, quote):
-                continue
-            features.append(feature)
-            clean_feature_evidence[feature] = quote
-        if not features:
-            features = list(rules.symptom_features)
-            clean_feature_evidence = dict(rules.feature_evidence)
+            observations.append(
+                InquiryObservation(
+                    concept=concept,
+                    status=status,
+                    evidence=evidence,
+                    source_turn=source_turn,
+                    confidence=confidence,
+                )
+            )
+
+        raw_history = payload.get("history_relationship")
+        raw_history = raw_history if isinstance(raw_history, dict) else {}
+        history = InquiryHistoryRelationship(
+            related=bool(raw_history.get("related")),
+            similarities=cls._text_list(raw_history.get("similarities"), 5, 100),
+            important_changes=cls._text_list(raw_history.get("important_changes"), 5, 100),
+            should_reuse_previous_conclusion=False,
+        )
+        action = str(payload.get("next_action") or payload.get("action_intent") or "ask").strip()
+        if action not in ALLOWED_ACTION_INTENTS:
+            action = "ask"
+        risk = str(payload.get("risk_level") or "").strip()
+        ai_risk_level: RiskLevel | None = risk if risk in ALLOWED_RISK_LEVELS else None  # type: ignore[assignment]
+        assistant_reply = cls._short_text(
+            payload.get("assistant_reply") or payload.get("next_question"),
+            240,
+        )
+        if any(term in assistant_reply for term in UNSAFE_HARDWARE_LANGUAGE):
+            assistant_reply = "我还需要继续确认你的情况，请再补充一项最重要的信息。"
+            action = "ask"
         try:
             confidence = max(0.0, min(float(payload.get("confidence") or 0), 1.0))
         except (TypeError, ValueError):
             confidence = 0.0
-        action_intent = str(payload.get("action_intent") or "ask").strip()
-        if action_intent not in ALLOWED_ACTION_INTENTS:
-            action_intent = "ask"
-        model_used = self._verbatim_value(payload.get("used_medicines"), transcript)
-        model_allergy = self._verbatim_value(payload.get("allergy_or_contraindication"), transcript)
-        used_medicines = (
-            rules.used_medicines
-            if rules.used_medicines in {"未使用", "不确定"}
-            else model_used or rules.used_medicines
-        )
-        allergy_or_contraindication = (
-            rules.allergy_or_contraindication
-            if rules.allergy_or_contraindication in {"无", "不确定"}
-            else model_allergy or rules.allergy_or_contraindication
-        )
+        case_summary = cls._short_text(payload.get("case_summary"), 260)
         return SymptomInterpretation(
-            symptom_dimensions=list(dict.fromkeys(dimensions)),
-            dimension_evidence=clean_evidence,
-            symptom_features=list(dict.fromkeys(features)),
-            feature_evidence=clean_feature_evidence,
-            duration=self._verbatim_value(payload.get("duration"), transcript) or rules.duration,
-            used_medicines=used_medicines,
-            allergy_or_contraindication=allergy_or_contraindication,
-            follow_up_question=str(payload.get("follow_up_question") or "").strip(),
-            assistant_reply=self._short_text(payload.get("assistant_reply"), 220),
-            reasoning_summary=self._short_text(payload.get("reasoning_summary"), 180),
-            action_intent=action_intent,
-            action_reason=self._short_text(payload.get("action_reason"), 120),
+            case_summary=case_summary,
+            observations=observations,
+            uncertainties=cls._text_list(payload.get("uncertainties"), 8, 120),
+            history_relationship=history,
+            duration=cls._short_text(payload.get("duration"), 120),
+            used_medicines=cls._short_text(payload.get("used_medicines"), 180),
+            allergy_or_contraindication=cls._short_text(
+                payload.get("allergy_or_contraindication"),
+                180,
+            ),
+            follow_up_question=cls._short_text(
+                payload.get("next_question") or payload.get("follow_up_question"),
+                160,
+            ),
+            assistant_reply=assistant_reply,
+            reasoning_summary=case_summary or cls._short_text(payload.get("reason"), 180),
+            action_intent=action,
+            action_reason=cls._short_text(payload.get("reason"), 160),
+            ai_risk_level=ai_risk_level,
+            risk_signals=cls._text_list(payload.get("risk_signals"), 8, 100),
             confidence=confidence,
             source=str(payload.get("source") or "cloud"),
+            available=True,
         )
-
-    def _rules_interpret(self, transcript: str) -> SymptomInterpretation:
-        dimensions: list[str] = []
-        evidence: dict[str, str] = {}
-        for dimension, keywords in DIMENSION_KEYWORDS.items():
-            match = next((keyword for keyword in keywords if self._has_unnegated_term(transcript, keyword)), "")
-            if match:
-                dimensions.append(dimension)
-                evidence[dimension] = match
-        features: list[str] = []
-        feature_evidence: dict[str, str] = {}
-        for feature, keywords in FEATURE_KEYWORDS.items():
-            match = next((keyword for keyword in keywords if self._has_unnegated_term(transcript, keyword)), "")
-            if match:
-                features.append(feature)
-                feature_evidence[feature] = match
-        duration = self.duration_answer(transcript)
-        used = self.used_medicine_answer(transcript)
-        allergy = self.allergy_answer(transcript)
-        if VITALS_SENSITIVE_DIMENSIONS.intersection(dimensions):
-            action_intent = "measure_vitals"
-            action_reason = "核心体征会影响本次风险核验"
-        elif dimensions:
-            action_intent = "analyze"
-            action_reason = "已识别到可由本地安全规则核验的症状维度"
-        else:
-            action_intent = "ask"
-            action_reason = "仍需补充明确的症状信息"
-        return SymptomInterpretation(
-            symptom_dimensions=dimensions,
-            dimension_evidence=evidence,
-            symptom_features=features,
-            feature_evidence=feature_evidence,
-            duration=duration,
-            used_medicines=used,
-            allergy_or_contraindication=allergy,
-            reasoning_summary="已按用户原话整理症状证据。" if dimensions else "本轮未提取到明确症状证据。",
-            action_intent=action_intent,
-            action_reason=action_reason,
-            confidence=0.7 if dimensions else 0.2,
-            source="rules_fallback",
-        )
-
-    @classmethod
-    def _evidence_is_positive(cls, transcript: str, quote: str) -> bool:
-        negated_fact = re.search(
-            r"(?:没有|没|无|未|否认|并不|不)\s*.{0,5}"
-            r"(?:过敏|瘙痒|皮疹|发热|发烧|胸痛|呼吸困难|咳嗽|腹泻|呕吐|疼痛|头晕)",
-            quote,
-        )
-        return not negated_fact and cls._has_unnegated_term(transcript, quote)
-
-    @staticmethod
-    def _first_match(text: str, candidates: tuple[str, ...]) -> str:
-        return next((item for item in candidates if item in text), "")
 
     @staticmethod
     def duration_answer(transcript: str) -> str:
@@ -294,15 +231,14 @@ class SymptomInterpreter:
             allow_short_answer and text in {"没有", "还没有", "没", "暂时没有"}
         ):
             return "未使用"
-        if any(cls._has_unnegated_term(text, term) for term in ("吃过", "用过", "已经吃", "已经用", "已使用")):
+        if any(term in text for term in ("吃过", "用过", "已经吃", "已经用", "已使用")):
             return text[:120] if len(text) > 4 else "已使用"
         return ""
 
     @staticmethod
     def allergy_answer(transcript: str, *, allow_short_answer: bool = False) -> str:
         text = transcript.strip()
-        uncertain = ("不知道", "不清楚", "不确定", "不能明确", "无法确认", "记不清")
-        if any(term in text for term in uncertain):
+        if any(term in text for term in ("不知道", "不清楚", "不确定", "不能明确", "无法确认", "记不清")):
             return "不确定"
         negative = (
             "没有过敏", "没有药物过敏", "无过敏", "无药物过敏", "没有禁忌", "无禁忌",
@@ -320,13 +256,18 @@ class SymptomInterpreter:
         return ""
 
     @staticmethod
-    def _verbatim_value(value: object, transcript: str) -> str:
-        normalized = str(value or "").strip()
-        return normalized if normalized and normalized in transcript else ""
-
-    @staticmethod
     def _short_text(value: object, limit: int) -> str:
-        return str(value or "").strip()[:limit]
+        return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+    @classmethod
+    def _text_list(cls, value: object, max_items: int, max_length: int) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [
+            text
+            for item in value[:max_items]
+            if (text := cls._short_text(item, max_length))
+        ]
 
     @staticmethod
     def _has_unnegated_term(text: str, term: str) -> bool:

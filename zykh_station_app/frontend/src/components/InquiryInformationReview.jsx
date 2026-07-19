@@ -147,10 +147,13 @@ function ReviewVital({ icon: Icon, label, value }) {
 }
 
 function buildFacts(extracted) {
-  const evidence = Object.values(extracted.dimension_evidence || {}).filter(Boolean);
+  const observations = (extracted.observations || [])
+    .filter((item) => item?.status === "present");
+  const evidence = observations.map((item) => item.evidence).filter(Boolean);
+  const concepts = observations.map((item) => item.concept).filter(Boolean);
   const dimensions = (extracted.symptom_dimensions || []).filter(Boolean);
   return {
-    complaint: evidence.join("、") || dimensions.join("、") || "尚未说明",
+    complaint: extracted.case_summary || evidence.join("、") || concepts.join("、") || dimensions.join("、") || "尚未说明",
     duration: extracted.duration || "尚未说明",
     usedMedicines: extracted.used_medicines || "尚未说明",
     allergy: extracted.allergy_or_contraindication || "尚未说明"

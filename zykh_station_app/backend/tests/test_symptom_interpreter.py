@@ -11,169 +11,147 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app.services.symptom_interpreter import SymptomInterpreter  # noqa: E402
 
 
-class FakeAiService:
+class OpenCaseAiService:
     def extract_inquiry_information(self, *_args, **_kwargs):
         return {
             "ok": True,
             "source": "cloud",
-            "symptom_dimensions": ["感冒鼻部症状"],
-            "dimension_evidence": {"感冒鼻部症状": "鼻塞"},
-            "duration": "三天",
-            "used_medicines": "已使用",
-            "allergy_or_contraindication": "阿司匹林过敏",
-            "follow_up_question": "这种不舒服持续多久了？",
-            "reasoning_summary": "用户明确提到鼻塞。",
-            "action_intent": "measure_vitals",
-            "action_reason": "体征会影响后续安全核验",
+            "case_summary": "起身时出现短暂眼前发黑，已经持续两天。",
+            "observations": [
+                {
+                    "concept": "体位变化相关不适",
+                    "status": "present",
+                    "evidence": "起身时眼前会突然黑一下",
+                    "source_turn": 3,
+                    "confidence": 0.92,
+                },
+                {
+                    "concept": "持续胸痛",
+                    "status": "absent",
+                    "evidence": "没有胸痛",
+                    "source_turn": 3,
+                    "confidence": 0.97,
+                },
+            ],
+            "uncertainties": ["是否伴随心悸尚未确认"],
+            "history_relationship": {
+                "related": True,
+                "similarities": ["与上月短暂头晕相似"],
+                "important_changes": ["本次主要发生在起身时"],
+                "should_reuse_previous_conclusion": False,
+            },
+            "duration": "两天",
+            "used_medicines": "未使用",
+            "allergy_or_contraindication": "头孢过敏",
+            "next_action": "measure_vitals",
+            "next_question": "",
+            "assistant_reply": "起身时眼前发黑需要结合体征再判断，请先测量额温、心率和血氧。",
+            "reason": "体位变化与循环状态可能相关",
+            "risk_level": "medium",
+            "risk_signals": ["起身诱发"],
             "confidence": 0.91,
+        }
+
+
+class SemanticEvidenceAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "case_summary": "用户描述咽部灼热，但原话没有使用医学术语。",
+            "observations": [
+                {
+                    "concept": "咽部灼热不适",
+                    "status": "present",
+                    "evidence": "嗓子像火烧一样",
+                    "source_turn": 1,
+                    "confidence": 0.88,
+                }
+            ],
+            "uncertainties": [],
+            "next_action": "ask",
+            "next_question": "这种感觉持续多久了？",
+            "assistant_reply": "我记下了嗓子灼热的感觉。这种感觉持续多久了？",
+            "risk_level": "low",
+            "confidence": 0.88,
         }
 
 
 class UnavailableAiService:
     def extract_inquiry_information(self, *_args, **_kwargs):
-        return {"ok": False}
+        return {
+            "ok": False,
+            "source": "ai_unavailable",
+            "message": "云端与本地问询模型当前都不可用。",
+        }
 
 
-class NegatedEvidenceAiService:
+class InvalidActionAiService:
     def extract_inquiry_information(self, *_args, **_kwargs):
         return {
             "ok": True,
             "source": "cloud",
-            "symptom_dimensions": ["过敏瘙痒"],
-            "dimension_evidence": {"过敏瘙痒": "没有过敏"},
-            "allergy_or_contraindication": "没有过敏",
-            "confidence": 0.9,
-        }
-
-
-class FollowupOnlyAiService:
-    def extract_inquiry_information(self, *_args, **_kwargs):
-        return {
-            "ok": True,
-            "source": "local_llm",
-            "follow_up_question": "这种头晕是突然出现的，还是慢慢加重的？",
-            "action_intent": "ask",
-            "reasoning_summary": "我听到你主要是头晕。",
-        }
-
-
-class SparseLocalAiService:
-    def extract_inquiry_information(self, *_args, **_kwargs):
-        return {"ok": True, "source": "local_llm", "action_intent": "ask"}
-
-
-class ContextAwareAiService:
-    def extract_inquiry_information(self, *_args, **_kwargs):
-        return {
-            "ok": True,
-            "source": "cloud",
-            "symptom_dimensions": ["感冒鼻部症状"],
-            "dimension_evidence": {"感冒鼻部症状": "鼻塞"},
-            "follow_up_question": "头晕是在起身时更明显，还是一直都有？",
-            "assistant_reply": "鼻塞我记下了。头晕是在起身时更明显，还是一直都有？",
-            "action_intent": "ask",
-            "confidence": 0.86,
+            "case_summary": "轻微不适。",
+            "observations": [],
+            "next_action": "open_cabinet",
+            "assistant_reply": "准备打开药柜。",
+            "confidence": 0.8,
         }
 
 
 class SymptomInterpreterTest(unittest.TestCase):
-    def test_model_cannot_invent_scalar_facts_not_present_in_transcript(self) -> None:
-        result = SymptomInterpreter(ai_service=FakeAiService()).interpret("刚有点鼻塞")
+    def test_open_case_keeps_a_concept_outside_any_fixed_symptom_whitelist(self) -> None:
+        result = SymptomInterpreter(ai_service=OpenCaseAiService()).interpret(
+            "起身时眼前会突然黑一下，已经两天了，没有胸痛，没用药，头孢过敏",
+            {"conversation_turns": 3},
+        )
 
-        self.assertEqual(result.symptom_dimensions, ["感冒鼻部症状"])
-        self.assertEqual(result.dimension_evidence, {"感冒鼻部症状": "鼻塞"})
-        self.assertEqual(result.duration, "")
-        self.assertEqual(result.used_medicines, "")
-        self.assertEqual(result.allergy_or_contraindication, "")
+        self.assertTrue(result.available)
+        self.assertEqual(result.case_summary, "起身时出现短暂眼前发黑，已经持续两天。")
+        self.assertEqual(result.observations[0].concept, "体位变化相关不适")
+        self.assertEqual(result.observations[0].source_turn, 3)
         self.assertEqual(result.action_intent, "measure_vitals")
-        self.assertEqual(result.reasoning_summary, "用户明确提到鼻塞。")
+        self.assertEqual(result.ai_risk_level, "medium")
+        self.assertTrue(result.history_relationship.related)
 
-    def test_negated_symptoms_are_not_added_as_dimensions(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("没有过敏，也没有头痛")
+    def test_semantic_concept_does_not_need_to_be_an_exact_transcript_substring(self) -> None:
+        result = SymptomInterpreter(ai_service=SemanticEvidenceAiService()).interpret(
+            "嗓子像火烧一样",
+            {"conversation_turns": 1},
+        )
 
-        self.assertEqual(result.symptom_dimensions, [])
+        self.assertEqual(result.observations[0].concept, "咽部灼热不适")
+        self.assertEqual(result.observations[0].evidence, "嗓子像火烧一样")
+        self.assertEqual(result.follow_up_question, "这种感觉持续多久了？")
+        self.assertEqual(result.source, "local_llm")
 
-    def test_standalone_negation_does_not_add_a_positive_feature(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("有点怕冷，但是不口渴")
-
-        self.assertIn("明显畏寒", result.symptom_features)
-        self.assertNotIn("明显口渴", result.symptom_features)
-
-    def test_head_discomfort_is_understood_without_asking_for_body_location(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("头有点不舒服")
-
-        self.assertIn("发热全身不适", result.symptom_dimensions)
-        self.assertEqual(result.dimension_evidence["发热全身不适"], "头有点不舒服")
-
-    def test_drug_allergy_is_not_misread_as_active_skin_or_nasal_symptom(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("我对头孢过敏")
-
-        self.assertNotIn("过敏瘙痒", result.symptom_dimensions)
-        self.assertNotIn("鼻炎过敏", result.symptom_dimensions)
-        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
-
-    def test_allergy_is_extracted_from_a_longer_spoken_sentence(self) -> None:
+    def test_model_unavailability_is_not_replaced_with_keyword_inference(self) -> None:
         result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret(
-            "我有点头晕，已经半天了，还没有用药，我对头孢过敏"
+            "我中暑头晕半天了，还没有用药，对头孢过敏"
         )
 
-        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
-
-    def test_model_dimension_with_negated_evidence_is_rejected(self) -> None:
-        result = SymptomInterpreter(ai_service=NegatedEvidenceAiService()).interpret("没有过敏")
-
+        self.assertFalse(result.available)
+        self.assertEqual(result.source, "ai_unavailable")
+        self.assertEqual(result.action_intent, "escalate")
+        self.assertEqual(result.observations, [])
         self.assertEqual(result.symptom_dimensions, [])
-        self.assertEqual(result.allergy_or_contraindication, "无")
 
-    def test_negated_used_medicine_phrase_is_not_misread_as_used(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("还没用过药")
+    def test_model_cannot_request_a_hardware_action(self) -> None:
+        result = SymptomInterpreter(ai_service=InvalidActionAiService()).interpret("有点不舒服")
 
-        self.assertEqual(result.used_medicines, "未使用")
+        self.assertEqual(result.action_intent, "ask")
+        self.assertNotIn("打开药柜", result.assistant_reply)
 
-    def test_natural_short_duration_is_extracted(self) -> None:
-        for transcript in ("五分钟", "十秒钟", "没多久", "两年半", "一天半", "去年"):
-            with self.subTest(transcript=transcript):
-                result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret(transcript)
-                self.assertEqual(result.duration, transcript)
-
-    def test_uncertain_allergy_history_is_not_recorded_as_a_positive_allergy(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("没有药物过敏或不能明确")
-
-        self.assertEqual(result.allergy_or_contraindication, "不确定")
-
-    def test_clear_runny_nose_phrase_is_kept_as_nasal_cold_evidence(self) -> None:
-        result = SymptomInterpreter(ai_service=UnavailableAiService()).interpret("今天开始流清鼻涕，还有一点头痛")
-
-        self.assertIn("感冒鼻部症状", result.symptom_dimensions)
-        self.assertEqual(result.dimension_evidence["感冒鼻部症状"], "流清鼻涕")
-
-    def test_model_followup_is_kept_even_when_the_turn_adds_no_new_structured_field(self) -> None:
-        result = SymptomInterpreter(ai_service=FollowupOnlyAiService()).interpret(
-            "就是刚才说的那种感觉",
-            {"symptom_dimensions": ["恶心暑湿"], "current_stage": "clarification"},
+    def test_short_spoken_answers_remain_available_for_review_edits(self) -> None:
+        self.assertEqual(SymptomInterpreter.duration_answer("已经两天半了"), "两天半")
+        self.assertEqual(
+            SymptomInterpreter.used_medicine_answer("还没用过药"),
+            "未使用",
         )
-
-        self.assertEqual(result.source, "local_llm")
-        self.assertEqual(result.follow_up_question, "这种头晕是突然出现的，还是慢慢加重的？")
-
-    def test_sparse_local_model_result_keeps_local_dialogue_path_and_verified_facts(self) -> None:
-        result = SymptomInterpreter(ai_service=SparseLocalAiService()).interpret(
-            "我中暑头晕半天了，还没有用药，对头孢过敏",
-            {"current_stage": "symptoms"},
+        self.assertEqual(
+            SymptomInterpreter.allergy_answer("我对头孢过敏"),
+            "头孢过敏",
         )
-
-        self.assertEqual(result.source, "local_llm")
-        self.assertIn("恶心暑湿", result.symptom_dimensions)
-        self.assertEqual(result.duration, "半天")
-        self.assertEqual(result.used_medicines, "未使用")
-        self.assertEqual(result.allergy_or_contraindication, "头孢过敏")
-
-    def test_cloud_model_leads_ambiguous_symptom_interpretation_without_keyword_union(self) -> None:
-        result = SymptomInterpreter(ai_service=ContextAwareAiService()).interpret("我鼻塞，还有一点头晕")
-
-        self.assertEqual(result.symptom_dimensions, ["感冒鼻部症状"])
-        self.assertEqual(result.follow_up_question, "头晕是在起身时更明显，还是一直都有？")
-        self.assertEqual(result.assistant_reply, "鼻塞我记下了。头晕是在起身时更明显，还是一直都有？")
 
 
 if __name__ == "__main__":

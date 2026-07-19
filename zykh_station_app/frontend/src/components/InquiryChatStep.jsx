@@ -21,6 +21,7 @@ import { isLocalNetworkMode } from "../utils/network.js";
 import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
 import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
+import { WxVoiceRecorderOverlay } from "./WxVoiceRecorderOverlay.jsx";
 
 function speakLocally(text) {
   if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return false;
@@ -42,6 +43,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
   const [keyboardText, setKeyboardText] = useState("");
   const [streamedReply, setStreamedReply] = useState(session.reply || "");
   const [streaming, setStreaming] = useState(false);
+  const [cancelGesture, setCancelGesture] = useState(false);
   const wsRef = useRef(null);
   const partialTextRef = useRef("");
   const finishTimerRef = useRef(null);
@@ -51,6 +53,8 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
   const bottomRef = useRef(null);
   const playbackGenerationRef = useRef(0);
   const holdActiveRef = useRef(false);
+  const holdStartYRef = useRef(0);
+  const cancelGestureRef = useRef(false);
 
   const preparingVoice = voicePhase === VoicePhase.PREPARING;
   const listening = voicePhase === VoicePhase.LISTENING;
@@ -92,13 +96,23 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     const release = (event) => {
       if (holdActiveRef.current) handleHoldEnd(event);
     };
+    const move = (event) => {
+      if (!holdActiveRef.current || !Number.isFinite(event.clientY)) return;
+      event.preventDefault();
+      const shouldCancel = holdStartYRef.current - event.clientY >= 84;
+      if (shouldCancel === cancelGestureRef.current) return;
+      cancelGestureRef.current = shouldCancel;
+      setCancelGesture(shouldCancel);
+    };
     const cancel = (event) => {
       if (holdActiveRef.current) handleHoldCancel(event);
     };
     window.addEventListener("pointerup", release);
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointercancel", cancel);
     return () => {
       window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointermove", move);
       window.removeEventListener("pointercancel", cancel);
     };
   }, []);
@@ -253,6 +267,9 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     holdActiveRef.current = true;
+    holdStartYRef.current = Number.isFinite(event.clientY) ? event.clientY : 0;
+    cancelGestureRef.current = false;
+    setCancelGesture(false);
     startVoice();
   }
 
@@ -260,6 +277,14 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     event.preventDefault();
     if (!holdActiveRef.current) return;
     holdActiveRef.current = false;
+    const shouldCancel = cancelGestureRef.current;
+    cancelGestureRef.current = false;
+    setCancelGesture(false);
+    if (shouldCancel) {
+      stopVoice(false);
+      setVoiceMessage("录音已取消。");
+      return;
+    }
     if (voicePhaseRef.current === VoicePhase.LISTENING) {
       stopVoice(true);
       return;
@@ -274,12 +299,16 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     event.preventDefault();
     if (!holdActiveRef.current) return;
     holdActiveRef.current = false;
+    cancelGestureRef.current = false;
+    setCancelGesture(false);
     stopVoice(false);
     setVoiceMessage("录音已取消。");
   }
 
   function closeVoiceOverlay() {
     holdActiveRef.current = false;
+    cancelGestureRef.current = false;
+    setCancelGesture(false);
     stopVoice(false);
     setTranscriptPreview("");
     setVoiceMessage("请在右侧按住说话。");
@@ -361,47 +390,18 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
         )}
       </section>
       {voiceOverlayOpen ? (
-        <div className={`voice-capture-overlay ${listening ? "listening" : preparingVoice ? "preparing" : transcribingVoice ? "processing" : "review"}`} role="dialog" aria-modal="true" aria-label="语音输入">
-          <button type="button" className="voice-overlay-close" onClick={closeVoiceOverlay} aria-label="关闭语音输入"><X size={28} /></button>
-          <div className="voice-overlay-content">
-            {transcriptPreview ? (
-              <>
-                <div className="voice-overlay-mark ready"><MessageCircle size={44} aria-hidden="true" /></div>
-                <div className="voice-overlay-copy">
-                  <span>请确认我听到的内容</span>
-                  <h3>{transcriptPreview}</h3>
-                  <p>文字无误后直接发送；需要修改时重新按住说话。</p>
-                </div>
-                <div className="voice-overlay-actions">
-                  <button
-                    type="button"
-                    className="voice-overlay-rerecord"
-                    onPointerDown={handleHoldStart}
-                    onPointerUp={handleHoldEnd}
-                    onPointerCancel={handleHoldCancel}
-                    onContextMenu={(event) => event.preventDefault()}
-                  ><Mic size={25} />按住重录</button>
-                  <button type="button" className="voice-overlay-send" onClick={() => send(transcriptPreview)} disabled={sending}><Send size={25} />发送给问询助手</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className={`voice-overlay-stage ${listening ? "listening" : preparingVoice ? "preparing" : "processing"}`} aria-hidden="true">
-                  <span className="voice-overlay-pulse pulse-one" />
-                  <span className="voice-overlay-pulse pulse-two" />
-                  {preparingVoice || transcribingVoice
-                    ? <LoaderCircle className="voice-preparing-spinner" size={58} />
-                    : <StrokeDrawIcon icon={Mic} size={64} strokeWidth={1.9} mode="yoyo" />}
-                </div>
-                <div className="voice-overlay-copy">
-                  <span>{preparingVoice ? "正在准备麦克风" : transcribingVoice ? "正在识别语音" : "正在听"}</span>
-                  <h3>{preparingVoice ? "请继续按住，准备完成后再说话" : transcribingVoice ? "请稍候，不需要再次操作" : "现在可以说话，松开即可完成"}</h3>
-                  <p>{voiceMessage}</p>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <WxVoiceRecorderOverlay
+          phase={listening ? "listening" : preparingVoice ? "preparing" : transcribingVoice ? "processing" : "review"}
+          message={voiceMessage}
+          transcript={transcriptPreview}
+          cancelGesture={cancelGesture}
+          sending={sending}
+          onClose={closeVoiceOverlay}
+          onRerecordStart={handleHoldStart}
+          onRerecordEnd={handleHoldEnd}
+          onRerecordCancel={handleHoldCancel}
+          onSend={() => send(transcriptPreview)}
+        />
       ) : null}
     </section>
   );

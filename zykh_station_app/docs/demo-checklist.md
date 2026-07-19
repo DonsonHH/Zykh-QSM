@@ -86,4 +86,6 @@ curl http://127.0.0.1:8000/api/device/check
 - If recognition fails, the Scan page should request manual confirmation rather than filling a fake medicine.
 - If the network is weak or unavailable, records remain local and can be shown as pending sync or not configured.
 - If cloud AI is unavailable, inquiry should use the QSM offline model and report `source=local_llm`.
-- If both cloud and QSM offline model are unavailable, inquiry must still return HTTP 200 with `source=rules_fallback` and emergency safety guidance.
+- If both cloud and QSM offline model are unavailable, inquiry must still return
+  HTTP 200 with `source=ai_unavailable`, emergency safety guidance and no
+  medicine candidate.

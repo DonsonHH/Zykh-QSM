@@ -332,7 +332,7 @@ cd zykh_station_app/frontend && npm run test:motion && npm run build
 
 1. 首页闭环和新架构基线；
 2. 药品页 + 取药确认流程；
-3. 问询页 + AI rules 兜底；
+3. 模型主导问询 + 本地硬性安全边界；
 4. 记录页 + 同步队列；
 5. QSM real/mock 双模式接入验证；
 6. QSM 外设功能联调入口；

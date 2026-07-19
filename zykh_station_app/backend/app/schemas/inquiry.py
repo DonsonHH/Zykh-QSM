@@ -74,7 +74,7 @@ InquiryStage = Literal[
 ]
 InquiryNextAction = Literal["ask", "measure_vitals", "show_recommendation", "escalate", "complete"]
 InquiryMessageRole = Literal["assistant", "user", "system"]
-InquiryModelAction = Literal["ask", "measure_vitals", "analyze"]
+InquiryModelAction = Literal["ask", "measure_vitals", "analyze", "escalate", "end"]
 InquiryActionStatus = Literal["idle", "ready", "opening", "complete", "partial", "failed"]
 
 
@@ -115,7 +115,29 @@ class InquiryMessage(BaseModel):
     created_at: str
 
 
+class InquiryObservation(BaseModel):
+    concept: str = Field(min_length=1, max_length=80)
+    status: Literal["present", "absent", "uncertain"] = "uncertain"
+    evidence: str = Field(default="", max_length=180)
+    source_turn: int = Field(default=0, ge=0)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+
+
+class InquiryHistoryRelationship(BaseModel):
+    related: bool = False
+    similarities: list[str] = Field(default_factory=list)
+    important_changes: list[str] = Field(default_factory=list)
+    should_reuse_previous_conclusion: bool = False
+
+
 class InquiryExtractedInformation(BaseModel):
+    case_summary: str = ""
+    observations: list[InquiryObservation] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    history_relationship: InquiryHistoryRelationship = Field(default_factory=InquiryHistoryRelationship)
+    ai_risk_level: RiskLevel | None = None
+    ai_risk_reasons: list[str] = Field(default_factory=list)
+    ai_available: bool = True
     symptom_dimensions: list[str] = Field(default_factory=list)
     dimension_evidence: dict[str, str] = Field(default_factory=dict)
     symptom_features: list[str] = Field(default_factory=list)
