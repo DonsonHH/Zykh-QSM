@@ -47,7 +47,7 @@ export function InquiryChatStep({
   onSend,
   onReset,
   onReview,
-  onReplyPlaybackComplete,
+  onReplyPlaybackStart,
   networkStatus
 }) {
   const [voicePhase, setVoicePhase] = useState(VoicePhase.IDLE);
@@ -70,6 +70,7 @@ export function InquiryChatStep({
   const holdActiveRef = useRef(false);
   const holdStartYRef = useRef(0);
   const cancelGestureRef = useRef(false);
+  const preservePlaybackOnExitRef = useRef(false);
 
   const preparingVoice = voicePhase === VoicePhase.PREPARING;
   const listening = voicePhase === VoicePhase.LISTENING;
@@ -104,7 +105,7 @@ export function InquiryChatStep({
 
   useEffect(() => () => {
     stopVoice(false);
-    interruptPlayback();
+    if (!preservePlaybackOnExitRef.current) interruptPlayback();
   }, []);
 
   useEffect(() => {
@@ -132,31 +133,29 @@ export function InquiryChatStep({
     };
   }, []);
 
-  async function playReply(text, announceCompletion = false) {
+  async function playReply(text, announceVitals = false) {
     if (!text) return;
     const generation = playbackGenerationRef.current + 1;
     playbackGenerationRef.current = generation;
+    preservePlaybackOnExitRef.current = false;
     window.speechSynthesis?.cancel();
     await stopAudioPlayback().catch(() => null);
     if (generation !== playbackGenerationRef.current) return;
     const mode = isLocalNetworkMode(networkStatus) ? "offline" : "auto";
-    let completed = false;
+    if (announceVitals && session.next_action === "measure_vitals") {
+      preservePlaybackOnExitRef.current = true;
+      onReplyPlaybackStart?.();
+    }
     try {
       const result = await speakText(text, undefined, 1.12, mode);
       if (!result?.ok) throw new Error(result?.message || "语音播报未完成");
-      completed = true;
     } catch {
-      if (generation === playbackGenerationRef.current) completed = await speakLocally(text);
-    }
-    if (generation !== playbackGenerationRef.current) return;
-    if (announceCompletion && completed) {
-      onReplyPlaybackComplete?.();
-    } else if (announceCompletion && session.next_action === "measure_vitals") {
-      notify("语音引导未完成，请点击右上角重播后继续");
+      if (generation === playbackGenerationRef.current) await speakLocally(text);
     }
   }
 
   function interruptPlayback() {
+    preservePlaybackOnExitRef.current = false;
     playbackGenerationRef.current += 1;
     window.speechSynthesis?.cancel();
     stopAudioPlayback().catch(() => null);

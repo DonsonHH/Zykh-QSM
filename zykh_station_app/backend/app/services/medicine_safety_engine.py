@@ -102,7 +102,11 @@ class MedicineSafetyEngine:
         for match in re.finditer(re.escape(term), text):
             prefix = text[max(0, match.start() - 8):match.start()]
             clause = re.split(r"[，。；、,;!?！？]", prefix)[-1]
-            if re.search(r"(?:没有|没|无|否认|未见|不伴|并无)\s*$", clause):
+            if re.search(
+                r"(?:没有|没|无|否认|未见|不伴|并无)"
+                r"(?:什么|明显|持续|大量|严重|出现|发生|看到|发现)?\s*$",
+                clause,
+            ):
                 continue
             return True
         return False

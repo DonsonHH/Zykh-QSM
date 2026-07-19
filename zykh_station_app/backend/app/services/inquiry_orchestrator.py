@@ -124,7 +124,12 @@ class InquiryOrchestrator:
         session.reasoning_summary = interpretation.reasoning_summary
         session.model_action_intent = interpretation.action_intent
         session.action_reason = interpretation.action_reason
-        return self._advance_from_interpretation(session, extracted, interpretation)
+        return self._advance_from_interpretation(
+            session,
+            extracted,
+            interpretation,
+            current_transcript=transcript,
+        )
 
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
@@ -407,6 +412,8 @@ class InquiryOrchestrator:
         session: InquirySessionResponse,
         extracted: InquiryExtractedInformation,
         interpretation: SymptomInterpretation,
+        *,
+        current_transcript: str = "",
     ) -> InquirySessionResponse:
         guard = self.safety_engine.assess_guardrails(
             extracted,
@@ -473,17 +480,19 @@ class InquiryOrchestrator:
                 ),
             )
         if interpretation.action_intent == "end":
-            session.extracted_information = extracted
-            session.risk_level = guard.risk_level
-            session.risk_reasons = guard.risk_reasons
-            session.stage = "result"
-            session.next_action = "complete"
-            session.reply = interpretation.assistant_reply or "本次问询已结束。"
-            session.source = interpretation.source
-            session.reasoning_summary = extracted.case_summary or session.reasoning_summary
-            session.title = self._title(session)
-            self._clear_decision(session)
-            return self._commit(session)
+            if self._is_explicit_end_request(current_transcript):
+                session.extracted_information = extracted
+                session.risk_level = guard.risk_level
+                session.risk_reasons = guard.risk_reasons
+                session.stage = "result"
+                session.next_action = "complete"
+                session.reply = interpretation.assistant_reply or "本次问询已结束。"
+                session.source = interpretation.source
+                session.reasoning_summary = extracted.case_summary or session.reasoning_summary
+                session.title = self._title(session)
+                self._clear_decision(session)
+                return self._commit(session)
+            return self._finish(session, extracted, source=interpretation.source)
         return self._finish(session, extracted, source=interpretation.source)
 
     def _finish(
@@ -566,9 +575,16 @@ class InquiryOrchestrator:
                 else "当前存在高风险信号，本次不展示候选药品，请尽快联系医生或现场协助人员。"
             )
         elif not self._medicine_information_confirmed(extracted):
-            session.stage = "result"
-            session.next_action = "escalate"
-            session.reply = "本次用药或过敏信息尚未确认，可以继续查看健康提示，但暂不生成取药候选。"
+            session.stage = "clarification"
+            session.next_action = "ask"
+            missing = self._missing_medicine_information(extracted)
+            session.reply = (
+                "为了避免和已经使用的药物重复，请问这次不舒服以后有没有用过药？"
+                "如果用过，请说出药名。"
+                if missing == "used_medicines"
+                else "还需要确认一项：你有没有药物过敏，或明确不能使用的药物？"
+            )
+            self._clear_decision(session)
         elif not options:
             if rank_failed or rank_message or not extracted.ai_available:
                 session.stage = "clarification"
@@ -583,8 +599,11 @@ class InquiryOrchestrator:
                 session.reply = empty_message
             else:
                 session.stage = "result"
-                session.next_action = "escalate"
-                session.reply = "当前没有适合这次情况的家庭药品候选，请联系医生或家人协助。"
+                session.next_action = "complete"
+                session.reply = (
+                    "目前更适合先做基础护理和观察，暂时没有需要打开的家庭药柜。"
+                    "如果出现红肿、持续疼痛、发热或症状明显加重，请及时联系医生或家人。"
+                )
         else:
             session.stage = "result"
             session.next_action = "show_recommendation"
@@ -676,6 +695,30 @@ class InquiryOrchestrator:
             and allergy
             and used != "不确定"
             and allergy != "不确定"
+        )
+
+    @staticmethod
+    def _missing_medicine_information(extracted: InquiryExtractedInformation) -> str:
+        used = extracted.used_medicines.strip()
+        if not used or used == "不确定":
+            return "used_medicines"
+        return "allergy_or_contraindication"
+
+    @staticmethod
+    def _is_explicit_end_request(transcript: str) -> bool:
+        text = transcript.strip()
+        return any(
+            phrase in text
+            for phrase in (
+                "不继续了",
+                "先不继续",
+                "结束问询",
+                "结束对话",
+                "不问了",
+                "先这样",
+                "到这里",
+                "退出问询",
+            )
         )
 
     @staticmethod

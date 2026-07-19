@@ -20,12 +20,12 @@ import {
   reviseInquiryInformation,
   sendInquiryTurn
 } from "../api/inquiry.js";
+import { stopAudioPlayback } from "../api/audio.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
 import { InquiryInformationReview } from "../components/InquiryInformationReview.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
-import { InquiryVitalsTransition } from "../components/InquiryVitalsTransition.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
 import {
@@ -79,7 +79,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
-  const vitalsTransitionTimerRef = useRef(null);
+  const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
   const {
     identity: faceIdentity,
@@ -146,7 +146,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      window.clearTimeout(vitalsTransitionTimerRef.current);
+      window.clearTimeout(vitalsLaunchTimerRef.current);
+      stopAudioPlayback().catch(() => null);
     };
   }, []);
 
@@ -263,16 +264,15 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     }
   }
 
-  const handleReplyPlaybackComplete = useCallback(() => {
+  const handleReplyPlaybackStart = useCallback(() => {
     if (!session || session.next_action !== "measure_vitals" || attachingVitals) return;
     const requestKey = `${session.session_id}:${session.updated_at}`;
     if (launchedVitalsRequestRef.current === requestKey) return;
     launchedVitalsRequestRef.current = requestKey;
-    setVitalsFlow("transition");
-    window.clearTimeout(vitalsTransitionTimerRef.current);
-    vitalsTransitionTimerRef.current = window.setTimeout(() => {
+    window.clearTimeout(vitalsLaunchTimerRef.current);
+    vitalsLaunchTimerRef.current = window.setTimeout(() => {
       if (mountedRef.current) setVitalsFlow("measuring");
-    }, 2200);
+    }, 3000);
   }, [attachingVitals, session]);
 
   const handleVitalsComplete = useCallback(async (vitals) => {
@@ -366,7 +366,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setVitalsFlow("chat");
     setAttachingVitals(false);
     launchedVitalsRequestRef.current = "";
-    window.clearTimeout(vitalsTransitionTimerRef.current);
+    window.clearTimeout(vitalsLaunchTimerRef.current);
+    stopAudioPlayback().catch(() => null);
     clearFaceIdentity();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
   }
@@ -457,9 +458,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       </aside> : null}
 
       <section className={`inquiry-flow-card chat-only ${vitalsSubflow ? "vitals-tool-host" : ""}`} aria-label="AI 应急问询流程">
-        {vitalsFlow === "transition" ? (
-          <InquiryVitalsTransition reason={session?.action_reason} />
-        ) : vitalsFlow === "measuring" ? (
+        {vitalsFlow === "measuring" ? (
           <Vitals
             embedded
             notify={notify}
@@ -494,7 +493,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onSend={handleTurn}
             onReset={resetFlow}
             onReview={() => setManualReviewOpen(true)}
-            onReplyPlaybackComplete={handleReplyPlaybackComplete}
+            onReplyPlaybackStart={handleReplyPlaybackStart}
             networkStatus={networkStatus}
           />
         ) : (

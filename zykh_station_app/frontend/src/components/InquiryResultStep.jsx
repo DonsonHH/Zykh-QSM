@@ -42,6 +42,7 @@ export function InquiryResultStep({
   const [selectedOptionId, setSelectedOptionId] = useState(result?.selected_option_id || options[0]?.option_id || "");
   const [countdown, setCountdown] = useState(null);
   const highRisk = ["high", "emergency"].includes(result?.risk_level);
+  const requiresEscalation = highRisk || result?.next_action === "escalate";
   const actionStatus = actionResult?.status || result?.action_status || "idle";
   const actionMessage = actionResult?.message || result?.action_message || "";
   const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
@@ -64,7 +65,7 @@ export function InquiryResultStep({
   const playbackGenerationRef = useRef(0);
 
   useEffect(() => {
-    if (!result?.session_id || (!canProceed && !highRisk)) return;
+    if (!result?.session_id) return;
     const key = `recommendation:${result.session_id}`;
     if (spokenKeysRef.current.has(key)) return;
     spokenKeysRef.current.add(key);
@@ -120,7 +121,7 @@ export function InquiryResultStep({
           {result?.risk_level === "low" ? <ShieldCheck size={38} /> : <AlertTriangle size={38} />}
         </span>
         <div>
-          <h2>{highRisk ? "请优先联系专业人员" : "请选择一个方案"}</h2>
+          <h2>{requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
         </div>
         <div className="treatment-result-meta">
           <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
@@ -166,11 +167,17 @@ export function InquiryResultStep({
             );
           })}
         </div>
-      ) : (
+      ) : requiresEscalation ? (
         <div className="treatment-escalation-panel">
           <AlertTriangle size={50} aria-hidden="true" />
           <strong>{result?.reply || "本次不展示候选方案"}</strong>
           <span>请联系医生、家人或现场协助人员，不要自行新增用药。</span>
+        </div>
+      ) : (
+        <div className="treatment-guidance-panel">
+          <ShieldCheck size={56} aria-hidden="true" />
+          <strong>{result?.reply || "目前更适合先做基础护理和观察。"}</strong>
+          <span>情况发生变化时，可以重新开始问询。</span>
         </div>
       )}
 

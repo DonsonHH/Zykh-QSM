@@ -49,7 +49,7 @@ const checks = [
   [result.includes("buildRecommendationSpeech"), "result does not announce the recommendation"],
   [recommendationSpeech.includes("藿香正气丸") && recommendationSpeech.includes("一次1丸"), "recommendation speech omits medicine or dosage"],
   [page.includes("主要不适") && page.includes("持续时间") && page.includes("体征信息"), "live inquiry summary wording is incomplete"],
-  [page.includes("complaint: extracted.case_summary || evidence[0]"), "live complaint must show one complete primary statement instead of an ellipsized list"],
+  [page.includes("chiefComplaint({"), "live complaint must use the concise chief complaint formatter"],
   [page.includes("symptomDimensionLabel(value)"), "live complaint must use normalized symptom dimensions"],
   [page.includes("showReview") && page.indexOf("showReview ?") < page.indexOf("showResult ?"), "information review must appear before the recommendation result"],
   [chat.includes("onReview") && chat.includes("核对本次问询信息"), "chat header is missing the information review shortcut"],

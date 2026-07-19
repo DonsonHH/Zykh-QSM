@@ -494,6 +494,78 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.treatment_options, [])
         self.assertEqual(interpreter.rank_candidates_seen, [])
 
+    def test_model_end_still_ranks_care_supplies_when_user_did_not_end_the_session(self) -> None:
+        service, interpreter = self.service(
+            [
+                case(
+                    action="end",
+                    concept="手部浅表刀伤",
+                    evidence="手部刀伤不深，出血已经止住",
+                    reply="伤口目前风险较低，注意清洁和覆盖。",
+                    duration="刚发生",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking={
+                "ok": True,
+                "source": "cloud",
+                "options": [
+                    {
+                        "label": "清洁与覆盖",
+                        "reason": "伤口较浅且已经止血，可先完成清洁消毒和覆盖保护。",
+                        "medicine_ids": [
+                            "slot-17-iodophor",
+                            "slot-22-cotton-swab",
+                            "slot-10-gauze",
+                        ],
+                    }
+                ],
+            },
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="手部刀伤不深，出血已经止住，没有用药也没有过敏"),
+        )
+
+        self.assertEqual(result.next_action, "show_recommendation")
+        self.assertTrue(result.can_view_medicines)
+        self.assertEqual(
+            [medicine.id for medicine in result.treatment_options[0].medicines],
+            ["slot-17-iodophor", "slot-22-cotton-swab", "slot-10-gauze"],
+        )
+        self.assertTrue(interpreter.rank_candidates_seen)
+
+    def test_low_risk_without_a_matching_candidate_returns_neutral_care_advice(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微擦伤",
+                    evidence="膝盖表皮轻微擦伤",
+                    duration="刚发生",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking={"ok": True, "source": "cloud", "options": []},
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="膝盖表皮轻微擦伤，没有用药也没有过敏"),
+        )
+
+        self.assertEqual(result.risk_level, "low")
+        self.assertEqual(result.stage, "result")
+        self.assertEqual(result.next_action, "complete")
+        self.assertIn("基础护理", result.reply)
+        self.assertNotIn("不要自行新增用药", result.reply)
+        self.assertFalse(result.can_view_medicines)
+
     def test_hard_emergency_signal_overrides_model_and_skips_it(self) -> None:
         service, interpreter = self.service([case(action="analyze", used="未使用", allergy="无")])
         session = self.create(service)
@@ -555,7 +627,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertTrue(interpreter.rank_candidates_seen)
 
     def test_unknown_allergy_or_current_medicine_blocks_cabinet_candidate(self) -> None:
-        service, _ = self.service(
+        service, interpreter = self.service(
             [
                 case(
                     action="analyze",
@@ -582,7 +654,63 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
 
         self.assertFalse(result.can_view_medicines)
-        self.assertIn("尚未确认", result.reply)
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("用过药", result.reply)
+        self.assertEqual(result.treatment_options, [])
+        self.assertEqual(interpreter.rank_candidates_seen, [])
+
+    def test_missing_allergy_information_is_asked_before_candidate_ranking(self) -> None:
+        service, interpreter = self.service(
+            [
+                case(
+                    action="analyze",
+                    duration="一天",
+                    used="未使用",
+                    allergy="",
+                )
+            ],
+            ranking={
+                "ok": True,
+                "source": "cloud",
+                "options": [{"medicine_ids": ["slot-08-huoxiang-zhengqi"]}],
+            },
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="不舒服一天，这次还没有用药"),
+        )
+
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("过敏", result.reply)
+        self.assertFalse(result.can_view_medicines)
+        self.assertEqual(interpreter.rank_candidates_seen, [])
+
+    def test_negated_massive_bleeding_is_not_treated_as_an_emergency(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="ask",
+                    concept="腿部擦伤",
+                    evidence="腿部轻微擦伤，没有什么大出血",
+                    reply="擦伤处有没有异物或明显肿胀？",
+                )
+            ]
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="腿部有点擦伤，没有什么大出血"),
+        )
+
+        self.assertNotEqual(result.risk_level, "emergency")
+        self.assertEqual(result.next_action, "ask")
 
     def test_displayed_option_is_revalidated_before_opening(self) -> None:
         ranking = {

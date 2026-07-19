@@ -228,6 +228,60 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertNotIn("slot-04-amoxicillin", selected_ids)
         self.assertEqual(options[0].label, "主方案")
 
+    @patch("app.services.ai_service.settings")
+    def test_candidate_ranking_prompt_treats_first_aid_supplies_as_valid_options(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": json.dumps(
+                    {
+                        "summary": "浅表伤口已经止血。",
+                        "options": [
+                            {
+                                "option_id": "primary",
+                                "label": "清洁与覆盖",
+                                "reason": "可先清洁伤口并覆盖保护。",
+                                "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {
+                "case_summary": "手部浅表刀伤，已经止血，无感染迹象。",
+                "risk_level": "low",
+                "used_medicines": "未使用",
+                "allergy_or_contraindication": "无",
+            },
+            [
+                {
+                    "id": "slot-17-iodophor",
+                    "name": "碘伏消毒液",
+                    "category": "外伤护理",
+                    "indications": "用于浅表创面清洁与消毒。",
+                },
+                {
+                    "id": "slot-10-gauze",
+                    "name": "医用纱布敷料",
+                    "category": "外伤护理",
+                    "indications": "用于清洁后的浅表伤口覆盖。",
+                },
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("外伤护理用品", client.last_messages[0]["content"])
+        self.assertIn("不应仅因不需要口服药", client.last_messages[0]["content"])
+        self.assertEqual(result["options"][0]["medicine_ids"], ["slot-17-iodophor", "slot-10-gauze"])
+
 
 if __name__ == "__main__":
     unittest.main()

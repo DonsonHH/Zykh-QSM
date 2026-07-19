@@ -535,6 +535,33 @@
   font-weight: 750;
 }
 
+.treatment-guidance-panel {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  border-radius: 20px;
+  background: #f2f8ff;
+  padding: 28px;
+  color: #2563eb;
+  text-align: center;
+  box-shadow: inset 0 0 0 1px #d7e7fb;
+}
+
+.treatment-guidance-panel strong {
+  max-width: 680px;
+  color: #173b68;
+  font-size: 22px;
+  line-height: 1.45;
+}
+
+.treatment-guidance-panel span {
+  color: #59728f;
+  font-size: 17px;
+  font-weight: 800;
+}
+
 .spin {
   animation: inquiry-treatment-spin 900ms linear infinite;
 }
