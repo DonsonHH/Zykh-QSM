@@ -282,6 +282,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
         )
         self.assertEqual(pending.next_action, "measure_vitals")
+        self.assertIn("额头", pending.reply)
+        self.assertIn("手指", pending.reply)
+        self.assertIn("开始测量", pending.reply)
 
         resumed = service.attach_vitals(
             session.session_id,
@@ -290,7 +293,65 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(resumed.next_action, "ask")
         self.assertEqual(resumed.vitals["spo2"], 98)
+        self.assertEqual(resumed.vitals["status"], "complete")
         self.assertEqual(interpreter.contexts[-1]["vitals"]["heart_rate"], 76)
+        self.assertEqual(resumed.messages[-2].source, "vitals_tool")
+
+    def test_cancelled_vitals_return_to_the_same_ai_session(self) -> None:
+        service, interpreter = self.service(
+            [
+                case(
+                    action="measure_vitals",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="头晕可能需要结合体征确认。",
+                    used="未使用",
+                    allergy="无",
+                ),
+                case(
+                    action="ask",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="没关系，我们继续。头晕是在起身时更明显吗？",
+                    used="未使用",
+                    allergy="无",
+                ),
+            ]
+        )
+        session = self.create(service)
+        service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
+        )
+
+        resumed = service.attach_vitals(
+            session.session_id,
+            InquiryVitalsRequest(status="cancelled"),
+        )
+
+        self.assertEqual(resumed.next_action, "ask")
+        self.assertEqual(resumed.vitals["status"], "cancelled")
+        self.assertEqual(interpreter.contexts[-1]["vitals_event"], "用户取消了本次体征测量，请结合已有信息自然继续问询。")
+        self.assertTrue(any(message.source == "vitals_tool" for message in resumed.messages))
+
+    def test_model_cannot_measure_before_a_complaint_is_understood(self) -> None:
+        interpretation = SymptomInterpretation(
+            assistant_reply="先测一下体征。",
+            action_intent="measure_vitals",
+            action_reason="尚未形成主诉",
+            source="cloud",
+            available=True,
+        )
+        service, _ = self.service([interpretation])
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我不知道怎么说"),
+        )
+
+        self.assertEqual(result.next_action, "ask")
+        self.assertEqual(result.reply, "请先说说现在最明显的不舒服是什么。")
 
     def test_ai_unavailable_never_generates_a_keyword_recommendation(self) -> None:
         unavailable = SymptomInterpretation(

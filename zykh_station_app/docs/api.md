@@ -107,8 +107,12 @@ Adds one speech transcript. The selected cloud or local model reads the full
 conversation, profile, vitals and recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
-fixed symptom taxonomy or fixed field order. A `measure_vitals` action opens the
-existing vitals subpage and then resumes the same model conversation.
+fixed symptom taxonomy, fixed field order or fixed turn count. The model may
+choose `measure_vitals` only after it has formed a meaningful chief complaint
+and only when core vitals materially affect the next decision. The frontend
+finishes the spoken guidance, pauses for 2.2 seconds, then renders the vitals
+tool inside the inquiry flow. It does not navigate away or transfer results
+through browser storage.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool filtered by stock, expiry, OTC eligibility and
@@ -119,7 +123,12 @@ no candidate and does not imitate a model response with keyword rules.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
-Attaches required `temperature`, `heart_rate` and `spo2` to the same inquiry session. Optional blood-pressure, respiratory-rate and HRV values do not block completion.
+Returns one vitals tool event to the same inquiry session. `status=complete`
+requires `temperature`, `heart_rate` and `spo2`; optional blood-pressure,
+respiratory-rate and HRV values do not block completion. `status=failed` and
+`status=cancelled` may omit measurements and include `error_message`. All three
+outcomes resume the same model conversation, while hard-risk checks run before
+the model when complete core vitals are available.
 
 ### POST /api/inquiry/sessions/{session_id}/treatment/confirm
 

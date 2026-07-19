@@ -129,19 +129,27 @@ class InquiryOrchestrator:
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         session = self._required_session(session_id)
         session.vitals = request.model_dump(exclude_none=True)
-        immediate = self.safety_engine.assess_guardrails(
-            session.extracted_information,
-            session.vitals,
+        self.repository.append_message(
+            session_id,
+            "system",
+            self._vitals_event_message(session.vitals),
+            "vitals_tool",
         )
-        if immediate.risk_level in {"high", "emergency"}:
-            return self._finish(
-                session,
+        if request.status == "complete":
+            immediate = self.safety_engine.assess_guardrails(
                 session.extracted_information,
-                source="safety_rules",
-                forced_guard=immediate,
+                session.vitals,
             )
+            if immediate.risk_level in {"high", "emergency"}:
+                return self._finish(
+                    session,
+                    session.extracted_information,
+                    source="safety_rules",
+                    forced_guard=immediate,
+                )
         existing = self._model_context(session)
         existing["vitals"] = session.vitals
+        existing["vitals_event"] = self._vitals_event_message(session.vitals)
         resume = getattr(self.interpreter, "resume_after_vitals", None)
         interpretation = (
             resume(existing, self._model_profile(session))
@@ -419,12 +427,26 @@ class InquiryOrchestrator:
             session.reply = interpretation.assistant_reply
             self._clear_decision(session)
             return self._commit(session)
-        if interpretation.action_intent == "measure_vitals" and not session.vitals:
+        if (
+            interpretation.action_intent == "measure_vitals"
+            and not self._has_complete_vitals(session)
+            and self._has_meaningful_complaint(extracted)
+        ):
             session.stage = "vitals"
             session.next_action = "measure_vitals"
-            session.reply = (
+            session.reply = self._vitals_guidance(
                 interpretation.assistant_reply
-                or "这项信息会影响本次判断，请先测量额温、心率和血氧。"
+                or "这项信息会影响本次判断，需要测量额温、心率和血氧。"
+            )
+            self._clear_decision(session)
+            return self._commit(session)
+        if interpretation.action_intent == "measure_vitals":
+            session.stage = "clarification"
+            session.next_action = "ask"
+            session.reply = (
+                "请先说说现在最明显的不舒服是什么。"
+                if not self._has_meaningful_complaint(extracted)
+                else "本次核心体征已经记录，请继续说说症状目前有什么变化。"
             )
             self._clear_decision(session)
             return self._commit(session)
@@ -641,6 +663,47 @@ class InquiryOrchestrator:
             and allergy
             and used != "不确定"
             and allergy != "不确定"
+        )
+
+    @staticmethod
+    def _has_meaningful_complaint(extracted: InquiryExtractedInformation) -> bool:
+        if extracted.case_summary.strip():
+            return True
+        return any(
+            item.status == "present" and bool(item.evidence.strip())
+            for item in extracted.observations
+        )
+
+    @staticmethod
+    def _has_complete_vitals(session: InquirySessionResponse) -> bool:
+        vitals = session.vitals or {}
+        status = str(vitals.get("status") or "complete")
+        return bool(
+            status == "complete"
+            and vitals.get("temperature")
+            and vitals.get("heart_rate")
+            and vitals.get("spo2")
+        )
+
+    @staticmethod
+    def _vitals_guidance(reply: str) -> str:
+        base = reply.strip().rstrip("。！？!?")
+        operation = "请将额头对准屏幕上方，并把手指平稳放在感应区。准备好后点击开始测量。"
+        if "额头" in base and "手指" in base and "开始测量" in base:
+            return f"{base}。"
+        return f"{base}。{operation}" if base else operation
+
+    @staticmethod
+    def _vitals_event_message(vitals: dict[str, object]) -> str:
+        status = str(vitals.get("status") or "complete")
+        if status == "cancelled":
+            return "用户取消了本次体征测量，请结合已有信息自然继续问询。"
+        if status == "failed":
+            detail = str(vitals.get("error_message") or "设备未获得完整读数")
+            return f"本次体征测量未完成：{detail}。请结合已有信息自然继续问询。"
+        return (
+            f"体征测量完成：额温 {vitals.get('temperature')}℃，"
+            f"心率 {vitals.get('heart_rate')}次/分，血氧 {vitals.get('spo2')}%。"
         )
 
     @staticmethod

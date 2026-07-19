@@ -24,17 +24,32 @@ import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
 import { WxVoiceRecorderOverlay } from "./WxVoiceRecorderOverlay.jsx";
 
 function speakLocally(text) {
-  if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return false;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-CN";
-  utterance.rate = 1.08;
-  utterance.pitch = 1;
-  window.speechSynthesis.speak(utterance);
-  return true;
+  return new Promise((resolve) => {
+    if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+      resolve(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 1.08;
+    utterance.pitch = 1;
+    utterance.onend = () => resolve(true);
+    utterance.onerror = () => resolve(false);
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
-export function InquiryChatStep({ session, sending, notify, onSend, onReset, onReview, networkStatus }) {
+export function InquiryChatStep({
+  session,
+  sending,
+  notify,
+  onSend,
+  onReset,
+  onReview,
+  onReplyPlaybackComplete,
+  networkStatus
+}) {
   const [voicePhase, setVoicePhase] = useState(VoicePhase.IDLE);
   const [voiceMessage, setVoiceMessage] = useState("请在右侧按住说话。");
   const [localPending, setLocalPending] = useState("");
@@ -81,7 +96,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
       if (index >= reply.length) {
         window.clearInterval(timer);
         setStreaming(false);
-        playReply(reply);
+        playReply(reply, true);
       }
     }, 42);
     return () => window.clearInterval(timer);
@@ -117,7 +132,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     };
   }, []);
 
-  async function playReply(text) {
+  async function playReply(text, announceCompletion = false) {
     if (!text) return;
     const generation = playbackGenerationRef.current + 1;
     playbackGenerationRef.current = generation;
@@ -125,10 +140,19 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
     await stopAudioPlayback().catch(() => null);
     if (generation !== playbackGenerationRef.current) return;
     const mode = isLocalNetworkMode(networkStatus) ? "offline" : "auto";
+    let completed = false;
     try {
-      await speakText(text, undefined, 1.12, mode);
+      const result = await speakText(text, undefined, 1.12, mode);
+      if (!result?.ok) throw new Error(result?.message || "语音播报未完成");
+      completed = true;
     } catch {
-      if (generation === playbackGenerationRef.current) speakLocally(text);
+      if (generation === playbackGenerationRef.current) completed = await speakLocally(text);
+    }
+    if (generation !== playbackGenerationRef.current) return;
+    if (announceCompletion && completed) {
+      onReplyPlaybackComplete?.();
+    } else if (announceCompletion && session.next_action === "measure_vitals") {
+      notify("语音引导未完成，请点击右上角重播后继续");
     }
   }
 
@@ -259,7 +283,7 @@ export function InquiryChatStep({ session, sending, notify, onSend, onReset, onR
   }
 
   function replay() {
-    playReply(session.reply || "");
+    playReply(session.reply || "", session.next_action === "measure_vitals");
   }
 
   function handleHoldStart(event) {

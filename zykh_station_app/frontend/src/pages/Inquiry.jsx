@@ -25,13 +25,14 @@ import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
 import { InquiryInformationReview } from "../components/InquiryInformationReview.jsx";
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
+import { InquiryVitalsTransition } from "../components/InquiryVitalsTransition.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
-  INQUIRY_DRAFT_KEY,
-  INQUIRY_VITALS_AWAITING_KEY
+  INQUIRY_DRAFT_KEY
 } from "../utils/inquirySession.js";
+import { Vitals } from "./Vitals.jsx";
 import "../styles/inquiry-actions.css";
 
 function readJson(key) {
@@ -72,9 +73,13 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const [resultConfirmed, setResultConfirmed] = useState(false);
   const [revisingResult, setRevisingResult] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
+  const [vitalsFlow, setVitalsFlow] = useState("chat");
+  const [attachingVitals, setAttachingVitals] = useState(false);
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
+  const vitalsTransitionTimerRef = useRef(null);
+  const launchedVitalsRequestRef = useRef("");
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
@@ -143,6 +148,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      window.clearTimeout(vitalsTransitionTimerRef.current);
     };
   }, []);
 
@@ -202,27 +208,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       });
   }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    const awaiting = window.sessionStorage.getItem(INQUIRY_VITALS_AWAITING_KEY);
-    const vitals = readJson("zykh-latest-vitals");
-    if (awaiting !== sessionId || !vitals || vitals.status !== "complete") return;
-    window.sessionStorage.removeItem(INQUIRY_VITALS_AWAITING_KEY);
-    attachInquiryVitals(sessionId, {
-      temperature: vitals.temperature,
-      heart_rate: vitals.heart_rate,
-      spo2: vitals.spo2,
-      systolic_pressure: vitals.systolic_pressure || null,
-      diastolic_pressure: vitals.diastolic_pressure || null,
-      respiratory_rate: vitals.respiratory_rate || null,
-      hrv_sdnn: vitals.hrv_sdnn || null,
-      hrv_rmssd: vitals.hrv_rmssd || null,
-      measured_at: vitals.measured_at || new Date().toISOString()
-    })
-      .then(handleSessionUpdate)
-      .catch((error) => notify(error.message || "体征信息未能写入本次问询"));
-  }, [sessionId]);
-
   function refreshUsers() {
     return loadServiceUsers().then((data) => setServiceUsers(data.users || [])).catch(() => setServiceUsers([]));
   }
@@ -274,12 +259,67 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       setRevisingResult(false);
       setManualReviewOpen(false);
     }
-    if (data.next_action === "measure_vitals") {
-      window.sessionStorage.removeItem("zykh-latest-vitals");
-      window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, data.session_id);
-      window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 700);
+    if (data.next_action !== "measure_vitals") {
+      setVitalsFlow("chat");
+      launchedVitalsRequestRef.current = "";
     }
   }
+
+  const handleReplyPlaybackComplete = useCallback(() => {
+    if (!session || session.next_action !== "measure_vitals" || attachingVitals) return;
+    const requestKey = `${session.session_id}:${session.updated_at}`;
+    if (launchedVitalsRequestRef.current === requestKey) return;
+    launchedVitalsRequestRef.current = requestKey;
+    setVitalsFlow("transition");
+    window.clearTimeout(vitalsTransitionTimerRef.current);
+    vitalsTransitionTimerRef.current = window.setTimeout(() => {
+      if (mountedRef.current) setVitalsFlow("measuring");
+    }, 2200);
+  }, [attachingVitals, session]);
+
+  const handleVitalsComplete = useCallback(async (vitals) => {
+    if (!sessionId || attachingVitals) return;
+    setAttachingVitals(true);
+    try {
+      const updated = await attachInquiryVitals(sessionId, {
+        status: "complete",
+        temperature: vitals.temperature,
+        heart_rate: vitals.heart_rate,
+        spo2: vitals.spo2,
+        systolic_pressure: vitals.systolic_pressure || null,
+        diastolic_pressure: vitals.diastolic_pressure || null,
+        respiratory_rate: vitals.respiratory_rate || null,
+        hrv_sdnn: vitals.hrv_sdnn || null,
+        hrv_rmssd: vitals.hrv_rmssd || null,
+        measured_at: vitals.measured_at || new Date().toISOString()
+      });
+      setVitalsFlow("chat");
+      handleSessionUpdate(updated);
+    } catch (error) {
+      notify(error.message || "体征信息未能写入本次问询");
+    } finally {
+      setAttachingVitals(false);
+    }
+  }, [attachingVitals, notify, sessionId]);
+
+  const handleVitalsExit = useCallback(async (outcome) => {
+    if (!sessionId || attachingVitals) return;
+    setAttachingVitals(true);
+    try {
+      const updated = await attachInquiryVitals(sessionId, {
+        status: outcome?.status === "failed" ? "failed" : "cancelled",
+        error_message: outcome?.error_message || "",
+        measured_at: new Date().toISOString()
+      });
+      setVitalsFlow("chat");
+      handleSessionUpdate(updated);
+    } catch (error) {
+      setVitalsFlow("chat");
+      notify(error.message || "已返回问询，体征状态暂未写入");
+    } finally {
+      setAttachingVitals(false);
+    }
+  }, [attachingVitals, notify, sessionId]);
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
     if (!sessionId || openingTreatmentRef.current) return;
@@ -325,6 +365,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setOpeningTreatment(false);
     openingTreatmentRef.current = false;
     setTreatmentAction(null);
+    setVitalsFlow("chat");
+    setAttachingVitals(false);
+    launchedVitalsRequestRef.current = "";
+    window.clearTimeout(vitalsTransitionTimerRef.current);
     clearFaceIdentity();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
   }
@@ -345,14 +389,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
           ...information,
           finalize: resultReady
         });
-        setSession(updated);
+        handleSessionUpdate(updated);
         setRevisingResult(false);
         setResultConfirmed(updated.stage === "result");
-        if (updated.next_action === "measure_vitals") {
-          window.sessionStorage.removeItem("zykh-latest-vitals");
-          window.sessionStorage.setItem(INQUIRY_VITALS_AWAITING_KEY, updated.session_id);
-          window.setTimeout(() => onNavigate("vitals", { returnTo: "inquiry" }), 500);
-        } else if (updated.stage !== "result") {
+        if (updated.next_action !== "measure_vitals" && updated.stage !== "result") {
           notify("修正内容已保存，请继续问询");
         }
       } catch (error) {
@@ -376,9 +416,11 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     if (resultReady) setRevisingResult(true);
   }
 
+  const vitalsSubflow = vitalsFlow !== "chat";
+
   return (
-    <main className="inquiry-page conversation-layout" id="main-content">
-      <aside className="inquiry-context-panel" aria-label="使用人信息">
+    <main className={`inquiry-page conversation-layout ${vitalsSubflow ? "vitals-subflow" : ""}`} id="main-content">
+      {!vitalsSubflow ? <aside className="inquiry-context-panel" aria-label="使用人信息">
         <section className="inquiry-user-card dynamic">
           <div className="context-heading user-context-heading">
             <UserRound size={26} aria-hidden="true" />
@@ -414,10 +456,19 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             </section>
           </div>
         </section>
-      </aside>
+      </aside> : null}
 
-      <section className="inquiry-flow-card chat-only" aria-label="AI 应急问询流程">
-        {!identityConfirmed ? (
+      <section className={`inquiry-flow-card chat-only ${vitalsSubflow ? "vitals-tool-host" : ""}`} aria-label="AI 应急问询流程">
+        {vitalsFlow === "transition" ? (
+          <InquiryVitalsTransition reason={session?.action_reason} />
+        ) : vitalsFlow === "measuring" ? (
+          <Vitals
+            embedded
+            notify={notify}
+            onComplete={handleVitalsComplete}
+            onExit={handleVitalsExit}
+          />
+        ) : !identityConfirmed ? (
           <InquiryIdentityGate candidate={candidateUser} status={faceIdentityStatus} onConfirm={confirmIdentity} onRetry={retryIdentity} onRequestGuest={confirmGuestInquiry} />
         ) : showReview ? (
           <InquiryInformationReview
@@ -445,6 +496,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onSend={handleTurn}
             onReset={resetFlow}
             onReview={() => setManualReviewOpen(true)}
+            onReplyPlaybackComplete={handleReplyPlaybackComplete}
             networkStatus={networkStatus}
           />
         ) : (

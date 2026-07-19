@@ -252,9 +252,12 @@ class AiService:
             "完整阅读 conversation、profile、vitals 和 recent_history；历史只用于比较，"
             "不得直接复用上次结论。每轮只问一个真正影响理解或安全的缺失信息，禁止固定字段顺序和重复追问。"
             "next_action 只能是 ask、measure_vitals、analyze、escalate、end。"
-            "需要额温、心率、血氧才能判断时选择 measure_vitals；信息足够时选择 analyze；"
+            "先从用户原话中形成明确主诉；主诉尚未明确时不得选择 measure_vitals。"
+            "主诉明确后，如果额温、心率和血氧会实质影响下一步判断，选择 measure_vitals；"
+            "不要按固定轮数触发，也不要为了收集数据而测量。信息足够时选择 analyze；"
             "出现明显危险信号时选择 escalate。risk_level 只能是 low、medium、high、emergency。"
-            "assistant_reply 是直接给用户的一句自然回应；ask 时包含一个问题，其他动作不强行追问。"
+            "assistant_reply 是直接给用户的一句自然回应；ask 时包含一个问题；"
+            "measure_vitals 时用一句自然中文解释为什么本次需要测量，不要继续追问。"
             "history_relationship.should_reuse_previous_conclusion 必须为 false。"
         )
         user_prompt = json.dumps(
@@ -709,6 +712,7 @@ class AiService:
             "n=ask|measure_vitals|analyze|escalate|end；q=下一问；r=给用户的自然回复；"
             "k=low|medium|high|emergency；g=风险信号数组；c=0到1。"
             "先读known.c和known.h，不重复已回答问题；每轮最多问一件真正影响安全或理解的事。"
+            "先形成明确主诉；只有体征会实质影响判断时才用measure_vitals，不按固定轮数触发。"
             "概念按用户实际表达自由概括，证据来自用户对话。历史只比较，不复用旧结论。"
         )
 

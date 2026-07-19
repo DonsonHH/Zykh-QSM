@@ -21,12 +21,21 @@ const activePhases = new Set(["starting", "waiting_finger", "stabilizing"]);
 const baseMeasurementSeconds = 18;
 const extendedMeasurementSeconds = 30;
 
-export function Vitals({ onNavigate, returnPage = "home", notify }) {
+export function Vitals({
+  onNavigate,
+  returnPage = "home",
+  notify,
+  embedded = false,
+  onComplete,
+  onExit
+}) {
   const [phase, setPhase] = useState("idle");
   const [sessionId, setSessionId] = useState("");
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const requestIdRef = useRef(0);
+  const completionReportedRef = useRef(false);
+  const completionTimerRef = useRef(null);
   const measuring = activePhases.has(phase);
   const elapsedSeconds = Number(result?.elapsed_seconds || 0);
 
@@ -62,17 +71,19 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
     };
   }, [phase, sessionId]);
 
+  useEffect(() => {
+    if (!embedded || phase !== "complete" || !coreComplete || completionReportedRef.current) {
+      return undefined;
+    }
+    completionReportedRef.current = true;
+    completionTimerRef.current = window.setTimeout(() => onComplete?.(result), 1800);
+    return () => window.clearTimeout(completionTimerRef.current);
+  }, [coreComplete, embedded, onComplete, phase, result]);
+
   function applySession(data) {
     setResult(data);
     setPhase(data.status || "failed");
     setErrorMessage(data.error_message || "");
-    if (data.status === "complete" && hasCoreVitals(data)) {
-      try {
-        window.sessionStorage.setItem("zykh-latest-vitals", JSON.stringify(data));
-      } catch {
-        // Session storage is optional.
-      }
-    }
   }
 
   async function handleMeasure() {
@@ -82,6 +93,7 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
     setSessionId("");
     setResult(null);
     setErrorMessage("");
+    completionReportedRef.current = false;
     try {
       const data = await startVitalsSession();
       if (requestId !== requestIdRef.current) return;
@@ -99,20 +111,34 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
     }
   }
 
-  async function handleCancel() {
+  async function handleCancel({ exit = embedded } = {}) {
+    window.clearTimeout(completionTimerRef.current);
     requestIdRef.current += 1;
     const currentSession = sessionId;
     setPhase("cancelled");
     if (currentSession) {
-      cancelVitalsSession(currentSession).catch(() => undefined);
+      await cancelVitalsSession(currentSession).catch(() => undefined);
     }
     setSessionId("");
     setResult(null);
     setErrorMessage("");
+    if (exit) onExit?.({ status: "cancelled" });
   }
 
-  function handleBack() {
-    onNavigate(returnPage === "inquiry" ? "inquiry" : "home");
+  async function handleBack() {
+    window.clearTimeout(completionTimerRef.current);
+    if (embedded) {
+      if (measuring) {
+        await handleCancel({ exit: true });
+        return;
+      }
+      onExit?.({
+        status: phase === "failed" ? "failed" : "cancelled",
+        error_message: errorMessage || result?.error_message || ""
+      });
+      return;
+    }
+    onNavigate?.(returnPage === "inquiry" ? "inquiry" : "home");
   }
 
   function handlePrimaryAction() {
@@ -133,14 +159,16 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
       ? returnPage === "inquiry" ? "返回问询" : "返回上一页"
       : phase === "failed" || phase === "cancelled" ? "重新测量" : "开始测量";
 
+  const Root = embedded ? "section" : "main";
+
   return (
-    <main className="vitals-page" id="main-content">
+    <Root className={`vitals-page ${embedded ? "embedded" : ""}`} id={embedded ? undefined : "main-content"}>
       <section className="vitals-guide-panel">
         <div className="vitals-page-heading">
           <button className="vitals-back-button" type="button" onClick={handleBack} aria-label="返回上一页" title="返回">
             <ArrowLeft size={25} aria-hidden="true" />
           </button>
-          <h2>{measuring ? status.title : phase === "complete" ? "测量结果" : "身体状态测量"}</h2>
+          <h2>{measuring ? status.title : phase === "complete" ? "测量结果" : embedded ? "AI问询 · 体征测量" : "身体状态测量"}</h2>
         </div>
 
         <div className={`vitals-visual-guide ${measuring ? "measuring" : phase}`}>
@@ -210,7 +238,7 @@ export function Vitals({ onNavigate, returnPage = "home", notify }) {
           />
         )}
       </section>
-    </main>
+    </Root>
   );
 }
 

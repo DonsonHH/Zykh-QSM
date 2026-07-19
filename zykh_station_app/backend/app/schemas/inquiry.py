@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 RiskLevel = Literal["low", "medium", "high", "emergency"]
@@ -96,15 +96,25 @@ class InquiryInformationRevisionRequest(BaseModel):
 
 
 class InquiryVitalsRequest(BaseModel):
-    temperature: float = Field(gt=0, lt=50)
-    heart_rate: int = Field(gt=0, lt=260)
-    spo2: int = Field(gt=0, le=100)
+    status: Literal["complete", "failed", "cancelled"] = "complete"
+    temperature: float | None = Field(default=None, gt=0, lt=50)
+    heart_rate: int | None = Field(default=None, gt=0, lt=260)
+    spo2: int | None = Field(default=None, gt=0, le=100)
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None
     hrv_sdnn: int | None = None
     hrv_rmssd: int | None = None
     measured_at: str = ""
+    error_message: str = Field(default="", max_length=240)
+
+    @model_validator(mode="after")
+    def require_core_vitals_when_complete(self) -> "InquiryVitalsRequest":
+        if self.status == "complete" and (
+            self.temperature is None or self.heart_rate is None or self.spo2 is None
+        ):
+            raise ValueError("测量完成时必须包含额温、心率和血氧。")
+        return self
 
 
 class InquiryMessage(BaseModel):
