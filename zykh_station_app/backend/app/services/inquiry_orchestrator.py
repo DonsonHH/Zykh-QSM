@@ -422,9 +422,10 @@ class InquiryOrchestrator:
                 forced_guard=guard,
             )
         if not interpretation.available:
-            session.stage = "escalated"
-            session.next_action = "escalate"
-            session.reply = interpretation.assistant_reply
+            session.stage = "clarification"
+            session.next_action = "ask"
+            session.reply = "连接有些不稳定，刚才的内容已经保留。请再说一次最后这句话，我会从这里继续。"
+            session.model_action_intent = "ask"
             self._clear_decision(session)
             return self._commit(session)
         if (
@@ -569,13 +570,20 @@ class InquiryOrchestrator:
             session.next_action = "escalate"
             session.reply = "本次用药或过敏信息尚未确认，可以继续查看健康提示，但暂不生成取药候选。"
         elif not options:
-            session.stage = "result"
-            session.next_action = "escalate"
-            if empty_message:
+            if rank_failed or rank_message or not extracted.ai_available:
+                session.stage = "clarification"
+                session.next_action = "ask"
+                session.reply = (
+                    "分析连接有些不稳定，本次信息已经保留。"
+                    "请稍后说“继续分析”，我会从这里重新尝试。"
+                )
+            elif empty_message:
+                session.stage = "result"
+                session.next_action = "escalate"
                 session.reply = empty_message
-            elif rank_failed or rank_message or not extracted.ai_available:
-                session.reply = "智能问询当前暂不可用，本次不会生成取药候选。"
             else:
+                session.stage = "result"
+                session.next_action = "escalate"
                 session.reply = "当前没有适合这次情况的家庭药品候选，请联系医生或家人协助。"
         else:
             session.stage = "result"
@@ -603,6 +611,11 @@ class InquiryOrchestrator:
         if include_current_transcript:
             messages.append({"role": "user", "content": include_current_transcript})
         context = session.extracted_information.model_dump()
+        context["symptoms_text"] = self._chief_complaint(
+            session.extracted_information.observations,
+            session.extracted_information.symptoms_text,
+            include_current_transcript,
+        )
         context.update(
             {
                 "current_stage": session.stage,
@@ -786,10 +799,10 @@ class InquiryOrchestrator:
             clarification_answers={},
             asked_clarifications=[],
             pending_clarification="",
-            symptoms_text=(
-                InquiryOrchestrator._append_text(current.symptoms_text, transcript)
-                if transcript
-                else current.symptoms_text
+            symptoms_text=InquiryOrchestrator._chief_complaint(
+                observations,
+                current.symptoms_text,
+                transcript,
             ),
             duration=interpretation.duration or current.duration,
             used_medicines=interpretation.used_medicines or current.used_medicines,
@@ -800,6 +813,26 @@ class InquiryOrchestrator:
             ),
             confidence=max(current.confidence, interpretation.confidence),
         )
+
+    @staticmethod
+    def _chief_complaint(observations, current: str, transcript: str) -> str:
+        for observation in observations:
+            if observation.status != "present":
+                continue
+            concept = " ".join(str(observation.concept or "").split()).strip()
+            if concept:
+                for separator in ("、", "；", "，", ","):
+                    concept = concept.split(separator, 1)[0]
+                return concept[:24]
+
+        fallback = str(current or transcript or "").strip()
+        for separator in ("、", "；", "，", "。", ",", ".", "！", "？"):
+            fallback = fallback.split(separator, 1)[0]
+        for prefix in ("我感觉", "我觉得", "我有一点", "我有点", "有一点", "有点"):
+            if fallback.startswith(prefix):
+                fallback = fallback[len(prefix) :].strip()
+                break
+        return fallback[:24]
 
     @staticmethod
     def _clear_decision(session: InquirySessionResponse) -> None:

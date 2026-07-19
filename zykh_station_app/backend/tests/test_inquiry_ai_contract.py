@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -25,7 +26,138 @@ class FakeLocalClient:
         return self.reply
 
 
+class FakeHttpResponse:
+    def __init__(self, payload: dict):
+        self.body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return self.body
+
+
 class InquiryAiContractTest(unittest.TestCase):
+    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_cloud_inquiry_retries_once_after_a_transient_timeout(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+        _mocked_local_mode,
+    ) -> None:
+        mocked_settings.ai_mode = "cloud"
+        mocked_settings.ai_api_key = "test-key"
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        mocked_settings.ai_api_base = "https://api.deepseek.com/chat/completions"
+        mocked_settings.ai_model = "deepseek-v4-flash"
+        mocked_settings.ai_inquiry_timeout_seconds = 45
+        mocked_settings.ai_inquiry_attempt_timeout_seconds = 12
+        mocked_settings.ai_inquiry_max_attempts = 2
+        mocked_settings.ai_inquiry_retry_delay_seconds = 0
+        mocked_urlopen.side_effect = [
+            TimeoutError("read timed out"),
+            FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "case_summary": "头晕、流清鼻涕持续半天。",
+                                        "observations": [],
+                                        "next_action": "ask",
+                                        "assistant_reply": "请问有没有发热或呼吸不适？",
+                                        "risk_level": "low",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            },
+                        }
+                    ]
+                }
+            ),
+        ]
+        local_client = FakeLocalClient({"ok": False, "error_message": "local unavailable"})
+
+        result = AiService(local_client=local_client).extract_inquiry_information(
+            "大概半天左右",
+            {"conversation_turns": 2, "conversation": []},
+            {"name": "张三", "age": 65},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "cloud")
+        self.assertEqual(result["next_action"], "ask")
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        self.assertEqual(local_client.last_messages, [])
+
+    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_cloud_inquiry_retries_once_after_an_invalid_json_completion(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+        _mocked_local_mode,
+    ) -> None:
+        mocked_settings.ai_mode = "cloud"
+        mocked_settings.ai_api_key = "test-key"
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        mocked_settings.ai_api_base = "https://api.deepseek.com/chat/completions"
+        mocked_settings.ai_model = "deepseek-v4-flash"
+        mocked_settings.ai_inquiry_timeout_seconds = 45
+        mocked_settings.ai_inquiry_attempt_timeout_seconds = 12
+        mocked_settings.ai_inquiry_max_attempts = 2
+        mocked_settings.ai_inquiry_retry_delay_seconds = 0
+        mocked_urlopen.side_effect = [
+            FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": '{"case_summary":"头晕'},
+                        }
+                    ]
+                }
+            ),
+            FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": (
+                                    "<think>忽略这里</think>\n```json\n"
+                                    '{"case_summary":"头晕半天","observations":[],'
+                                    '"next_action":"measure_vitals",'
+                                    '"assistant_reply":"需要测量额温、心率和血氧。",'
+                                    '"risk_level":"medium"}\n```'
+                                )
+                            },
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        result = AiService(
+            local_client=FakeLocalClient({"ok": False, "error_message": "local unavailable"})
+        ).extract_inquiry_information(
+            "头晕半天",
+            {"conversation_turns": 1, "conversation": []},
+            {"name": "张三", "age": 65},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["next_action"], "measure_vitals")
+        self.assertEqual(mocked_urlopen.call_count, 2)
+
     @patch("app.services.ai_service.settings")
     def test_local_model_uses_open_case_schema_instead_of_classification_codes(self, mocked_settings) -> None:
         mocked_settings.ai_mode = "local"

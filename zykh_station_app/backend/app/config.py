@@ -179,6 +179,13 @@ class Settings:
     }
     ai_chat_timeout_seconds: float = float(_env("AI_CHAT_TIMEOUT_SECONDS", "35"))
     ai_inquiry_timeout_seconds: float = float(_env("AI_INQUIRY_TIMEOUT_SECONDS", "45"))
+    ai_inquiry_attempt_timeout_seconds: float = float(
+        _env("AI_INQUIRY_ATTEMPT_TIMEOUT_SECONDS", "12")
+    )
+    ai_inquiry_max_attempts: int = int(_env("AI_INQUIRY_MAX_ATTEMPTS", "2"))
+    ai_inquiry_retry_delay_seconds: float = float(
+        _env("AI_INQUIRY_RETRY_DELAY_SECONDS", "0.25")
+    )
     inquiry_spo2_emergency_below: float = float(_env("INQUIRY_SPO2_EMERGENCY_BELOW", "90"))
     inquiry_spo2_high_max: float = float(_env("INQUIRY_SPO2_HIGH_MAX", "93"))
     inquiry_temperature_high_at: float = float(_env("INQUIRY_TEMPERATURE_HIGH_AT", "39"))

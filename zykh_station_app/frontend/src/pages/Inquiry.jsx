@@ -27,6 +27,7 @@ import { InquiryInformationReview } from "../components/InquiryInformationReview
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { InquiryVitalsTransition } from "../components/InquiryVitalsTransition.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
+import { chiefComplaint } from "../utils/inquiryFacts.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
@@ -117,12 +118,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     const dimensions = (extracted.symptom_dimensions || [])
       .map((value) => symptomDimensionLabel(value))
       .filter(Boolean);
-    const evidence = observations
-      .map((item) => item.evidence)
-      .filter(Boolean);
-    const concepts = observations
-      .map((item) => item.concept)
-      .filter(Boolean);
     const vitals = session?.vitals || {};
     const temperature = Number(vitals.temperature) > 0 ? `${Number(vitals.temperature).toFixed(1)}℃` : "待测";
     const heartRate = Number(vitals.heart_rate) > 0 ? `${Number(vitals.heart_rate)}` : "待测";
@@ -134,7 +129,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         ? "本次已用药"
         : extracted.used_medicines || "尚未确认";
     return {
-      complaint: extracted.case_summary || evidence[0] || concepts[0] || dimensions[0] || "等待描述",
+      complaint: chiefComplaint({
+        ...extracted,
+        symptom_dimensions: dimensions
+      }).replace("尚未说明", "等待描述"),
       duration: extracted.duration || "尚未确认",
       medicine: medicineText,
       allergy: allergy || "尚未确认",

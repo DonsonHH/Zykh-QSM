@@ -176,6 +176,39 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.reply, "这种情况是每次起身都会出现，还是偶尔一次？")
         self.assertEqual(result.extracted_information.observations[0].concept, "体位变化相关不适")
 
+    def test_main_complaint_stays_concise_instead_of_accumulating_every_answer(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="ask",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="这种情况持续多久了？",
+                ),
+                case(
+                    action="ask",
+                    concept="头晕",
+                    evidence="头晕持续半天",
+                    reply="有没有恶心或站立不稳？",
+                    duration="半天",
+                ),
+            ]
+        )
+        session = self.create(service)
+
+        first = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="有点头晕，流清鼻涕"),
+        )
+        second = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="大概半天左右"),
+        )
+
+        self.assertEqual(first.extracted_information.symptoms_text, "头晕")
+        self.assertEqual(second.extracted_information.symptoms_text, "头晕")
+        self.assertNotIn("半天", second.extracted_information.symptoms_text)
+
     def test_reviewed_information_still_honors_the_model_next_action(self) -> None:
         service, interpreter = self.service(
             [
@@ -353,7 +386,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.next_action, "ask")
         self.assertEqual(result.reply, "请先说说现在最明显的不舒服是什么。")
 
-    def test_ai_unavailable_never_generates_a_keyword_recommendation(self) -> None:
+    def test_ai_unavailable_keeps_the_session_retryable_without_generating_candidates(self) -> None:
         unavailable = SymptomInterpretation(
             available=False,
             source="ai_unavailable",
@@ -368,7 +401,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryTurnRequest(transcript="我中暑头晕"),
         )
 
-        self.assertEqual(result.next_action, "escalate")
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("再说一次", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
 
@@ -402,7 +437,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.treatment_options, [])
         self.assertEqual(interpreter.rank_candidates_seen, [])
 
-    def test_candidate_ranking_failure_is_not_reported_as_no_matching_medicine(self) -> None:
+    def test_candidate_ranking_failure_keeps_the_session_retryable(self) -> None:
         service, _ = self.service(
             [
                 case(
@@ -425,8 +460,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryTurnRequest(transcript="有点不舒服半天，没用药，没有过敏"),
         )
 
-        self.assertEqual(result.next_action, "escalate")
-        self.assertIn("智能问询当前暂不可用", result.reply)
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("继续分析", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
 

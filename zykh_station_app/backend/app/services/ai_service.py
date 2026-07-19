@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import socket
+import time
 from collections.abc import Iterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -12,6 +14,9 @@ from urllib.request import Request, urlopen
 from .. import db
 from ..config import settings
 from .local_ai_client import LocalAiClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class AiService:
@@ -311,30 +316,24 @@ class AiService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.25,
-            "max_tokens": 520,
+            "temperature": 0.15,
+            "max_tokens": 900,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
         self._apply_provider_options(payload, enable_thinking=False)
-        request = Request(
-            settings.ai_api_base,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+        parsed, cloud_error = self._request_json_completion(
+            payload,
+            key,
+            purpose="inquiry_extract",
         )
-        try:
-            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            return self._extract_inquiry_local(transcript, existing, profile, f"云端提取失败：{exc}。")
-        parsed = self._parse_json_content(self._extract_message_text(data))
         if not isinstance(parsed, dict):
-            return self._extract_inquiry_local(transcript, existing, profile, "云端未返回有效结构。")
+            return self._extract_inquiry_local(
+                transcript,
+                existing,
+                profile,
+                f"云端问询失败：{cloud_error or '未返回有效结构'}。",
+            )
         return {"ok": True, "source": "cloud", **parsed}
 
     def rank_inquiry_candidates(
@@ -375,38 +374,23 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
-            "max_tokens": 520,
+            "max_tokens": 700,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
         self._apply_provider_options(payload, enable_thinking=False)
-        request = Request(
-            settings.ai_api_base,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+        parsed, cloud_error = self._request_json_completion(
+            payload,
+            key,
+            purpose="inquiry_rank",
         )
-        try:
-            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            parsed = self._parse_json_content(self._extract_message_text(data))
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            return self._rank_inquiry_candidates_local(
-                system_prompt,
-                user_prompt,
-                f"云端排序失败：{exc}。",
-            )
         return (
             {"ok": True, "source": "cloud", **parsed}
             if isinstance(parsed, dict)
             else self._rank_inquiry_candidates_local(
                 system_prompt,
                 user_prompt,
-                "云端排序未返回有效结构。",
+                f"云端排序失败：{cloud_error or '未返回有效结构'}。",
             )
         )
 
@@ -490,31 +474,22 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.35,
-            "max_tokens": 420,
+            "max_tokens": 520,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
         self._apply_provider_options(payload, enable_thinking=False)
-        request = Request(
-            settings.ai_api_base,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
+        parsed, cloud_error = self._request_json_completion(
+            payload,
+            key,
+            purpose="inquiry_explain",
         )
-        try:
-            with urlopen(request, timeout=settings.ai_inquiry_timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            parsed = self._parse_json_content(self._extract_message_text(data))
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        if not isinstance(parsed, dict):
             return self._generate_recommendation_local(
                 system_prompt,
                 user_prompt,
                 option_ids,
-                f"云端说明生成失败：{exc}。",
+                f"云端说明生成失败：{cloud_error or '未返回有效结构'}。",
             )
         return self._normalize_recommendation_language(parsed, option_ids, "cloud")
 
@@ -1110,6 +1085,69 @@ class AiService:
         if enable_thinking:
             payload["enable_thinking"] = True
 
+    def _request_json_completion(
+        self,
+        payload: dict[str, Any],
+        key: str,
+        *,
+        purpose: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        max_attempts = max(1, min(int(settings.ai_inquiry_max_attempts), 3))
+        attempt_timeout = max(
+            2.0,
+            min(
+                float(settings.ai_inquiry_attempt_timeout_seconds),
+                float(settings.ai_inquiry_timeout_seconds),
+            ),
+        )
+        retry_delay = max(0.0, min(float(settings.ai_inquiry_retry_delay_seconds), 2.0))
+        errors: list[str] = []
+        retryable_http_codes = {408, 409, 425, 429, 500, 502, 503, 504}
+
+        for attempt in range(1, max_attempts + 1):
+            request = Request(
+                settings.ai_api_base,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+            retryable = True
+            try:
+                with urlopen(request, timeout=attempt_timeout) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                parsed = self._parse_json_content(self._extract_message_text(data))
+                if isinstance(parsed, dict):
+                    return parsed, ""
+                choice = (
+                    (data.get("choices") or [{}])[0]
+                    if isinstance(data.get("choices"), list)
+                    else {}
+                )
+                finish_reason = str(choice.get("finish_reason") or "").strip()
+                errors.append(
+                    "返回内容被截断"
+                    if finish_reason == "length"
+                    else "返回结构无法解析"
+                )
+            except HTTPError as exc:
+                retryable = exc.code in retryable_http_codes
+                errors.append(f"HTTP {exc.code}")
+            except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                errors.append(self._compact_error(exc))
+
+            if not retryable or attempt >= max_attempts:
+                break
+            if retry_delay:
+                time.sleep(retry_delay * attempt)
+
+        error = "；".join(dict.fromkeys(errors)) or "未知错误"
+        logger.warning("AI structured completion failed purpose=%s error=%s", purpose, error)
+        return None, error
+
     @staticmethod
     def _extract_message_text(data: dict[str, Any]) -> str:
         choice = (data.get("choices") or [{}])[0] if isinstance(data.get("choices"), list) else {}
@@ -1134,21 +1172,29 @@ class AiService:
         text = (content or "").strip()
         if not text:
             return None
-        if text.startswith("```"):
-            text = text.removeprefix("```json").removeprefix("```").strip()
-            if text.endswith("```"):
-                text = text[:-3].strip()
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+        fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            text = fenced.group(1).strip()
         try:
             parsed = json.loads(text)
             return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             pass
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", text):
             try:
-                parsed = json.loads(text[start : end + 1])
+                parsed, _end = decoder.raw_decode(text[match.start() :])
                 return parsed if isinstance(parsed, dict) else None
             except json.JSONDecodeError:
-                return None
+                continue
         return None
+
+    @staticmethod
+    def _compact_error(exc: BaseException) -> str:
+        detail = re.sub(r"\s+", " ", str(exc or "")).strip()
+        if isinstance(exc, TimeoutError) or "timed out" in detail.lower():
+            return "读取超时"
+        if isinstance(exc, json.JSONDecodeError):
+            return "响应不是有效 JSON"
+        return detail[:120] or exc.__class__.__name__

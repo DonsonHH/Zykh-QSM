@@ -77,12 +77,12 @@ class SymptomInterpreter:
         if not payload.get("ok"):
             return SymptomInterpretation(
                 assistant_reply=(
-                    "智能问询当前暂不可用。本次不会生成用药候选；"
-                    "如有胸痛、呼吸困难、意识异常或明显加重，请立即联系医生。"
+                    "连接有些不稳定，刚才的内容已经保留。"
+                    "请再说一次最后这句话，我会从这里继续。"
                 ),
                 reasoning_summary=str(payload.get("message") or "云端与本地问询模型均未返回有效内容。")[:180],
-                action_intent="escalate",
-                action_reason="智能问询服务不可用",
+                action_intent="ask",
+                action_reason="智能问询服务发生暂时性故障，等待重试",
                 source="ai_unavailable",
                 available=False,
             )

@@ -11,6 +11,7 @@ import {
   Thermometer,
   UserRound
 } from "lucide-react";
+import { chiefComplaint } from "../utils/inquiryFacts.js";
 
 const AUTO_CONFIRM_SECONDS = 10;
 
@@ -147,13 +148,8 @@ function ReviewVital({ icon: Icon, label, value }) {
 }
 
 function buildFacts(extracted) {
-  const observations = (extracted.observations || [])
-    .filter((item) => item?.status === "present");
-  const evidence = observations.map((item) => item.evidence).filter(Boolean);
-  const concepts = observations.map((item) => item.concept).filter(Boolean);
-  const dimensions = (extracted.symptom_dimensions || []).filter(Boolean);
   return {
-    complaint: extracted.case_summary || evidence.join("、") || concepts.join("、") || dimensions.join("、") || "尚未说明",
+    complaint: chiefComplaint(extracted),
     duration: extracted.duration || "尚未说明",
     usedMedicines: extracted.used_medicines || "尚未说明",
     allergy: extracted.allergy_or_contraindication || "尚未说明"

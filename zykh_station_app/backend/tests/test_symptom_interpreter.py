@@ -132,7 +132,8 @@ class SymptomInterpreterTest(unittest.TestCase):
 
         self.assertFalse(result.available)
         self.assertEqual(result.source, "ai_unavailable")
-        self.assertEqual(result.action_intent, "escalate")
+        self.assertEqual(result.action_intent, "ask")
+        self.assertIn("再说一次", result.assistant_reply)
         self.assertEqual(result.observations, [])
         self.assertEqual(result.symptom_dimensions, [])
 
