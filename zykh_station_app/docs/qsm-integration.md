@@ -175,7 +175,7 @@ QSM camera proxy methods live in `services/qsm_camera_service.py`. Normal identi
 
 Fingerprint calls use `services/qsm_fingerprint_client.py`. The AS608 module stores fingerprint templates; SQLite stores only `template_id -> service_user_id`, last-seen time and match score. Existing board templates are never treated as identities unless they have a local binding. IDs 0-15 are reserved by default so the verified pre-existing board template is not overwritten.
 
-The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Online mode streams PCM to Qwen realtime ASR. Local mode buffers one user-controlled utterance, converts it to float PCM and sends the complete request to the resident QSM Paraformer service on board port `6006` (host forward `18084`). Capture gain changes are forwarded to the QSM `Mic` mixer control.
+The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway. It auto-detects the ALSA `FF Camera`/`Camera` card and exposes real `S16_LE`, 16 kHz, mono PCM. The host ASR websocket consumes that stream directly, so browser microphone permissions and a host microphone are not required. Online mode streams PCM to Qwen realtime ASR. Local mode buffers one user-controlled utterance, converts it to float PCM and sends the complete request to the resident QSM Paraformer service on board port `6006` (host forward `18084`). Capture gain changes are forwarded to the QSM `Mic` mixer control. When the host closes a recording stream, the gateway now terminates its child `arecord` process immediately; a cancelled or failed request cannot retain the microphone for the former 600-second capture limit.
 
 The speaker has two low-latency playback paths. Online Qwen realtime TTS writes 24 kHz PCM deltas to board port `19001` as they arrive. Offline TTS is synthesized on the host with the local Sherpa-ONNX model and then writes 22.05 kHz PCM to the same QSM playback stream. The QSM board no longer loads a TTS model or exposes a board-local TTS service on `19002`; its compute is reserved for ASR and the offline inquiry model.
 
@@ -255,7 +255,8 @@ Inquiry AI follows this order:
 - when the key is missing, connectivity fails or the cloud request errors, call Qwen3.5 through QSM llama.cpp on port `8083`;
 - if the offline model is also unavailable or returns invalid output, expose no
   candidate, retain emergency hard-guard behavior and return a natural retry
-  prompt without showing transport or fallback terminology.
+  prompt without showing transport or fallback terminology. The local path does
+  not use character-similarity or keyword scoring to invent a candidate.
 
 When heat exposure or suspected heat illness is mentioned, the online request
 also includes current Chengdu weather from Open-Meteo as supporting context.

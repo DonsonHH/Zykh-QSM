@@ -287,7 +287,7 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertNotIn("risk_level", result)
 
     @patch("app.services.ai_service.settings")
-    def test_local_inquiry_extraction_has_a_strict_short_completion_budget(self, mocked_settings) -> None:
+    def test_local_inquiry_extraction_uses_a_small_but_complete_json_budget(self, mocked_settings) -> None:
         mocked_settings.ai_mode = "local"
         mocked_settings.ai_api_key = ""
         mocked_settings.ai_api_key_file = Path("/nonexistent")
@@ -317,11 +317,44 @@ class AiServiceOfflineTest(unittest.TestCase):
             {"age": 65},
         )
 
-        self.assertEqual(client.last_kwargs["max_tokens"], 40)
+        self.assertEqual(client.last_kwargs["max_tokens"], 72)
         self.assertLess(len(client.last_messages[0]["content"]), 520)
         self.assertIn('"f"', client.last_messages[1]["content"])
         self.assertEqual(result["observations"][0]["concept"], "暑热后头晕")
         self.assertEqual(result["next_question"], "有没有恶心或腹泻？")
+
+    @patch("app.services.ai_service.settings")
+    def test_local_inquiry_recovers_complete_facts_from_a_truncated_outer_object(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": (
+                    '{"summary":"头晕脑胀伴冷汗","facts":['
+                    '{"concept":"头晕脑胀","status":"present","evidence":"我有点头晕脑胀"},'
+                    '{"concept":"冷汗","status":"present","evidence":"还冒冷汗"}],'
+                    '"action":"ask",'
+                ),
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我有点头晕脑胀，还冒冷汗",
+            {"conversation_turns": 1, "conversation": []},
+            {"age": 65},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [item["concept"] for item in result["observations"]],
+            ["头晕脑胀", "冷汗"],
+        )
+        self.assertEqual(result["next_question"], "这种不舒服大概持续多久了？")
 
     @patch("app.services.ai_service.settings")
     def test_local_inquiry_prompt_names_the_field_answered_by_a_short_reply(self, mocked_settings) -> None:
@@ -438,8 +471,8 @@ class AiServiceOfflineTest(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
-        self.assertEqual(result["next_question"], result["assistant_reply"])
+        self.assertFalse(result["ok"])
+        self.assertIn("换一种说法", result["message"])
 
     @patch("app.services.ai_service.settings")
     def test_local_model_cannot_repeat_the_opening_after_extracting_a_complaint(

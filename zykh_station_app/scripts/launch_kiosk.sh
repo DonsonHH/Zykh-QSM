@@ -608,9 +608,13 @@ if [ "$KIOSK_OFFLINE_AI" = "1" ]; then
   else
     warn "未找到离线模型检查脚本。"
   fi
-  log "后台预热离线问询缓存..."
-  curl -sS --max-time 90 -X POST "$BACKEND_URL/api/ai/warm-local" \
-    >"$RUN_DIR/local-ai-warmup.log" 2>&1 &
+  log "预热离线问询缓存..."
+  if curl -sS --max-time 90 -X POST "$BACKEND_URL/api/ai/warm-local" \
+    >"$RUN_DIR/local-ai-warmup.log" 2>&1; then
+    log "离线问询缓存预热完成。"
+  else
+    warn "离线问询缓存预热未完成；应用仍会继续启动。"
+  fi
 fi
 start_frontend_if_needed
 set_kiosk_resolution

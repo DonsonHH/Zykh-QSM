@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import re
 import socket
 import time
-from collections import Counter
 from collections.abc import Iterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -430,10 +428,293 @@ class AiService:
         try:
             payload = json.loads(user_prompt)
         except json.JSONDecodeError:
-            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+            return {
+                "ok": False,
+                "source": "ai_unavailable",
+                "message": "离线模型排序输入无效。",
+            }
         context = payload.get("case") if isinstance(payload.get("case"), dict) else {}
         candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
-        return self._local_semantic_candidate_selection(context, candidates)
+        if not context or not candidates:
+            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+
+        compact_case = {
+            "s": str(context.get("case_summary") or "")[:80],
+            "f": [
+                {
+                    "c": str(item.get("concept") or "")[:28],
+                    "v": str(item.get("status") or "present")[:10],
+                    "e": str(item.get("evidence") or "")[:48],
+                }
+                for item in context.get("observations") or []
+                if isinstance(item, dict)
+            ][:4],
+            "d": str(context.get("duration") or "")[:32],
+            "m": str(context.get("used_medicines") or "")[:36],
+            "a": str(context.get("allergy_or_contraindication") or "")[:44],
+            "r": str(context.get("risk_level") or "")[:12],
+        }
+        if len(candidates) > 6:
+            narrowed = self._local_candidate_category_pool(compact_case, candidates)
+            if narrowed is None:
+                return {
+                    "ok": False,
+                    "source": "ai_unavailable",
+                    "message": "离线模型暂未完成候选类别理解。",
+                }
+            if not narrowed:
+                return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+            candidates = narrowed
+        catalog: dict[str, list[list[str]]] = {}
+        for candidate in candidates:
+            if not str(candidate.get("id") or "").strip():
+                continue
+            category = str(candidate.get("category") or "其他")[:12]
+            catalog.setdefault(category, []).append(
+                [
+                    str(candidate.get("name") or "")[:16],
+                    str(candidate.get("indications") or "")[:42],
+                ]
+            )
+        compact_catalog = [[category, items] for category, items in catalog.items()]
+        system_prompt = (
+            "你是家庭康护问询的候选理解助手。安全程序已过滤库存、有效期、OTC和绝对禁忌。"
+            "只从候选中选择与case直接相关的用品；不相关就返回空，不要因一个相似字硬选。"
+            "最多两个方案，每个最多三个药品；备选不是同时使用。浅表伤口可按清洁、消毒、覆盖顺序组合。"
+            "只输出一行：主方案写A=后接catalog中的药品名称，再写逗号和简短原因；"
+            "有备选时继续写分号和B=。名称必须原样复制。没有合适候选只输出NONE。不要输出剂量。"
+        )
+        compact_prompt = json.dumps(
+            # Catalog first maximizes llama.cpp prompt-cache reuse across
+            # inquiry sessions; only the trailing case changes per user.
+            {"catalog": compact_catalog, "case": compact_case},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        result = self.local_client.chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": compact_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=32,
+        )
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "source": "ai_unavailable",
+                "message": "离线模型暂未完成候选排序。",
+            }
+        reply = str(result.get("reply") or "")
+        line_options = self._parse_local_rank_line(reply, candidates)
+        if line_options is not None:
+            return {
+                "ok": True,
+                "source": "local_llm",
+                "summary": "",
+                "options": line_options,
+            }
+        parsed = self._parse_json_content(reply)
+        if not isinstance(parsed, dict):
+            # A small local model can hit its output limit after the closing
+            # array but before the outer JSON brace. Recover the complete
+            # scalar fields and key array without inventing any field.
+            option_match = re.search(
+                r"\{\s*\"label\"\s*:\s*\"(?P<label>[^\"]*)\".*?"
+                r"\"reason\"\s*:\s*\"(?P<reason>[^\"]*)\".*?"
+                r"\"medicine_(?:keys|ids)\"\s*:\s*\[(?P<keys>[^\]]*)\]",
+                reply,
+                flags=re.DOTALL,
+            )
+            if option_match:
+                parsed = {
+                    "options": [
+                        {
+                            "label": option_match.group("label"),
+                            "reason": option_match.group("reason"),
+                            "medicine_keys": re.findall(
+                                r'"([^"\r\n]+)"', option_match.group("keys")
+                            ),
+                        }
+                    ]
+                }
+            else:
+                parsed = None
+        if not isinstance(parsed, dict):
+            return {
+                "ok": False,
+                "source": "ai_unavailable",
+                "message": "离线模型未返回可解析的候选排序。",
+            }
+        if "options" not in parsed and any(
+            key in parsed for key in ("medicine_ids", "medicine_keys", "ids", "i")
+        ):
+            parsed = {"options": [parsed]}
+        raw_options = parsed.get("options")
+        if not isinstance(raw_options, list):
+            raw_options = parsed.get("o") if isinstance(parsed.get("o"), list) else []
+        allowed_ids = {str(item.get("id") or "").strip() for item in candidates}
+        key_to_id: dict[str, str] = {}
+        for item in candidates:
+            medicine_id = str(item.get("id") or "").strip()
+            slot = str(item.get("slot") or "").strip()
+            if not medicine_id:
+                continue
+            key_to_id[medicine_id] = medicine_id
+            if slot:
+                key_to_id[slot] = medicine_id
+                key_to_id[f"slot-{slot}"] = medicine_id
+        options: list[dict[str, Any]] = []
+        for raw in raw_options[:2]:
+            if not isinstance(raw, dict):
+                continue
+            raw_ids = raw.get("medicine_ids")
+            if not isinstance(raw_ids, list):
+                raw_ids = raw.get("medicine_keys")
+            if not isinstance(raw_ids, list):
+                raw_ids = raw.get("ids") if isinstance(raw.get("ids"), list) else raw.get("i")
+            if not isinstance(raw_ids, list):
+                continue
+            medicine_ids = list(
+                dict.fromkeys(
+                    key_to_id.get(str(value or "").strip(), "")
+                    for value in raw_ids[:3]
+                    if key_to_id.get(str(value or "").strip(), "") in allowed_ids
+                )
+            )
+            if not medicine_ids:
+                continue
+            usage = raw.get("usage_by_medicine")
+            usage = usage if isinstance(usage, dict) else raw.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            options.append(
+                {
+                    "option_id": "primary" if not options else "alternative",
+                    "label": str(raw.get("label") or ("主方案" if not options else "备选方案")),
+                    "reason": str(raw.get("reason") or raw.get("r") or "").strip(),
+                    "medicine_ids": medicine_ids,
+                    "usage_by_medicine": usage,
+                }
+            )
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "summary": str(parsed.get("summary") or parsed.get("s") or "").strip()[:120],
+            "options": options,
+        }
+
+    def _local_candidate_category_pool(
+        self,
+        compact_case: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        categories = list(
+            dict.fromkeys(
+                str(candidate.get("category") or "").strip()
+                for candidate in candidates
+                if str(candidate.get("category") or "").strip()
+            )
+        )
+        if not categories:
+            return None
+        result = self.local_client.chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "根据case从categories中选择最多两个直接相关类别。"
+                        "只回复类别名，用逗号分隔；无明确不适或无相关类别只回复NONE。不要解释。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"case": compact_case, "categories": categories},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            temperature=0.0,
+            max_tokens=16,
+        )
+        if not result.get("ok"):
+            return None
+        reply = str(result.get("reply") or "").strip()
+        if re.match(r"^(?:NONE|无|没有合适)", reply, flags=re.IGNORECASE):
+            return []
+        selected = [category for category in categories if category in reply][:2]
+        if not selected:
+            return None
+        return [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("category") or "").strip() in selected
+        ]
+
+    @staticmethod
+    def _parse_local_rank_line(
+        reply: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        text = re.sub(r"\s+", " ", str(reply or "")).strip()
+        if not text:
+            return None
+        if re.match(r"^(?:NONE|无|没有合适)", text, flags=re.IGNORECASE):
+            return []
+        key_to_id: dict[str, str] = {}
+        name_to_id: dict[str, str] = {}
+        for item in candidates:
+            medicine_id = str(item.get("id") or "").strip()
+            slot = str(item.get("slot") or "").strip()
+            if medicine_id and slot:
+                key_to_id[slot] = medicine_id
+            name = str(item.get("name") or "").strip()
+            if medicine_id and name:
+                name_to_id[name] = medicine_id
+        options: list[dict[str, Any]] = []
+        matches = list(
+            re.finditer(
+                r"(?:^|[;；])\s*([AB])\s*=\s*(.*?)(?=(?:[;；]\s*[AB]\s*=)|$)",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+        for match in matches:
+            segment = match.group(2).strip()
+            names = [name for name in name_to_id if name in segment][:3]
+            medicine_ids = [name_to_id[name] for name in names]
+            if not medicine_ids:
+                numeric_prefix = re.match(
+                    r"([0-9]+(?:\s*[,，]\s*[0-9]+){0,2})",
+                    segment,
+                )
+                keys = (
+                    re.split(r"\s*[,，]\s*", numeric_prefix.group(1))
+                    if numeric_prefix
+                    else []
+                )
+                medicine_ids = [key_to_id[key] for key in keys if key in key_to_id]
+            medicine_ids = list(
+                dict.fromkeys(medicine_ids)
+            )
+            if not medicine_ids:
+                continue
+            option_name = match.group(1).upper()
+            reason = segment
+            for name in names:
+                reason = reason.replace(name, "")
+            reason = re.sub(r"^[\s,，|｜:：-]+", "", reason).strip()
+            options.append(
+                {
+                    "option_id": "primary" if option_name == "A" else "alternative",
+                    "label": "主方案" if option_name == "A" else "备选方案",
+                    "reason": reason[:40],
+                    "medicine_ids": medicine_ids,
+                    "usage_by_medicine": {},
+                }
+            )
+        return options[:2] if options else None
 
     def generate_inquiry_recommendation(self, context: dict[str, Any]) -> dict[str, Any]:
         """Explain already-approved options without allowing the model to alter them."""
@@ -721,12 +1002,32 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=40,
+            max_tokens=72,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
             return self._local_continuity_result(transcript, existing, reason)
-        parsed = self._parse_json_content(str(result.get("reply") or ""))
+        raw_reply = str(result.get("reply") or "")
+        parsed = self._parse_json_content(raw_reply)
+        if not isinstance(parsed, dict) or not any(
+            key in parsed
+            for key in (
+                "summary",
+                "s",
+                "facts",
+                "f",
+                "duration",
+                "du",
+                "used_medicines",
+                "m",
+                "allergy",
+                "a",
+                "action",
+                "n",
+            )
+        ):
+            recovered = self._recover_local_inquiry_prefix(raw_reply)
+            parsed = recovered if isinstance(recovered, dict) else parsed
         if not isinstance(parsed, dict):
             return self._local_continuity_result(transcript, existing, reason)
         expanded = self._expand_local_inquiry(
@@ -736,19 +1037,31 @@ class AiService:
             suppress_observations=self._is_contextual_answer(transcript, answer_target),
         )
         self._apply_contextual_answer(expanded, transcript, answer_target, existing)
+        has_extracted_context = any(
+            str(expanded.get(field) or "").strip()
+            for field in (
+                "case_summary",
+                "duration",
+                "used_medicines",
+                "allergy_or_contraindication",
+            )
+        )
+        if not expanded.get("observations") and not has_extracted_context:
+            return self._local_continuity_result(transcript, existing, "离线模型未提取到明确病例信息。")
         self._complete_local_inquiry(expanded, existing)
         return {"ok": True, "source": "local_llm", **expanded}
 
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
         return (
-            "你是家庭健康问询助手，不诊断、不选药、不控硬件。"
-            "只理解said本轮新增信息，不重写known。"
-            "只输出一行最小JSON，省略未变化键；可用n、q、f、du、m、a。"
-            "n只能ask、measure_vitals、analyze、escalate、end；q只问一件事；"
-            "f最多2项，每项是主诉、present或absent、用户原话。"
-            "target是上一问要回答的字段；没有、还没、不清楚要填target，不能当新症状。"
-            "主诉明确且体征必要时才measure_vitals。"
+            "你是家庭康护问询信息整理器。只依据本轮said和known继续自然问询；语音可能有同音错字。"
+            "不要诊断、选药或控硬件。只输出一行JSON对象，键为summary、facts、action、question、"
+            "duration、used_medicines、allergy。facts元素的键为concept、status、evidence；"
+            "status只能是present、absent或uncertain，action只能是ask、measure_vitals、analyze、escalate或end。"
+            "facts最多2项；summary和concept必须写said中的具体不适，禁止输出字段说明或占位词。"
+            "said有两个明确不适就分别整理；否定词后的内容只能absent；字段没有新信息就留空。"
+            "question必须紧扣本轮具体不适且只问一件事，不得复制无关问题。"
+            "没有不适时facts=[]并询问哪里不舒服；主诉明确且体征有帮助时才measure_vitals。"
         )
 
     @classmethod
@@ -766,31 +1079,39 @@ class AiService:
             return payload
         observations: list[dict[str, Any]] = []
         raw_facts = [] if suppress_observations else (
-            payload.get("f") if isinstance(payload.get("f"), list) else []
+            payload.get("f")
+            if isinstance(payload.get("f"), list)
+            else payload.get("facts") if isinstance(payload.get("facts"), list) else []
         )
         for item in raw_facts:
             if isinstance(item, dict):
                 concept = str(item.get("concept") or item.get("c") or "").strip()
                 status = str(item.get("status") or item.get("s") or "uncertain").strip()
                 evidence = str(item.get("evidence") or item.get("e") or "").strip()
-                source_turn = item.get("source_turn") or item.get("t") or 0
+                item_source_turn = item.get("source_turn") or item.get("t") or source_turn
                 confidence = item.get("confidence") or item.get("p") or 0
             elif isinstance(item, list) and item:
                 concept = str(item[0] or "").strip()
                 status = str(item[1] if len(item) > 1 else "uncertain").strip()
                 evidence = str(item[2] if len(item) > 2 else "").strip()
-                source_turn = item[3] if len(item) > 3 else 0
+                item_source_turn = item[3] if len(item) > 3 else source_turn
                 confidence = item[4] if len(item) > 4 else 0
             else:
                 continue
             if not concept:
                 continue
+            if evidence in {"用户原话", "原话", "said"}:
+                evidence = cls._compact_text(transcript, 100)
+            else:
+                evidence = re.sub(r"^(?:said|用户原话)\s*[:：]\s*", "", evidence).strip()
+            if status == "absent" and not cls._contains_negation(evidence):
+                status = "present"
             observations.append(
                 {
                     "concept": concept,
                     "status": status,
                     "evidence": evidence,
-                    "source_turn": source_turn,
+                    "source_turn": item_source_turn,
                     "confidence": confidence,
                 }
             )
@@ -824,22 +1145,13 @@ class AiService:
                     "confidence": payload.get("c") or 0.65,
                 }
             )
-        if not observations and transcript and not suppress_observations:
-            concept = cls._local_complaint_concept(
-                str(payload.get("s") or ""),
-                transcript,
-            )
-            observations.append(
-                {
-                    "concept": concept,
-                    "status": "present",
-                    "evidence": cls._compact_text(transcript, 100),
-                    "source_turn": source_turn,
-                    "confidence": payload.get("c") or 0.55,
-                }
-            )
         return {
-            "case_summary": str(payload.get("s") or payload.get("case_summary") or "").strip(),
+            "case_summary": str(
+                payload.get("s")
+                or payload.get("summary")
+                or payload.get("case_summary")
+                or ""
+            ).strip(),
             "observations": observations,
             "uncertainties": payload.get("u") if isinstance(payload.get("u"), list) else [],
             "history_relationship": payload.get("h") if isinstance(payload.get("h"), dict) else {},
@@ -847,11 +1159,13 @@ class AiService:
             "used_medicines": str(
                 payload.get("m")
                 or payload.get("used_medicines")
+                or payload.get("medicines")
                 or payload.get("medications_taken")
                 or ""
             ).strip(),
             "allergy_or_contraindication": str(
                 payload.get("a")
+                or payload.get("allergy")
                 or payload.get("allergy_or_contraindication")
                 or payload.get("allergies")
                 or ""
@@ -868,7 +1182,12 @@ class AiService:
                 or ""
             ).strip(),
             "reason": str(payload.get("x") or "").strip(),
-            "next_action": str(payload.get("n") or payload.get("next_action") or "ask").strip(),
+            "next_action": str(
+                payload.get("n")
+                or payload.get("action")
+                or payload.get("next_action")
+                or "ask"
+            ).strip(),
             "risk_level": str(payload.get("k") or payload.get("risk_level") or "low").strip(),
             "risk_signals": (
                 payload.get("g")
@@ -1080,13 +1399,9 @@ class AiService:
         value = re.sub(r"(?:吗|呢)$", "", value)
         return cls._compact_text(value, 28)
 
-    @classmethod
-    def _local_complaint_concept(cls, summary: str, transcript: str) -> str:
-        value = cls._compact_text(summary, 40)
-        value = re.sub(r"^(?:用户|患者)(?:描述|表示|出现)?", "", value)
-        value = re.sub(r"(?:症状)?(?:需|需要).*$", "", value)
-        value = re.sub(r"(?:可能|疑似|考虑)", "", value).strip("，。； ")
-        return cls._compact_text(value or transcript.rstrip("。！？!?"), 28)
+    @staticmethod
+    def _contains_negation(value: str) -> bool:
+        return bool(re.search(r"(?:没有|无|未见|不伴|并无|不是|否认|没|未)\s*", value or ""))
 
     @staticmethod
     def _question_repeats_known_complaint(
@@ -1111,120 +1426,12 @@ class AiService:
         existing: dict[str, Any],
         diagnostic_reason: str,
     ) -> dict[str, Any]:
-        concept = cls._compact_text(transcript.rstrip("。！？!?"), 28)
-        expanded = cls._expand_local_inquiry(
-            {
-                "s": concept,
-                "d": [concept] if concept else [],
-                "n": "ask",
-                "k": "low",
-                "c": 0.35,
-            },
-            transcript=transcript,
-            source_turn=max(1, int(existing.get("conversation_turns") or 1)),
-            suppress_observations=cls._is_contextual_answer(
-                transcript,
-                cls._pending_answer_target(existing),
-            ),
-        )
-        cls._apply_contextual_answer(
-            expanded,
-            transcript,
-            cls._pending_answer_target(existing),
-            existing,
-        )
-        cls._complete_local_inquiry(expanded, existing)
         return {
-            "ok": True,
+            "ok": False,
             "source": "assistant",
+            "message": "刚才没有听清或整理出明确的不适，请换一种说法再说一次。",
             "diagnostic_note": diagnostic_reason,
-            **expanded,
         }
-
-    @classmethod
-    def _local_semantic_candidate_selection(
-        cls,
-        context: dict[str, Any],
-        candidates: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        observations = [
-            str(item.get("concept") or "")
-            for item in context.get("observations") or []
-            if isinstance(item, dict) and str(item.get("status") or "present") == "present"
-        ]
-        case_text = " ".join(
-            [
-                str(context.get("case_summary") or ""),
-                *observations,
-            ]
-        ).strip()
-        if not case_text or not candidates:
-            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
-
-        documents = [
-            cls._semantic_terms(
-                " ".join(
-                    str(candidate.get(key) or "")
-                    for key in ("name", "category", "indications", "safety_note")
-                )
-            )
-            for candidate in candidates
-        ]
-        document_frequency = Counter(term for document in documents for term in document)
-        query = Counter(cls._semantic_terms(case_text, unique=False))
-        total = len(documents)
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for candidate, document in zip(candidates, documents):
-            score = sum(
-                count
-                * (4 if len(term) == 2 else 1)
-                * (math.log((total + 1) / (document_frequency[term] + 1)) + 1) ** 2
-                for term, count in query.items()
-                if term in document
-            )
-            if score > 0:
-                scored.append((score, candidate))
-        scored.sort(key=lambda item: (-item[0], int(item[1].get("slot") or 99)))
-        if not scored or scored[0][0] < 8:
-            return {"ok": True, "source": "local_llm", "summary": case_text[:80], "options": []}
-
-        selected = [scored[0]]
-        if len(scored) > 1 and scored[1][0] >= max(8, scored[0][0] * 0.42):
-            selected.append(scored[1])
-        options = []
-        complaint = observations[0] if observations else case_text[:24]
-        for index, (_score, candidate) in enumerate(selected):
-            name = str(candidate.get("name") or "这一选择")
-            reason = (
-                f"根据你描述的{complaint}，{name}的说明更贴近本次情况。"
-                if index == 0
-                else f"{name}侧重的用途不同，如果更符合你最明显的不适，可对照选择。"
-            )
-            medicine_id = str(candidate.get("id") or "")
-            options.append(
-                {
-                    "option_id": "primary" if index == 0 else "alternative",
-                    "label": "主方案" if index == 0 else "备选方案",
-                    "reason": reason,
-                    "medicine_ids": [medicine_id],
-                    "usage_by_medicine": {
-                        medicine_id: str(candidate.get("dosage") or ""),
-                    },
-                }
-            )
-        return {
-            "ok": True,
-            "source": "local_llm",
-            "summary": case_text[:100],
-            "options": options,
-        }
-
-    @staticmethod
-    def _semantic_terms(value: str, *, unique: bool = True):
-        text = "".join(re.findall(r"[\u4e00-\u9fff]", value or ""))
-        terms = list(text)
-        terms.extend(text[index : index + 2] for index in range(max(0, len(text) - 1)))
-        return set(terms) if unique else terms
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
         """Generate structured reference text without presenting it as verified prescribing data."""
@@ -1674,6 +1881,40 @@ class AiService:
             except json.JSONDecodeError:
                 continue
         return None
+
+    @staticmethod
+    def _recover_local_inquiry_prefix(content: str) -> dict[str, Any] | None:
+        """Recover complete fields when the small model stops before the outer brace."""
+        text = (content or "").strip()
+        if not text:
+            return None
+        decoder = json.JSONDecoder()
+
+        def value_after(key: str) -> Any:
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*', text)
+            if not match:
+                return None
+            try:
+                value, _end = decoder.raw_decode(text[match.end() :])
+            except json.JSONDecodeError:
+                return None
+            return value
+
+        recovered: dict[str, Any] = {}
+        for key in (
+            "summary",
+            "facts",
+            "action",
+            "question",
+            "duration",
+            "used_medicines",
+            "allergy",
+        ):
+            value = value_after(key)
+            if value is not None:
+                recovered[key] = value
+        facts = recovered.get("facts")
+        return recovered if isinstance(facts, list) and facts else None
 
     @staticmethod
     def _compact_error(exc: BaseException) -> str:

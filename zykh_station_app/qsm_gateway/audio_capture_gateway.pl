@@ -91,7 +91,7 @@ sub send_pcm_stream {
     $duration = 1 if $duration < 1;
     $duration = $MAX_DURATION if $duration > $MAX_DURATION;
     my @command = ('arecord', '-q', '-D', $device, '-t', 'raw', '-f', 'S16_LE', '-r', $rate, '-c', '1', '-d', $duration);
-    open my $audio, '-|', @command
+    my $capture_pid = open my $audio, '-|', @command
         or return send_json($client, 500, { ok => JSON::PP::false, error_message => "无法启动麦克风采集：$!" });
 
     print {$client} "HTTP/1.1 200 OK\r\n";
@@ -106,9 +106,24 @@ sub send_pcm_stream {
     local $SIG{PIPE} = 'IGNORE';
     my $buffer;
     while (read($audio, $buffer, 3200)) {
-        last unless print {$client} $buffer;
+        if (!print {$client} $buffer) {
+            last;
+        }
     }
+    stop_capture_process($capture_pid);
     close $audio;
+}
+
+sub stop_capture_process {
+    my ($pid) = @_;
+    return unless defined $pid && $pid =~ /^\d+$/;
+    return unless kill 0, $pid;
+    kill 'TERM', $pid;
+    for (1..10) {
+        last unless kill 0, $pid;
+        select(undef, undef, undef, 0.05);
+    }
+    kill 'KILL', $pid if kill 0, $pid;
 }
 
 sub record_audio {

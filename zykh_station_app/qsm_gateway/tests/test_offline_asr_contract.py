@@ -30,6 +30,14 @@ class OfflineAsrContractTest(unittest.TestCase):
         self.assertIn("start_asr_service.sh", source)
         self.assertIn("resident Paraformer ASR", source)
 
+    def test_microphone_stream_terminates_arecord_when_host_disconnects(self) -> None:
+        source = (ROOT / "qsm_gateway" / "audio_capture_gateway.pl").read_text(encoding="utf-8")
+
+        self.assertIn("my $capture_pid = open my $audio, '-|', @command", source)
+        self.assertIn("stop_capture_process($capture_pid)", source)
+        self.assertIn("kill 'TERM', $pid", source)
+        self.assertIn("kill 'KILL', $pid", source)
+
 
 if __name__ == "__main__":
     unittest.main()

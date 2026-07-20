@@ -15,14 +15,21 @@ from app.services.medicine_knowledge_repository import MedicineKnowledgeReposito
 
 
 class FakeLocalClient:
-    def __init__(self, reply: dict):
+    def __init__(self, reply: dict | list[dict]):
         self.reply = reply
         self.last_messages = []
         self.last_kwargs = {}
+        self.messages_history = []
+        self.calls = 0
 
     def chat(self, messages, **kwargs):
         self.last_messages = messages
         self.last_kwargs = kwargs
+        self.messages_history.append(messages)
+        index = self.calls
+        self.calls += 1
+        if isinstance(self.reply, list):
+            return self.reply[min(index, len(self.reply) - 1)]
         return self.reply
 
 
@@ -322,7 +329,26 @@ class InquiryAiContractTest(unittest.TestCase):
         mocked_settings,
     ) -> None:
         mocked_settings.ai_mode = "local"
-        client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": json.dumps(
+                    {
+                        "summary": "手部浅表伤口需要先清洁并覆盖保护。",
+                        "options": [
+                            {
+                                "option_id": "primary",
+                                "label": "主方案",
+                                "reason": "这组护理用品更贴近浅表伤口的清洁和覆盖。",
+                                "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
+                                "usage_by_medicine": {},
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
 
         result = AiService(local_client=client).rank_inquiry_candidates(
             {
@@ -356,13 +382,180 @@ class InquiryAiContractTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["source"], "local_llm")
-        self.assertEqual(client.last_messages, [])
+        self.assertTrue(client.last_messages)
         self.assertTrue(result["options"])
         self.assertIn(
             result["options"][0]["medicine_ids"][0],
             {"slot-17-iodophor", "slot-10-gauze"},
         )
-        self.assertIn("浅表刀伤", result["options"][0]["reason"])
+        self.assertIn("浅表伤口", result["options"][0]["reason"])
+
+    @patch("app.services.ai_service.settings")
+    def test_local_candidate_ranking_does_not_recommend_when_model_returns_empty(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"summary":"目前还不能确认具体不适。","options":[]}',
+            }
+        )
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {
+                "case_summary": "我有点吃饱了没事干",
+                "observations": [
+                    {
+                        "concept": "我有点吃饱了没事干",
+                        "status": "present",
+                        "evidence": "我有点吃饱了没事干",
+                    }
+                ],
+                "risk_level": "low",
+                "used_medicines": "未使用",
+                "allergy_or_contraindication": "无",
+            },
+            [
+                {
+                    "id": "slot-12-aluminium-magnesia",
+                    "name": "铝碳酸镁咀嚼片",
+                    "category": "胃部不适",
+                    "indications": "用于胃酸、胃部不适。",
+                    "dosage": "按说明书使用。",
+                },
+                {
+                    "id": "slot-22-cotton-swab",
+                    "name": "医用棉签",
+                    "category": "外伤护理",
+                    "indications": "用于外伤护理。",
+                    "dosage": "按需使用。",
+                },
+            ],
+        )
+
+        self.assertTrue(client.last_messages)
+        self.assertEqual(result["options"], [])
+
+    @patch("app.services.ai_service.settings")
+    def test_local_candidate_ranking_recovers_short_keys_from_a_truncated_reply(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"options":[{"label":"主方案","reason":"先清洁再覆盖保护",'
+                '"medicine_keys":["17","20"]',
+            }
+        )
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {
+                "case_summary": "手部浅表擦伤",
+                "observations": [{"concept": "擦伤", "status": "present", "evidence": "手部擦伤"}],
+                "risk_level": "low",
+            },
+            [
+                {
+                    "id": "slot-17-iodophor",
+                    "slot": "17",
+                    "name": "碘伏消毒液",
+                    "indications": "用于浅表创面清洁与消毒。",
+                },
+                {
+                    "id": "slot-20-bandage",
+                    "slot": "20",
+                    "name": "创口贴",
+                    "indications": "用于清洁后的浅表伤口覆盖。",
+                },
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["options"][0]["medicine_ids"],
+            ["slot-17-iodophor", "slot-20-bandage"],
+        )
+        self.assertEqual(client.last_kwargs["max_tokens"], 32)
+
+    @patch("app.services.ai_service.settings")
+    def test_local_candidate_ranking_accepts_the_compact_board_model_format(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {"ok": True, "reply": "A=17,20|先消毒再覆盖;B=10|覆盖并吸收渗液"}
+        )
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {"case_summary": "手部浅表擦伤", "risk_level": "low"},
+            [
+                {"id": "iodophor", "slot": "17", "name": "碘伏消毒液", "category": "外伤护理"},
+                {"id": "bandage", "slot": "20", "name": "创口贴", "category": "外伤护理"},
+                {"id": "gauze", "slot": "10", "name": "医用纱布敷料", "category": "外伤护理"},
+            ],
+        )
+
+        self.assertEqual(
+            [option["medicine_ids"] for option in result["options"]],
+            [["iodophor", "bandage"], ["gauze"]],
+        )
+
+    @patch("app.services.ai_service.settings")
+    def test_large_local_inventory_is_narrowed_by_the_model_before_ranking(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            [
+                {"ok": True, "reply": "外伤护理"},
+                {"ok": True, "reply": "A=碘伏消毒液,创口贴|先清洁消毒再覆盖"},
+            ]
+        )
+        candidates = [
+            {
+                "id": f"cold-{slot}",
+                "slot": str(slot),
+                "name": f"感冒用品{slot}",
+                "category": "感冒发热",
+                "indications": "用于常见感冒相关不适。",
+            }
+            for slot in range(1, 6)
+        ] + [
+            {
+                "id": "iodophor",
+                "slot": "17",
+                "name": "碘伏消毒液",
+                "category": "外伤护理",
+                "indications": "用于浅表创面清洁消毒。",
+            },
+            {
+                "id": "bandage",
+                "slot": "20",
+                "name": "创口贴",
+                "category": "外伤护理",
+                "indications": "用于清洁后覆盖保护。",
+            },
+        ]
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {"case_summary": "手部浅表擦伤", "risk_level": "low"},
+            candidates,
+        )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(
+            result["options"][0]["medicine_ids"],
+            ["iodophor", "bandage"],
+        )
+        ranking_prompt = client.messages_history[1][1]["content"]
+        self.assertIn("碘伏消毒液", ranking_prompt)
+        self.assertNotIn("感冒用品", ranking_prompt)
 
 
 if __name__ == "__main__":

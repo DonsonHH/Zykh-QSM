@@ -7,6 +7,9 @@ case "$name" in
   curl)
     case "$*" in
       *'/src/styles/app.css'*) printf '%s\n' 'const __vite__css = "body{}";' ;;
+      *'/api/medicines/slot-08-huoxiang-zhengqi'*)
+        printf '%s\n' '{"indications":"test","dosage":"test","guidance_source":"verified"}'
+        ;;
     esac
     exit 0
     ;;
