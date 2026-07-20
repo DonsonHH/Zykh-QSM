@@ -16,6 +16,7 @@ const speech = await import(path.join(root, "src/utils/inquirySpeech.js"));
 const recommendationSpeech = speech.buildRecommendationSpeech(
   {
     risk_level: "low",
+    treatment_options: [{ option_id: "A" }, { option_id: "B" }],
     extracted_information: { dimension_evidence: { "恶心暑湿": "头重胸闷" } }
   },
   {
@@ -58,8 +59,11 @@ const checks = [
   [recommendationSpeech.includes("更贴近本次暑湿不适"), "recommendation speech omits the selected option reason"],
   [reviewSpeech.includes("张三") && reviewSpeech.includes("请核对"), "information review speech is incomplete"],
   [review.includes("buildInformationReviewSpeech") && review.includes("speakText("), "information review does not trigger TTS"],
+  [review.includes("setTimeout") && review.includes("spokenKeyRef.current = \"\""), "information review speech is vulnerable to mount cleanup cancellation"],
   [page.match(/InquiryInformationReview[\s\S]{0,300}networkStatus=\{networkStatus\}/), "information review does not receive the active network mode"],
   [result.includes("selectedOption?.option_id || \"none\"") && result.includes("lastRecommendationKeyRef"), "switching treatment options does not trigger the selected plan speech"],
+  [result.includes("setTimeout") && result.includes("lastRecommendationKeyRef.current = \"\""), "recommendation speech is vulnerable to mount cleanup cancellation"],
+  [recommendationSpeech.includes("请点选其中一个") && recommendationSpeech.includes("不要同时使用"), "recommendation speech does not explain how to choose"],
   [page.includes("主要不适") && page.includes("持续时间") && page.includes("体征信息"), "live inquiry summary wording is incomplete"],
   [page.includes("chiefComplaint({"), "live complaint must use the concise chief complaint formatter"],
   [page.includes("symptomDimensionLabel(value)"), "live complaint must use normalized symptom dimensions"],

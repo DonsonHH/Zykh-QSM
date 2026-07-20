@@ -56,7 +56,7 @@ class NetworkService:
         local_ai_ready = bool(local_ai.get("ready"))
         local_label = "离线模型" if local_ai_ready else "离线问询"
         local_ai_mode = "local_llm" if local_ai_ready else "rules_fallback"
-        local_warnings = [] if local_ai_ready else ["离线模型未就绪，当前仅保留安全规则。"]
+        local_warnings = [] if local_ai_ready else ["本地问询服务尚未就绪。"]
         sim_enabled = self._bool_setting("sim_enabled", True)
         sim_identity = self._sim_identity(qsm_network, qsm_at)
 

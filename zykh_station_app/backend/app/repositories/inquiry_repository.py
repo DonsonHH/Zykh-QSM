@@ -7,6 +7,23 @@ from .. import db
 from ..schemas.inquiry import InquiryMessage, InquiryResult, InquirySessionResponse
 
 
+_LEGACY_TECHNICAL_REPLY_MARKERS = (
+    "智能问询当前暂不可用",
+    "本次不会生成用药候选",
+    "连接有些不稳定",
+    "分析连接",
+    "规则兜底",
+    "本地兜底",
+)
+_LEGACY_RETRY_REPLY = "这一轮没有完整整理好，请重新开始问询，并重新说明现在最不舒服的地方。"
+
+
+def _present_legacy_reply(content: str, source: str) -> tuple[str, str]:
+    if any(marker in content for marker in _LEGACY_TECHNICAL_REPLY_MARKERS):
+        return _LEGACY_RETRY_REPLY, "assistant"
+    return content, source
+
+
 class InquiryRepository:
     def list_records(self) -> list[InquiryResult]:
         db.init_db()
@@ -158,6 +175,16 @@ class InquiryRepository:
                 (session_id,),
             ).fetchall()
         values = dict(row)
+        reply, source = _present_legacy_reply(values["reply"], values["source"])
+        messages = []
+        for raw_message in message_rows:
+            message = dict(raw_message)
+            if message["role"] == "assistant":
+                message["content"], message["source"] = _present_legacy_reply(
+                    message["content"],
+                    message["source"],
+                )
+            messages.append(InquiryMessage(**message))
         return InquirySessionResponse(
             session_id=values["session_id"],
             user_id=values["user_id"],
@@ -166,8 +193,8 @@ class InquiryRepository:
             user_profile=values["user_profile"],
             user_allergies=values["user_allergies"],
             stage=values["stage"],
-            reply=values["reply"],
-            source=values["source"],
+            reply=reply,
+            source=source,
             reasoning_summary=values.get("reasoning_summary", ""),
             model_action_intent=values.get("model_action_intent", "ask") or "ask",
             action_reason=values.get("action_reason", ""),
@@ -190,7 +217,7 @@ class InquiryRepository:
             action_progress_index=int(values.get("action_progress_index", 0) or 0),
             action_total_items=int(values.get("action_total_items", 0) or 0),
             action_items=json.loads(values.get("action_items_json") or "[]"),
-            messages=[InquiryMessage(**dict(message)) for message in message_rows],
+            messages=messages,
             title=values["title"],
             created_at=values["created_at"],
             updated_at=values["updated_at"],

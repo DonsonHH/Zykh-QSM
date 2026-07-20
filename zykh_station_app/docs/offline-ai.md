@@ -14,7 +14,7 @@ React inquiry UI
   -> FastAPI AiService
      -> cloud Chat Completions when reachable
      -> QSM llama.cpp when cloud is unavailable
-     -> explicit ai_unavailable with no candidate when both model routes fail
+     -> natural retry prompt with no candidate when both model routes fail
 ```
 
 ## Runtime
@@ -87,7 +87,15 @@ LOCAL_AI_HEALTH_PATH=/health
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 LOCAL_AI_TIMEOUT_SECONDS=45
 LOCAL_AI_HEALTH_TIMEOUT_SECONDS=2
+LOCAL_AI_CTX_SIZE=1024
+LOCAL_AI_THREADS=3
+LOCAL_AI_BATCH_SIZE=128
+LOCAL_AI_UBATCH_SIZE=32
 ```
+
+板端默认只保留最近 6 条有效对话，并以 `1024` 上下文、较小批次运行。这个配置用于控制
+2GB 内存设备上的峰值占用，避免体征、身份识别或离线语音合成同时工作时系统终止
+`llama-server`。如更换内存更大的板卡，可通过上述环境变量单独放大。
 
 Modes:
 
@@ -95,11 +103,11 @@ Modes:
 - `AI_MODE=local`: always use the QSM offline model.
 - `AI_MODE=cloud`: request cloud first, but still fail safely to the offline model if the request cannot complete.
 
-Inquiry-session source values are `cloud`, `local_llm`, `safety_rules` and
-`ai_unavailable`. The terminal UI represents them with accessible status icons
-instead of exposing technical channel names. The generic `/api/ai/chat`
-compatibility endpoint may still return `rules_fallback`, but that text fallback
-does not create an inquiry result or medicine candidate.
+Inquiry-session source values remain internal diagnostics. The terminal UI uses
+accessible icons and natural retry guidance instead of exposing channel names,
+connection errors or “rules fallback” wording. Legacy stored sessions containing
+those technical phrases are normalized when read; the original SQLite history
+is not rewritten.
 
 ## Safety Boundary
 
@@ -112,12 +120,12 @@ Before and after inference, the backend enforces only hard boundaries:
 - stock, expiry, OTC eligibility and absolute-contraindication filtering before ranking;
 - model selection restricted to IDs in that filtered pool;
 - current-state revalidation before the existing dispense service runs;
-- explicit unavailability and zero candidates when the local process is stopped
-  or returns invalid JSON.
+- zero candidates when both model routes fail;
+- emergency hard guards remain available even when neither model responds.
 
 ## Verified Performance
 
-On the connected RK3568 QSM with 2 GB RAM, the deployed model passed a real Chinese inquiry request. The observed run was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s. The model process used approximately 1.19 GB RSS and left approximately 1.09 GB available memory. These values are deployment observations, not hard guarantees.
+On the connected RK3568 QSM with 2 GB RAM, the deployed model passed a real Chinese inquiry request. The observed run was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s. The compact 64-token case contract returned a useful first follow-up in about 7.5 seconds during the latest warm-board check, compared with roughly 17–37 seconds for the former verbose contract. Candidate ordering then completed in milliseconds because it does not launch a second model request. With the language model, resident ASR and resident TTS loaded together, the current board has little spare memory; these timings are deployment observations, not hard guarantees.
 
 ## Offline Verification
 
@@ -133,5 +141,5 @@ curl -X POST http://127.0.0.1:8000/api/ai/chat \
 
 Expected session source is `local_llm`. To verify failure handling, stop the
 local model and repeat an `/api/inquiry/sessions/{id}/turn` request; the endpoint
-must stay available, return `source=ai_unavailable`, and return no medicine
-candidate rather than HTTP 500.
+must stay available, return a natural retry prompt, and return no medicine
+candidate rather than HTTP 500 or terminal-facing transport details.

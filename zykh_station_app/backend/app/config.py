@@ -187,6 +187,12 @@ class Settings:
     ai_inquiry_retry_delay_seconds: float = float(
         _env("AI_INQUIRY_RETRY_DELAY_SECONDS", "0.25")
     )
+    inquiry_location_name: str = _env("INQUIRY_LOCATION_NAME", "成都")
+    inquiry_location_latitude: float = float(_env("INQUIRY_LOCATION_LATITUDE", "30.5728"))
+    inquiry_location_longitude: float = float(_env("INQUIRY_LOCATION_LONGITUDE", "104.0668"))
+    weather_api_base: str = _env("WEATHER_API_BASE", "https://api.open-meteo.com/v1/forecast")
+    weather_timeout_seconds: float = float(_env("WEATHER_TIMEOUT_SECONDS", "2.5"))
+    weather_cache_seconds: float = float(_env("WEATHER_CACHE_SECONDS", "600"))
     inquiry_spo2_emergency_below: float = float(_env("INQUIRY_SPO2_EMERGENCY_BELOW", "90"))
     inquiry_spo2_high_max: float = float(_env("INQUIRY_SPO2_HIGH_MAX", "93"))
     inquiry_temperature_high_at: float = float(_env("INQUIRY_TEMPERATURE_HIGH_AT", "39"))

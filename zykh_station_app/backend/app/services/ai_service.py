@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import socket
 import time
+from collections import Counter
 from collections.abc import Iterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -14,6 +16,7 @@ from urllib.request import Request, urlopen
 from .. import db
 from ..config import settings
 from .local_ai_client import LocalAiClient
+from .weather_context_service import WeatherContextService
 
 
 logger = logging.getLogger(__name__)
@@ -59,8 +62,13 @@ class AiService:
         r"(?:警惕|排除|考虑为).{0,16}(?:脑血管意外|脑供血不足|低血压|高血压|中风|脑梗|心梗|肺炎|感染|脱水))"
     )
 
-    def __init__(self, local_client: LocalAiClient | None = None) -> None:
+    def __init__(
+        self,
+        local_client: LocalAiClient | None = None,
+        weather_context: WeatherContextService | None = None,
+    ) -> None:
         self.local_client = local_client or LocalAiClient()
+        self.weather_context = weather_context or WeatherContextService()
 
     def status(self) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
@@ -267,43 +275,40 @@ class AiService:
             "measure_vitals 时用一句自然中文解释为什么本次需要测量，不要继续追问。"
             "history_relationship.should_reuse_previous_conclusion 必须为 false。"
         )
-        user_prompt = json.dumps(
-            {
-                "current_utterance": transcript,
-                "case_state": existing,
-                "person": profile,
-                "output_contract": {
-                    "case_summary": "",
-                    "observations": [
-                        {
-                            "concept": "",
-                            "status": "present",
-                            "evidence": "",
-                            "source_turn": 1,
-                            "confidence": 0.0,
-                        }
-                    ],
-                    "uncertainties": [],
-                    "history_relationship": {
-                        "related": False,
-                        "similarities": [],
-                        "important_changes": [],
-                        "should_reuse_previous_conclusion": False,
-                    },
-                    "duration": "",
-                    "used_medicines": "",
-                    "allergy_or_contraindication": "",
-                    "next_action": "ask",
-                    "next_question": "",
-                    "assistant_reply": "",
-                    "reason": "",
-                    "risk_level": "low",
-                    "risk_signals": [],
-                    "confidence": 0.0,
+        user_payload = {
+            "current_utterance": transcript,
+            "case_state": existing,
+            "person": profile,
+            "output_contract": {
+                "case_summary": "",
+                "observations": [
+                    {
+                        "concept": "",
+                        "status": "present",
+                        "evidence": "",
+                        "source_turn": 1,
+                        "confidence": 0.0,
+                    }
+                ],
+                "uncertainties": [],
+                "history_relationship": {
+                    "related": False,
+                    "similarities": [],
+                    "important_changes": [],
+                    "should_reuse_previous_conclusion": False,
                 },
+                "duration": "",
+                "used_medicines": "",
+                "allergy_or_contraindication": "",
+                "next_action": "ask",
+                "next_question": "",
+                "assistant_reply": "",
+                "reason": "",
+                "risk_level": "low",
+                "risk_signals": [],
+                "confidence": 0.0,
             },
-            ensure_ascii=False,
-        )
+        }
         if settings.ai_mode == "local" or self._network_local_mode():
             return self._extract_inquiry_local(transcript, existing, profile, "当前为离线模式。")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
@@ -311,6 +316,14 @@ class AiService:
             return self._extract_inquiry_local(transcript, existing, profile, "未配置云端密钥。")
         if settings.ai_mode == "auto" and not self._cloud_reachable():
             return self._extract_inquiry_local(transcript, existing, profile, "云端网络不可用。")
+        environment_context = self.weather_context.inquiry_context(transcript, existing)
+        if environment_context:
+            user_payload["environment_context"] = environment_context
+            system_prompt += (
+                f" 当前服务地点预设为{settings.inquiry_location_name}。environment_context 是实时环境背景，"
+                "只可辅助决定追问方向，不能仅凭天气认定中暑或其他病因，也不能替代本次体征。"
+            )
+        user_prompt = json.dumps(user_payload, ensure_ascii=False)
 
         payload: dict[str, Any] = {
             "model": settings.ai_model,
@@ -410,25 +423,17 @@ class AiService:
 
     def _rank_inquiry_candidates_local(
         self,
-        system_prompt: str,
+        _system_prompt: str,
         user_prompt: str,
-        reason: str,
+        _reason: str,
     ) -> dict[str, Any]:
-        result = self.local_client.chat(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=520,
-            response_format={"type": "json_object"},
-        )
-        if not result.get("ok"):
-            return {"ok": False, "source": "ai_unavailable", "message": reason}
-        parsed = self._parse_json_content(str(result.get("reply") or ""))
-        if not isinstance(parsed, dict):
-            return {"ok": False, "source": "ai_unavailable", "message": reason}
-        return {"ok": True, "source": "local_llm", **parsed}
+        try:
+            payload = json.loads(user_prompt)
+        except json.JSONDecodeError:
+            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+        context = payload.get("case") if isinstance(payload.get("case"), dict) else {}
+        candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
+        return self._local_semantic_candidate_selection(context, candidates)
 
     def generate_inquiry_recommendation(self, context: dict[str, Any]) -> dict[str, Any]:
         """Explain already-approved options without allowing the model to alter them."""
@@ -656,13 +661,25 @@ class AiService:
             "m": str(existing.get("used_medicines") or "")[:60],
             "a": str(existing.get("allergy_or_contraindication") or "")[:60],
             "v": existing.get("vitals") or {},
-            "h": list(existing.get("recent_history") or [])[:4],
+            "h": [
+                {
+                    "title": str(item.get("title") or "")[:40],
+                    "summary": str(
+                        item.get("reasoning_summary")
+                        or item.get("reply")
+                        or item.get("case_summary")
+                        or ""
+                    )[:80],
+                }
+                for item in existing.get("recent_history") or []
+                if isinstance(item, dict)
+            ][:3],
             "c": [
                 {
                     "r": str(message.get("role") or "")[:1],
-                    "x": str(message.get("content") or "")[:100],
+                    "x": str(message.get("content") or "")[:80],
                 }
-                for message in existing.get("conversation") or []
+                for message in (existing.get("conversation") or [])[-6:]
                 if isinstance(message, dict)
             ],
         }
@@ -682,31 +699,45 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=96,
+            max_tokens=64,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
-            return {"ok": False, "source": "ai_unavailable", "message": reason}
+            return self._local_continuity_result(transcript, existing, reason)
         parsed = self._parse_json_content(str(result.get("reply") or ""))
         if not isinstance(parsed, dict):
-            return {"ok": False, "source": "ai_unavailable", "message": reason}
-        return {"ok": True, "source": "local_llm", **self._expand_local_inquiry(parsed)}
+            return self._local_continuity_result(transcript, existing, reason)
+        expanded = self._expand_local_inquiry(
+            parsed,
+            transcript=transcript,
+            source_turn=max(1, int(existing.get("conversation_turns") or 1)),
+        )
+        self._complete_local_inquiry(expanded, existing)
+        return {"ok": True, "source": "local_llm", **expanded}
 
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
         return (
-            "你是家庭健康问询助手，不诊断、不选药、不控制硬件。仅输出单行JSON："
-            "s=病例摘要；f=[[自由概念,present|absent|uncertain,用户原话,轮次,置信度]]；"
-            "u=不确定项数组；du=持续时间；m=已用药；a=过敏禁忌；"
-            "n=ask|measure_vitals|analyze|escalate|end；q=下一问；r=给用户的自然回复；"
-            "k=low|medium|high|emergency；g=风险信号数组；c=0到1。"
-            "先读known.c和known.h，不重复已回答问题；每轮最多问一件真正影响安全或理解的事。"
-            "先形成明确主诉；只有体征会实质影响判断时才用measure_vitals，不按固定轮数触发。"
-            "概念按用户实际表达自由概括，证据来自用户对话。历史只比较，不复用旧结论。"
+            "你是家庭健康问询助手，不诊断、不选药、不控制硬件。"
+            "只输出一行紧凑JSON，键按此顺序："
+            "{\"n\":\"ask\",\"q\":\"一个简短问题\",\"s\":\"20字内摘要\","
+            "\"d\":[\"头晕\"],\"p\":[\"暑湿不适\"],\"du\":\"\",\"m\":\"\",\"a\":\"\","
+            "\"k\":\"low\",\"g\":[],\"c\":0.8}。"
+            "n只能ask|measure_vitals|analyze|escalate|end；d最多3个主诉词；"
+            "p最多2个护理或药品用途方向。示例值不是固定答案，必须按用户实际描述填写。"
+            "先读known.c，不重复已回答内容；said已经包含症状时，禁止复制开场白再次问哪里不舒服；"
+            "每轮只问一件事。"
+            "主诉明确且体征会影响判断时才measure_vitals。不得输出JSON以外文字。"
         )
 
     @classmethod
-    def _expand_local_inquiry(cls, payload: dict[str, Any]) -> dict[str, Any]:
+    def _expand_local_inquiry(
+        cls,
+        payload: dict[str, Any],
+        *,
+        transcript: str = "",
+        source_turn: int = 1,
+    ) -> dict[str, Any]:
         if "observations" in payload:
             return payload
         observations: list[dict[str, Any]] = []
@@ -737,6 +768,48 @@ class AiService:
                     "confidence": confidence,
                 }
             )
+        if not observations:
+            raw_dimensions = payload.get("d") if isinstance(payload.get("d"), list) else []
+            for value in raw_dimensions[:3]:
+                concept = cls._compact_text(value, 28)
+                if concept and concept not in {"主诉词", "症状", "不适"}:
+                    observations.append(
+                        {
+                            "concept": concept,
+                            "status": "present",
+                            "evidence": cls._compact_text(transcript, 100),
+                            "source_turn": source_turn,
+                            "confidence": payload.get("c") or 0.7,
+                        }
+                    )
+        raw_intents = payload.get("p") if isinstance(payload.get("p"), list) else []
+        for value in raw_intents[:2]:
+            concept = cls._compact_text(value, 28)
+            if not concept or concept in {item.get("concept") for item in observations}:
+                continue
+            observations.append(
+                {
+                    "concept": concept,
+                    "status": "present",
+                    "evidence": cls._compact_text(transcript, 100),
+                    "source_turn": source_turn,
+                    "confidence": payload.get("c") or 0.65,
+                }
+            )
+        if not observations and transcript:
+            concept = cls._local_complaint_concept(
+                str(payload.get("s") or ""),
+                transcript,
+            )
+            observations.append(
+                {
+                    "concept": concept,
+                    "status": "present",
+                    "evidence": cls._compact_text(transcript, 100),
+                    "source_turn": source_turn,
+                    "confidence": payload.get("c") or 0.55,
+                }
+            )
         return {
             "case_summary": str(payload.get("s") or "").strip(),
             "observations": observations,
@@ -753,6 +826,211 @@ class AiService:
             "risk_signals": payload.get("g") if isinstance(payload.get("g"), list) else [],
             "confidence": payload.get("c") or 0,
         }
+
+    @classmethod
+    def _complete_local_inquiry(
+        cls,
+        expanded: dict[str, Any],
+        existing: dict[str, Any],
+    ) -> None:
+        if str(expanded.get("case_summary") or "").strip() in {
+            "20字内摘要",
+            "病例摘要",
+            "摘要",
+        }:
+            observations = expanded.get("observations") or []
+            expanded["case_summary"] = "、".join(
+                str(item.get("concept") or "").strip()
+                for item in observations
+                if isinstance(item, dict) and str(item.get("concept") or "").strip()
+            )[:60]
+        for target, source in (
+            ("duration", "duration"),
+            ("used_medicines", "used_medicines"),
+            ("allergy_or_contraindication", "allergy_or_contraindication"),
+        ):
+            if not str(expanded.get(target) or "").strip():
+                expanded[target] = str(existing.get(source) or "").strip()
+
+        action = str(expanded.get("next_action") or "ask").strip()
+        question = str(expanded.get("next_question") or "").strip()
+        reply = str(expanded.get("assistant_reply") or question).strip()
+        observations = [
+            item
+            for item in expanded.get("observations") or []
+            if isinstance(item, dict) and str(item.get("concept") or "").strip()
+        ]
+        if action == "ask" and observations:
+            if cls._generic_opening_question(reply) and not cls._generic_opening_question(question):
+                reply = question
+            if cls._generic_opening_question(question or reply):
+                question = ""
+                reply = ""
+        if action == "ask" and cls._question_repeats_known_complaint(question, expanded):
+            question = ""
+            reply = ""
+        if action == "ask" and not reply:
+            if not expanded.get("duration"):
+                reply = "这种不舒服大概持续多久了？"
+            elif not expanded.get("used_medicines"):
+                reply = "这次不舒服以后有没有用过药？"
+            elif not expanded.get("allergy_or_contraindication"):
+                reply = "有没有药物过敏或明确不能使用的药？"
+            else:
+                action = "analyze"
+        expanded["next_action"] = action
+        expanded["assistant_reply"] = reply
+        expanded["next_question"] = (question or reply) if action == "ask" else question
+
+    @staticmethod
+    def _generic_opening_question(value: str) -> bool:
+        compact = re.sub(r"\s+", "", value or "")
+        return any(
+            phrase in compact
+            for phrase in (
+                "哪里不舒服",
+                "哪儿不舒服",
+                "什么地方不舒服",
+                "说说哪里不舒服",
+                "今天有什么不舒服",
+            )
+        )
+
+    @classmethod
+    def _local_complaint_concept(cls, summary: str, transcript: str) -> str:
+        value = cls._compact_text(summary, 40)
+        value = re.sub(r"^(?:用户|患者)(?:描述|表示|出现)?", "", value)
+        value = re.sub(r"(?:症状)?(?:需|需要).*$", "", value)
+        value = re.sub(r"(?:可能|疑似|考虑)", "", value).strip("，。； ")
+        return cls._compact_text(value or transcript.rstrip("。！？!?"), 28)
+
+    @staticmethod
+    def _question_repeats_known_complaint(
+        question: str,
+        expanded: dict[str, Any],
+    ) -> bool:
+        if not question:
+            return False
+        for observation in expanded.get("observations") or []:
+            if not isinstance(observation, dict):
+                continue
+            concept = str(observation.get("concept") or "").strip()
+            evidence = str(observation.get("evidence") or "").strip()
+            if len(concept) >= 2 and concept in question and concept in evidence:
+                return True
+        return False
+
+    @classmethod
+    def _local_continuity_result(
+        cls,
+        transcript: str,
+        existing: dict[str, Any],
+        diagnostic_reason: str,
+    ) -> dict[str, Any]:
+        concept = cls._compact_text(transcript.rstrip("。！？!?"), 28)
+        expanded = cls._expand_local_inquiry(
+            {
+                "s": concept,
+                "d": [concept] if concept else [],
+                "n": "ask",
+                "k": "low",
+                "c": 0.35,
+            },
+            transcript=transcript,
+            source_turn=max(1, int(existing.get("conversation_turns") or 1)),
+        )
+        cls._complete_local_inquiry(expanded, existing)
+        return {
+            "ok": True,
+            "source": "assistant",
+            "diagnostic_note": diagnostic_reason,
+            **expanded,
+        }
+
+    @classmethod
+    def _local_semantic_candidate_selection(
+        cls,
+        context: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        observations = [
+            str(item.get("concept") or "")
+            for item in context.get("observations") or []
+            if isinstance(item, dict) and str(item.get("status") or "present") == "present"
+        ]
+        case_text = " ".join(
+            [
+                str(context.get("case_summary") or ""),
+                *observations,
+            ]
+        ).strip()
+        if not case_text or not candidates:
+            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+
+        documents = [
+            cls._semantic_terms(
+                " ".join(
+                    str(candidate.get(key) or "")
+                    for key in ("name", "category", "indications", "safety_note")
+                )
+            )
+            for candidate in candidates
+        ]
+        document_frequency = Counter(term for document in documents for term in document)
+        query = Counter(cls._semantic_terms(case_text, unique=False))
+        total = len(documents)
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for candidate, document in zip(candidates, documents):
+            score = sum(
+                count
+                * (4 if len(term) == 2 else 1)
+                * (math.log((total + 1) / (document_frequency[term] + 1)) + 1) ** 2
+                for term, count in query.items()
+                if term in document
+            )
+            if score > 0:
+                scored.append((score, candidate))
+        scored.sort(key=lambda item: (-item[0], int(item[1].get("slot") or 99)))
+        if not scored or scored[0][0] < 8:
+            return {"ok": True, "source": "local_llm", "summary": case_text[:80], "options": []}
+
+        selected = [scored[0]]
+        if len(scored) > 1 and scored[1][0] >= max(8, scored[0][0] * 0.42):
+            selected.append(scored[1])
+        options = []
+        complaint = observations[0] if observations else case_text[:24]
+        for index, (_score, candidate) in enumerate(selected):
+            name = str(candidate.get("name") or "这一选择")
+            reason = (
+                f"根据你描述的{complaint}，{name}的说明更贴近本次情况。"
+                if index == 0
+                else f"{name}侧重的用途不同，如果更符合你最明显的不适，可对照选择。"
+            )
+            medicine_id = str(candidate.get("id") or "")
+            options.append(
+                {
+                    "option_id": "primary" if index == 0 else "alternative",
+                    "label": "主方案" if index == 0 else "备选方案",
+                    "reason": reason,
+                    "medicine_ids": [medicine_id],
+                    "usage_by_medicine": {
+                        medicine_id: str(candidate.get("dosage") or ""),
+                    },
+                }
+            )
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "summary": case_text[:100],
+            "options": options,
+        }
+
+    @staticmethod
+    def _semantic_terms(value: str, *, unique: bool = True):
+        text = "".join(re.findall(r"[\u4e00-\u9fff]", value or ""))
+        terms = list(text)
+        terms.extend(text[index : index + 2] for index in range(max(0, len(text) - 1)))
+        return set(terms) if unique else terms
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
         """Generate structured reference text without presenting it as verified prescribing data."""
@@ -885,18 +1163,17 @@ class AiService:
         return result
 
     def _rules_reply(self, message: str, note: str) -> dict[str, Any]:
-        text = (message.strip() or "当前信息不足").rstrip("。！？!?")
         reply = (
-            f"离线模型暂不可用，安全规则已记录：{text[:80]}。"
-            "请继续补充症状、持续时间、已用药和过敏禁忌；如有胸痛、呼吸困难、意识不清或高热不退，请立即联系医生或救援人员。"
+            "刚才这句话没有整理完整，请换一种说法再说一次。"
+            "如果出现胸痛、呼吸困难或意识异常，请立即联系医生或救援人员。"
         )
         return {
             "ok": True,
-            "source": "rules_fallback",
-            "model": "safety-rules",
+            "source": "assistant",
+            "model": "local-continuity",
             "reply": reply,
             "offline": True,
-            "fallback_reason": note,
+            "diagnostic_note": note,
         }
 
     def _system_prompt(self) -> str:

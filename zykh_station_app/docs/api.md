@@ -118,8 +118,10 @@ Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool filtered by stock, expiry, OTC eligibility and
 absolute contraindications. The model may choose at most one primary and one
 alternative from that pool, or choose none. If both model routes are unavailable
-or return invalid structure, the session reports `source=ai_unavailable`, returns
-no candidate and does not imitate a model response with keyword rules.
+or return invalid structure, the session remains retryable, returns no candidate
+and does not expose connection or fallback terminology in its user-facing reply.
+Environment-sensitive cloud requests may include current Chengdu weather as
+supporting context; it cannot replace measured vitals or establish a diagnosis.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
@@ -294,7 +296,7 @@ Records 16 kHz mono audio on QSM and calls the resident offline Paraformer servi
 
 ### POST /api/audio/speak
 
-Speaks text through the QSM speaker. Online mode uses Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the resident QSM sherpa-onnx TTS process. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`.
+Speaks text through the QSM speaker. Online mode uses Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the resident QSM sherpa-onnx TTS process. The resident process generates into an asynchronous playback queue and prebuffers enough audio to avoid sentence-boundary underflow. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`.
 
 ### WebSocket /api/audio/asr/realtime
 
@@ -310,11 +312,12 @@ Calls the QSM beep path.
 
 ### POST /api/ai/chat
 
-Uses the configured cloud endpoint first in `AI_MODE=auto`. A missing key, failed connectivity probe or cloud request error automatically routes the request to the QSM llama.cpp endpoint. Response sources are `cloud`, `local_llm`, `safety_rules` or `rules_fallback`; only the last source means that both model routes were unavailable.
-
-This generic chat compatibility endpoint retains its concise safety-text
-fallback. The model-led `/api/inquiry/sessions/*` workflow instead returns
-`ai_unavailable` with no recommendation when both model routes fail.
+Uses the configured cloud endpoint first in `AI_MODE=auto`. A missing key,
+failed connectivity probe or cloud request error automatically routes the
+request to the QSM llama.cpp endpoint. Internal response sources distinguish the
+route for diagnostics, while the terminal-facing response never displays
+connection errors or fallback terminology. If both routes fail, the endpoint
+returns a short natural retry prompt and no medicine candidate.
 
 ### GET /api/ai/status
 

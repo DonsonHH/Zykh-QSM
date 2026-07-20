@@ -253,9 +253,14 @@ Inquiry AI follows this order:
 
 - call the configured DeepSeek-compatible cloud endpoint from the host when `AI_API_KEY` or `AI_API_KEY_FILE` is available;
 - when the key is missing, connectivity fails or the cloud request errors, call Qwen3.5 through QSM llama.cpp on port `8083`;
-- if the offline model is also unavailable or returns invalid output, mark the
-  inquiry `source=ai_unavailable`, expose no candidate, and retain only emergency
-  hard-guard behavior.
+- if the offline model is also unavailable or returns invalid output, expose no
+  candidate, retain emergency hard-guard behavior and return a natural retry
+  prompt without showing transport or fallback terminology.
+
+When heat exposure or suspected heat illness is mentioned, the online request
+also includes current Chengdu weather from Open-Meteo as supporting context.
+Weather cannot establish a diagnosis and never replaces heart rate, blood oxygen
+or forehead temperature.
 
 The offline model is a real board-side process, not mock data. See [`offline-ai.md`](offline-ai.md) for model hashes, download/deploy commands, measured resource use and disconnected validation.
 

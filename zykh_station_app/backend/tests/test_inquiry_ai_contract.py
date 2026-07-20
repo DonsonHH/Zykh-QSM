@@ -40,7 +40,84 @@ class FakeHttpResponse:
         return self.body
 
 
+class FakeWeatherContext:
+    def __init__(self, value):
+        self.value = value
+        self.calls = []
+
+    def inquiry_context(self, transcript, existing):
+        self.calls.append((transcript, existing))
+        return self.value
+
+
 class InquiryAiContractTest(unittest.TestCase):
+    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_cloud_inquiry_includes_chengdu_weather_as_non_diagnostic_context(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+        _mocked_local_mode,
+    ) -> None:
+        mocked_settings.ai_mode = "cloud"
+        mocked_settings.ai_api_key = "test-key"
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        mocked_settings.ai_api_base = "https://api.deepseek.com/chat/completions"
+        mocked_settings.ai_model = "deepseek-v4-flash"
+        mocked_settings.ai_inquiry_timeout_seconds = 45
+        mocked_settings.ai_inquiry_attempt_timeout_seconds = 12
+        mocked_settings.ai_inquiry_max_attempts = 1
+        mocked_settings.ai_inquiry_retry_delay_seconds = 0
+        mocked_settings.inquiry_location_name = "成都"
+        mocked_urlopen.return_value = FakeHttpResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "case_summary": "暴晒后头晕。",
+                                    "observations": [],
+                                    "next_action": "measure_vitals",
+                                    "assistant_reply": "先测量额温、心率和血氧。",
+                                    "risk_level": "medium",
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                    }
+                ]
+            }
+        )
+        weather = FakeWeatherContext(
+            {
+                "location": "成都",
+                "temperature_c": 34.2,
+                "apparent_temperature_c": 38.7,
+                "usage_note": "仅作为环境背景，不可单独用于判断病因。",
+            }
+        )
+
+        result = AiService(
+            local_client=FakeLocalClient({"ok": False}),
+            weather_context=weather,
+        ).extract_inquiry_information(
+            "在外面晒了以后像是中暑，有点头晕",
+            {"conversation_turns": 1, "conversation": []},
+            {"name": "张三"},
+        )
+
+        self.assertTrue(result["ok"])
+        request_payload = json.loads(mocked_urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(
+            json.loads(request_payload["messages"][1]["content"])["environment_context"]["location"],
+            "成都",
+        )
+        self.assertIn("不能仅凭天气认定中暑", request_payload["messages"][0]["content"])
+        self.assertEqual(len(weather.calls), 1)
+
     @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
@@ -245,33 +322,18 @@ class InquiryAiContractTest(unittest.TestCase):
         mocked_settings,
     ) -> None:
         mocked_settings.ai_mode = "local"
-        client = FakeLocalClient(
-            {
-                "ok": True,
-                "reply": json.dumps(
-                    {
-                        "summary": "浅表伤口已经止血。",
-                        "options": [
-                            {
-                                "option_id": "primary",
-                                "label": "清洁与覆盖",
-                                "reason": "可先清洁伤口并覆盖保护。",
-                                "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
-                                "usage_by_medicine": {
-                                    "slot-17-iodophor": "先用碘伏消毒液清洁伤口",
-                                    "slot-10-gauze": "最后用医用纱布覆盖保护",
-                                },
-                            }
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        )
+        client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
 
         result = AiService(local_client=client).rank_inquiry_candidates(
             {
                 "case_summary": "手部浅表刀伤，已经止血，无感染迹象。",
+                "observations": [
+                    {
+                        "concept": "浅表刀伤",
+                        "status": "present",
+                        "evidence": "手部刀伤不深",
+                    }
+                ],
                 "risk_level": "low",
                 "used_medicines": "未使用",
                 "allergy_or_contraindication": "无",
@@ -293,11 +355,14 @@ class InquiryAiContractTest(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertIn("外伤护理用品", client.last_messages[0]["content"])
-        self.assertIn("不应仅因不需要口服药", client.last_messages[0]["content"])
-        self.assertIn("同样符合当前情况的第二种安全选择", client.last_messages[0]["content"])
-        self.assertIn("usage_by_medicine", client.last_messages[0]["content"])
-        self.assertEqual(result["options"][0]["medicine_ids"], ["slot-17-iodophor", "slot-10-gauze"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(client.last_messages, [])
+        self.assertTrue(result["options"])
+        self.assertIn(
+            result["options"][0]["medicine_ids"][0],
+            {"slot-17-iodophor", "slot-10-gauze"},
+        )
+        self.assertIn("浅表刀伤", result["options"][0]["reason"])
 
 
 if __name__ == "__main__":

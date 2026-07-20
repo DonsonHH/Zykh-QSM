@@ -404,6 +404,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.stage, "clarification")
         self.assertEqual(result.next_action, "ask")
         self.assertIn("再说一次", result.reply)
+        self.assertNotIn("暂不可用", result.reply)
+        self.assertNotIn("规则", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
 
@@ -462,7 +464,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(result.stage, "clarification")
         self.assertEqual(result.next_action, "ask")
-        self.assertIn("继续分析", result.reply)
+        self.assertIn("最希望先处理", result.reply)
+        self.assertNotIn("连接", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
 

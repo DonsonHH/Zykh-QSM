@@ -9,10 +9,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -60,22 +64,83 @@ struct Playback {
   std::chrono::steady_clock::time_point started;
   long first_audio_ms = -1;
   int64_t samples = 0;
+  long callback_count = 0;
+  long max_callback_gap_ms = 0;
+  long max_queue_wait_ms = 0;
+  long underflow_count = 0;
+  std::chrono::steady_clock::time_point last_callback;
+  std::mutex mutex;
+  std::condition_variable available;
+  std::deque<std::vector<int16_t>> pending;
+  int64_t queued_samples = 0;
+  int64_t prebuffer_samples = 0;
+  bool playback_started = false;
+  bool generation_done = false;
+  bool playback_failed = false;
 };
+
+void PlaybackWorker(Playback *playback) {
+  while (true) {
+    std::vector<int16_t> pcm;
+    {
+      std::unique_lock<std::mutex> lock(playback->mutex);
+      const bool waiting_after_start =
+          playback->playback_started && playback->pending.empty() && !playback->generation_done;
+      const auto wait_started = std::chrono::steady_clock::now();
+      playback->available.wait(lock, [playback] {
+        return playback->generation_done ||
+               (!playback->pending.empty() &&
+                (playback->playback_started ||
+                 playback->queued_samples >= playback->prebuffer_samples));
+      });
+      if (waiting_after_start) {
+        const long queue_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - wait_started).count();
+        playback->underflow_count += 1;
+        playback->max_queue_wait_ms = std::max(playback->max_queue_wait_ms, queue_wait_ms);
+      }
+      if (playback->pending.empty() && playback->generation_done) return;
+      playback->playback_started = true;
+      pcm = std::move(playback->pending.front());
+      playback->pending.pop_front();
+      playback->queued_samples -= static_cast<int64_t>(pcm.size());
+    }
+    if (playback->first_audio_ms < 0) {
+      playback->first_audio_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - playback->started).count();
+    }
+    if (fwrite(pcm.data(), sizeof(int16_t), pcm.size(), playback->pipe) != pcm.size()) {
+      std::lock_guard<std::mutex> lock(playback->mutex);
+      playback->playback_failed = true;
+      return;
+    }
+    fflush(playback->pipe);
+  }
+}
 
 int32_t PlayChunk(const float *samples, int32_t count, float, void *arg) {
   auto *playback = static_cast<Playback *>(arg);
   if (!playback || !playback->pipe || !samples || count <= 0) return 0;
-  if (playback->first_audio_ms < 0) {
-    playback->first_audio_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - playback->started).count();
+  const auto now = std::chrono::steady_clock::now();
+  if (playback->callback_count > 0) {
+    const long gap = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - playback->last_callback).count();
+    playback->max_callback_gap_ms = std::max(playback->max_callback_gap_ms, gap);
   }
+  playback->last_callback = now;
+  playback->callback_count += 1;
   std::vector<int16_t> pcm(static_cast<size_t>(count));
   for (int32_t index = 0; index < count; ++index) {
     const float value = std::clamp(samples[index], -1.0f, 1.0f);
     pcm[static_cast<size_t>(index)] = static_cast<int16_t>(std::lrint(value * 32767.0f));
   }
-  if (fwrite(pcm.data(), sizeof(int16_t), pcm.size(), playback->pipe) != pcm.size()) return 0;
-  fflush(playback->pipe);
+  {
+    std::lock_guard<std::mutex> lock(playback->mutex);
+    if (playback->playback_failed) return 0;
+    playback->queued_samples += count;
+    playback->pending.push_back(std::move(pcm));
+  }
+  playback->available.notify_one();
   playback->samples += count;
   return 1;
 }
@@ -113,42 +178,53 @@ bool HandleClient(int fd, const SherpaOnnxOfflineTts *tts, int sample_rate) {
   const int mixer_status = std::system(mixer);
   (void)mixer_status;
 
-  char player[256];
-  std::snprintf(player, sizeof(player),
+  char player_command[256];
+  std::snprintf(player_command, sizeof(player_command),
                 "aplay -q -D plughw:0,0 -t raw -f S16_LE -r %d -c 1", sample_rate);
   Playback playback;
-  playback.pipe = popen(player, "w");
+  playback.pipe = popen(player_command, "w");
   playback.started = std::chrono::steady_clock::now();
+  playback.prebuffer_samples = static_cast<int64_t>(sample_rate) * 5;
   if (!playback.pipe) {
     SendError(fd, "speaker unavailable");
     return false;
   }
+  std::thread playback_thread(PlaybackWorker, &playback);
 
   SherpaOnnxGenerationConfig generation{};
   generation.speed = speed;
   generation.sid = 0;
-  generation.silence_scale = 0.15f;
+  generation.silence_scale = 0.03f;
   const SherpaOnnxGeneratedAudio *audio = SherpaOnnxOfflineTtsGenerateWithConfig(
       tts, text.c_str(), &generation, PlayChunk, &playback);
+  {
+    std::lock_guard<std::mutex> lock(playback.mutex);
+    playback.generation_done = true;
+  }
+  playback.available.notify_one();
+  playback_thread.join();
   const int play_status = pclose(playback.pipe);
   playback.pipe = nullptr;
   const long total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - playback.started).count();
 
-  if (!audio || play_status != 0) {
+  if (!audio || play_status != 0 || playback.playback_failed) {
     if (audio) SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
     SendError(fd, audio ? "speaker playback failed" : "synthesis failed");
     return false;
   }
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
 
-  char response[320];
+  char response[400];
   std::snprintf(response, sizeof(response),
                 "{\"ok\":true,\"mode\":\"offline-sherpa-onnx-stream\","
                 "\"sample_rate\":%d,\"samples\":%lld,\"first_audio_ms\":%ld,"
-                "\"total_ms\":%ld,\"speed\":%.2f}\n",
+                "\"total_ms\":%ld,\"speed\":%.2f,\"callback_count\":%ld,"
+                "\"max_callback_gap_ms\":%ld,\"underflow_count\":%ld,"
+                "\"max_queue_wait_ms\":%ld}\n",
                 sample_rate, static_cast<long long>(playback.samples), playback.first_audio_ms,
-                total_ms, speed);
+                total_ms, speed, playback.callback_count, playback.max_callback_gap_ms,
+                playback.underflow_count, playback.max_queue_wait_ms);
   return WriteAll(fd, response, std::strlen(response));
 }
 
@@ -170,11 +246,11 @@ int main(int argc, char **argv) {
   config.model.vits.noise_scale = 0.667f;
   config.model.vits.noise_scale_w = 0.8f;
   config.model.vits.length_scale = 1.0f;
-  config.model.num_threads = 2;
+  config.model.num_threads = 4;
   config.model.provider = "cpu";
   config.rule_fsts = rules.c_str();
   config.max_num_sentences = 1;
-  config.silence_scale = 0.15f;
+  config.silence_scale = 0.03f;
 
   const SherpaOnnxOfflineTts *tts = SherpaOnnxCreateOfflineTts(&config);
   if (!tts) {

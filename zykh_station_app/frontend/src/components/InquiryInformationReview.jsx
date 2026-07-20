@@ -53,11 +53,17 @@ export function InquiryInformationReview({
     const key = `${session.session_id}:${ready ? "ready" : "review"}`;
     if (spokenKeyRef.current === key) return;
     spokenKeyRef.current = key;
-    playReviewSpeech(
-      buildInformationReviewSpeech(session),
-      networkStatus,
-      playbackGenerationRef
-    );
+    const timer = window.setTimeout(() => {
+      playReviewSpeech(
+        buildInformationReviewSpeech(session),
+        networkStatus,
+        playbackGenerationRef
+      );
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      if (spokenKeyRef.current === key) spokenKeyRef.current = "";
+    };
   }, [networkStatus, ready, session]);
 
   useEffect(() => () => {

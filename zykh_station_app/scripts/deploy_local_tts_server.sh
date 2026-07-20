@@ -19,10 +19,12 @@ done
 mkdir -p "$CACHE_DIR/include/sherpa-onnx/c-api"
 curl -fsSL --retry 3 -o "$CACHE_DIR/include/sherpa-onnx/c-api/c-api.h" "$HEADER_URL"
 adb pull /userdata/zykh_voice/runtime/lib/libsherpa-onnx-c-api.so "$BOARD_LIB" >/dev/null
-aarch64-linux-gnu-g++ -std=c++17 -O2 -Wall -Wextra \
+aarch64-linux-gnu-g++ -std=c++17 -O2 -Wall -Wextra -pthread \
   -I"$CACHE_DIR/include" \
   "$ROOT_DIR/qsm_gateway/local_tts_server.cpp" \
   "$BOARD_LIB" \
+  -static-libstdc++ \
+  -static-libgcc \
   -Wl,--allow-shlib-undefined \
   -Wl,-rpath,/userdata/zykh_voice/runtime/lib \
   -o "$OUTPUT"
@@ -30,6 +32,6 @@ aarch64-linux-gnu-g++ -std=c++17 -O2 -Wall -Wextra \
 adb shell 'mkdir -p /userdata/zykh_app/bin /userdata/zykh_app/scripts /userdata/zykh_app/data'
 adb push "$OUTPUT" /userdata/zykh_app/bin/local-tts-server >/dev/null
 adb push "$ROOT_DIR/qsm_gateway/start_local_tts_server.sh" /userdata/zykh_app/scripts/start_local_tts_server.sh >/dev/null
-adb shell 'chmod 755 /userdata/zykh_app/bin/local-tts-server /userdata/zykh_app/scripts/start_local_tts_server.sh; sh /userdata/zykh_app/scripts/start_local_tts_server.sh'
+adb shell 'chmod 755 /userdata/zykh_app/bin/local-tts-server /userdata/zykh_app/scripts/start_local_tts_server.sh; sh /userdata/zykh_app/scripts/start_local_tts_server.sh restart'
 
 printf '[local-tts] persistent service deployed on QSM port 19002.\n'

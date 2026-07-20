@@ -57,7 +57,7 @@ class InquiryResult(BaseModel):
     can_proceed_to_dispense: bool
     created_at: str
     ai_source: str = "rules_fallback"
-    ai_message: str = "安全规则核验"
+    ai_message: str = "本地问询核验"
 
 
 class InquiryRecordResponse(BaseModel):

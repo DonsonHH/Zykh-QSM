@@ -70,7 +70,17 @@ export function InquiryResultStep({
     const key = `recommendation:${result.session_id}:${selectedOption?.option_id || "none"}`;
     if (lastRecommendationKeyRef.current === key) return;
     lastRecommendationKeyRef.current = key;
-    playResultSpeech(buildRecommendationSpeech(result, selectedOption), networkStatus, playbackGenerationRef);
+    const timer = window.setTimeout(() => {
+      playResultSpeech(
+        buildRecommendationSpeech(result, selectedOption),
+        networkStatus,
+        playbackGenerationRef
+      );
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      if (lastRecommendationKeyRef.current === key) lastRecommendationKeyRef.current = "";
+    };
   }, [networkStatus, result, selectedOption]);
 
   useEffect(() => {

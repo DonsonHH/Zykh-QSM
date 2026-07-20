@@ -96,10 +96,10 @@ export function localNetworkCopy(networkStatus) {
     const localModelReady = Boolean(networkStatus?.local_ai?.ready) || networkStatus?.ai_mode === "local_llm";
     return {
       title: "离线模式",
-      status: localModelReady ? "离线模型可用" : "安全规则可用",
+      status: localModelReady ? "本地问询可用" : "本地服务准备中",
       detail: localModelReady
         ? "联网功能未使用，问询由设备内离线模型完成。"
-        : "离线模型暂未就绪，当前仅执行本地安全规则。"
+        : "本地问询服务正在准备，请稍后重试。"
     };
   }
 

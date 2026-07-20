@@ -5,6 +5,7 @@ QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 VOICE_ROOT="${ZYKH_VOICE_ROOT:-/userdata/zykh_voice}"
 BIN="${QSM_LOCAL_TTS_BIN:-$QSM_HOME/bin/local-tts-server}"
 PORT="${QSM_LOCAL_TTS_PORT:-19002}"
+ACTION="${1:-start}"
 PID_FILE="${QSM_LOCAL_TTS_PID_FILE:-$QSM_HOME/data/local-tts.pid}"
 LOG_FILE="${QSM_LOCAL_TTS_LOG_FILE:-$QSM_HOME/data/local-tts.log}"
 
@@ -18,6 +19,19 @@ test -s "$VOICE_ROOT/models/tts/zh_CN-xiao_ya-medium.onnx" || {
 }
 
 mkdir -p "$(dirname "$PID_FILE")"
+if [ "$ACTION" = "restart" ] && [ -s "$PID_FILE" ]; then
+  old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  case "$old_pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      kill "$old_pid" 2>/dev/null || true
+      sleep 1
+      kill -9 "$old_pid" 2>/dev/null || true
+      ;;
+  esac
+  rm -f "$PID_FILE"
+fi
+
 if [ -s "$PID_FILE" ]; then
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then

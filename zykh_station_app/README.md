@@ -196,7 +196,9 @@ AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境�
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
-`AI_MODE=auto` 默认先调用云端；密钥缺失、网络不可达或云请求失败时，会自动调用 QSM 上真实运行的 Qwen3.5 GGUF 模型。只有 QSM 离线模型也不可用时，才进入确定性的安全规则兜底。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+`AI_MODE=auto` 默认先调用云端；密钥缺失、网络不可达或云请求失败时，会自动调用 QSM 上真实运行的 Qwen3.5 GGUF 模型。离线模型只做一次紧凑病例理解，候选药品在已经排除过期、无库存、非 OTC 和禁忌冲突项的安全池中完成快速语义排序，不再发起第二次耗时推理。两个模型通道都无法完成时，界面只会自然提示用户重新说明，不展示“规则兜底”或连接错误；紧急危险信号仍由本地硬边界直接拦截。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+
+服务地点默认预设为成都。用户提到中暑、暴晒或高温不适时，云端问询会读取成都当前气温、体感温度和湿度作为环境背景；天气不能单独用于判断病因，也不能替代本次体征测量。相关配置为 `INQUIRY_LOCATION_NAME`、`INQUIRY_LOCATION_LATITUDE`、`INQUIRY_LOCATION_LONGITUDE` 和 `WEATHER_API_BASE`。
 
 首次下载和部署离线模型：
 
@@ -218,13 +220,13 @@ INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
 继续部署常驻离线 TTS 和本地 Paraformer 语音识别服务：
 
 ```bash
-sh scripts/deploy_local_tts_server.sh
+bash scripts/deploy_local_tts_server.sh
 sh scripts/deploy_local_asr.sh
 ```
 
 `deploy_local_asr.sh` 从仓库根目录的 `QSM368ZP-offline-asr-migration*.zip` 校验并部署 Paraformer int8 模型，删除旧 Zipformer 目录，并预热板端 `6006` 常驻服务。本地模式先采集完整一句语音，用户停止后通常约 1 秒返回最终文本；联网模式仍使用 `qwen3-asr-flash-realtime`。前端只有在识别服务与 QSM 麦克风都就绪后才显示“正在听”。离线识别部署和验收见 [`docs/offline-asr.md`](docs/offline-asr.md)。
 
-语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时自动回退常驻板端模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时自动回退常驻板端模型。离线常驻服务使用异步生成/播放队列并在开始前预缓冲，避免生成速度低于播放速度时每句话之间出现断音。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 
@@ -240,7 +242,7 @@ sh scripts/deploy_local_asr.sh
 sh scripts/start_4g.sh
 ```
 
-该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询自动使用 QSM 离线模型；模型进程也不可用时才由安全规则继续处理。
+该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询自动使用 QSM 离线模型；模型进程也不可用时保留紧急危险信号拦截，并提示用户重新说明或联系现场人员，不在普通界面展示技术通道名称。
 
 主机通过 QSM 的 USB RNDIS 接口使用该数据链路：QSM `usb0` 连接 EC200A，QSM `usb1` 连接主机，主机侧接口名为 `usb0`。首次启动终端时，`launch_kiosk.sh` 会请求一次管理员授权并安装受限路由助手。之后关闭 Wi-Fi 前，后端会先完成 QSM NAT、主机 `192.168.77.2/24` 地址和 metric 700 备用路由验证；任一步失败都会保留 Wi-Fi，避免终端失联。也可提前手动安装：
 

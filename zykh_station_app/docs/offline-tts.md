@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The QSM gateway can synthesize Chinese speech without Wi-Fi, SIM connectivity or an API key. It uses the aarch64 `sherpa-onnx` runtime and the INT8 `zh_CN-xiao_ya-medium` VITS model supplied in the local deployment archive. A persistent service keeps the model loaded and streams generated PCM to `aplay`; the original per-request WAV script remains a compatibility fallback.
+The QSM gateway can synthesize Chinese speech without Wi-Fi, SIM connectivity or an API key. It uses the aarch64 `sherpa-onnx` runtime and the INT8 `zh_CN-xiao_ya-medium` VITS model supplied in the local deployment archive. A persistent service keeps the model loaded, generates PCM into an asynchronous queue and prebuffers playback; the original per-request WAV script remains a compatibility fallback.
 
 The model and runtime are deployed to QSM but are not committed to Git:
 
@@ -36,7 +36,7 @@ INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
 The script checks aarch64 compatibility and free space, uploads the runtime and model, verifies key SHA-256 hashes, backs up and installs the current gateway when requested, generates a Chinese WAV entirely on QSM, and optionally plays it through the QSM speaker. Then deploy the persistent streamer:
 
 ```bash
-sh scripts/deploy_local_tts_server.sh
+bash scripts/deploy_local_tts_server.sh
 ```
 
 ## Verification
@@ -60,7 +60,7 @@ A successful offline response contains:
 }
 ```
 
-On the verified board, the old process-per-request route took about 17.18 seconds for a short sentence because model loading consumed roughly 14 seconds. Keeping the model resident reduced end-to-end time to about 4.16 seconds and began playback after about 1.28 seconds. This is still the offline fallback; online speech uses Qwen realtime TTS and writes each PCM delta directly to QSM. The bundled voice model is restricted to non-commercial use; replace it or obtain suitable licensing before commercial distribution.
+On the verified board, the old process-per-request route took about 17.18 seconds for a short sentence because model loading consumed roughly 14 seconds. The resident service removes model reload cost. For multi-sentence text it now uses all four board CPU cores and a five-second audio prebuffer so generation cannot repeatedly starve the speaker. A real three-sentence check reported `underflow_count=0`, `max_queue_wait_ms=0`, first audio at about 7.7 seconds and completion at about 13.6 seconds. This deliberately trades a longer initial preparation for continuous playback. Online speech still uses Qwen realtime TTS and writes each PCM delta directly to QSM. The bundled voice model is restricted to non-commercial use; replace it or obtain suitable licensing before commercial distribution.
 
 Offline speech recognition is deployed separately from TTS. See
 [`offline-asr.md`](offline-asr.md) for the resident Paraformer service,

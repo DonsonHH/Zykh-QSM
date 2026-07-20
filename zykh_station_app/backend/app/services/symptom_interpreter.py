@@ -76,17 +76,16 @@ class SymptomInterpreter:
         payload = self.ai_service.extract_inquiry_information(transcript, existing, profile)
         if not payload.get("ok"):
             return SymptomInterpretation(
-                assistant_reply=(
-                    "连接有些不稳定，刚才的内容已经保留。"
-                    "请再说一次最后这句话，我会从这里继续。"
-                ),
+                assistant_reply="刚才这句话没有整理完整，请换一种说法再说一次。",
                 reasoning_summary=str(payload.get("message") or "云端与本地问询模型均未返回有效内容。")[:180],
                 action_intent="ask",
-                action_reason="智能问询服务发生暂时性故障，等待重试",
-                source="ai_unavailable",
+                action_reason="等待用户换一种说法补充本轮内容",
+                source="assistant",
                 available=False,
             )
-        return self._validated_model_result(payload, existing)
+        interpretation = self._validated_model_result(payload, existing)
+        self._complete_explicit_answers(interpretation, transcript, existing)
+        return interpretation
 
     def resume_after_vitals(
         self,
@@ -225,7 +224,8 @@ class SymptomInterpreter:
         negative = (
             "没吃药", "没有吃药", "没吃过药", "没有吃过药", "还没吃药", "还没吃过药",
             "没用药", "没有用药", "没用过药", "没有用过药", "还没用药", "还没用过药",
-            "未使用", "未用药", "什么药都没用", "什么药都没有用", "暂时还没有",
+            "没有使用药物", "还没有使用药物", "未使用", "未用药",
+            "什么药都没用", "什么药都没有用", "暂时还没有",
         )
         if any(term in text for term in negative) or (
             allow_short_answer and text in {"没有", "还没有", "没", "暂时没有"}
@@ -254,6 +254,54 @@ class SymptomInterpreter:
                 return f"{direct_allergy.group(1)}过敏"
             return text[:120]
         return ""
+
+    @classmethod
+    def _complete_explicit_answers(
+        cls,
+        interpretation: SymptomInterpretation,
+        transcript: str,
+        existing: dict[str, Any],
+    ) -> None:
+        interpretation.duration = (
+            interpretation.duration
+            or cls.duration_answer(transcript)
+            or str(existing.get("duration") or "").strip()
+        )
+        interpretation.used_medicines = (
+            interpretation.used_medicines
+            or cls.used_medicine_answer(transcript)
+            or str(existing.get("used_medicines") or "").strip()
+        )
+        interpretation.allergy_or_contraindication = (
+            interpretation.allergy_or_contraindication
+            or cls.allergy_answer(transcript)
+            or str(existing.get("allergy_or_contraindication") or "").strip()
+        )
+
+        question = interpretation.follow_up_question or interpretation.assistant_reply
+        asks_answered_field = (
+            bool(interpretation.duration)
+            and any(term in question for term in ("持续", "多久", "多长时间"))
+        ) or (
+            bool(interpretation.used_medicines)
+            and any(term in question for term in ("用过药", "用药", "吃过药", "吃药"))
+        ) or (
+            bool(interpretation.allergy_or_contraindication)
+            and any(term in question for term in ("过敏", "禁忌", "不能使用"))
+        )
+        if interpretation.action_intent != "ask" or not asks_answered_field:
+            return
+        if not interpretation.used_medicines:
+            next_question = "这次不舒服以后有没有用过药？"
+        elif not interpretation.allergy_or_contraindication:
+            next_question = "有没有药物过敏或明确不能使用的药？"
+        else:
+            interpretation.action_intent = "analyze"
+            interpretation.follow_up_question = ""
+            interpretation.assistant_reply = "信息已经整理好了，我来结合当前情况继续分析。"
+            return
+        interpretation.follow_up_question = next_question
+        interpretation.assistant_reply = next_question
 
     @staticmethod
     def _short_text(value: object, limit: int) -> str:

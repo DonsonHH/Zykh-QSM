@@ -211,12 +211,15 @@ class AiServiceOfflineTest(unittest.TestCase):
 
         self.assertEqual(reply, "咳嗽持续了多久？")
 
-    def test_rules_reply_does_not_duplicate_terminal_punctuation(self) -> None:
+    def test_continuity_reply_hides_internal_fallback_details(self) -> None:
         reply = AiService(local_client=FakeLocalClient({"ok": False}))._rules_reply(
             "我有些头晕。", "offline"
         )["reply"]
 
         self.assertNotIn("头晕。。", reply)
+        self.assertNotIn("规则", reply)
+        self.assertNotIn("模型", reply)
+        self.assertNotIn("暂不可用", reply)
 
     def test_recommendation_language_removes_efficacy_promises(self) -> None:
         result = AiService._normalize_recommendation_language(
@@ -314,11 +317,105 @@ class AiServiceOfflineTest(unittest.TestCase):
             {"age": 65},
         )
 
-        self.assertEqual(client.last_kwargs["max_tokens"], 96)
+        self.assertEqual(client.last_kwargs["max_tokens"], 64)
         self.assertLess(len(client.last_messages[0]["content"]), 520)
         self.assertIn('"f"', client.last_messages[1]["content"])
         self.assertEqual(result["observations"][0]["concept"], "暑热后头晕")
         self.assertEqual(result["next_question"], "有没有恶心或腹泻？")
+
+    @patch("app.services.ai_service.settings")
+    def test_partial_small_model_json_continues_with_one_natural_question(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"s":"暑热后头晕","d":["头晕"]}',
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "在外面晒了以后有点头晕",
+            {"conversation_turns": 1, "conversation": []},
+            {"age": 65},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["next_action"], "ask")
+        self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
+        self.assertEqual(result["observations"][0]["evidence"], "在外面晒了以后有点头晕")
+
+    @patch("app.services.ai_service.settings")
+    def test_local_model_cannot_repeat_the_opening_after_extracting_a_complaint(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": (
+                    '{"s":"头晕、暑湿不适","d":["头晕"],"p":["暑湿不适"],'
+                    '"n":"ask","q":"今天哪里不舒服？慢慢说。","k":"low","c":0.7}'
+                ),
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我今天在外面晒了以后有点头晕恶心",
+            {
+                "conversation_turns": 1,
+                "conversation": [
+                    {"role": "assistant", "content": "今天哪里不舒服？慢慢说。"},
+                ],
+            },
+            {},
+        )
+
+        self.assertEqual(result["case_summary"], "头晕、暑湿不适")
+        self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
+        self.assertNotIn("哪里不舒服", result["next_question"])
+
+    @patch("app.services.ai_service.settings")
+    def test_local_prompt_keeps_only_recent_compact_conversation(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"s":"头晕","d":["头晕"],"n":"ask","q":"持续多久了？"}',
+            }
+        )
+        conversation = [
+            {"role": "user", "content": f"第{index}轮" + "很长的描述" * 40}
+            for index in range(10)
+        ]
+
+        AiService(local_client=client).extract_inquiry_information(
+            "我头晕",
+            {
+                "conversation_turns": 10,
+                "conversation": conversation,
+                "recent_history": [
+                    {"title": "旧问询", "reply": "旧结论" * 80},
+                ],
+            },
+            {},
+        )
+
+        payload = json.loads(client.last_messages[1]["content"])
+        self.assertEqual(len(payload["known"]["c"]), 6)
+        self.assertTrue(payload["known"]["c"][0]["x"].startswith("第4轮"))
+        self.assertLessEqual(len(payload["known"]["c"][0]["x"]), 80)
+        self.assertLessEqual(len(payload["known"]["h"][0]["summary"]), 80)
 
     def test_compact_local_schema_accepts_small_model_object_variants(self) -> None:
         result = AiService._expand_local_inquiry(

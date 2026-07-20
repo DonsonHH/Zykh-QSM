@@ -8,6 +8,10 @@ SERVER="${LOCAL_AI_SERVER:-$ASSET_DIR/llama-server}"
 MODEL="${LOCAL_AI_MODEL_FILE:-$ASSET_DIR/models/Qwen3.5-0.8B-Q4_K_M.gguf}"
 HOST="${LOCAL_AI_HOST:-0.0.0.0}"
 PORT="${LOCAL_AI_PORT:-8083}"
+CTX_SIZE="${LOCAL_AI_CTX_SIZE:-1024}"
+THREADS="${LOCAL_AI_THREADS:-3}"
+BATCH_SIZE="${LOCAL_AI_BATCH_SIZE:-128}"
+UBATCH_SIZE="${LOCAL_AI_UBATCH_SIZE:-32}"
 PID_FILE="$RUNTIME_DIR/llama-server.pid"
 LOG_FILE="$RUNTIME_DIR/llama-server.log"
 START_TIMEOUT="${LOCAL_AI_START_TIMEOUT:-65}"
@@ -53,11 +57,11 @@ if command -v setsid >/dev/null 2>&1; then
     -m "$MODEL" \
     --host "$HOST" \
     --port "$PORT" \
-    --ctx-size 2048 \
-    --threads 4 \
-    --threads-batch 4 \
-    --batch-size 256 \
-    --ubatch-size 64 \
+    --ctx-size "$CTX_SIZE" \
+    --threads "$THREADS" \
+    --threads-batch "$THREADS" \
+    --batch-size "$BATCH_SIZE" \
+    --ubatch-size "$UBATCH_SIZE" \
     --parallel 1 \
     --reasoning off \
     --reasoning-budget 0 \
@@ -68,11 +72,11 @@ else
     -m "$MODEL" \
     --host "$HOST" \
     --port "$PORT" \
-    --ctx-size 2048 \
-    --threads 4 \
-    --threads-batch 4 \
-    --batch-size 256 \
-    --ubatch-size 64 \
+    --ctx-size "$CTX_SIZE" \
+    --threads "$THREADS" \
+    --threads-batch "$THREADS" \
+    --batch-size "$BATCH_SIZE" \
+    --ubatch-size "$UBATCH_SIZE" \
     --parallel 1 \
     --reasoning off \
     --reasoning-budget 0 \

@@ -129,9 +129,9 @@ class DashboardService:
             "cloud": "云端",
             "local": "离线模型",
             "local_llm": "离线模型",
-            "rules": "安全规则",
-            "rules_fallback": "安全规则",
-        }.get(value, "安全规则")
+            "rules": "本地问询",
+            "rules_fallback": "本地问询",
+        }.get(value, "本地问询")
 
     @staticmethod
     def _sync_label(value: str) -> str:

@@ -431,7 +431,7 @@ class InquiryOrchestrator:
         if not interpretation.available:
             session.stage = "clarification"
             session.next_action = "ask"
-            session.reply = "连接有些不稳定，刚才的内容已经保留。请再说一次最后这句话，我会从这里继续。"
+            session.reply = "刚才这句话没有整理完整，请换一种说法再说一次。"
             session.model_action_intent = "ask"
             self._clear_decision(session)
             return self._commit(session)
@@ -589,10 +589,7 @@ class InquiryOrchestrator:
             if rank_failed or rank_message or not extracted.ai_available:
                 session.stage = "clarification"
                 session.next_action = "ask"
-                session.reply = (
-                    "分析连接有些不稳定，本次信息已经保留。"
-                    "请稍后说“继续分析”，我会从这里重新尝试。"
-                )
+                session.reply = "我还需要再确认一次：现在最希望先处理的是哪一种不舒服？"
             elif empty_message:
                 session.stage = "result"
                 session.next_action = "escalate"

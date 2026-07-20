@@ -56,8 +56,9 @@ Phase eight switches the runtime defaults to real-device first:
 - records and dashboard values come from SQLite instead of fixed page constants;
 - sync reports `未配置` until a real cloud endpoint is configured;
 - inquiry uses a DeepSeek-compatible endpoint when reachable and routes failures
-  to the real QSM Qwen3.5 model. If both models are unavailable, the inquiry is
-  marked unavailable and cannot generate a medicine candidate.
+  to the real QSM Qwen3.5 model. If both models are unavailable, the inquiry
+  remains retryable and cannot generate a medicine candidate; transport and
+  fallback terminology stays out of terminal-facing copy.
 
 ## AI routing
 
@@ -68,11 +69,22 @@ describe the case, what single question to ask next, whether vitals are needed
 and whether recent history is semantically related. It can rank only IDs admitted
 by the hard-safe pool and may return no candidate.
 
+For online environment-sensitive complaints such as heat exposure, the service
+can attach current Chengdu weather from Open-Meteo to the model request. This is
+supporting context only and cannot establish a cause or replace measured vitals.
+The offline 0.8B route emits one compact case-understanding structure. To avoid
+a second slow board inference, local candidate ordering compares model-extracted
+complaint and care-purpose concepts with descriptions in the already-filtered
+hard-safe pool.
+
 Deterministic code is deliberately narrower: it intercepts non-negotiable danger
 signals, may raise but never lower model risk, excludes expired, unavailable,
 non-OTC or contraindicated medicines, and revalidates the selected option before
-the existing dispense service runs. There is no fixed symptom taxonomy, fixed
-question table or rule-generated medicine ranking in the session workflow.
+the existing dispense service runs. There is no fixed symptom taxonomy or fixed
+question table in the session workflow. The cloud route ranks the safe pool with
+the model; the constrained offline route uses the compact model concepts for a
+deterministic similarity ordering so safety is retained without another slow
+generation.
 
 Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.md).
 

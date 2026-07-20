@@ -99,6 +99,32 @@ class InvalidActionAiService:
         }
 
 
+class StaleDurationQuestionAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "case_summary": "晒后头晕恶心。",
+            "observations": [
+                {
+                    "concept": "头晕恶心",
+                    "status": "present",
+                    "evidence": "晒后头晕恶心",
+                    "source_turn": 2,
+                    "confidence": 0.82,
+                }
+            ],
+            "duration": "",
+            "used_medicines": "",
+            "allergy_or_contraindication": "",
+            "next_action": "ask",
+            "next_question": "头晕持续多久了？",
+            "assistant_reply": "头晕持续多久了？",
+            "risk_level": "low",
+            "confidence": 0.82,
+        }
+
+
 class SymptomInterpreterTest(unittest.TestCase):
     def test_open_case_keeps_a_concept_outside_any_fixed_symptom_whitelist(self) -> None:
         result = SymptomInterpreter(ai_service=OpenCaseAiService()).interpret(
@@ -131,9 +157,11 @@ class SymptomInterpreterTest(unittest.TestCase):
         )
 
         self.assertFalse(result.available)
-        self.assertEqual(result.source, "ai_unavailable")
+        self.assertEqual(result.source, "assistant")
         self.assertEqual(result.action_intent, "ask")
         self.assertIn("再说一次", result.assistant_reply)
+        self.assertNotIn("模型", result.assistant_reply)
+        self.assertNotIn("规则", result.assistant_reply)
         self.assertEqual(result.observations, [])
         self.assertEqual(result.symptom_dimensions, [])
 
@@ -153,6 +181,17 @@ class SymptomInterpreterTest(unittest.TestCase):
             SymptomInterpreter.allergy_answer("我对头孢过敏"),
             "头孢过敏",
         )
+
+    def test_explicit_answers_fill_small_model_omissions_without_repeating_question(self) -> None:
+        result = SymptomInterpreter(ai_service=StaleDurationQuestionAiService()).interpret(
+            "大概半天了，还没有使用药物",
+            {"conversation_turns": 2},
+        )
+
+        self.assertEqual(result.duration, "半天")
+        self.assertEqual(result.used_medicines, "未使用")
+        self.assertEqual(result.follow_up_question, "有没有药物过敏或明确不能使用的药？")
+        self.assertEqual(result.assistant_reply, result.follow_up_question)
 
 
 if __name__ == "__main__":
