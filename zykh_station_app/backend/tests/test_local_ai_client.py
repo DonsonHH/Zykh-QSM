@@ -317,7 +317,7 @@ class AiServiceOfflineTest(unittest.TestCase):
             {"age": 65},
         )
 
-        self.assertEqual(client.last_kwargs["max_tokens"], 72)
+        self.assertEqual(client.last_kwargs["max_tokens"], 96)
         self.assertLess(len(client.last_messages[0]["content"]), 520)
         self.assertIn('"f"', client.last_messages[1]["content"])
         self.assertEqual(result["observations"][0]["concept"], "暑热后头晕")
@@ -454,7 +454,7 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertEqual(result["observations"][0]["evidence"], "在外面晒了以后有点头晕")
 
     @patch("app.services.ai_service.settings")
-    def test_small_model_fragment_is_not_shown_as_a_follow_up_question(self, mocked_settings) -> None:
+    def test_small_model_fragment_preserves_the_user_complaint(self, mocked_settings) -> None:
         mocked_settings.ai_mode = "local"
         mocked_settings.ai_api_key = ""
         mocked_settings.ai_api_key_file = Path("/nonexistent")
@@ -471,8 +471,10 @@ class AiServiceOfflineTest(unittest.TestCase):
             {},
         )
 
-        self.assertFalse(result["ok"])
-        self.assertIn("换一种说法", result["message"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["case_summary"], "今天在外面晒后有点头晕")
+        self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
 
     @patch("app.services.ai_service.settings")
     def test_local_model_cannot_repeat_the_opening_after_extracting_a_complaint(

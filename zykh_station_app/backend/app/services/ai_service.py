@@ -1072,7 +1072,10 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=72,
+            # 72 tokens is often enough for Chinese prose but can cut the JSON
+            # closing brace off on this small model. Keep the response compact,
+            # while leaving enough room for one observation and one question.
+            max_tokens=96,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
@@ -1099,6 +1102,10 @@ class AiService:
             recovered = self._recover_local_inquiry_prefix(raw_reply)
             parsed = recovered if isinstance(recovered, dict) else parsed
         if not isinstance(parsed, dict):
+            recovered = self._recover_local_transcript(transcript, existing)
+            if recovered:
+                self._complete_local_inquiry(recovered, existing)
+                return {"ok": True, "source": "local_llm", **recovered}
             return self._local_continuity_result(transcript, existing, reason)
         expanded = self._expand_local_inquiry(
             parsed,
@@ -1117,6 +1124,10 @@ class AiService:
             )
         )
         if not expanded.get("observations") and not has_extracted_context:
+            recovered = self._recover_local_transcript(transcript, existing)
+            if recovered:
+                self._complete_local_inquiry(recovered, existing)
+                return {"ok": True, "source": "local_llm", **recovered}
             return self._local_continuity_result(transcript, existing, "离线模型未提取到明确病例信息。")
         self._complete_local_inquiry(expanded, existing)
         return {"ok": True, "source": "local_llm", **expanded}
@@ -1129,6 +1140,8 @@ class AiService:
             "duration、used_medicines、allergy。facts元素的键为concept、status、evidence；"
             "status只能是present、absent或uncertain，action只能是ask、measure_vitals、analyze、escalate或end。"
             "facts最多2项；summary和concept必须写said中的具体不适，禁止输出字段说明或占位词。"
+            "不要把用户没有说出的发热、皮肤潮红、疼痛等表现自行补出来；用户说‘好像’或‘可能’时保留为其原话，"
+            "不要把它扩写成已确认的病因。"
             "said有两个明确不适就分别整理；否定词后的内容只能absent；字段没有新信息就留空。"
             "question必须紧扣本轮具体不适且只问一件事，不得复制无关问题。"
             "没有不适时facts=[]并询问哪里不舒服；主诉明确且体征有帮助时才measure_vitals。"
@@ -1548,6 +1561,77 @@ class AiService:
             "source": "assistant",
             "message": "刚才没有听清或整理出明确的不适，请换一种说法再说一次。",
             "diagnostic_note": diagnostic_reason,
+        }
+
+    @classmethod
+    def _recover_local_transcript(
+        cls,
+        transcript: str,
+        existing: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Keep a clear utterance when the local model misses its JSON contract.
+
+        This is a lossless transport fallback, not a clinical classifier: it only
+        trims speech fillers and stores the user's own words as evidence. It does
+        not infer a diagnosis, risk level, medicine, or hardware action.
+        """
+        raw = cls._compact_text(transcript, 120)
+        compact = re.sub(r"[，。！？,.!?；;]", "", raw).strip()
+        if not compact or compact in {
+            "嗯", "哦", "啊", "好", "好的", "是", "是的", "没有", "无", "不知道", "不清楚",
+        }:
+            return None
+
+        complaint = re.sub(r"^(?:我说|就是说)", "", compact).strip()
+        complaint = re.sub(
+            r"^(?:我)?(?:好像|感觉|觉得|似乎|有点|有些|一点|一些|最近|现在|目前)",
+            "",
+            complaint,
+        ).strip()
+        complaint = re.sub(r"^(?:有点|有些|一点|一些)", "", complaint).strip()
+        complaint = re.sub(r"^我", "", complaint).strip()
+        complaint = re.sub(r"(?:了|啦|的)$", "", complaint).strip()
+        if len(complaint) < 2:
+            return None
+
+        complaint_signals = (
+            "中暑", "暑湿", "头晕", "发热", "高热", "咳嗽", "流涕", "鼻塞", "头痛",
+            "腹泻", "胃痛", "恶心", "呕吐", "过敏", "瘙痒", "擦伤", "刀伤", "伤口",
+            "出血", "胸闷", "心慌", "气短", "喉咙", "嗓子", "疼", "痛", "发冷", "乏力",
+            "出汗", "不舒服", "难受", "不适",
+        )
+        if not any(term in complaint for term in complaint_signals):
+            return None
+
+        existing_summary = str(existing.get("case_summary") or "").strip()
+        summary = complaint[:40] or existing_summary[:40]
+        if not summary:
+            return None
+        return {
+            "case_summary": summary,
+            "observations": [
+                {
+                    "concept": summary,
+                    "status": "present",
+                    "evidence": raw,
+                    "source_turn": max(1, int(existing.get("conversation_turns") or 1)),
+                    "confidence": 0.55,
+                }
+            ],
+            "uncertainties": [],
+            "history_relationship": {},
+            "duration": str(existing.get("duration") or "").strip(),
+            "used_medicines": str(existing.get("used_medicines") or "").strip(),
+            "allergy_or_contraindication": str(
+                existing.get("allergy_or_contraindication") or ""
+            ).strip(),
+            "next_question": "",
+            "assistant_reply": "",
+            "reason": "保留用户原话，等待本地模型下一轮继续整理。",
+            "next_action": "ask",
+            "risk_level": "low",
+            "risk_signals": [],
+            "confidence": 0.55,
         }
 
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:

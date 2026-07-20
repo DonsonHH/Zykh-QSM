@@ -270,6 +270,75 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertNotIn("分类码", client.last_messages[0]["content"])
         self.assertNotIn("allowed_dimensions", client.last_messages[1]["content"])
 
+    @patch("app.services.ai_service.settings")
+    def test_local_inquiry_accepts_full_schema_for_short_heatstroke_utterance(
+        self,
+        mocked_settings,
+    ) -> None:
+        """A valid full-field response must not fall into the generic retry message."""
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": json.dumps(
+                    {
+                        "case_summary": "中暑",
+                        "observations": [
+                            {
+                                "concept": "中暑",
+                                "status": "present",
+                                "evidence": "我好像有点中暑",
+                                "source_turn": 1,
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "next_action": "ask",
+                        "next_question": "这种不舒服大概持续多久了？",
+                        "assistant_reply": "这种不舒服大概持续多久了？",
+                        "risk_level": "low",
+                        "risk_signals": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我好像有点中暑",
+            {
+                "conversation_turns": 1,
+                "case_summary": "",
+                "observations": [],
+                "conversation": [],
+            },
+            {"name": "李四", "age": 72},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["case_summary"], "中暑")
+        self.assertEqual(result["next_action"], "ask")
+        self.assertNotIn("换一种说法", result.get("message", ""))
+
+    @patch("app.services.ai_service.settings")
+    def test_local_inquiry_preserves_explicit_complaint_when_model_returns_plain_text(
+        self,
+        mocked_settings,
+    ) -> None:
+        """A format miss must not erase a clear user utterance."""
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient({"ok": True, "reply": "中暑"})
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我好像有点中暑",
+            {"conversation_turns": 1, "conversation": []},
+            {"name": "李四", "age": 72},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["case_summary"], "中暑")
+
     def test_safe_pool_excludes_prescription_expired_and_allergy_conflicts(self) -> None:
         pool = MedicineKnowledgeRepository().safe_candidate_pool("青霉素过敏")
         ids = {medicine.id for medicine in pool}
