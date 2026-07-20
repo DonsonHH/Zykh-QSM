@@ -216,7 +216,7 @@ class SymptomInterpreterTest(unittest.TestCase):
         )
 
     def test_contextual_spoken_negative_answers_are_understood(self) -> None:
-        for transcript in ("这些都还没有", "都没有", "我说没有你耳朵聋吗"):
+        for transcript in ("这些都还没有", "都没有", "也没有", "我说没有你耳朵聋吗"):
             with self.subTest(transcript=transcript):
                 self.assertEqual(
                     SymptomInterpreter.allergy_answer(transcript, allow_short_answer=True),

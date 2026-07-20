@@ -155,3 +155,11 @@ P2:
 
 - Add a QSM gateway watchdog/start script.
 - Add a targeted station smoke script that skips physical dispense unless the double safety gate is present.
+
+## 2026-07-20 Integrated Vitals Follow-up
+
+- The QSM USB enumeration exposes Quectel `2c7c:6005` and CH340 `1a86:7523`. The CH340 node `/dev/ttyUSB3` is bound to the AS608 fingerprint service, not the integrated vitals module.
+- Linux does not currently enumerate a separate STLink virtual COM port. The integrated vitals protocol is received through `/dev/ttyS8` at 9600 8N1.
+- Recent failed measurements still contained 18-19 valid `FF 01 ... F1` frames. This proves the UART transport and frame parser were active; those frames carried zero heart-rate/SpO2 algorithm values.
+- Successful measurements showed heart rate first at frames 12-17 and SpO2 first at frames 16-22. One failed measurement produced 12 heart-rate frames but no SpO2 value.
+- The gateway now requires two recent heart-rate and SpO2 values, reports transport status separately, and grants one extra SpO2-only stabilization window when heart rate is already stable. It does not restart the sensor while valid protocol frames are arriving.

@@ -263,6 +263,8 @@ class AiService:
             "原话所在 source_turn 和 confidence。不得把否定表达写成 present。"
             "完整阅读 conversation、profile、vitals 和 recent_history；历史只用于比较，"
             "不得直接复用上次结论。每轮只问一个真正影响理解或安全的缺失信息，禁止固定字段顺序和重复追问。"
+            "case_state.symptom_followups_remaining 是症状追问剩余轮数，最多三轮；为 0 时不得继续追问症状，"
+            "应先确认过敏或禁忌，再确认本次是否用过药，随后选择 measure_vitals；核心体征已有结果时选择 analyze。"
             "next_action 只能是 ask、measure_vitals、analyze、escalate、end。"
             "先从用户原话中形成明确主诉；主诉尚未明确时不得选择 measure_vitals。"
             "主诉明确后，如果额温、心率和血氧会实质影响下一步判断，选择 measure_vitals；"

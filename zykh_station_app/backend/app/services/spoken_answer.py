@@ -30,6 +30,8 @@ def is_contextual_negative_answer(text: str) -> bool:
         "真没有",
         "真的没有",
         "确实没有",
+        "也没有",
+        "也没有啊",
     }:
         return True
     return any(

@@ -21,11 +21,13 @@ from .dispense_service import DispenseError, DispenseService
 from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryService
 from .inquiry_guest_archive_service import InquiryGuestArchiveService
 from .medicine_safety_engine import MedicineSafetyEngine
+from .spoken_answer import is_contextual_negative_answer
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
 
 
 class InquiryOrchestrator:
     _treatment_action_lock = threading.Lock()
+    _MAX_SYMPTOM_FOLLOWUPS = 3
 
     def __init__(
         self,
@@ -428,6 +430,16 @@ class InquiryOrchestrator:
                 source="safety_rules",
                 forced_guard=guard,
             )
+        if (
+            not interpretation.available
+            and self._symptom_followup_limit_reached(session)
+            and self._has_meaningful_complaint(extracted)
+        ):
+            return self._advance_after_symptom_collection(
+                session,
+                extracted,
+                source=interpretation.source,
+            )
         if not interpretation.available:
             session.stage = "clarification"
             session.next_action = "ask"
@@ -468,6 +480,12 @@ class InquiryOrchestrator:
             self._clear_decision(session)
             return self._commit(session)
         if interpretation.action_intent == "ask":
+            if self._symptom_followup_limit_reached(session):
+                return self._advance_after_symptom_collection(
+                    session,
+                    extracted,
+                    source=interpretation.source,
+                )
             session.stage = "clarification"
             session.next_action = "ask"
             session.reply = (
@@ -646,12 +664,60 @@ class InquiryOrchestrator:
             {
                 "current_stage": session.stage,
                 "conversation_turns": self._current_user_turn_count(session),
+                "symptom_followups_remaining": max(
+                    0,
+                    self._MAX_SYMPTOM_FOLLOWUPS
+                    - max(self._current_user_turn_count(session) - 1, 0),
+                ),
                 "conversation": messages,
                 "vitals": session.vitals or {},
                 "recent_history": self._history_context(session).model_context(),
             }
         )
         return context
+
+    def _advance_after_symptom_collection(
+        self,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+        *,
+        source: str,
+    ) -> InquirySessionResponse:
+        allergy = extracted.allergy_or_contraindication.strip()
+        if not allergy or allergy == "不确定":
+            session.stage = "clarification"
+            session.next_action = "ask"
+            session.reply = "接下来确认用药安全：你有没有药物过敏，或明确不能使用的药物？"
+            session.source = source
+            self._clear_decision(session)
+            return self._commit(session)
+
+        used = extracted.used_medicines.strip()
+        if not used or used == "不确定":
+            session.stage = "clarification"
+            session.next_action = "ask"
+            session.reply = "这次不舒服以后有没有用过药？如果用过，请说出药名。"
+            session.source = source
+            self._clear_decision(session)
+            return self._commit(session)
+
+        vitals_status = str((session.vitals or {}).get("status") or "")
+        if not self._has_complete_vitals(session) and vitals_status not in {
+            "failed",
+            "cancelled",
+            "unavailable",
+        }:
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.reply = self._vitals_guidance(
+                "症状和用药安全信息已经确认，接下来读取额温、心率和血氧。"
+            )
+            session.source = source
+            session.action_reason = "症状追问已完成，进入核心体征核验。"
+            self._clear_decision(session)
+            return self._commit(session)
+
+        return self._finish(session, extracted, source=source)
 
     @staticmethod
     def _model_profile(session: InquirySessionResponse) -> dict[str, object]:
@@ -870,6 +936,34 @@ class InquiryOrchestrator:
             for item in observations
             if item.status == "present" and item.evidence
         }
+        used_medicines = interpretation.used_medicines or current.used_medicines
+        allergy_or_contraindication = (
+            interpretation.allergy_or_contraindication
+            or current.allergy_or_contraindication
+            or session.user_allergies
+        )
+        if is_contextual_negative_answer(transcript):
+            previous_question = next(
+                (
+                    message.content
+                    for message in reversed(session.messages)
+                    if message.role == "assistant"
+                ),
+                "",
+            )
+            asks_allergy = any(
+                term in previous_question
+                for term in ("过敏", "禁忌", "不能使用", "不能用")
+            )
+            asks_used_medicines = any(
+                term in previous_question
+                for term in ("用过药", "用药", "吃过药", "吃药", "服药")
+            )
+            if asks_allergy:
+                if not allergy_or_contraindication:
+                    allergy_or_contraindication = "无"
+            elif asks_used_medicines and not used_medicines:
+                used_medicines = "未使用"
         return InquiryExtractedInformation(
             case_summary=interpretation.case_summary or current.case_summary,
             observations=observations,
@@ -891,12 +985,8 @@ class InquiryOrchestrator:
                 transcript,
             ),
             duration=interpretation.duration or current.duration,
-            used_medicines=interpretation.used_medicines or current.used_medicines,
-            allergy_or_contraindication=(
-                interpretation.allergy_or_contraindication
-                or current.allergy_or_contraindication
-                or session.user_allergies
-            ),
+            used_medicines=used_medicines,
+            allergy_or_contraindication=allergy_or_contraindication,
             confidence=max(current.confidence, interpretation.confidence),
         )
 
@@ -939,6 +1029,12 @@ class InquiryOrchestrator:
     def _current_user_turn_count(session: InquirySessionResponse) -> int:
         # The current transcript is persisted before this in-memory session is refreshed.
         return sum(1 for message in session.messages if message.role == "user") + 1
+
+    @classmethod
+    def _symptom_followup_limit_reached(cls, session: InquirySessionResponse) -> bool:
+        # The first user turn states the complaint. The next three turns are the
+        # maximum symptom-refinement budget; the fourth answer advances the flow.
+        return cls._current_user_turn_count(session) > cls._MAX_SYMPTOM_FOLLOWUPS
 
     def _history_context(self, session: InquirySessionResponse) -> InquiryHistoryContext:
         return self.history_service.context_for(

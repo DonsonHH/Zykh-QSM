@@ -11,10 +11,11 @@ my %options = (
     device            => $ENV{VITALS_UART_DEVICE} || '/dev/ttyS8',
     output            => $ENV{VITALS_UART_JSON} || '/userdata/zykh_app/data/vital_signs_uart8.json',
     timeout           => number_or($ENV{VITALS_UART_TIMEOUT_SECONDS}, 16),
-    stable_frames     => int(number_or($ENV{VITALS_UART_STABLE_FRAMES}, 3)),
+    stable_frames     => int(number_or($ENV{VITALS_UART_STABLE_FRAMES}, 2)),
     reference_frames  => int(number_or($ENV{VITALS_UART_REFERENCE_FRAMES}, 2)),
     aggregate_samples => int(number_or($ENV{VITALS_UART_AGGREGATE_SAMPLES}, 5)),
     stabilization_grace => number_or($ENV{VITALS_UART_STABILIZATION_GRACE_SECONDS}, 12),
+    spo2_grace        => number_or($ENV{VITALS_UART_SPO2_GRACE_SECONDS}, 8),
     minimum_measurement_seconds => number_or($ENV{VITALS_UART_MINIMUM_MEASUREMENT_SECONDS}, 4),
     minimum_contact_seconds => number_or($ENV{VITALS_UART_MINIMUM_CONTACT_SECONDS}, 2.6),
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
@@ -31,6 +32,7 @@ $options{stable_frames} = 1 if $options{stable_frames} < 1;
 $options{reference_frames} = 1 if $options{reference_frames} < 1;
 $options{aggregate_samples} = 1 if $options{aggregate_samples} < 1;
 $options{stabilization_grace} = 0 if $options{stabilization_grace} < 0;
+$options{spo2_grace} = 0 if $options{spo2_grace} < 0;
 $options{minimum_measurement_seconds} = 0 if $options{minimum_measurement_seconds} < 0;
 $options{minimum_contact_seconds} = 0 if $options{minimum_contact_seconds} < 0;
 $options{chunk_size} = 1 if $options{chunk_size} < 1;
@@ -77,6 +79,9 @@ if ($options{state_file} && !$options{input_file}) {
         contact_frame_count    => int($payload->{contact_frame_count} || 0),
         heart_rate_frame_count => int($payload->{heart_rate_frame_count} || 0),
         spo2_frame_count       => int($payload->{spo2_frame_count} || 0),
+        communication_status   => $payload->{communication_status} || 'no_protocol_frames',
+        stable_core            => $payload->{stable_core} || JSON::PP::false,
+        spo2_stabilization_extended => $payload->{spo2_stabilization_extended} || JSON::PP::false,
         error_message    => $payload->{error} || '',
     });
 }
@@ -109,6 +114,8 @@ sub parse_arguments {
             $options->{aggregate_samples} = int(number_or(require_value($name, \@args), $options->{aggregate_samples}));
         } elsif ($name eq '--stabilization-grace') {
             $options->{stabilization_grace} = number_or(require_value($name, \@args), $options->{stabilization_grace});
+        } elsif ($name eq '--spo2-grace') {
+            $options->{spo2_grace} = number_or(require_value($name, \@args), $options->{spo2_grace});
         } elsif ($name eq '--minimum-measurement-seconds') {
             $options->{minimum_measurement_seconds} = number_or(
                 require_value($name, \@args),
@@ -231,6 +238,7 @@ sub read_uart_frames {
     my $contact_window_set = 0;
     my $first_contact_at;
     my $stabilization_extended = 0;
+    my $spo2_stabilization_extended = 0;
     while (time() < $deadline) {
         if ($options->{cancel_file} && -e $options->{cancel_file}) {
             $stop_hardware->();
@@ -248,10 +256,11 @@ sub read_uart_frames {
             $buffer .= $chunk;
             extract_frames(\$buffer, \@frames);
             my @contact = grep { frame_has_contact($_) } @frames;
+            my $contact_detected = contact_detected(\@frames);
             my @heart_rate = grep { $_->[2] > 0 } @frames;
             my @spo2 = grep { $_->[3] > 0 } @frames;
-            $first_contact_at = time() if !defined($first_contact_at) && @contact;
-            if (!$contact_window_set && @contact && $options->{stabilization_grace} > 0) {
+            $first_contact_at = time() if !defined($first_contact_at) && $contact_detected;
+            if (!$contact_window_set && $contact_detected && $options->{stabilization_grace} > 0) {
                 my $extended_deadline = time() + $options->{stabilization_grace};
                 if ($extended_deadline > $deadline) {
                     $deadline = $extended_deadline;
@@ -259,17 +268,30 @@ sub read_uart_frames {
                 }
                 $contact_window_set = 1;
             }
+            if (
+                !$spo2_stabilization_extended
+                && $options->{spo2_grace} > 0
+                && time() >= $deadline - 0.25
+                && @heart_rate >= $options->{stable_frames}
+                && @spo2 < $options->{stable_frames}
+            ) {
+                $deadline = time() + $options->{spo2_grace};
+                $spo2_stabilization_extended = 1;
+                $options->{spo2_stabilization_extended} = 1;
+            }
             write_state($options, {
                 ok               => JSON::PP::true,
-                status           => @contact ? 'stabilizing' : 'waiting_finger',
+                status           => $contact_detected ? 'stabilizing' : 'waiting_finger',
                 hardware_started => JSON::PP::true,
-                finger_detected  => @contact ? JSON::PP::true : JSON::PP::false,
+                finger_detected  => $contact_detected ? JSON::PP::true : JSON::PP::false,
                 sample_count     => scalar(@frames),
                 valid_frame_count      => scalar(@frames),
                 contact_frame_count    => scalar(@contact),
                 heart_rate_frame_count => scalar(@heart_rate),
                 spo2_frame_count       => scalar(@spo2),
+                communication_status   => 'receiving_protocol_frames',
                 stabilization_extended => $stabilization_extended ? JSON::PP::true : JSON::PP::false,
+                spo2_stabilization_extended => $spo2_stabilization_extended ? JSON::PP::true : JSON::PP::false,
                 elapsed_seconds        => sprintf('%.2f', time() - $started_at) + 0,
             });
             my $measurement_old_enough = time() - $started_at >= $options->{minimum_measurement_seconds};
@@ -334,17 +356,48 @@ sub frame_has_measurement {
 
 sub frame_has_contact {
     my ($frame) = @_;
-    return $frame->[2] > 0 || $frame->[3] > 0 || $frame->[12] > 0;
+    return $frame->[2] > 0 || $frame->[3] > 0;
+}
+
+sub contact_detected {
+    my ($frames) = @_;
+    return first_contact_frame($frames) > 0 ? 1 : 0;
+}
+
+sub first_contact_frame {
+    my ($frames) = @_;
+    my $consecutive_temperature = 0;
+    for my $index (0 .. $#{$frames}) {
+        my $frame = $frames->[$index];
+        return $index + 1 if frame_has_contact($frame);
+        if ($frame->[12] > 0) {
+            $consecutive_temperature++;
+            return $index + 1 if $consecutive_temperature >= 2;
+        } else {
+            $consecutive_temperature = 0;
+        }
+    }
+    return 0;
 }
 
 sub measurement_window_ready {
     my ($frames, $options) = @_;
-    my @heart_rate = grep { $_->[2] > 0 } @{$frames};
-    my @spo2 = grep { $_->[3] > 0 } @{$frames};
+    my @recent = recent_signal_window($frames, $options);
+    my @heart_rate = grep { $_->[2] > 0 } @recent;
+    my @spo2 = grep { $_->[3] > 0 } @recent;
     # Blood pressure and HRV are optional reference fields. Waiting for them
     # kept an otherwise stable heart-rate/SpO2 result open until timeout.
     return @heart_rate >= $options->{stable_frames}
         && @spo2 >= $options->{stable_frames};
+}
+
+sub recent_signal_window {
+    my ($frames, $options) = @_;
+    my $window_size = $options->{stable_frames} * 2;
+    $window_size = 4 if $window_size < 4;
+    my $start = @{$frames} > $window_size ? @{$frames} - $window_size : 0;
+    return @{$frames}[$start .. $#{$frames}] if @{$frames};
+    return ();
 }
 
 sub build_payload {
@@ -356,6 +409,7 @@ sub build_payload {
             source      => 'UART8-vitals-24B',
             device      => $options->{device},
             error       => $read_error || 'No valid 24-byte frame received',
+            communication_status => 'no_protocol_frames',
             measured_at => now_text(),
         };
     }
@@ -364,15 +418,16 @@ sub build_payload {
     my @contact = grep { frame_has_contact($_) } @{$frames};
     my @heart_rate_frames = grep { $_->[2] > 0 } @{$frames};
     my @spo2_frames = grep { $_->[3] > 0 } @{$frames};
+    my $stable_core = measurement_window_ready($frames, $options);
     my $latest = $frames->[-1];
     my $heart_rate = median_recent_nonzero($frames, 2, $options->{aggregate_samples});
     my $spo2 = median_recent_nonzero($frames, 3, $options->{aggregate_samples});
     my $core_complete = $heart_rate > 0 && $spo2 > 0;
-    my $finger_detected = @contact ? JSON::PP::true : JSON::PP::false;
-    my $quality = @heart_rate_frames >= $options->{stable_frames}
-            && @spo2_frames >= $options->{stable_frames}
+    my $has_contact = contact_detected($frames);
+    my $finger_detected = $has_contact ? JSON::PP::true : JSON::PP::false;
+    my $quality = $stable_core
         ? 'stable'
-        : @contact
+        : $has_contact
             ? 'poor_signal'
             : 'no_finger';
     my $body_temperature = median_recent_temperature(
@@ -397,7 +452,7 @@ sub build_payload {
 
     return {
         ok                      => $core_complete ? JSON::PP::true : JSON::PP::false,
-        status                  => $core_complete ? 'measured' : @contact ? 'stabilizing' : 'awaiting_finger',
+        status                  => $core_complete ? 'measured' : $has_contact ? 'stabilizing' : 'awaiting_finger',
         source                  => 'UART8-vitals-24B',
         device                  => $options->{device},
         heart_rate_bpm          => $heart_rate,
@@ -416,11 +471,16 @@ sub build_payload {
         ambient_temperature_c   => $ambient_temperature->{value},
         temperature_scale       => $options->{temperature_scale} || undef,
         reference_ready         => $reference_ready ? JSON::PP::true : JSON::PP::false,
+        stable_core             => $stable_core ? JSON::PP::true : JSON::PP::false,
+        communication_status    => 'receiving_protocol_frames',
+        spo2_stabilization_extended => $options->{spo2_stabilization_extended}
+            ? JSON::PP::true
+            : JSON::PP::false,
         finger_detected         => $finger_detected,
         quality                 => $quality,
         message                 => $core_complete
             ? 'Integrated UART vitals measurement received'
-            : @contact
+            : $has_contact
                 ? 'Finger detected; waiting for heart-rate and SpO2 to stabilize'
             : 'No finger measurement yet; keep the fingertip steady and retry',
         sample_count            => scalar(@{$frames}),
@@ -429,7 +489,7 @@ sub build_payload {
         contact_frame_count     => scalar(@contact),
         heart_rate_frame_count  => scalar(@heart_rate_frames),
         spo2_frame_count        => scalar(@spo2_frames),
-        first_contact_frame     => first_matching_frame($frames, sub { frame_has_contact($_[0]) }),
+        first_contact_frame     => first_contact_frame($frames) || undef,
         first_heart_rate_frame  => first_matching_frame($frames, sub { $_[0]->[2] > 0 }),
         first_spo2_frame        => first_matching_frame($frames, sub { $_[0]->[3] > 0 }),
         signal_trace            => signal_trace($frames, 12),

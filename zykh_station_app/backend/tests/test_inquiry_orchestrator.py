@@ -176,6 +176,170 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.reply, "这种情况是每次起身都会出现，还是偶尔一次？")
         self.assertEqual(result.extracted_information.observations[0].concept, "体位变化相关不适")
 
+    def test_symptom_followups_are_capped_at_three_before_core_safety_questions(self) -> None:
+        service, _ = self.service(
+            [
+                case(reply="有没有恶心或明显出汗？"),
+                case(reply="头晕是旋转感还是站立不稳？"),
+                case(reply="休息和补水以后有没有缓解？"),
+                case(reply="现在还有没有乏力或头痛？"),
+            ]
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+
+        first = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="天气很热，我有点中暑头晕"),
+        )
+        second = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="有一点恶心，也出了汗"),
+        )
+        third = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="主要是站起来时有点晕"),
+        )
+        capped = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="休息以后稍微好一点"),
+        )
+
+        self.assertIn("恶心", first.reply)
+        self.assertIn("旋转感", second.reply)
+        self.assertIn("补水", third.reply)
+        self.assertNotIn("乏力", capped.reply)
+        self.assertIn("过敏", capped.reply)
+        self.assertEqual(capped.stage, "clarification")
+        self.assertEqual(capped.next_action, "ask")
+
+    def test_capped_flow_advances_through_safety_questions_vitals_and_recommendation(self) -> None:
+        service, _ = self.service(
+            [
+                case(reply="症状问题一？"),
+                case(reply="症状问题二？"),
+                case(reply="症状问题三？"),
+                case(reply="不应出现的症状问题四？"),
+                case(reply="模型仍想追问", allergy="无"),
+                case(reply="模型仍想追问", allergy="无", used="未使用"),
+                case(action="analyze", allergy="无", used="未使用", duration="半天"),
+            ],
+            ranking={
+                "ok": True,
+                "source": "cloud",
+                "options": [
+                    {
+                        "medicine_ids": ["slot-08-huoxiang-zhengqi"],
+                        "label": "主方案",
+                        "reason": "更贴近当前的暑热不适。",
+                    }
+                ],
+            },
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+        for transcript in ("中暑头晕", "有点恶心", "站起来更晕", "休息后稍好"):
+            result = service.process_turn(
+                session.session_id,
+                InquiryTurnRequest(transcript=transcript),
+            )
+        self.assertIn("过敏", result.reply)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="也没有"),
+        )
+        self.assertIn("用过药", result.reply)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="还没有用过药"),
+        )
+        self.assertEqual(result.next_action, "measure_vitals")
+
+        result = service.attach_vitals(
+            session.session_id,
+            InquiryVitalsRequest(
+                status="complete",
+                temperature=36.4,
+                heart_rate=78,
+                spo2=98,
+            ),
+        )
+        self.assertEqual(result.next_action, "show_recommendation")
+        self.assertEqual(result.stage, "result")
+        self.assertEqual(result.treatment_options[0].medicines[0].slot, "8")
+
+    def test_capped_flow_advances_when_the_model_is_unavailable(self) -> None:
+        unavailable = SymptomInterpretation(
+            available=False,
+            source="ai_unavailable",
+            action_intent="ask",
+            assistant_reply="刚才这句话没有整理完整，请换一种说法再说一次。",
+        )
+        service, _ = self.service(
+            [
+                case(reply="症状问题一？"),
+                case(reply="症状问题二？"),
+                case(reply="症状问题三？"),
+                unavailable,
+            ]
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+
+        for transcript in ("中暑头晕", "有点恶心", "站起来更晕"):
+            service.process_turn(
+                session.session_id,
+                InquiryTurnRequest(transcript=transcript),
+            )
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="休息后稍微好一点"),
+        )
+
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("过敏", result.reply)
+        self.assertNotIn("换一种说法", result.reply)
+
+    def test_contextual_negative_answer_survives_model_failure_after_the_cap(self) -> None:
+        unavailable = SymptomInterpretation(
+            available=False,
+            source="ai_unavailable",
+            action_intent="ask",
+            assistant_reply="刚才这句话没有整理完整，请换一种说法再说一次。",
+        )
+        service, _ = self.service(
+            [
+                case(reply="症状问题一？"),
+                case(reply="症状问题二？"),
+                case(reply="症状问题三？"),
+                case(reply="不应出现的症状问题四？"),
+                unavailable,
+            ]
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+
+        for transcript in ("中暑头晕", "有点恶心", "站起来更晕", "休息后稍好"):
+            result = service.process_turn(
+                session.session_id,
+                InquiryTurnRequest(transcript=transcript),
+            )
+        self.assertIn("过敏", result.reply)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="也没有"),
+        )
+
+        self.assertEqual(result.extracted_information.allergy_or_contraindication, "无")
+        self.assertIn("用过药", result.reply)
+        self.assertNotIn("换一种说法", result.reply)
+
     def test_main_complaint_stays_concise_instead_of_accumulating_every_answer(self) -> None:
         service, _ = self.service(
             [

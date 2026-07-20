@@ -20,10 +20,15 @@ class VitalsGatewayContractTest(unittest.TestCase):
         gateway = GATEWAY.read_text(encoding="utf-8")
         reader = READER.read_text(encoding="utf-8")
         self.assertIn("/api/vitals/prepare", gateway)
-        self.assertRegex(gateway, r"--stable-frames['\s,]+3")
+        self.assertRegex(gateway, r"QSM_VITALS_STABLE_FRAMES\}\s*\|\|\s*2")
+        self.assertRegex(gateway, r"--stable-frames['\s,]+\$STABLE_FRAMES")
+        self.assertRegex(gateway, r"QSM_VITALS_INITIAL_STABILIZATION_SECONDS\}\s*\|\|\s*8")
+        self.assertIn("prewarm_age", gateway)
+        self.assertIn("minimum_measurement_seconds", gateway)
         self.assertIn("--prewarmed", gateway)
         self.assertIn("minimum_measurement_seconds", reader)
         self.assertIn("minimum_contact_seconds", reader)
+        self.assertIn("communication_status", reader)
 
 
 if __name__ == "__main__":

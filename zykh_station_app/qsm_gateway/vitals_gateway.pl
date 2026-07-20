@@ -21,6 +21,12 @@ my $UART_DEVICE = $ENV{VITALS_UART_DEVICE} || '/dev/ttyS8';
 # then produces an update about every 1.28 seconds. Stable warm readings still
 # exit early in read_vitals_uart8.pl.
 my $MEASURE_TIMEOUT = int($ENV{QSM_VITALS_MEASURE_TIMEOUT} || 18);
+my $STABLE_FRAMES = int($ENV{QSM_VITALS_STABLE_FRAMES} || 2);
+$STABLE_FRAMES = 2 if $STABLE_FRAMES < 2;
+my $SPO2_GRACE = int($ENV{QSM_VITALS_SPO2_GRACE_SECONDS} || 8);
+$SPO2_GRACE = 0 if $SPO2_GRACE < 0;
+my $INITIAL_STABILIZATION_SECONDS = int($ENV{QSM_VITALS_INITIAL_STABILIZATION_SECONDS} || 8);
+$INITIAL_STABILIZATION_SECONDS = 5 if $INITIAL_STABILIZATION_SECONDS < 5;
 my $PREPARE_TTL = int($ENV{QSM_VITALS_PREPARE_TTL_SECONDS} || 45);
 my $CURRENT = "$DATA/current.json";
 my $PREPARED = "$DATA/prepared.json";
@@ -85,7 +91,7 @@ sub start_session {
         return $current;
     }
 
-    my $prewarmed = consume_prepared();
+    my ($prewarmed, $prewarm_age) = consume_prepared();
     my $session_id = join('-', 'vitals', int(time() * 1000), int(rand(100000)));
     my $state_file = state_file($session_id);
     my $started_at = now_text();
@@ -99,6 +105,7 @@ sub start_session {
         updated_at => $started_at,
         worker_pid => 0,
         prewarmed => $prewarmed ? JSON::PP::true : JSON::PP::false,
+        prewarm_age => sprintf('%.2f', $prewarm_age) + 0,
     };
     write_json_atomic($state_file, $state);
     write_json_atomic($CURRENT, $state);
@@ -108,7 +115,7 @@ sub start_session {
     if (!$pid) {
         $SIG{CHLD} = 'DEFAULT';
         setsid();
-        run_measurement($session_id, $started_at, $prewarmed);
+        run_measurement($session_id, $started_at, $prewarmed, $prewarm_age);
         exit 0;
     }
     my $fresh_state = read_json($state_file) || $state;
@@ -130,7 +137,7 @@ sub start_session {
 }
 
 sub run_measurement {
-    my ($session_id, $started_at, $prewarmed) = @_;
+    my ($session_id, $started_at, $prewarmed, $prewarm_age) = @_;
     my $started_epoch = time();
     my $state_file = state_file($session_id);
     my $cancel_file = cancel_file($session_id);
@@ -140,11 +147,19 @@ sub run_measurement {
     unlink $uart_output if -e $uart_output;
     unlink $gy_output if -e $gy_output;
 
+    my $minimum_measurement_seconds = $INITIAL_STABILIZATION_SECONDS;
+    if ($prewarmed) {
+        $minimum_measurement_seconds = $INITIAL_STABILIZATION_SECONDS - ($prewarm_age || 0);
+        # Two 1.28-second update periods are still required after the user starts.
+        $minimum_measurement_seconds = 3 if $minimum_measurement_seconds < 3;
+    }
+
     my $uart_cmd = join(' ',
         'perl', shell_quote($UART_READER),
         '--timeout', $MEASURE_TIMEOUT,
-        '--stable-frames', 3,
-        '--minimum-measurement-seconds', 4,
+        '--stable-frames', $STABLE_FRAMES,
+        '--spo2-grace', $SPO2_GRACE,
+        '--minimum-measurement-seconds', $minimum_measurement_seconds,
         '--minimum-contact-seconds', 2.6,
         ($prewarmed ? ('--prewarmed') : ()),
         '--output', shell_quote($uart_output),
@@ -169,7 +184,8 @@ sub run_measurement {
     my $heart_rate = first_number($uart, qw(heart_rate_bpm heart_rate));
     my $spo2 = first_number($uart, qw(spo2_percent spo2));
     my $cancelled = -e $cancel_file;
-    my $complete = !$cancelled && defined($heart_rate) && $heart_rate > 0
+    my $complete = !$cancelled && $uart->{stable_core}
+        && defined($heart_rate) && $heart_rate > 0
         && defined($spo2) && $spo2 > 0
         && defined($temperature) && $temperature > 0;
     my $status = $cancelled ? 'cancelled' : $complete ? 'complete' : 'failed';
@@ -183,6 +199,8 @@ sub run_measurement {
             $error = '已读取到心率，血氧仍未稳定，请保持手指不动后重试。';
         } elsif (!defined($heart_rate) || $heart_rate <= 0) {
             $error = '已读取到血氧，心率仍未稳定，请保持手指不动后重试。';
+        } elsif (!$uart->{stable_core}) {
+            $error = '心率和血氧出现过读数，但近期信号不连续，请保持手指完整覆盖后重试。';
         } elsif (!defined($temperature) || $temperature <= 0) {
             $error = '心率与血氧已完成，额温未读取，请对准额温传感器后重试。';
         }
@@ -213,9 +231,16 @@ sub run_measurement {
         message => $uart->{message} || undef,
         sample_count => int($uart->{sample_count} || 0),
         valid_frame_count => int($uart->{valid_frame_count} || 0),
+        communication_status => $uart->{communication_status} || undef,
+        stable_core => $uart->{stable_core} ? JSON::PP::true : JSON::PP::false,
+        spo2_stabilization_extended => $uart->{spo2_stabilization_extended}
+            ? JSON::PP::true
+            : JSON::PP::false,
         contact_frame_count => int($uart->{contact_frame_count} || 0),
         heart_rate_frame_count => int($uart->{heart_rate_frame_count} || 0),
         spo2_frame_count => int($uart->{spo2_frame_count} || 0),
+        first_heart_rate_frame => $uart->{first_heart_rate_frame},
+        first_spo2_frame => $uart->{first_spo2_frame},
         source => 'UART8-vitals-24B+GY-614',
         started_at => $started_at,
         updated_at => now_text(),
@@ -223,6 +248,8 @@ sub run_measurement {
         error_message => $error || undef,
         worker_pid => $$,
         prewarmed => $prewarmed ? JSON::PP::true : JSON::PP::false,
+        prewarm_age => sprintf('%.2f', $prewarm_age || 0) + 0,
+        minimum_measurement_seconds => sprintf('%.2f', $minimum_measurement_seconds) + 0,
     };
     write_json_atomic($state_file, $state);
     write_json_atomic($CURRENT, $state);
@@ -282,7 +309,7 @@ sub consume_prepared {
     my $age = time() - ($prepared->{prepared_epoch} || 0);
     my $ready = $prepared->{hardware_started} && $age >= 0 && $age <= $PREPARE_TTL;
     unlink $PREPARED if -e $PREPARED;
-    return $ready ? 1 : 0;
+    return ($ready ? 1 : 0, $ready ? $age : 0);
 }
 
 sub write_uart_command {
