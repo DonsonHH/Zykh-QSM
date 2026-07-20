@@ -40,6 +40,7 @@ class HostOfflineTts:
         return Path(settings.host_offline_tts_model_root)
 
     def status(self) -> dict[str, Any]:
+        cls = type(self)
         model_dir = self.model_root / "models" / "tts"
         required = {
             "model": model_dir / "zh_CN-xiao_ya-medium.onnx",
@@ -54,7 +55,7 @@ class HostOfflineTts:
             "ready": ready,
             "source": "host-local-sherpa-onnx",
             "engine": "host-offline-sherpa-onnx",
-            "model_loaded": self._loaded_model is not None and self._loaded_root == str(self.model_root),
+            "model_loaded": cls._loaded_model is not None and cls._loaded_root == str(self.model_root),
             "model_root": str(self.model_root),
             "package_available": package_available,
             "missing": missing,
@@ -155,11 +156,12 @@ class HostOfflineTts:
         return asyncio.run(self.speak(text, volume=volume, speed=speed))
 
     def _load_model(self) -> Any:
-        with self._model_lock:
+        cls = type(self)
+        with cls._model_lock:
             root = self.model_root
             root_key = str(root)
-            if self._loaded_model is not None and self._loaded_root == root_key:
-                return self._loaded_model
+            if cls._loaded_model is not None and cls._loaded_root == root_key:
+                return cls._loaded_model
 
             import sherpa_onnx
 
@@ -196,8 +198,8 @@ class HostOfflineTts:
                 raise RuntimeError("主机离线语音模型配置无效。")
 
             loaded = sherpa_onnx.OfflineTts(config)
-            self._loaded_model = loaded
-            self._loaded_root = root_key
+            cls._loaded_model = loaded
+            cls._loaded_root = root_key
             return loaded
 
     def _synthesize(self, text: str, speed: float | None) -> tuple[bytes, int]:
@@ -312,7 +314,7 @@ def get_host_offline_tts(qsm_client: QsmClient | None = None) -> HostOfflineTts:
     if _HOST_TTS is None:
         _HOST_TTS = HostOfflineTts(qsm_client)
     elif qsm_client is not None:
-        return HostOfflineTts(qsm_client)
+        _HOST_TTS.qsm_client = qsm_client
     return _HOST_TTS
 
 

@@ -557,6 +557,55 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertEqual(result["allergy_or_contraindication"], "对头孢过敏")
         self.assertEqual(result["observations"][0]["concept"], "药物过敏史")
 
+    @patch("app.services.ai_service.settings")
+    def test_explicit_contraindication_answer_is_never_rewritten_as_none(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
+        existing = {
+            "conversation_turns": 5,
+            "case_summary": "暑热后头晕",
+            "duration": "半天",
+            "used_medicines": "未使用",
+            "conversation": [
+                {"role": "assistant", "content": "有没有药物过敏或明确不能使用的药？"},
+            ],
+        }
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "头孢类药物我不能用",
+            existing,
+            {},
+        )
+
+        self.assertEqual(client.last_messages, [])
+        self.assertEqual(result["allergy_or_contraindication"], "头孢类药物我不能用")
+        self.assertEqual(result["next_action"], "analyze")
+
+    @patch("app.services.ai_service.settings")
+    def test_generic_affirmative_allergy_answer_asks_for_the_medicine_name(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
+        existing = {
+            "conversation_turns": 4,
+            "case_summary": "暑热后头晕",
+            "duration": "半天",
+            "used_medicines": "未使用",
+            "conversation": [
+                {"role": "assistant", "content": "有没有药物过敏或明确不能使用的药？"},
+            ],
+        }
+
+        result = AiService(local_client=client).extract_inquiry_information("有", existing, {})
+
+        self.assertEqual(client.last_messages, [])
+        self.assertEqual(result["allergy_or_contraindication"], "")
+        self.assertEqual(result["next_action"], "ask")
+        self.assertEqual(result["assistant_reply"], "具体是哪一种药物过敏或不能使用？")
+
 
 if __name__ == "__main__":
     unittest.main()

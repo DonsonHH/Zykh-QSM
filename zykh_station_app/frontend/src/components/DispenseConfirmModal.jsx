@@ -5,6 +5,13 @@ import { verifyDispenseIdentity } from "../api/identity.js";
 import { updateMedicine } from "../api/medicines.js";
 import { activateIdentity } from "../hooks/useFaceIdentity.js";
 import { useExitPresence } from "../hooks/useExitPresence.js";
+import { speakText, stopAudioPlayback } from "../api/audio.js";
+import {
+  buildDispenseFailureSpeech,
+  buildDispenseGuidanceSpeech,
+  buildDispenseSuccessSpeech,
+  resolveDispenseUsage
+} from "../utils/dispenseSpeech.js";
 import { MedicineRemainingPrompt } from "./MedicineRemainingPrompt.jsx";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
@@ -73,6 +80,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   const previewReadyTimerRef = useRef(null);
   const previewReadyWaiterRef = useRef(null);
   const autoCloseTimerRef = useRef(null);
+  const spokenAnnouncementsRef = useRef(new Set());
   const onCancelRef = useRef(onCancel);
   const busy = ["verifying", "recognized", "opening"].includes(phase) || submitting;
 
@@ -98,6 +106,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
       setVerificationFrameReady(false);
       setInventoryUpdating(false);
       setInventoryMessage("");
+      spokenAnnouncementsRef.current.clear();
     } else {
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
@@ -137,12 +146,50 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     return undefined;
   }, [open, phase]);
 
+  useEffect(() => {
+    if (!open || !medicine) return undefined;
+    const timer = window.setTimeout(() => {
+      playSpeech(
+        `guidance:${medicine.id}:${plan?.id || "manual"}:${method}`,
+        buildDispenseGuidanceSpeech(medicine, plan, method)
+      );
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [medicine?.id, method, open, plan?.id]);
+
+  useEffect(() => {
+    if (!open || !medicine) return;
+    if (phase === "complete") {
+      playSpeech(`complete:${medicine.id}`, buildDispenseSuccessSpeech(medicine));
+      return;
+    }
+    const failure = verificationError || error;
+    if (failure && !["verifying", "recognized", "opening"].includes(phase)) {
+      playSpeech(`failure:${phase}:${failure}`, buildDispenseFailureSpeech(failure));
+    }
+  }, [error, medicine?.id, open, phase, verificationError]);
+
   if (!present || !medicine) {
     return null;
   }
 
   function changeQuantity(nextQuantity) {
     setQuantity(Math.max(1, Math.min(30, nextQuantity)));
+  }
+
+  function playSpeech(key, text) {
+    if (!text || spokenAnnouncementsRef.current.has(key)) return;
+    spokenAnnouncementsRef.current.add(key);
+    const session = sessionRef.current;
+    void stopAudioPlayback()
+      .catch(() => undefined)
+      .then(() => {
+        if (session === sessionRef.current) {
+          return speakText(text, undefined, 1.12);
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
   }
 
   function selectMethod(nextMethod) {
@@ -425,6 +472,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     window.clearTimeout(autoCloseTimerRef.current);
     settlePreviewReadiness(false);
     setPreviewActive(false);
+    void stopAudioPlayback().catch(() => undefined);
     onCancelRef.current();
   }
 
@@ -493,6 +541,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   const planScheduleNote = plan
     ? [...new Set([plan.time, plan.timing_label, plan.frequency_label].filter(Boolean))].join(" · ")
     : "";
+  const dispenseUsage = resolveDispenseUsage(medicine, plan);
 
   return (
     <div className={`modal-layer${exiting ? " is-exiting" : ""}`} role="presentation">
@@ -538,7 +587,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
 
             <div className="modal-usage-guidance">
               <strong>本次用法</strong>
-              <span>{plan?.dose || medicine.safety_note || "请按药品说明使用"}</span>
+              <span>{dispenseUsage}</span>
               {planScheduleNote ? <small>{planScheduleNote}</small> : null}
             </div>
 

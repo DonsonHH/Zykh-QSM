@@ -10,10 +10,29 @@ from unittest.mock import PropertyMock, patch
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+from app.services import host_offline_tts  # noqa: E402
 from app.services.host_offline_tts import HostOfflineTts  # noqa: E402
 
 
 class HostOfflineTtsTest(unittest.TestCase):
+    def test_factory_reuses_the_warmed_engine_when_client_changes(self) -> None:
+        previous = host_offline_tts._HOST_TTS
+        host_offline_tts._HOST_TTS = None
+        first_client = object()
+        second_client = object()
+        try:
+            first = host_offline_tts.get_host_offline_tts(first_client)
+            marker = object()
+            first._loaded_model = marker
+
+            second = host_offline_tts.get_host_offline_tts(second_client)
+
+            self.assertIs(second, first)
+            self.assertIs(second._loaded_model, marker)
+            self.assertIs(second.qsm_client, second_client)
+        finally:
+            host_offline_tts._HOST_TTS = previous
+
     def test_synthesis_returns_little_endian_pcm(self) -> None:
         engine = HostOfflineTts()
         fake_model = SimpleNamespace(

@@ -20,9 +20,25 @@ import { AdminConsole } from "./pages/AdminConsole.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 import { clearInquirySession } from "./utils/inquirySession.js";
 import { enableTouchKeyboardForEvent } from "./utils/touchKeyboard.js";
+import { speakText } from "./api/audio.js";
+import {
+  buildMedicationReminderSpeech,
+  getDueMedicationAnnouncements,
+  medicationAnnouncementKey
+} from "./utils/medicationReminder.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
+const MEDICATION_ANNOUNCEMENT_STORAGE_KEY = "zykh:medication-announcements";
 let viewTransitionToken = 0;
+
+function loadMedicationAnnouncementKeys() {
+  try {
+    const values = JSON.parse(window.localStorage.getItem(MEDICATION_ANNOUNCEMENT_STORAGE_KEY) || "[]");
+    return new Set(Array.isArray(values) ? values : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function transitionKind(currentPage, nextPage, requestedKind) {
   if (requestedKind) {
@@ -72,6 +88,8 @@ export function App() {
   const [idleSeconds, setIdleSeconds] = useState(Number.isFinite(configuredIdleSeconds) ? Math.max(0, configuredIdleSeconds) : 90);
   const toastTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
+  const medicationReminderMinuteRef = useRef("");
+  const medicationAnnouncementsRef = useRef(loadMedicationAnnouncementKeys());
   const { clear: clearIdentity } = useFaceIdentity({ auto: false });
 
   useEffect(() => {
@@ -111,6 +129,34 @@ export function App() {
     const timer = window.setInterval(refreshDashboard, 30000);
     return () => window.clearInterval(timer);
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
+    if (medicationReminderMinuteRef.current === minuteKey) return;
+    medicationReminderMinuteRef.current = minuteKey;
+
+    const duePlans = getDueMedicationAnnouncements(dashboard?.medication, now);
+    const pending = duePlans.filter((plan) => {
+      const key = medicationAnnouncementKey(plan, now);
+      if (medicationAnnouncementsRef.current.has(key)) return false;
+      medicationAnnouncementsRef.current.add(key);
+      return true;
+    });
+    if (!pending.length) return;
+    try {
+      window.localStorage.setItem(
+        MEDICATION_ANNOUNCEMENT_STORAGE_KEY,
+        JSON.stringify([...medicationAnnouncementsRef.current].slice(-80))
+      );
+    } catch {
+      // A locked-down kiosk profile may disable web storage; the in-memory set still prevents repeats.
+    }
+
+    void pending.reduce(
+      (chain, plan) => chain.then(() => speakText(buildMedicationReminderSpeech(plan))),
+      Promise.resolve()
+    ).catch(() => undefined);
+  }, [dashboard?.medication, now]);
 
   useEffect(() => {
     const action = idle ? setFingerprintStandby() : wakeFingerprint();

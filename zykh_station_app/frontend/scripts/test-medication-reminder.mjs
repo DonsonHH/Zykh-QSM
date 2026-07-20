@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { getMedicationReminder, getMedicationReminders } from "../src/utils/medicationReminder.js";
+import {
+  buildMedicationReminderSpeech,
+  getDueMedicationAnnouncements,
+  getMedicationReminder,
+  getMedicationReminders,
+  medicationAnnouncementKey
+} from "../src/utils/medicationReminder.js";
 
 const medication = {
   plans: [
@@ -30,6 +36,22 @@ assert.deepEqual(
 assert.deepEqual(
   getMedicationReminders(nearbyMedication, new Date("2026-07-16T09:20:00")).map(({ plan }) => plan.id),
   ["c"]
+);
+
+const duePlans = getDueMedicationAnnouncements(
+  medication,
+  new Date("2026-07-16T08:02:00"),
+  5
+);
+assert.deepEqual(duePlans.map((plan) => plan.id), ["p1"]);
+assert.equal(buildMedicationReminderSpeech(duePlans[0]), "张三，请服药了。");
+assert.equal(
+  medicationAnnouncementKey(duePlans[0], new Date("2026-07-16T08:02:00")),
+  "2026-07-16:p1:08:00"
+);
+assert.deepEqual(
+  getDueMedicationAnnouncements(medication, new Date("2026-07-16T08:06:00"), 5),
+  []
 );
 
 console.log("medication reminder contract: ok");

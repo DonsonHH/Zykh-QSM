@@ -413,14 +413,14 @@ class RecordsService:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
-        seed_version = "family-demo-v4-resolved-users"
+        seed_version = "family-demo-v5-cabinet-consistent"
         demo_plans = (
-            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "1片"),
+            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "按既往医嘱1片"),
             ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", "zhangsan", "1片"),
-            ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "zhangsan", "每侧1喷"),
-            ("plan-demo-lisi-lactulose", "07:30", "早餐前", "slot-06-lactulose", "lisi", "10毫升"),
+            ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "zhangsan", "每侧鼻孔1喷"),
+            ("plan-demo-lisi-lactulose", "07:30", "早餐时", "slot-06-lactulose", "lisi", "10毫升"),
             ("plan-demo-lisi-bifid", "13:00", "午饭后", "slot-09-bifid-triple", "lisi", "2粒"),
-            ("plan-demo-lisi-hydrotalcite", "19:00", "晚饭后", "slot-12-hydrotalcite", "lisi", "1片"),
+            ("plan-demo-lisi-hydrotalcite", "20:00", "晚饭后1至2小时", "slot-12-hydrotalcite", "lisi", "1片，嚼服"),
         )
         with db.connect() as conn:
             seed = conn.execute("SELECT value FROM app_settings WHERE key='today_plan_seed_version'").fetchone()
@@ -444,6 +444,32 @@ class RecordsService:
                 "zhangsan": primary_user,
                 "lisi": secondary_user,
             }
+            if primary_user and str(primary_user["name"]) == "张三":
+                conn.execute(
+                    """
+                    UPDATE service_users
+                    SET age=67,
+                        profile='高血压；常年性过敏性鼻炎；维生素与矿物质补充计划',
+                        allergies='头孢类药物禁忌',
+                        note='降压药按既往医嘱使用；鼻喷剂和营养补充剂已建立家庭计划',
+                        status='家庭成员'
+                    WHERE id=?
+                    """,
+                    (primary_user["id"],),
+                )
+            if secondary_user and str(secondary_user["name"]) == "李四":
+                conn.execute(
+                    """
+                    UPDATE service_users
+                    SET age=63,
+                        profile='功能性便秘；胃酸相关胃部不适；肠道菌群失调史',
+                        allergies='无已知药物过敏',
+                        note='肠胃调理药品按既往医嘱和说明书计划使用',
+                        status='家庭成员'
+                    WHERE id=?
+                    """,
+                    (secondary_user["id"],),
+                )
             for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
                 user = demo_users.get(user_id)
                 medicine = conn.execute(
@@ -459,7 +485,22 @@ class RecordsService:
                       medicine, target_user, updated_at, schedule_type,
                       interval_days, weekdays_json, start_date, last_action_date
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO NOTHING
+                    ON CONFLICT(id) DO UPDATE SET
+                      time=excluded.time,
+                      timing_label=excluded.timing_label,
+                      medicine_id=excluded.medicine_id,
+                      service_user_id=excluded.service_user_id,
+                      dose=excluded.dose,
+                      medicine=excluded.medicine,
+                      target_user=excluded.target_user,
+                      updated_at=excluded.updated_at,
+                      schedule_type=excluded.schedule_type,
+                      interval_days=excluded.interval_days,
+                      weekdays_json=excluded.weekdays_json,
+                      start_date=CASE
+                        WHEN today_plans.start_date='' THEN excluded.start_date
+                        ELSE today_plans.start_date
+                      END
                     """,
                     (
                         plan_id,

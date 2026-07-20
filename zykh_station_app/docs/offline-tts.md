@@ -72,6 +72,8 @@ HOST_OFFLINE_TTS_OUTPUT=qsm
 
 ## 延迟说明
 
-模型在后端进程中只加载一次，`launch_kiosk.sh` 会在后台调用 `/api/audio/host/warmup`。每次播报只执行文本生成和 PCM 播放，不再等待 QSM 重复加载 TTS 模型，也不再让 TTS 与 QSM 本地问询模型争抢内存。
+模型在后端进程中只加载一次，所有播报请求复用同一个已加载模型。`launch_kiosk.sh` 会在打开浏览器前同步调用 `/api/audio/host/warmup`；预热失败只给出警告，不阻断终端启动。每次播报只执行文本生成和 PCM 播放，不再重复加载 TTS 模型，也不再让 TTS 与 QSM 本地问询模型争抢内存。
+
+当前主机实测中，预热约需 3.3 秒；预热后的短句首段音频生成约 0.8 秒。接口总耗时还包含实际语音播放时长，不能把正常播报时长误判为模型等待延迟。
 
 在线 TTS 和主机离线 TTS 共用 QSM 的 PCM 播放端口 `19001`。启动前仍需执行 `scripts/adb_forward.sh`，但该脚本只建立 ASR、离线模型和音频播放端口，不会启动 QSM 离线 TTS。

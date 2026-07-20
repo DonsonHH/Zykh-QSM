@@ -429,8 +429,24 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                ("zhangsan", "张三", 65, "高血压", "头孢过敏；避免头孢类抗生素", "今日演示对象", "重点关注"),
-                ("lisi", "李四", 72, "糖尿病", "", "随访对象", "随访"),
+                (
+                    "zhangsan",
+                    "张三",
+                    67,
+                    "高血压；常年性过敏性鼻炎；维生素与矿物质补充计划",
+                    "头孢类药物禁忌",
+                    "降压药按既往医嘱使用；鼻喷剂和营养补充剂已建立家庭计划",
+                    "家庭成员",
+                ),
+                (
+                    "lisi",
+                    "李四",
+                    63,
+                    "功能性便秘；胃酸相关胃部不适；肠道菌群失调史",
+                    "无已知药物过敏",
+                    "肠胃调理药品按既往医嘱和说明书计划使用",
+                    "家庭成员",
+                ),
                 ("wangwu", "王五", 58, "长期胃病", "", "近期有问询", "观察"),
             ],
         )
@@ -438,8 +454,9 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             UPDATE service_users
-            SET allergies='头孢过敏；避免头孢类抗生素',
+            SET allergies='头孢类药物禁忌',
                 note=CASE WHEN note='' OR note='今日有计划' THEN '今日演示对象' ELSE note END
             WHERE name='张三'
+              AND allergies IN ('', '头孢过敏', '头孢过敏；避免头孢类抗生素')
             """
         )

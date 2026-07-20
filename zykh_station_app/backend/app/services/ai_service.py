@@ -1336,7 +1336,23 @@ class AiService:
                 term in compact
                 for term in ("没吃药", "没有吃药", "没用药", "没有用药", "还没用药", "还没有用药", "未使用药物", "用过药", "吃过药", "已用药")
             )
-        return any(term in compact for term in ("没有过敏", "无过敏", "没有禁忌", "无禁忌", "对药物过敏", "药物过敏", "不能用"))
+        return compact in {
+            "有",
+            "有过敏",
+            "有禁忌",
+            "有不能用的药",
+        } or any(
+            term in compact
+            for term in (
+                "没有过敏",
+                "无过敏",
+                "没有禁忌",
+                "无禁忌",
+                "对药物过敏",
+                "药物过敏",
+                "不能用",
+            )
+        )
 
     @classmethod
     def _apply_contextual_answer(
@@ -1360,7 +1376,38 @@ class AiService:
             else:
                 expanded["used_medicines"] = "未使用"
         elif target.get("field") == "allergy_or_contraindication":
-            expanded["allergy_or_contraindication"] = "不确定" if uncertain else "无"
+            negative = compact in {"没有", "还没有", "没", "无", "暂时没有"} or any(
+                term in compact
+                for term in (
+                    "没有药物过敏",
+                    "无药物过敏",
+                    "没有过敏",
+                    "无过敏",
+                    "没有禁忌",
+                    "无禁忌",
+                    "没有不能用的药",
+                    "没有不能使用的药",
+                )
+            )
+            generic_affirmative = compact in {
+                "有",
+                "有过敏",
+                "有禁忌",
+                "有不能用的药",
+                "对药物过敏",
+                "药物过敏",
+            }
+            if uncertain:
+                expanded["allergy_or_contraindication"] = "不确定"
+            elif negative:
+                expanded["allergy_or_contraindication"] = "无"
+            elif generic_affirmative:
+                expanded["allergy_or_contraindication"] = ""
+                expanded["next_action"] = "ask"
+                expanded["assistant_reply"] = "具体是哪一种药物过敏或不能使用？"
+                expanded["next_question"] = expanded["assistant_reply"]
+            else:
+                expanded["allergy_or_contraindication"] = transcript[:120]
         elif target.get("field") == "duration":
             expanded["duration"] = cls._duration_context_value(transcript)
         elif target.get("field") == "clinical_follow_up":

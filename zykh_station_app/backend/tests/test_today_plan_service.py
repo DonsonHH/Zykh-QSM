@@ -38,10 +38,16 @@ class TodayPlanServiceTest(unittest.TestCase):
         self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "李四": 3})
         self.assertEqual(
             {plan.timing_label for plan in plans},
-            {"早餐前", "早餐后", "午饭后", "晚饭后", "睡前"},
+            {"早餐时", "早餐后", "午饭后", "晚饭后1至2小时", "睡前"},
         )
         self.assertIn("slot-21-amlodipine", {plan.medicine_id for plan in plans})
         self.assertTrue(all(plan.status == "待执行" for plan in plans))
+        users = {user.name: user for user in self.service.list_service_users()}
+        self.assertEqual(users["张三"].age, 67)
+        self.assertIn("常年性过敏性鼻炎", users["张三"].profile)
+        self.assertEqual(users["张三"].allergies, "头孢类药物禁忌")
+        self.assertEqual(users["李四"].age, 63)
+        self.assertIn("功能性便秘", users["李四"].profile)
 
     def test_plan_crud_keeps_normalized_links_and_does_not_reseed_after_delete(self) -> None:
         default_plans = self.service.list_today_plans()
