@@ -84,6 +84,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
   const preparedVitalsRequestRef = useRef("");
+  const resetOnResultLeaveRef = useRef(false);
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
@@ -151,8 +152,17 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       mountedRef.current = false;
       window.clearTimeout(vitalsLaunchTimerRef.current);
       stopAudioPlayback().catch(() => null);
+      if (resetOnResultLeaveRef.current) clearInquirySession();
     };
   }, []);
+
+  useEffect(() => {
+    resetOnResultLeaveRef.current = Boolean(
+      session?.stage === "result" && resultConfirmed
+      && session?.can_view_medicines
+      && session?.treatment_options?.length
+    );
+  }, [resultConfirmed, session]);
 
   useEffect(() => {
     refreshUsers();
