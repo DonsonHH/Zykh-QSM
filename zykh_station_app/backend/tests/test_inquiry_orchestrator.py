@@ -330,6 +330,31 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(interpreter.contexts[-1]["vitals"]["heart_rate"], 76)
         self.assertEqual(resumed.messages[-2].source, "vitals_tool")
 
+    def test_local_like_analysis_cannot_skip_vitals_for_heat_and_dizziness(self) -> None:
+        local_interpretation = case(
+            action="analyze",
+            concept="中暑和头晕",
+            evidence="中暑后有点头晕",
+            reply="我来结合现有信息分析。",
+            duration="半天",
+            used="未使用",
+            allergy="无",
+        )
+        local_interpretation.source = "local_llm"
+        service, _ = self.service(
+            [local_interpretation]
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我有点中暑头晕，半天了，没用药，也没有过敏"),
+        )
+
+        self.assertEqual(result.next_action, "measure_vitals")
+        self.assertEqual(result.stage, "vitals")
+        self.assertIn("额头", result.reply)
+
     def test_cancelled_vitals_return_to_the_same_ai_session(self) -> None:
         service, interpreter = self.service(
             [

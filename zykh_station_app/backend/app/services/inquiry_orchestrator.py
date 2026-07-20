@@ -435,6 +435,16 @@ class InquiryOrchestrator:
             session.model_action_intent = "ask"
             self._clear_decision(session)
             return self._commit(session)
+        if self._should_measure_vitals_for_case(session, extracted, interpretation):
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.action_reason = "当前症状可能受额温、心率和血氧影响，先读取核心体征。"
+            session.reply = self._vitals_guidance(
+                interpretation.assistant_reply
+                or "为了更准确判断当前不适，需要先测量额温、心率和血氧。"
+            )
+            self._clear_decision(session)
+            return self._commit(session)
         if (
             interpretation.action_intent == "measure_vitals"
             and not self._has_complete_vitals(session)
@@ -738,6 +748,42 @@ class InquiryOrchestrator:
             and vitals.get("heart_rate")
             and vitals.get("spo2")
         )
+
+    @classmethod
+    def _should_measure_vitals_for_case(
+        cls,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+        interpretation: SymptomInterpretation,
+    ) -> bool:
+        if interpretation.source != "local_llm":
+            return False
+        if interpretation.action_intent == "measure_vitals":
+            return False
+        if cls._has_complete_vitals(session):
+            return False
+        if str((session.vitals or {}).get("status") or "") in {"failed", "cancelled"}:
+            return False
+        if not cls._has_meaningful_complaint(extracted):
+            return False
+        text = "；".join(
+            value
+            for value in (
+                extracted.case_summary,
+                extracted.symptoms_text,
+                "；".join(item.evidence for item in extracted.observations if item.status == "present"),
+            )
+            if value
+        )
+        needs_core_vitals = (
+            "中暑", "暑湿", "暴晒", "头晕", "发热", "高热", "乏力", "恶心", "呕吐",
+            "腹泻", "头痛", "胸闷", "心慌", "气短", "呼吸", "发冷", "出汗",
+        )
+        if not any(term in text for term in needs_core_vitals):
+            return False
+        # Let the model ask for the first missing context item once. After the
+        # complaint has a duration, a missed model action cannot skip vitals.
+        return bool(extracted.duration.strip() or cls._current_user_turn_count(session) >= 2)
 
     @staticmethod
     def _vitals_guidance(reply: str) -> str:

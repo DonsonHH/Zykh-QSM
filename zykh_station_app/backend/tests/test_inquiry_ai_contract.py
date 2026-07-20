@@ -557,6 +557,48 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertIn("碘伏消毒液", ranking_prompt)
         self.assertNotIn("感冒用品", ranking_prompt)
 
+    @patch("app.services.ai_service.settings")
+    def test_local_ranking_focuses_clear_heatstroke_case_before_model_selection(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient(
+            {"ok": True, "reply": "A=8|更贴合暑湿不适和头晕"}
+        )
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {
+                "case_summary": "中暑后头晕，今天在外面晒了半天。",
+                "observations": [
+                    {"concept": "中暑", "status": "present", "evidence": "我有点中暑"},
+                    {"concept": "头晕", "status": "present", "evidence": "有点头晕"},
+                ],
+                "duration": "半天",
+                "used_medicines": "未使用",
+                "allergy_or_contraindication": "无",
+                "risk_level": "low",
+                "vitals": {"temperature": 36.5, "heart_rate": 78, "spo2": 98},
+            },
+            [
+                {
+                    "id": "slot-03-ganmao-qingre",
+                    "slot": "3",
+                    "name": "感冒清热颗粒",
+                    "category": "感冒发热",
+                    "indications": "用于风寒感冒、头痛发热、鼻流清涕。",
+                },
+                {
+                    "id": "slot-08-huoxiang-zhengqi",
+                    "slot": "8",
+                    "name": "藿香正气丸",
+                    "category": "肠胃",
+                    "indications": "解表化湿，理气和中。用于暑湿感冒、头痛身重、胸闷、呕吐泄泻。",
+                },
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["options"][0]["medicine_ids"], ["slot-08-huoxiang-zhengqi"])
+        self.assertEqual(client.calls, 1)
+        self.assertNotIn("感冒清热颗粒", client.last_messages[1]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

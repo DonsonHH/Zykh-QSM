@@ -12,11 +12,10 @@ export function resolveDispenseUsage(medicine, plan = null) {
 
 export function buildDispenseGuidanceSpeech(medicine, plan = null, method = "fingerprint") {
   const name = String(medicine?.name || "本次药品").trim();
-  const usage = resolveDispenseUsage(medicine, plan);
   const identityGuide = method === "face"
     ? "请面向摄像头完成身份确认；也可以选择指纹确认并把手指平放在传感器上。"
     : "请将手指平放在指纹传感器上；也可以选择面部确认。";
-  return `${name}，本次用法：${usage}。${identityGuide}`;
+  return `${name}，${identityGuide}`;
 }
 
 export function buildDispenseSuccessSpeech(medicine) {

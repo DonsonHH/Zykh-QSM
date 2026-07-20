@@ -453,7 +453,11 @@ class AiService:
             "m": str(context.get("used_medicines") or "")[:36],
             "a": str(context.get("allergy_or_contraindication") or "")[:44],
             "r": str(context.get("risk_level") or "")[:12],
+            "v": context.get("vitals") or {},
         }
+        focused = self._semantic_focus_candidates(compact_case, candidates)
+        if focused is not None:
+            candidates = focused
         if len(candidates) > 6:
             narrowed = self._local_candidate_category_pool(compact_case, candidates)
             if narrowed is None:
@@ -617,19 +621,41 @@ class AiService:
         )
         if not categories:
             return None
+        category_evidence: dict[str, list[str]] = {}
+        for candidate in candidates:
+            category = str(candidate.get("category") or "").strip()
+            if not category:
+                continue
+            description = "；".join(
+                value
+                for value in (
+                    str(candidate.get("name") or "").strip(),
+                    str(candidate.get("indications") or "").strip(),
+                    str(candidate.get("safety_note") or "").strip(),
+                )
+                if value
+            )[:180]
+            if description:
+                category_evidence.setdefault(category, []).append(description)
         result = self.local_client.chat(
             [
                 {
                     "role": "system",
                     "content": (
-                        "根据case从categories中选择最多两个直接相关类别。"
+                        "根据case和每个类别下的药品适用描述，选择最多两个直接相关类别。"
+                        "必须优先依据适用描述，不要只看类别名称；例如暑湿/中暑应优先看含‘暑湿’或‘化湿’描述的类别，"
+                        "不能因为都带‘感冒’二字就把风寒感冒药当成暑湿不适的首选。"
                         "只回复类别名，用逗号分隔；无明确不适或无相关类别只回复NONE。不要解释。"
                     ),
                 },
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"case": compact_case, "categories": categories},
+                        {
+                            "case": compact_case,
+                            "categories": categories,
+                            "category_evidence": category_evidence,
+                        },
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ),
@@ -651,6 +677,50 @@ class AiService:
             for candidate in candidates
             if str(candidate.get("category") or "").strip() in selected
         ]
+
+    @staticmethod
+    def _semantic_focus_candidates(
+        compact_case: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        """Remove obvious semantic mismatches before the small model ranks options.
+
+        This is deliberately a narrow contradiction guard, not a medicine selector.
+        The model still chooses the final option and wording from the focused pool.
+        """
+        case_text = "；".join(
+            str(value or "")
+            for value in (
+                compact_case.get("s"),
+                "；".join(
+                    str(item.get("e") or "")
+                    for item in compact_case.get("f") or []
+                    if isinstance(item, dict)
+                ),
+            )
+        )
+        focus_groups = (
+            (
+                ("中暑", "暑湿", "暴晒", "晒了", "高温天气"),
+                ("暑湿", "化湿", "暑湿感冒", "藿香正气"),
+            ),
+        )
+        for triggers, matches in focus_groups:
+            if not any(trigger in case_text for trigger in triggers):
+                continue
+            scored: list[tuple[int, dict[str, Any]]] = []
+            for candidate in candidates:
+                medicine_text = "；".join(
+                    str(candidate.get(field) or "")
+                    for field in ("name", "category", "indications", "safety_note")
+                )
+                score = sum(1 for term in matches if term in medicine_text)
+                scored.append((score, candidate))
+            best = max((score for score, _candidate in scored), default=0)
+            focused = [candidate for score, candidate in scored if score == best and score > 0]
+            if best >= 2 and focused and len(focused) < len(candidates):
+                return focused
+        return None
 
     @staticmethod
     def _parse_local_rank_line(
