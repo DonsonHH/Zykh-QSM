@@ -161,7 +161,6 @@ export function Scan({ notify, onNavigate }) {
             <>
               <ScanLine size={54} aria-hidden="true" />
               <strong>摄像头暂不可用</strong>
-              <p>{liveMessage || "请检查外设摄像头连接后重试。"}</p>
             </>
           ) : (
             <>
@@ -187,13 +186,13 @@ export function Scan({ notify, onNavigate }) {
                 <span />
                 <span />
               </div>
-              <div className={`live-scan-badge ${liveStatus}`}>
-                {liveStatus === "matched" ? <BadgeCheck size={20} aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
-                <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "自动识别" : "摄像头预览"}</strong>
-                <span>{liveMessage}</span>
-              </div>
             </>
           )}
+        </div>
+        <div className={`scan-live-status-row ${liveStatus}`} aria-live="polite">
+          {liveStatus === "matched" ? <BadgeCheck size={20} aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
+          <strong>{liveStatus === "matched" ? "已识别" : liveStatus === "scanning" ? "自动识别" : "摄像头预览"}</strong>
+          <span>{liveMessage || "请检查外设摄像头连接后重试。"}</span>
         </div>
       </section>
 
@@ -213,21 +212,17 @@ export function Scan({ notify, onNavigate }) {
               <strong>{result.match_percent ?? 0}%</strong>
             </div>
             <div className="scan-meta-grid">
-              <article>
+              <article className="scan-meta-wide">
                 <span>条码</span>
                 <strong>{result.barcode || "--"}</strong>
               </article>
-              <article>
+              <article className="scan-meta-wide">
                 <span>规格</span>
                 <strong>{result.spec || "--"}</strong>
               </article>
               <article>
                 <span>数量</span>
                 <strong>{result.quantity || "--"}</strong>
-              </article>
-              <article>
-                <span>有效期</span>
-                <strong>{result.expire_date || "--"}</strong>
               </article>
               <article>
                 <span>仓位</span>

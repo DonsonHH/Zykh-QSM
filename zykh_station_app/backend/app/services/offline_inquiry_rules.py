@@ -5,6 +5,13 @@ import hashlib
 import re
 from typing import Any
 
+from .offline_inquiry_catalog import (
+    DETAIL_QUESTIONS,
+    LEGACY_CONCEPT_ALIASES,
+    RULE_SPECS,
+    SPOKEN_NORMALIZATIONS,
+)
+
 
 @dataclass(frozen=True)
 class OfflineSymptomRule:
@@ -17,125 +24,7 @@ class OfflineSymptomRule:
     needs_vitals: bool = False
 
 
-RULES = (
-    OfflineSymptomRule(
-        "heat",
-        "暑热不适",
-        ("中暑", "暑热", "暴晒", "闷热", "热晕", "头晕恶心", "头晕乏力"),
-        ("这种不舒服持续多久了？", "从什么时候开始感觉头晕或不舒服？", "大概不舒服了多长时间？"),
-        ("slot-08-huoxiang-zhengqi",),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "wound",
-        "轻微外伤",
-        ("擦伤", "划伤", "刀伤", "破皮", "小伤口", "伤口", "磕破", "外伤"),
-        ("伤口现在还能止住血吗？", "现在有没有持续出血或明显肿痛？", "伤口深不深，出血已经止住了吗？"),
-        ("slot-17-iodophor", "slot-22-cotton-swab", "slot-20-bandage"),
-        ("slot-17-iodophor", "slot-22-cotton-swab", "slot-10-gauze"),
-    ),
-    OfflineSymptomRule(
-        "cold",
-        "感冒样不适",
-        ("感冒", "流鼻涕", "流涕", "鼻塞", "怕冷", "受凉", "打喷嚏", "发热头痛"),
-        ("这些不舒服持续多久了？", "鼻塞、流涕或发冷是从什么时候开始的？", "大概从多久前开始不舒服？"),
-        ("slot-03-ganmao-qingre",),
-        ("slot-01-fufang-ganmaoling",),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "fever",
-        "发热头痛不适",
-        ("发烧", "发热", "体温高", "头痛", "浑身酸痛", "全身酸痛"),
-        ("发热或头痛持续多久了？", "体温升高或头痛是从什么时候开始的？", "大概不舒服了多长时间？"),
-        ("slot-01-fufang-ganmaoling",),
-        ("slot-03-ganmao-qingre",),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "cough",
-        "咳嗽咽喉不适",
-        ("咳嗽", "咳痰", "喉咙", "咽痛", "嗓子", "声音嘶哑"),
-        ("咳嗽或咽喉不适持续多久了？", "现在主要是干咳，还是有痰？", "有没有发热或呼吸费力？"),
-        ("slot-05-nin-jiom-pei-pa-koa",),
-        ("slot-07-yinhuang", "slot-11-guilin-xiguashuang"),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "diarrhea",
-        "腹泻肠道不适",
-        ("腹泻", "拉肚子", "稀便", "水样便"),
-        ("今天大概腹泻了几次？", "腹泻持续多久了，有没有明显口渴乏力？", "从什么时候开始腹泻的？"),
-        ("slot-09-bifid-triple",),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "mouth",
-        "口腔咽喉不适",
-        ("口腔溃疡", "口疮", "牙龈肿痛", "咽喉肿痛", "嘴里疼", "口腔疼"),
-        ("口腔或咽喉不适持续多久了？", "有没有明显高热或吞咽困难？", "不舒服主要在口腔还是咽喉？"),
-        ("slot-11-guilin-xiguashuang",),
-        ("slot-07-yinhuang",),
-    ),
-    OfflineSymptomRule(
-        "stomach",
-        "胃部不适",
-        ("胃痛", "胃酸", "反酸", "烧心", "腹胀", "胃胀", "恶心", "呕吐"),
-        ("胃部不适持续多久了？", "是饭前明显，还是饭后更明显？", "有没有持续呕吐或明显腹痛？"),
-        ("slot-12-hydrotalcite",),
-        ("slot-08-huoxiang-zhengqi",),
-        needs_vitals=True,
-    ),
-    OfflineSymptomRule(
-        "constipation",
-        "排便困难",
-        ("便秘", "排便困难", "大便干", "拉不出来"),
-        ("排便困难大概持续几天了？", "最近一次正常排便是什么时候？", "有没有明显腹痛或呕吐？"),
-        ("slot-06-lactulose",),
-    ),
-    OfflineSymptomRule(
-        "allergy",
-        "鼻部过敏不适",
-        ("鼻炎", "鼻痒", "连续打喷嚏", "过敏性鼻炎", "鼻子过敏"),
-        ("鼻部不适持续多久了？", "有没有明显喘憋或面唇肿胀？", "这些症状是接触什么之后出现的？"),
-        ("slot-18-budesonide-nasal",),
-    ),
-    OfflineSymptomRule(
-        "skin_allergy",
-        "皮肤过敏不适",
-        ("皮肤过敏", "皮肤瘙痒", "浑身痒", "起疹子", "皮疹", "荨麻疹", "风团"),
-        ("皮肤不适持续多久了？", "有没有呼吸费力或面唇肿胀？", "皮疹或瘙痒主要在什么位置？"),
-        ("slot-23-desloratadine",),
-    ),
-    OfflineSymptomRule(
-        "fungus",
-        "皮肤真菌样不适",
-        ("脚气", "真菌", "脱皮", "癣", "趾缝痒"),
-        ("皮肤不适持续多久了？", "有没有破溃、渗液或明显红肿？", "不舒服主要在什么位置？"),
-        ("slot-16-ketoconazole",),
-    ),
-    OfflineSymptomRule(
-        "pain",
-        "肌肉关节不适",
-        ("扭伤", "肌肉痛", "关节痛", "膝盖痛", "腰痛", "落枕"),
-        ("疼痛持续多久了？", "现在还能正常活动吗？", "有没有明显变形、肿胀或无法负重？"),
-        ("slot-19-ketoprofen-gel",),
-    ),
-    OfflineSymptomRule(
-        "eye",
-        "眼部干涩",
-        ("眼干", "眼涩", "眼睛干", "眼睛涩", "干眼"),
-        ("眼部不适持续多久了？", "有没有明显眼痛或视物模糊？", "近期是不是长时间看屏幕？"),
-        ("slot-13-sodium-hyaluronate-eye",),
-    ),
-    OfflineSymptomRule(
-        "supplement",
-        "营养补充需求",
-        ("维生素", "营养补充", "补充营养"),
-        ("是日常补充，还是最近有明确不舒服？", "以前是否一直在按说明补充？", "有没有正在使用其他复合维生素？"),
-        ("slot-02-centrum",),
-    ),
-)
+RULES = tuple(OfflineSymptomRule(**spec) for spec in RULE_SPECS)
 
 
 GENERIC_DETAIL_QUESTIONS = (
@@ -154,62 +43,7 @@ GENERIC_DETAIL_QUESTIONS = (
 )
 
 
-SYMPTOM_DETAIL_QUESTIONS = {
-    "heat": (
-        (
-            "除了头晕，有没有恶心、乏力或明显出汗？",
-            "现在有没有恶心、没力气或出汗很多？",
-            "头晕以外，会不会想吐、浑身没劲或大量出汗？",
-        ),
-        ("不舒服前有没有暴晒、在闷热环境停留或大量活动？", "出现症状前是不是晒了太阳、待在闷热处或活动较多？"),
-        ("休息、通风或补水以后有没有缓解？", "到凉快处休息或喝水以后，感觉有没有好一些？"),
-    ),
-    "wound": (
-        ("伤口在什么位置，大概有多深、多大？", "请说说受伤位置，伤口是浅表擦破还是比较深？"),
-        ("伤口现在还在出血吗，有没有异物留在里面？", "出血能止住吗，伤口里有没有看得见的异物？"),
-        ("现在有没有明显红肿、疼痛加重或活动受限？", "伤口周围有没有肿、热、明显疼痛或不好活动？"),
-    ),
-    "cold": (
-        ("现在最明显的是鼻塞流涕、怕冷，还是头痛？", "鼻塞、流鼻涕、发冷和头痛里，哪一项最明显？"),
-        ("有没有测到发热，或出现明显全身酸痛？", "现在有没有发热、发冷或浑身酸痛？"),
-        ("还伴有咳嗽、咽痛或呼吸不舒服吗？", "除了这些，有没有咳嗽、嗓子痛或呼吸费力？"),
-    ),
-    "fever": (
-        ("有没有量过体温，大概是多少？", "目前能确认体温升高吗，测到多少度？"),
-        ("有没有发冷、出汗或明显全身酸痛？", "发热时会不会发冷、出很多汗或浑身疼？"),
-        ("还伴有咳嗽、呕吐、皮疹或剧烈头痛吗？", "除了发热头痛，还有没有咳嗽、呕吐或其他明显变化？"),
-    ),
-    "cough": (
-        ("现在主要是干咳，还是有痰？", "咳嗽时有没有痰，痰大概是什么样？"),
-        ("有没有发热、胸闷或呼吸费力？", "咳嗽时会不会发热、胸口不舒服或喘不上气？"),
-        ("嗓子有没有明显疼痛，咳嗽会影响睡觉吗？", "现在嗓子疼不疼，夜里会不会咳得更明显？"),
-    ),
-    "diarrhea": (
-        ("今天大概腹泻了几次？", "从开始到现在大约拉了几次肚子？"),
-        ("大便是稀软还是水样，有没有血或黑色表现？", "排便主要是稀便还是水样，有没有异常颜色？"),
-        ("有没有明显口渴、乏力、腹痛或呕吐？", "现在会不会很渴、没力气、肚子痛或想吐？"),
-    ),
-    "stomach": (
-        ("不舒服主要在上腹、肚脐周围，还是其他位置？", "胃部不适最明显的位置在哪里？"),
-        ("是饭前明显、饭后明显，还是和进食关系不大？", "吃东西前后，哪一个时候更不舒服？"),
-        ("有没有持续呕吐、腹泻或疼痛明显加重？", "还伴有呕吐、拉肚子或越来越痛吗？"),
-    ),
-    "allergy": (
-        ("现在最明显的是鼻痒、喷嚏、流涕，还是鼻塞？", "鼻部症状里哪一项最明显？"),
-        ("症状是在接触灰尘、花粉或其他东西后出现的吗？", "这次发作前有没有接触可能的过敏原？"),
-        ("有没有喘憋、喉咙发紧或面唇肿胀？", "除了鼻部不适，有没有呼吸费力或嘴唇脸部肿胀？"),
-    ),
-    "skin_allergy": (
-        ("皮疹或瘙痒主要在什么位置？", "皮肤不适集中在哪里，范围大不大？"),
-        ("是在接触食物、药物或其他东西后出现的吗？", "出现皮疹前有没有吃药、吃特殊食物或接触新物品？"),
-        ("有没有呼吸费力、喉咙发紧或面唇肿胀？", "除了皮肤表现，有没有喘憋或脸、嘴唇肿胀？"),
-    ),
-    "pain": (
-        ("疼痛在什么位置，是扭伤、碰撞后出现的吗？", "请说说疼痛位置和出现前发生了什么。"),
-        ("现在还能正常活动和负重吗？", "走路、抬手或正常活动会不会明显受影响？"),
-        ("有没有明显肿胀、变形、发热或疼痛加重？", "疼痛处有没有肿起来、形状异常或越来越痛？"),
-    ),
-}
+SYMPTOM_DETAIL_QUESTIONS = DETAIL_QUESTIONS
 
 
 class OfflineInquiryRules:
@@ -288,6 +122,7 @@ class OfflineInquiryRules:
         if not case_summary and complaint_text:
             case_summary = self._short_complaint(complaint_text)
         detail_count = self._detail_answer_count(observations, case_summary)
+        next_detail_index = self._next_detail_index(observations, case_summary)
         downstream_started = self._downstream_started(existing)
         summary_prefix = (
             f"我先整理一下：目前主要是{case_summary}。"
@@ -309,11 +144,11 @@ class OfflineInquiryRules:
                 turn,
             )
             reason = "等待明确主诉"
-        elif not downstream_started and detail_count < 3:
+        elif not downstream_started and next_detail_index is not None:
             action = "ask"
             detail_questions = self._detail_questions(rule)
-            reply = self._variant(detail_questions[detail_count], text, turn)
-            reason = f"补充主要不适信息（{detail_count + 1}/3）"
+            reply = self._variant(detail_questions[next_detail_index], text, turn)
+            reason = f"补充主要不适信息（{next_detail_index + 1}/3）"
         elif not duration:
             action = "ask"
             duration_question = self._variant(rule.followups if rule else (
@@ -437,15 +272,39 @@ class OfflineInquiryRules:
     @classmethod
     def _match_rule(cls, text: str) -> OfflineSymptomRule | None:
         compact = cls._clean(text)
+        for legacy, current in LEGACY_CONCEPT_ALIASES:
+            compact = compact.replace(legacy, current)
         # Ranking receives the normalized case summary. Prefer that exact
         # concept over overlapping symptom words such as "咽喉" or "发热".
         for rule in RULES:
             if rule.concept in compact:
                 return rule
-        for rule in RULES:
-            if any(term in compact for term in rule.terms):
-                return rule
-        return None
+        matches: list[tuple[int, int, int, OfflineSymptomRule]] = []
+        for rule_index, rule in enumerate(RULES):
+            matched_terms = [
+                term
+                for term in rule.terms
+                if term in compact and not cls._term_is_negated(compact, term)
+            ]
+            if matched_terms:
+                matches.append((
+                    max(len(term) for term in matched_terms),
+                    sum(len(term) for term in matched_terms),
+                    -rule_index,
+                    rule,
+                ))
+        return max(matches, key=lambda item: item[:3])[3] if matches else None
+
+    @staticmethod
+    def _term_is_negated(text: str, term: str) -> bool:
+        for match in re.finditer(re.escape(term), text):
+            prefix = text[max(0, match.start() - 8):match.start()]
+            if re.search(
+                r"(?:没有|并没有|没|无|否认|不是|并不|不)(?:明显|什么|任何|一点|怎么)?$",
+                prefix,
+            ):
+                return True
+        return False
 
     @classmethod
     def _risk(cls, text: str, existing_text: str) -> tuple[str, list[str]]:
@@ -498,6 +357,24 @@ class OfflineInquiryRules:
             )
         }
         return len(indexes)
+
+    @staticmethod
+    def _next_detail_index(
+        observations: list[dict[str, Any]],
+        case_summary: str,
+    ) -> int | None:
+        prefix = f"{case_summary}·补充"
+        answered = {
+            int(match.group(1)) - 1
+            for item in observations
+            if (
+                match := re.fullmatch(
+                    rf"{re.escape(prefix)}([1-3])",
+                    str(item.get("concept") or ""),
+                )
+            )
+        }
+        return next((index for index in range(3) if index not in answered), None)
 
     @classmethod
     def _downstream_started(cls, existing: dict[str, Any]) -> bool:
@@ -576,6 +453,7 @@ class OfflineInquiryRules:
 
     @classmethod
     def _allergy(cls, text: str) -> str:
+        text = cls._clean(text)
         if cls._negative(text):
             return "无"
         if any(term in text for term in cls.UNCERTAIN_TERMS):
@@ -589,9 +467,19 @@ class OfflineInquiryRules:
     @staticmethod
     def _negative(text: str) -> bool:
         compact = re.sub(r"\s+", "", text)
-        emphatic_negative = re.search(r"(?:^|我说|都|真的|确实|还)(?:没有|没|无)(?:了|啊|呢|呀|的)?", compact)
-        return bool(emphatic_negative) or compact in {"无", "没有", "没", "都没有", "这些都没有", "没有的", "不用", "还没有"} or any(
-            term in compact for term in ("没有过敏", "无过敏", "没有禁忌", "没用药", "没有用药", "没吃药", "还没用")
+        emphatic_negative = re.search(
+            r"(?:^|我说|都|真的|确实|还|也|目前|暂时)(?:没有|没|无)(?:了|啊|呢|呀|的)?",
+            compact,
+        )
+        return bool(emphatic_negative) or compact in {
+            "无", "没有", "没", "都没有", "这些都没有", "没有的", "不用",
+            "还没有", "暂时没有", "目前没有", "也没有",
+        } or any(
+            term in compact
+            for term in (
+                "没有过敏", "无过敏", "没有禁忌", "没用药", "没有用药",
+                "没吃药", "还没用", "没有不能用的", "没有不能吃的",
+            )
         )
 
     @staticmethod
@@ -611,7 +499,13 @@ class OfflineInquiryRules:
 
     @staticmethod
     def _asks_duration(question: str) -> bool:
-        return any(term in question for term in ("持续", "多久", "多长时间", "什么时候开始"))
+        return any(
+            term in question
+            for term in (
+                "多久", "多长时间", "什么时候开始", "从什么时候开始",
+                "持续多久", "持续多长",
+            )
+        )
 
     @staticmethod
     def _asks_used_medicine(question: str) -> bool:
@@ -649,4 +543,7 @@ class OfflineInquiryRules:
 
     @staticmethod
     def _clean(value: object) -> str:
-        return re.sub(r"\s+", "", str(value or "")).strip("。．.，, ")
+        cleaned = re.sub(r"\s+", "", str(value or "")).strip("。．.，, ")
+        for spoken, normalized in SPOKEN_NORMALIZATIONS:
+            cleaned = cleaned.replace(spoken, normalized)
+        return cleaned

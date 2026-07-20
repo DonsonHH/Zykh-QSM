@@ -10,7 +10,7 @@ from unittest.mock import patch
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.offline_inquiry_rules import OfflineInquiryRules  # noqa: E402
+from app.services.offline_inquiry_rules import OfflineInquiryRules, RULES  # noqa: E402
 from app.services.ai_service import AiService  # noqa: E402
 
 
@@ -143,8 +143,8 @@ class OfflineInquiryRulesTest(unittest.TestCase):
 
     def test_additional_common_complaints_map_to_cabinet_categories(self) -> None:
         cases = (
-            ("我发烧头痛", "发热头痛不适", "slot-01-fufang-ganmaoling"),
-            ("嘴里有口腔溃疡", "口腔咽喉不适", "slot-11-guilin-xiguashuang"),
+            ("我发烧而且全身酸痛", "发热不适", "slot-01-fufang-ganmaoling"),
+            ("嘴里有口腔溃疡", "口腔不适", "slot-11-guilin-xiguashuang"),
             ("身上起疹子而且皮肤瘙痒", "皮肤过敏不适", "slot-23-desloratadine"),
         )
         candidates = [
@@ -164,6 +164,97 @@ class OfflineInquiryRulesTest(unittest.TestCase):
                 ranked = self.rules.rank({"case_summary": case_summary, "observations": []}, candidates)
                 self.assertEqual(extracted["case_summary"], case_summary)
                 self.assertEqual(ranked["options"][0]["medicine_ids"], [primary_id])
+
+    def test_recent_sore_throat_history_does_not_turn_into_a_cough_flow(self) -> None:
+        result = self.rules.extract(
+            "我嗓子有一点痛，但我没有咳嗽",
+            {"conversation_turns": 1, "conversation": []},
+            {},
+        )
+
+        self.assertEqual(result["case_summary"], "咽喉不适")
+        self.assertNotIn("干咳", result["assistant_reply"])
+        self.assertNotIn("有痰", result["assistant_reply"])
+
+    def test_wound_bleeding_answer_is_not_stored_as_duration(self) -> None:
+        existing = {
+            "conversation_turns": 2,
+            "case_summary": "轻微外伤",
+            "observations": [{
+                "concept": "轻微外伤",
+                "status": "present",
+                "evidence": "我膝盖擦伤了",
+                "source_turn": 1,
+                "confidence": 0.9,
+            }],
+            "conversation": [{
+                "role": "assistant",
+                "content": "现在有没有持续出血或明显肿痛？",
+            }],
+        }
+
+        result = self.rules.extract("稍微出一点点血，不算多", existing, {})
+
+        self.assertEqual(result["duration"], "")
+        self.assertNotEqual(result["assistant_reply"], "现在有没有持续出血或明显肿痛？")
+
+    def test_common_asr_aliases_are_normalized_for_safety_information(self) -> None:
+        existing = {
+            "conversation_turns": 6,
+            "case_summary": "咽喉不适",
+            "duration": "半天",
+            "used_medicines": "未使用",
+            "conversation": [{"role": "assistant", "content": "有没有药物过敏或明确不能使用的药？"}],
+        }
+
+        result = self.rules.extract("我头包过敏", existing, {})
+
+        self.assertEqual(result["allergy_or_contraindication"], "头孢过敏或禁忌")
+
+        complaint = self.rules.extract(
+            "我胳膊有一些他声，有点痛",
+            {"conversation_turns": 1, "conversation": []},
+            {},
+        )
+        self.assertEqual(complaint["case_summary"], "轻微外伤")
+
+    def test_rule_catalog_covers_common_spoken_complaints(self) -> None:
+        cases = (
+            ("喉咙疼但是不咳嗽", "咽喉不适"),
+            ("一直干咳，晚上更厉害", "咳嗽咳痰不适"),
+            ("鼻子痒还连续打喷嚏", "鼻部过敏不适"),
+            ("吃完饭以后反酸烧心", "反酸烧心不适"),
+            ("肚子胀还总是打嗝", "胃肠胀满"),
+            ("想吐，还有一点干呕", "恶心呕吐不适"),
+            ("嘴里长了两个溃疡", "口腔不适"),
+            ("脚趾缝脱皮还很痒", "皮肤真菌样不适"),
+            ("胳膊扭了一下，现在有点痛", "肌肉关节不适"),
+            ("眼睛干涩像有沙子", "眼部干涩"),
+            ("站起来眼前发黑，走路发飘", "头晕不适"),
+            ("太阳穴一跳一跳地疼", "头痛不适"),
+            ("浑身没劲，特别容易累", "乏力不适"),
+            ("晚上总睡不着，还容易醒", "睡眠不适"),
+            ("耳朵里面疼，还有闷堵感", "耳部不适"),
+            ("小便时刺痛，总想上厕所", "泌尿不适"),
+            ("手背被热水轻微烫红了", "轻微烫伤"),
+        )
+
+        for transcript, expected in cases:
+            with self.subTest(transcript=transcript):
+                result = self.rules.extract(
+                    transcript,
+                    {"conversation_turns": 1, "conversation": []},
+                    {},
+                )
+                self.assertEqual(result["case_summary"], expected)
+                self.assertEqual(result["next_action"], "ask")
+
+    def test_every_rule_has_three_stages_of_symptom_questions(self) -> None:
+        for rule in RULES:
+            with self.subTest(rule=rule.key):
+                questions = self.rules._detail_questions(rule)
+                self.assertEqual(len(questions), 3)
+                self.assertTrue(all(len(variants) >= 2 for variants in questions))
 
     def test_heat_inquiry_collects_three_symptom_details_then_summarizes(self) -> None:
         existing = {"conversation_turns": 1, "conversation": [], "vitals": {}}
