@@ -608,6 +608,34 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertEqual(result["next_action"], "ask")
         self.assertEqual(result["assistant_reply"], "具体是哪一种药物过敏或不能使用？")
 
+    @patch("app.services.ai_service.settings")
+    def test_spoken_negative_allergy_answers_finish_the_pending_question(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        existing = {
+            "conversation_turns": 5,
+            "case_summary": "暑热后头晕",
+            "duration": "半天",
+            "used_medicines": "未使用",
+            "conversation": [
+                {"role": "assistant", "content": "有没有药物过敏或明确不能使用的药？"},
+            ],
+        }
+
+        for transcript in ("这些都还没有", "都没有", "我说没有你耳朵聋吗"):
+            with self.subTest(transcript=transcript):
+                client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
+                result = AiService(local_client=client).extract_inquiry_information(
+                    transcript,
+                    existing,
+                    {},
+                )
+
+                self.assertEqual(client.last_messages, [])
+                self.assertEqual(result["allergy_or_contraindication"], "无")
+                self.assertEqual(result["next_action"], "analyze")
+
 
 if __name__ == "__main__":
     unittest.main()

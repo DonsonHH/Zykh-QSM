@@ -50,6 +50,7 @@ class Settings:
     qsm_vitals_retry_attempts: int = max(1, int(_env("QSM_VITALS_RETRY_ATTEMPTS", "1")))
     qsm_vitals_retry_delay_seconds: float = max(0.0, float(_env("QSM_VITALS_RETRY_DELAY_SECONDS", "0.7")))
     qsm_vitals_api_base: str = _env("QSM_VITALS_BASE_URL", "http://127.0.0.1:18085").rstrip("/")
+    qsm_vitals_prepare_path: str = _env("QSM_VITALS_PREPARE_PATH", "/api/vitals/prepare")
     qsm_vitals_session_start_path: str = _env(
         "QSM_VITALS_SESSION_START_PATH", "/api/vitals/session/start"
     )

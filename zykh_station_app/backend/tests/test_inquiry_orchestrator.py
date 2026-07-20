@@ -355,6 +355,27 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.stage, "vitals")
         self.assertIn("额头", result.reply)
 
+    def test_forced_vitals_guidance_does_not_mix_in_an_unanswered_question(self) -> None:
+        local_interpretation = case(
+            action="ask",
+            concept="头晕",
+            evidence="有点头晕",
+            reply="这次不舒服以后有没有用过药？",
+            duration="半天",
+        )
+        local_interpretation.source = "local_llm"
+        service, _ = self.service([local_interpretation])
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我有点头晕，已经半天了"),
+        )
+
+        self.assertEqual(result.next_action, "measure_vitals")
+        self.assertNotIn("用过药", result.reply)
+        self.assertIn("开始测量", result.reply)
+
     def test_cancelled_vitals_return_to_the_same_ai_session(self) -> None:
         service, interpreter = self.service(
             [

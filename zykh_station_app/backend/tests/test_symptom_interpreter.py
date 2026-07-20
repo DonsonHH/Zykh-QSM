@@ -215,6 +215,14 @@ class SymptomInterpreterTest(unittest.TestCase):
             "头孢过敏",
         )
 
+    def test_contextual_spoken_negative_answers_are_understood(self) -> None:
+        for transcript in ("这些都还没有", "都没有", "我说没有你耳朵聋吗"):
+            with self.subTest(transcript=transcript):
+                self.assertEqual(
+                    SymptomInterpreter.allergy_answer(transcript, allow_short_answer=True),
+                    "无",
+                )
+
     def test_explicit_answers_fill_small_model_omissions_without_repeating_question(self) -> None:
         result = SymptomInterpreter(ai_service=StaleDurationQuestionAiService()).interpret(
             "大概半天了，还没有使用药物",

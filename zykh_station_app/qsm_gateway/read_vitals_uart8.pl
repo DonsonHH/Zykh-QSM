@@ -15,12 +15,15 @@ my %options = (
     reference_frames  => int(number_or($ENV{VITALS_UART_REFERENCE_FRAMES}, 2)),
     aggregate_samples => int(number_or($ENV{VITALS_UART_AGGREGATE_SAMPLES}, 5)),
     stabilization_grace => number_or($ENV{VITALS_UART_STABILIZATION_GRACE_SECONDS}, 12),
+    minimum_measurement_seconds => number_or($ENV{VITALS_UART_MINIMUM_MEASUREMENT_SECONDS}, 4),
+    minimum_contact_seconds => number_or($ENV{VITALS_UART_MINIMUM_CONTACT_SECONDS}, 2.6),
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
     temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 100),
     input_file        => '',
     state_file        => '',
     cancel_file       => '',
     session_id        => '',
+    prewarmed         => 0,
 );
 
 parse_arguments(\%options, @ARGV);
@@ -28,6 +31,8 @@ $options{stable_frames} = 1 if $options{stable_frames} < 1;
 $options{reference_frames} = 1 if $options{reference_frames} < 1;
 $options{aggregate_samples} = 1 if $options{aggregate_samples} < 1;
 $options{stabilization_grace} = 0 if $options{stabilization_grace} < 0;
+$options{minimum_measurement_seconds} = 0 if $options{minimum_measurement_seconds} < 0;
+$options{minimum_contact_seconds} = 0 if $options{minimum_contact_seconds} < 0;
 $options{chunk_size} = 1 if $options{chunk_size} < 1;
 $options{timeout} = 1 if $options{timeout} < 1;
 
@@ -104,6 +109,16 @@ sub parse_arguments {
             $options->{aggregate_samples} = int(number_or(require_value($name, \@args), $options->{aggregate_samples}));
         } elsif ($name eq '--stabilization-grace') {
             $options->{stabilization_grace} = number_or(require_value($name, \@args), $options->{stabilization_grace});
+        } elsif ($name eq '--minimum-measurement-seconds') {
+            $options->{minimum_measurement_seconds} = number_or(
+                require_value($name, \@args),
+                $options->{minimum_measurement_seconds},
+            );
+        } elsif ($name eq '--minimum-contact-seconds') {
+            $options->{minimum_contact_seconds} = number_or(
+                require_value($name, \@args),
+                $options->{minimum_contact_seconds},
+            );
         } elsif ($name eq '--chunk-size') {
             $options->{chunk_size} = int(number_or(require_value($name, \@args), $options->{chunk_size}));
         } elsif ($name eq '--temperature-scale') {
@@ -116,6 +131,8 @@ sub parse_arguments {
             $options->{cancel_file} = require_value($name, \@args);
         } elsif ($name eq '--session-id') {
             $options->{session_id} = require_value($name, \@args);
+        } elsif ($name eq '--prewarmed') {
+            $options->{prewarmed} = 1;
         } else {
             die "Unknown argument: $name\n";
         }
@@ -171,12 +188,6 @@ sub read_uart_frames {
         or return ([], "Cannot open $device: $!");
     binmode($uart);
 
-    # A final frame can arrive after the previous session's stop byte. Reset the
-    # module and flush only received data so stale vitals cannot seed a new run.
-    syswrite($uart, pack('C', 0x2A));
-    select(undef, undef, undef, 0.12);
-    tcflush(fileno($uart), TCIFLUSH);
-
     my $stopped = 0;
     my $stop_hardware = sub {
         return if $stopped;
@@ -186,10 +197,21 @@ sub read_uart_frames {
     local $SIG{INT} = sub { $stop_hardware->(); close $uart; exit 130; };
     local $SIG{TERM} = sub { $stop_hardware->(); close $uart; exit 143; };
 
-    my $written = syswrite($uart, pack('C', 0x24));
-    if (!defined $written || $written != 1) {
-        close $uart;
-        return ([], "Failed to send start command to $device: $!");
+    if ($options->{prewarmed}) {
+        # The algorithm is already running. Drop every frame produced before
+        # the user pressed Start so only this measurement can become a result.
+        tcflush(fileno($uart), TCIFLUSH);
+    } else {
+        # A final frame can arrive after the previous session's stop byte. Reset
+        # the module before a cold start so stale vitals cannot seed a new run.
+        syswrite($uart, pack('C', 0x2A));
+        select(undef, undef, undef, 0.12);
+        tcflush(fileno($uart), TCIFLUSH);
+        my $written = syswrite($uart, pack('C', 0x24));
+        if (!defined $written || $written != 1) {
+            close $uart;
+            return ([], "Failed to send start command to $device: $!");
+        }
     }
 
     write_state($options, {
@@ -198,6 +220,7 @@ sub read_uart_frames {
         hardware_started => JSON::PP::true,
         finger_detected  => JSON::PP::false,
         sample_count     => 0,
+        prewarmed         => $options->{prewarmed} ? JSON::PP::true : JSON::PP::false,
     });
 
     my $buffer = '';
@@ -206,6 +229,7 @@ sub read_uart_frames {
     my $deadline = $started_at + $options->{timeout};
     my $start_retried = 0;
     my $contact_window_set = 0;
+    my $first_contact_at;
     my $stabilization_extended = 0;
     while (time() < $deadline) {
         if ($options->{cancel_file} && -e $options->{cancel_file}) {
@@ -226,6 +250,7 @@ sub read_uart_frames {
             my @contact = grep { frame_has_contact($_) } @frames;
             my @heart_rate = grep { $_->[2] > 0 } @frames;
             my @spo2 = grep { $_->[3] > 0 } @frames;
+            $first_contact_at = time() if !defined($first_contact_at) && @contact;
             if (!$contact_window_set && @contact && $options->{stabilization_grace} > 0) {
                 my $extended_deadline = time() + $options->{stabilization_grace};
                 if ($extended_deadline > $deadline) {
@@ -247,7 +272,12 @@ sub read_uart_frames {
                 stabilization_extended => $stabilization_extended ? JSON::PP::true : JSON::PP::false,
                 elapsed_seconds        => sprintf('%.2f', time() - $started_at) + 0,
             });
-            last if measurement_window_ready(\@frames, $options);
+            my $measurement_old_enough = time() - $started_at >= $options->{minimum_measurement_seconds};
+            my $contact_old_enough = defined($first_contact_at)
+                && time() - $first_contact_at >= $options->{minimum_contact_seconds};
+            last if measurement_window_ready(\@frames, $options)
+                && $measurement_old_enough
+                && $contact_old_enough;
         }
         if (!$start_retried && time() - $started_at >= 2) {
             # Any valid 24-byte frame proves the module is already running.

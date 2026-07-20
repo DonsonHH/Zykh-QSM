@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from .. import db
 from ..config import settings
 from .local_ai_client import LocalAiClient
+from .spoken_answer import is_contextual_negative_answer, is_uncertain_answer
 from .weather_context_service import WeatherContextService
 
 
@@ -1409,10 +1410,10 @@ class AiService:
             return bool(AiService._duration_context_value(transcript))
         compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
         if field == "clinical_follow_up":
-            return compact in {"没有", "还没有", "没", "无", "暂时没有"}
+            return is_contextual_negative_answer(transcript)
         if field not in {"used_medicines", "allergy_or_contraindication"}:
             return False
-        if compact in {"没有", "还没有", "没", "无", "暂时没有", "不知道", "不清楚", "不确定"}:
+        if is_contextual_negative_answer(transcript) or is_uncertain_answer(transcript):
             return True
         if field == "used_medicines":
             return any(
@@ -1450,7 +1451,7 @@ class AiService:
         expanded["observations"] = []
         expanded["case_summary"] = str(existing.get("case_summary") or "").strip()
         compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
-        uncertain = compact in {"不知道", "不清楚", "不确定"}
+        uncertain = is_uncertain_answer(transcript)
         if target.get("field") == "used_medicines":
             if uncertain:
                 expanded["used_medicines"] = "不确定"
@@ -1459,7 +1460,7 @@ class AiService:
             else:
                 expanded["used_medicines"] = "未使用"
         elif target.get("field") == "allergy_or_contraindication":
-            negative = compact in {"没有", "还没有", "没", "无", "暂时没有"} or any(
+            negative = is_contextual_negative_answer(transcript) or any(
                 term in compact
                 for term in (
                     "没有药物过敏",

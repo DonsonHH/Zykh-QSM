@@ -199,13 +199,26 @@ class QsmClient:
     def prepare_vitals(self) -> dict[str, Any]:
         if self.mode != "real":
             return {"ok": True, "mode": self.mode, "status": "ready", "started": False}
-        started = _VITALS_MEASUREMENT.start(self._read_full_vitals)
-        return {
-            "ok": True,
-            "mode": "real",
-            "status": "preparing" if started else "in_progress",
-            "started": started,
-        }
+        payload, error = self._request_json(
+            settings.qsm_vitals_prepare_path,
+            method="POST",
+            payload={},
+            body_format="json",
+            timeout=4,
+            base_url=self.vitals_base_url,
+        )
+        if error:
+            return {
+                "ok": False,
+                "mode": "real",
+                "status": "unavailable",
+                "started": False,
+                "error_message": error,
+            }
+        payload.setdefault("ok", True)
+        payload.setdefault("mode", "real")
+        payload["started"] = bool(payload.get("hardware_started"))
+        return payload
 
     def start_vitals_session(self) -> dict[str, Any]:
         if self.mode != "real":

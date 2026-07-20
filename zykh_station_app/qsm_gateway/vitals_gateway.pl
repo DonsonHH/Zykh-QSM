@@ -4,7 +4,8 @@ use warnings;
 use utf8;
 use IO::Socket::INET;
 use JSON::PP qw(encode_json decode_json);
-use POSIX qw(strftime setsid);
+use Fcntl qw(O_RDWR O_NOCTTY LOCK_EX LOCK_NB);
+use POSIX qw(strftime setsid tcflush TCIFLUSH);
 use Time::HiRes qw(time sleep);
 
 $| = 1;
@@ -15,11 +16,14 @@ my $DATA = "$HOME/data";
 my $UART_READER = $ENV{QSM_VITALS_UART_READER} || '/userdata/zykh_app/scripts/read_vitals_uart8.pl';
 my $GY_READER = $ENV{QSM_GY614_READER} || '/userdata/medical_assistant/scripts/read_gy614_uart4.pl';
 my $GY_DEVICE = $ENV{GY614_UART} || '/dev/ttyS4';
+my $UART_DEVICE = $ENV{VITALS_UART_DEVICE} || '/dev/ttyS8';
 # The module needs 5-10 seconds to initialize its algorithm after a cold start,
 # then produces an update about every 1.28 seconds. Stable warm readings still
 # exit early in read_vitals_uart8.pl.
 my $MEASURE_TIMEOUT = int($ENV{QSM_VITALS_MEASURE_TIMEOUT} || 18);
+my $PREPARE_TTL = int($ENV{QSM_VITALS_PREPARE_TTL_SECONDS} || 45);
 my $CURRENT = "$DATA/current.json";
+my $PREPARED = "$DATA/prepared.json";
 
 system('mkdir', '-p', $DATA) == 0 or die "Cannot create $DATA\n";
 
@@ -58,6 +62,9 @@ sub route_request {
     my ($client, $request) = @_;
     my $path = $request->{path};
     my $method = $request->{method};
+    if ($method eq 'POST' && $path eq '/api/vitals/prepare') {
+        return send_json($client, 200, prepare_hardware());
+    }
     if ($method eq 'POST' && $path eq '/api/vitals/session/start') {
         return send_json($client, 200, start_session());
     }
@@ -78,6 +85,7 @@ sub start_session {
         return $current;
     }
 
+    my $prewarmed = consume_prepared();
     my $session_id = join('-', 'vitals', int(time() * 1000), int(rand(100000)));
     my $state_file = state_file($session_id);
     my $started_at = now_text();
@@ -90,6 +98,7 @@ sub start_session {
         started_at => $started_at,
         updated_at => $started_at,
         worker_pid => 0,
+        prewarmed => $prewarmed ? JSON::PP::true : JSON::PP::false,
     };
     write_json_atomic($state_file, $state);
     write_json_atomic($CURRENT, $state);
@@ -99,7 +108,7 @@ sub start_session {
     if (!$pid) {
         $SIG{CHLD} = 'DEFAULT';
         setsid();
-        run_measurement($session_id, $started_at);
+        run_measurement($session_id, $started_at, $prewarmed);
         exit 0;
     }
     my $fresh_state = read_json($state_file) || $state;
@@ -121,7 +130,7 @@ sub start_session {
 }
 
 sub run_measurement {
-    my ($session_id, $started_at) = @_;
+    my ($session_id, $started_at, $prewarmed) = @_;
     my $started_epoch = time();
     my $state_file = state_file($session_id);
     my $cancel_file = cancel_file($session_id);
@@ -134,7 +143,10 @@ sub run_measurement {
     my $uart_cmd = join(' ',
         'perl', shell_quote($UART_READER),
         '--timeout', $MEASURE_TIMEOUT,
-        '--stable-frames', 2,
+        '--stable-frames', 3,
+        '--minimum-measurement-seconds', 4,
+        '--minimum-contact-seconds', 2.6,
+        ($prewarmed ? ('--prewarmed') : ()),
         '--output', shell_quote($uart_output),
         '--state-file', shell_quote($state_file),
         '--cancel-file', shell_quote($cancel_file),
@@ -210,9 +222,118 @@ sub run_measurement {
         measured_at => now_text(),
         error_message => $error || undef,
         worker_pid => $$,
+        prewarmed => $prewarmed ? JSON::PP::true : JSON::PP::false,
     };
     write_json_atomic($state_file, $state);
     write_json_atomic($CURRENT, $state);
+}
+
+sub prepare_hardware {
+    my $existing = read_json($PREPARED) || {};
+    my $existing_age = time() - ($existing->{prepared_epoch} || 0);
+    if ($existing->{hardware_started} && $existing_age >= 0 && $existing_age <= $PREPARE_TTL) {
+        $existing->{reused} = JSON::PP::true;
+        return $existing;
+    }
+    my $current = read_json($CURRENT);
+    if ($current && active_status($current->{status}) && process_alive($current->{worker_pid})) {
+        return {
+            ok => JSON::PP::true,
+            mode => 'real',
+            status => 'in_progress',
+            hardware_started => JSON::PP::true,
+            prepared => JSON::PP::false,
+            updated_at => now_text(),
+        };
+    }
+    my $result = write_uart_command(0x24, reset_first => 1);
+    return $result unless $result->{ok};
+
+    my $token = join('-', int(time() * 1000), int(rand(100000)));
+    my $prepared = {
+        ok => JSON::PP::true,
+        mode => 'real',
+        status => 'ready',
+        hardware_started => JSON::PP::true,
+        prepared => JSON::PP::true,
+        prepared_epoch => time() + 0,
+        prepared_at => now_text(),
+        token => $token,
+    };
+    write_json_atomic($PREPARED, $prepared);
+
+    my $guard = fork();
+    if (defined $guard && !$guard) {
+        $SIG{CHLD} = 'DEFAULT';
+        sleep($PREPARE_TTL);
+        my $latest = read_json($PREPARED) || {};
+        my $active = read_json($CURRENT) || {};
+        if (($latest->{token} || '') eq $token && !active_status($active->{status})) {
+            write_uart_command(0x2A);
+            unlink $PREPARED;
+        }
+        exit 0;
+    }
+    return $prepared;
+}
+
+sub consume_prepared {
+    my $prepared = read_json($PREPARED) || {};
+    my $age = time() - ($prepared->{prepared_epoch} || 0);
+    my $ready = $prepared->{hardware_started} && $age >= 0 && $age <= $PREPARE_TTL;
+    unlink $PREPARED if -e $PREPARED;
+    return $ready ? 1 : 0;
+}
+
+sub write_uart_command {
+    my ($command, %options) = @_;
+    return session_error('', 'failed', "Vitals UART device does not exist: $UART_DEVICE")
+        unless -e $UART_DEVICE;
+    my $lock_path = $ENV{VITALS_UART_LOCK_FILE} || '/tmp/zykh-vitals-uart8.lock';
+    open my $lock_fh, '>>', $lock_path
+        or return session_error('', 'failed', "Cannot open UART lock: $!");
+    if (!flock($lock_fh, LOCK_EX | LOCK_NB)) {
+        close $lock_fh;
+        return session_error('', 'busy', 'Vitals UART is already in use');
+    }
+    my @stty = (
+        'stty', '-F', $UART_DEVICE, '9600', 'cs8', '-cstopb', '-parenb',
+        '-ixon', '-ixoff', '-crtscts', 'raw', '-echo', 'min', '0', 'time', '10',
+    );
+    my $stty_rc;
+    {
+        # The HTTP server ignores SIGCHLD for request workers. Temporarily use
+        # the default handler so system() can collect stty's real exit status.
+        local $SIG{CHLD} = 'DEFAULT';
+        $stty_rc = system(@stty);
+    }
+    if ($stty_rc != 0) {
+        close $lock_fh;
+        return session_error('', 'failed', "Failed to configure $UART_DEVICE");
+    }
+    my $uart;
+    if (!sysopen($uart, $UART_DEVICE, O_RDWR | O_NOCTTY)) {
+        close $lock_fh;
+        return session_error('', 'failed', "Cannot open $UART_DEVICE: $!");
+    }
+    binmode($uart);
+    if ($options{reset_first}) {
+        syswrite($uart, pack('C', 0x2A));
+        sleep(0.12);
+        tcflush(fileno($uart), TCIFLUSH);
+    }
+    my $written = syswrite($uart, pack('C', $command));
+    close $uart;
+    close $lock_fh;
+    return session_error('', 'failed', "Failed to write UART command 0x" . sprintf('%02X', $command))
+        unless defined($written) && $written == 1;
+    return {
+        ok => JSON::PP::true,
+        mode => 'real',
+        status => 'ready',
+        hardware_started => JSON::PP::true,
+        updated_at => now_text(),
+    };
 }
 
 sub session_status {

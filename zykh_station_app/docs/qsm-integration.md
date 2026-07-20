@@ -44,6 +44,7 @@ QSM_VITALS_RETRY_ATTEMPTS=2
 QSM_VITALS_RETRY_DELAY_SECONDS=0.7
 QSM_VITALS_PREFER_FULL=false
 QSM_VITALS_BASE_URL=http://127.0.0.1:18085
+QSM_VITALS_PREPARE_PATH=/api/vitals/prepare
 QSM_VITALS_SESSION_START_PATH=/api/vitals/session/start
 QSM_VITALS_SESSION_STATUS_PATH=/api/vitals/session/status
 QSM_VITALS_SESSION_CANCEL_PATH=/api/vitals/session/cancel
@@ -74,6 +75,7 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_STATUS_PATH` for external gateway status.
 - `QSM_TEMP_PATH` for the default quick temperature read.
 - `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
+- `QSM_VITALS_PREPARE_PATH` starts the UART8 sensor algorithm when the measurement page opens. The session start then flushes preheat frames and collects a fresh stable window.
 - `QSM_VITALS_RETRY_ATTEMPTS` and `QSM_VITALS_RETRY_DELAY_SECONDS` for one automatic stabilization retry when temperature, heart rate or blood oxygen is incomplete. Concurrent UI requests share the same physical measurement instead of competing for UART.
 - `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_STATUS_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.

@@ -16,10 +16,14 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertGreaterEqual(int(match.group(1)), 18)
 
-    def test_warm_measurements_can_finish_as_soon_as_frames_are_stable(self) -> None:
-        source = READER.read_text(encoding="utf-8")
-        self.assertIn("last if measurement_window_ready", source)
-        self.assertIn("stabilization_grace", source)
+    def test_measurements_require_fresh_stable_frames_after_preheat(self) -> None:
+        gateway = GATEWAY.read_text(encoding="utf-8")
+        reader = READER.read_text(encoding="utf-8")
+        self.assertIn("/api/vitals/prepare", gateway)
+        self.assertRegex(gateway, r"--stable-frames['\s,]+3")
+        self.assertIn("--prewarmed", gateway)
+        self.assertIn("minimum_measurement_seconds", reader)
+        self.assertIn("minimum_contact_seconds", reader)
 
 
 if __name__ == "__main__":

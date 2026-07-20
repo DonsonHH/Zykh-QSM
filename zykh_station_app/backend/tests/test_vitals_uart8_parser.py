@@ -63,6 +63,88 @@ def frame(
 
 
 class VitalsUart8ParserTest(unittest.TestCase):
+    def test_prewarmed_measurement_uses_fresh_frames_and_a_minimum_window(self) -> None:
+        measured = frame(
+            heart_rate=74,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=16,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            commands: list[int] = []
+            stopped = threading.Event()
+
+            def emulate_sensor() -> None:
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 4
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            commands.extend(os.read(master_fd, 128))
+                        except OSError:
+                            break
+                    now = time.monotonic()
+                    if now - last_frame_at < 0.12:
+                        continue
+                    try:
+                        os.write(master_fd, measured)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_sensor, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            started_at = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "2",
+                        "--stable-frames",
+                        "2",
+                        "--minimum-measurement-seconds",
+                        "0.7",
+                        "--minimum-contact-seconds",
+                        "0.5",
+                        "--prewarmed",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=5,
+                )
+                elapsed = time.monotonic() - started_at
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn(0x24, commands, "a prewarmed run must not restart the sensor algorithm")
+        self.assertGreaterEqual(elapsed, 0.65)
+        self.assertGreaterEqual(payload["heart_rate_frame_count"], 2)
+        self.assertGreaterEqual(payload["spo2_frame_count"], 2)
+
     def test_valid_waiting_frames_do_not_restart_sensor_before_spo2_stabilizes(self) -> None:
         no_finger = frame(
             heart_rate=0,

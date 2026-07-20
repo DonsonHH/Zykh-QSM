@@ -440,8 +440,7 @@ class InquiryOrchestrator:
             session.next_action = "measure_vitals"
             session.action_reason = "当前症状可能受额温、心率和血氧影响，先读取核心体征。"
             session.reply = self._vitals_guidance(
-                interpretation.assistant_reply
-                or "为了更准确判断当前不适，需要先测量额温、心率和血氧。"
+                "为了更准确判断当前不适，需要先测量额温、心率和血氧。"
             )
             self._clear_decision(session)
             return self._commit(session)

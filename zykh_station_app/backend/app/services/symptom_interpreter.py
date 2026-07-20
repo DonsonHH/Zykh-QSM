@@ -6,6 +6,7 @@ from typing import Any
 
 from ..schemas.inquiry import InquiryHistoryRelationship, InquiryObservation, RiskLevel
 from .ai_service import AiService
+from .spoken_answer import is_contextual_negative_answer
 
 
 ALLOWED_ACTION_INTENTS = {"ask", "measure_vitals", "analyze", "escalate", "end"}
@@ -228,7 +229,7 @@ class SymptomInterpreter:
             "什么药都没用", "什么药都没有用", "暂时还没有",
         )
         if any(term in text for term in negative) or (
-            allow_short_answer and text in {"没有", "还没有", "没", "暂时没有"}
+            allow_short_answer and is_contextual_negative_answer(text)
         ):
             return "未使用"
         if any(term in text for term in ("吃过", "用过", "已经吃", "已经用", "已使用")):
@@ -245,7 +246,7 @@ class SymptomInterpreter:
             "没有不能用的药", "没有不能使用的药",
         )
         if any(term in text for term in negative) or (
-            allow_short_answer and text in {"没有", "还没有", "没", "无"}
+            allow_short_answer and is_contextual_negative_answer(text)
         ):
             return "无"
         if "过敏" in text or "禁忌" in text or "不能用" in text or "不能使用" in text:
@@ -345,7 +346,7 @@ class SymptomInterpreter:
         if pending_field not in {"used_medicines", "allergy_or_contraindication"}:
             return False
         compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
-        return compact in {"没有", "还没有", "没", "无", "暂时没有", "不知道", "不清楚", "不确定"}
+        return is_contextual_negative_answer(transcript) or compact in {"不知道", "不清楚", "不确定"}
 
     @staticmethod
     def _is_generic_opening_question(question: str) -> bool:

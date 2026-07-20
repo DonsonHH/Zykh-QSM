@@ -129,6 +129,7 @@ curl -X POST http://127.0.0.1:8000/api/sync/run
 QSM_MODE=real
 QSM_BASE_URL=http://127.0.0.1:18080
 QSM_VITALS_BASE_URL=http://127.0.0.1:18085
+QSM_VITALS_PREPARE_PATH=/api/vitals/prepare
 QSM_TIMEOUT_SECONDS=5
 QSM_FACE_BASE_URL=http://127.0.0.1:18081
 QSM_MIC_BASE_URL=http://127.0.0.1:18082
@@ -175,7 +176,7 @@ real 模式用于本机访问外设网关。如果 real 模式不可用，后端
 
 当前硬件分工：摄像头、FF Camera 麦克风、AS608 指纹模块、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，指纹模板保留在 AS608 内，主机 SQLite 只保存不含原始生物特征的服务对象映射。
 
-身体状态测量页使用 `/api/vitals/session/*` 会话接口并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；板端成功写出 `0x24` 后才确认硬件已启动，完成、取消和异常均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。
+身体状态测量页进入时先调用 `/api/vitals/prepare` 启动传感器算法，点击“开始测量”后再通过 `/api/vitals/session/*` 采集本次新帧，并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；正式采样会丢弃预热阶段缓存，至少等待 4 秒并要求心率、血氧各 3 个稳定帧，避免旧帧在一秒内被误记为结果。完成、取消、异常及无人操作的预热超时均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。
 
 AI 问询中的体征测量是当前问询会话的工具步骤。模型在主诉明确且体征会影响后续判断时返回 `measure_vitals`；前端完整播放操作引导，短暂停顿后在问询主体内显示测量界面。完成、失败或取消都会写回原会话并由同一个模型继续，不使用固定问询轮数，也不通过浏览器临时存储拼接两个页面。
 

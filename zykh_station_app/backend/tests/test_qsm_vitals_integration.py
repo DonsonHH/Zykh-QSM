@@ -197,33 +197,22 @@ class QsmVitalsIntegrationTest(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(item["heart_rate"] == 74 for item in results))
 
-    def test_prepare_starts_one_background_measurement_reused_by_first_read(self) -> None:
+    def test_prepare_only_requests_board_prewarm_without_reading_a_result(self) -> None:
         client = QsmClient(mode="real")
-        started = threading.Event()
-        release = threading.Event()
-        calls = 0
+        with (
+            patch.object(
+                client,
+                "_request_json",
+                return_value=({"ok": True, "hardware_started": True, "status": "ready"}, None),
+            ) as request,
+            patch.object(client, "_read_full_vitals") as read_full,
+        ):
+            prepared = client.prepare_vitals()
 
-        def measure() -> dict[str, object]:
-            nonlocal calls
-            calls += 1
-            started.set()
-            release.wait(timeout=2)
-            return client._parse_vitals(QSM_RESPONSE)
-
-        client._read_full_vitals = measure
-        prepared = client.prepare_vitals()
         self.assertTrue(prepared["ok"])
-        self.assertTrue(started.wait(timeout=1))
-
-        results: list[dict[str, object]] = []
-        reader = threading.Thread(target=lambda: results.append(client.read_full_vitals()))
-        reader.start()
-        time.sleep(0.05)
-        release.set()
-        reader.join(timeout=2)
-
-        self.assertEqual(calls, 1)
-        self.assertEqual(results[0]["heart_rate"], 74)
+        self.assertTrue(prepared["started"])
+        read_full.assert_not_called()
+        self.assertEqual(request.call_args.args[0], "/api/vitals/prepare")
 
     def test_top_level_failure_is_not_reported_as_real_measurement(self) -> None:
         result = self.read_vitals(QSM_FAILED_RESPONSE)

@@ -14,7 +14,7 @@ import {
   Waves,
   Wind
 } from "lucide-react";
-import { cancelVitalsSession, loadVitalsSession, startVitalsSession } from "../api/qsm.js";
+import { cancelVitalsSession, loadVitalsSession, prepareQsmVitals, startVitalsSession } from "../api/qsm.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
 const activePhases = new Set(["starting", "waiting_finger", "stabilizing"]);
@@ -36,6 +36,7 @@ export function Vitals({
   const requestIdRef = useRef(0);
   const completionReportedRef = useRef(false);
   const completionTimerRef = useRef(null);
+  const prewarmPromiseRef = useRef(Promise.resolve());
   const measuring = activePhases.has(phase);
   const elapsedSeconds = Number(result?.elapsed_seconds || 0);
 
@@ -43,6 +44,10 @@ export function Vitals({
   const auxiliaryMetrics = useMemo(() => buildAuxiliaryMetrics(result), [result]);
   const hasFingerTemperature = hasReading(result?.body_temperature);
   const coreComplete = hasCoreVitals(result);
+
+  useEffect(() => {
+    prewarmPromiseRef.current = prepareQsmVitals().catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (!sessionId || !activePhases.has(phase)) {
@@ -95,6 +100,7 @@ export function Vitals({
     setErrorMessage("");
     completionReportedRef.current = false;
     try {
+      await prewarmPromiseRef.current;
       const data = await startVitalsSession();
       if (requestId !== requestIdRef.current) return;
       if (!data.hardware_started) {
