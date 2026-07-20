@@ -296,7 +296,11 @@ Records 16 kHz mono audio on QSM and calls the resident offline Paraformer servi
 
 ### POST /api/audio/speak
 
-Speaks text through the QSM speaker. Online mode uses Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the resident QSM sherpa-onnx TTS process. The resident process generates into an asynchronous playback queue and prebuffers enough audio to avoid sentence-boundary underflow. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`.
+Speaks text through the QSM speaker. Online mode uses host-connected Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the host-resident Sherpa-ONNX TTS model and streams generated PCM to QSM. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`. It never calls the QSM board-side TTS service.
+
+### POST /api/audio/host/warmup
+
+Loads the host offline voice model in advance. This is used by the kiosk startup script to remove first-use model-loading delay.
 
 ### WebSocket /api/audio/asr/realtime
 
@@ -304,7 +308,7 @@ Streams real FF Camera microphone PCM into Qwen realtime ASR while online. In lo
 
 ### GET /api/audio/status
 
-Returns QSM cloud/offline TTS readiness and resident Paraformer status without exposing API keys to the terminal UI.
+Returns host offline TTS readiness, QSM playback status and resident Paraformer ASR status without exposing API keys to the terminal UI.
 
 ### POST /api/audio/beep
 

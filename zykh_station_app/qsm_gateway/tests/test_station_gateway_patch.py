@@ -27,6 +27,9 @@ my $path = "/api/audio/stream/stop";
 if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
     return send_json($client, 200, stop_audio_pcm_stream());
 }
+if ($method eq 'POST' && $path eq '/api/audio/speak') {
+    return send_json($client, 200, speak_text($req->{params}));
+}
     my $last_path = '';
     my $last_mtime = 0;
     my $delay = 1 / $fps;
@@ -68,6 +71,9 @@ sub latest_stream_frame { return ""; }
         self.assertIn("$idle_ticks >= $fps * 3", patched)
         self.assertIn("ZYKH_STATION_AUDIO_STOP_ALL", patched)
         self.assertIn("release_audio_playback_device()", patched)
+        self.assertIn("ZYKH_STATION_HOST_TTS_ONLY", patched)
+        self.assertIn("host-offline-tts-required", patched)
+        self.assertNotIn("speak_text($req->{params})", patched)
 
 
 if __name__ == "__main__":

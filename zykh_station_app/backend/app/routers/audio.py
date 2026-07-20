@@ -24,6 +24,7 @@ from ..config import settings
 from ..db import now_text
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
 from ..services.local_asr_client import LocalAsrClient
+from ..services.host_offline_tts import get_host_offline_tts
 from ..services.qsm_client import QsmClient
 from ..services.qwen_realtime_tts import QwenRealtimeTts
 
@@ -80,6 +81,7 @@ class AudioStreamRequest(BaseModel):
 def host_audio_status() -> dict[str, object]:
     microphone = _qsm_mic_request(settings.qsm_mic_status_path)
     microphone_available = bool(microphone.get("ok"))
+    offline_tts = get_host_offline_tts().status()
     microphones = (
         [{"id": "qsm:FF Camera", "label": "外设摄像头麦克风"}]
         if microphone_available
@@ -93,10 +95,11 @@ def host_audio_status() -> dict[str, object]:
         "microphones": microphones,
         "microphone_source": "qsm",
         "microphone_status": microphone,
-        "speaker_route": "qsm",
+        "speaker_route": "qsm-pcm-playback",
         "speaker_available": speaker_available,
         "relay_supported": True,
-        "relay_note": "主机系统声音外放只使用低延迟 PCM 实时流；语音合成播报仍走外设播报接口。",
+        "offline_tts": offline_tts,
+        "relay_note": "离线语音在主机生成，再通过低延迟 PCM 实时流发送到外设喇叭。",
     }
 
 
@@ -126,14 +129,23 @@ def audio_status() -> dict[str, object]:
     requested_mode = _tts_mode_for_network()
     result = QsmClient().audio_status()
     local_asr = LocalAsrClient().status()
+    offline_tts = get_host_offline_tts().status()
+    qsm_status = dict(result)
+    # Do not expose the legacy board-side TTS advertisement as the active
+    # route. The host service is the source of truth for offline speech.
+    qsm_status.pop("offline", None)
+    qsm_status.pop("offline_available", None)
+    qsm_status.pop("cloud", None)
+    qsm_status["tts_owner"] = "host"
     return {
         "ok": bool(result.get("ok")),
         "requested_mode": requested_mode,
-        "offline_available": bool(result.get("offline_available") or result.get("offline", {}).get("available")),
+        "offline_available": bool(offline_tts.get("ready")),
         "cloud_available": bool(result.get("cloud_available") or result.get("cloud", {}).get("available")),
         "local_asr": local_asr,
+        "host_offline_tts": offline_tts,
         "realtime_tts_configured": bool(_read_api_key(settings.dashscope_api_key, settings.dashscope_api_key_file)),
-        "raw": result,
+        "raw": qsm_status,
     }
 
 
@@ -176,27 +188,22 @@ async def _audio_speak_impl(request: SpeakRequest) -> dict[str, object]:
         )
         if not result.get("ok"):
             realtime_failure = str(result.get("error_message") or "实时语音合成暂不可用。")
-            result = await asyncio.to_thread(
-                client.audio_speak,
+            result = await get_host_offline_tts(client).speak(
                 request.text,
-                volume,
-                request.speed,
-                "offline",
+                volume=volume,
+                speed=request.speed,
             )
             result["fallback_reason"] = realtime_failure
     else:
-        await asyncio.to_thread(client.audio_stream_stop)
-        result = await asyncio.to_thread(
-            client.audio_speak,
+        result = await get_host_offline_tts(client).speak(
             request.text,
-            volume,
-            request.speed,
-            "offline",
+            volume=volume,
+            speed=request.speed,
         )
     actual_mode = str(result.get("mode") or "")
     description = (
-        "已使用板端离线语音播报。"
-        if actual_mode.startswith("offline")
+        "已使用主机离线语音播报。"
+        if actual_mode.startswith("host-offline")
         else "实时语音已发送到外设喇叭。"
         if result.get("ok")
         else str(result.get("error_message") or result.get("detail") or "播报失败。")
@@ -235,7 +242,9 @@ def audio_relay_test(request: RelayTestRequest) -> dict[str, object]:
     result = client.audio_play_base64(audio_b64, "wav", volume)
     mode = "uploaded-audio"
     if not result.get("ok"):
-        result = client.audio_speak(text, volume, tts_mode=_tts_mode_for_network())
+        result = asyncio.run(
+            get_host_offline_tts(client).speak(text, volume=volume)
+        )
         mode = "tts"
     if not result.get("ok"):
         result = client.audio_beep(volume)
@@ -296,6 +305,12 @@ async def audio_stream_stop() -> dict[str, object]:
         "message": result.get("detail") or result.get("error_message") or "",
         "raw": result,
     }
+
+
+@router.post("/host/warmup")
+async def host_audio_warmup() -> dict[str, object]:
+    """Load the host offline voice once so the first user prompt is responsive."""
+    return await get_host_offline_tts().warmup()
 
 
 @router.websocket("/asr/realtime")

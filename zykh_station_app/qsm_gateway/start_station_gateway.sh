@@ -18,6 +18,23 @@ CAMERA_STREAM_FPS="${CAMERA_STREAM_FPS:-30}"
 cd "$QSM_HOME" || exit 1
 mkdir -p "$QSM_HOME/data" "$QSM_HOME/scripts"
 
+# The board-side TTS service was retired. Stop an older deployment if one is
+# still running so its model cannot compete with ASR or the local AI process.
+legacy_tts_pid_file="$QSM_HOME/data/local-tts.pid"
+if [ -s "$legacy_tts_pid_file" ]; then
+  legacy_tts_pid="$(cat "$legacy_tts_pid_file" 2>/dev/null || true)"
+  case "$legacy_tts_pid" in
+    ''|*[!0-9]*) ;;
+    *) kill "$legacy_tts_pid" 2>/dev/null || true; sleep 1; kill -9 "$legacy_tts_pid" 2>/dev/null || true ;;
+  esac
+  rm -f "$legacy_tts_pid_file"
+fi
+if command -v pidof >/dev/null 2>&1; then
+  for legacy_tts_pid in $(pidof local-tts-server 2>/dev/null || true); do
+    kill "$legacy_tts_pid" 2>/dev/null || true
+  done
+fi
+
 if [ -f "$QSM_HOME/scripts/patch_station_gateway.pl" ]; then
   perl "$QSM_HOME/scripts/patch_station_gateway.pl" "$QSM_HOME/server.pl" || exit 1
 fi
@@ -25,11 +42,6 @@ fi
 if [ -x "$QSM_HOME/scripts/start_asr_service.sh" ]; then
   "$QSM_HOME/scripts/start_asr_service.sh" start >/dev/null 2>&1 || \
     printf 'Warning: resident Paraformer ASR did not start; cloud recognition remains available.\n' >&2
-fi
-
-if [ -x "$QSM_HOME/scripts/start_local_tts_server.sh" ]; then
-  sh "$QSM_HOME/scripts/start_local_tts_server.sh" >/dev/null 2>&1 || \
-    printf 'Warning: persistent offline TTS did not start; script fallback remains available.\n' >&2
 fi
 
 gateway_pids() {

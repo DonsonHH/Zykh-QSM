@@ -226,6 +226,15 @@ class Settings:
         8.0,
         float(_env("QWEN_REALTIME_TTS_MAX_DRAIN_SECONDS", "90")),
     )
+    host_offline_tts_model_root: Path = Path(
+        _env("HOST_OFFLINE_TTS_MODEL_ROOT", str(DATA_DIR / "host_tts"))
+    )
+    host_offline_tts_threads: int = max(1, int(_env("HOST_OFFLINE_TTS_THREADS", "4")))
+    host_offline_tts_timeout_seconds: float = float(
+        _env("HOST_OFFLINE_TTS_TIMEOUT_SECONDS", "45")
+    )
+    host_offline_tts_output: str = _env("HOST_OFFLINE_TTS_OUTPUT", "qsm")
+    host_offline_tts_max_chars: int = max(80, int(_env("HOST_OFFLINE_TTS_MAX_CHARS", "320")))
     qwen_vision_model: str = _env("QWEN_VISION_MODEL", "qwen3.6-flash")
     showapi_app_key_file: Path = Path(_env("SHOWAPI_APP_KEY_FILE", "/userdata/zykh_app/data/showapi-app-key.txt"))
     sync_endpoint: str = _env("SYNC_ENDPOINT", "")

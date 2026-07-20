@@ -35,8 +35,8 @@ The script:
 
 1. verifies the ARM64 board and SHA-256 hashes of the model and runtime;
 2. stops and removes `/userdata/zykh_app/local_asr`, the old Zipformer module;
-3. installs the shared runtime under `/userdata/zykh_voice` so offline TTS can
-   continue using the same compatible libraries;
+3. installs the ASR runtime under `/userdata/zykh_voice`; offline TTS is now
+   hosted on the main application machine and does not use this board runtime;
 4. installs and starts `/userdata/zykh_app/scripts/start_asr_service.sh`;
 5. updates the board compatibility API and startup hooks;
 6. recognizes the bundle's `penicillin-allergy.wav` on the real QSM board.

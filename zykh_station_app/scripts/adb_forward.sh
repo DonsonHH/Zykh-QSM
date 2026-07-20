@@ -96,10 +96,6 @@ if $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1; 
   else
     warn "板端尚未部署本地语音识别；可运行 scripts/deploy_local_asr.sh。"
   fi
-  if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_local_tts_server.sh' >/dev/null 2>&1; then
-    $ADB_PREFIX shell 'sh /userdata/zykh_app/scripts/start_local_tts_server.sh' >/dev/null 2>&1 \
-      || warn "板端常驻离线语音服务未能启动，将使用兼容回退。"
-  fi
   if $ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" >/dev/null 2>&1; then
     ok "本地 Paraformer 语音识别端口转发已建立：127.0.0.1:${LOCAL_ASR_HOST_PORT}。"
   else

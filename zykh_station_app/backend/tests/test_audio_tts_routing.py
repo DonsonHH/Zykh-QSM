@@ -55,18 +55,38 @@ class FakeRealtimeTts:
         }
 
 
+class FakeHostOfflineTts:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int | None, float | None]] = []
+
+    def status(self) -> dict[str, object]:
+        return {"ok": True, "ready": True, "engine": "host-offline-sherpa-onnx"}
+
+    async def speak(self, text, *, volume=None, speed=None):
+        self.calls.append((text, volume, speed))
+        return {
+            "ok": True,
+            "mode": "host-offline-sherpa-onnx-pcm",
+            "engine": "host-offline-sherpa-onnx",
+            "offline": True,
+            "detail": "ok",
+        }
+
+
 class AudioTtsRoutingTest(unittest.TestCase):
     def test_local_network_forces_offline_tts(self) -> None:
         client = FakeQsmClient()
+        host_tts = FakeHostOfflineTts()
         with (
             patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio, "get_host_offline_tts", return_value=host_tts),
             patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
             result = asyncio.run(audio.audio_speak(SpeakRequest(text="请安全用药。", speed=1.2)))
 
-        self.assertEqual(client.speak_calls[0][3], "offline")
-        self.assertEqual(result["engine"], "offline-sherpa-onnx")
+        self.assertEqual(host_tts.calls[0][0], "请安全用药。")
+        self.assertEqual(result["engine"], "host-offline-sherpa-onnx-pcm")
         self.assertTrue(result["offline"])
 
     def test_online_network_uses_auto_mode(self) -> None:
@@ -88,25 +108,29 @@ class AudioTtsRoutingTest(unittest.TestCase):
 
     def test_local_network_cannot_be_overridden_with_cloud_mode(self) -> None:
         client = FakeQsmClient()
+        host_tts = FakeHostOfflineTts()
         with (
             patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio, "get_host_offline_tts", return_value=host_tts),
             patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
             asyncio.run(audio.audio_speak(SpeakRequest(text="指定云端。", mode="cloud")))
 
-        self.assertEqual(client.speak_calls[0][3], "offline")
+        self.assertEqual(host_tts.calls[0][0], "指定云端。")
 
     def test_online_request_can_explicitly_select_offline_mode(self) -> None:
         client = FakeQsmClient()
+        host_tts = FakeHostOfflineTts()
         with (
             patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio, "get_host_offline_tts", return_value=host_tts),
             patch.object(audio.db, "get_setting", return_value="sim"),
             patch.object(audio, "_record"),
         ):
             asyncio.run(audio.audio_speak(SpeakRequest(text="指定离线。", mode="offline")))
 
-        self.assertEqual(client.speak_calls[0][3], "offline")
+        self.assertEqual(host_tts.calls[0][0], "指定离线。")
 
     def test_asr_mode_uses_fast_persisted_preference(self) -> None:
         with patch.object(audio.db, "get_setting", return_value="local") as get_setting:
@@ -120,13 +144,9 @@ class AudioTtsRoutingTest(unittest.TestCase):
 
     def test_qsm_client_sends_normalized_tts_mode(self) -> None:
         client = QsmClient(mode="real")
-        with patch.object(client, "_qsm_action", return_value={"ok": True}) as action:
-            client.audio_speak("测试", 280, 2.0, "INVALID")
-
-        payload = action.call_args.args[1]
-        self.assertEqual(payload["volume"], 255)
-        self.assertEqual(payload["speed"], 1.8)
-        self.assertEqual(payload["tts_mode"], "auto")
+        result = client.audio_speak("测试", 280, 2.0, "INVALID")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["mode"], "host-offline-tts-required")
 
     def test_stream_stop_cancels_an_active_tts_request(self) -> None:
         client = FakeQsmClient()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
@@ -8,32 +7,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class LocalTtsGatewaySourceTest(unittest.TestCase):
-    def test_offline_tts_uses_parallel_inference_and_short_silence(self) -> None:
-        source = (ROOT / "qsm_gateway" / "local_tts_server.cpp").read_text(encoding="utf-8")
-        threads = re.search(r"config\.model\.num_threads\s*=\s*(\d+)", source)
-        silence = re.findall(r"silence_scale\s*=\s*([0-9.]+)f", source)
+class HostTtsRoutingSourceTest(unittest.TestCase):
+    def test_host_service_owns_model_and_qsm_only_receives_pcm(self) -> None:
+        source = (ROOT / "backend" / "app" / "services" / "host_offline_tts.py").read_text(encoding="utf-8")
+        self.assertIn("sherpa_onnx.OfflineTts", source)
+        self.assertIn("audio_stream_start", source)
+        self.assertIn("host-offline-sherpa-onnx-pcm", source)
+        self.assertIn("主机离线语音已发送到外设喇叭", source)
 
-        self.assertIsNotNone(threads)
-        self.assertGreaterEqual(int(threads.group(1)), 4)
-        self.assertTrue(silence)
-        self.assertTrue(all(float(value) <= 0.05 for value in silence))
-        self.assertIn("max_callback_gap_ms", source)
-        self.assertIn("std::thread playback_thread(PlaybackWorker", source)
-        self.assertIn("pending.push_back", source)
-        self.assertIn("generation_done = true", source)
-        self.assertIn("prebuffer_samples", source)
-        self.assertIn("underflow_count", source)
+    def test_startup_scripts_do_not_start_board_tts(self) -> None:
+        station = (ROOT / "qsm_gateway" / "start_station_gateway.sh").read_text(encoding="utf-8")
+        forward = (ROOT / "scripts" / "adb_forward.sh").read_text(encoding="utf-8")
+        ensure = (ROOT / "scripts" / "ensure_qsm_gateway.sh").read_text(encoding="utf-8")
+        for source in (station, forward, ensure):
+            self.assertNotIn("start_local_tts_server.sh", source)
 
-    def test_deploy_forces_the_running_daemon_to_restart(self) -> None:
-        deploy = (ROOT / "scripts" / "deploy_local_tts_server.sh").read_text(encoding="utf-8")
-        startup = (ROOT / "qsm_gateway" / "start_local_tts_server.sh").read_text(encoding="utf-8")
-
-        self.assertIn("start_local_tts_server.sh restart", deploy)
-        self.assertIn("-static-libstdc++", deploy)
-        self.assertIn("-pthread", deploy)
-        self.assertIn('ACTION="${1:-start}"', startup)
-        self.assertIn('if [ "$ACTION" = "restart" ]', startup)
+    def test_old_deploy_entry_points_redirect_to_host(self) -> None:
+        for name in ("deploy_offline_tts.sh", "deploy_local_tts_server.sh"):
+            source = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            self.assertIn("deploy_host_offline_tts.sh", source)
 
 
 if __name__ == "__main__":

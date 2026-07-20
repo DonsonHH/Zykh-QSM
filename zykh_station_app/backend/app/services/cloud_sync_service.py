@@ -27,6 +27,7 @@ from ..schemas.sync import SyncStatus
 from .ai_service import AiService
 from .dispense_service import DispenseService
 from .qsm_client import QsmClient
+from .host_offline_tts import get_host_offline_tts
 
 
 class CloudSyncError(RuntimeError):
@@ -544,11 +545,13 @@ class CloudSyncWorker:
             speed = float(raw_speed) if raw_speed not in (None, "") else None
         except (TypeError, ValueError):
             speed = None
-        return QsmClient().audio_speak(
+        # Audio generation belongs to the host now. The QSM board only receives
+        # the resulting PCM stream for speaker playback and keeps its ASR/local
+        # inquiry resources available.
+        return get_host_offline_tts().speak_sync(
             text[:240],
-            CloudSyncWorker._int(payload.get("volume")),
+            volume=CloudSyncWorker._int(payload.get("volume")),
             speed=speed,
-            tts_mode=str(payload.get("tts_mode") or "auto"),
         )
 
     @staticmethod

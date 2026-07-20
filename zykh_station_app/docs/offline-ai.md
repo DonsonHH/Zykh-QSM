@@ -126,7 +126,7 @@ Before and after inference, the backend enforces only hard boundaries:
 
 ## Verified Performance
 
-On the connected RK3568 QSM with 2 GB RAM, the deployed model passed a real Chinese inquiry request. The observed run was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s. The compact 64-token case contract returned a useful first follow-up in about 7.5 seconds during the latest warm-board check, compared with roughly 17–37 seconds for the former verbose contract. Candidate ordering then completed in milliseconds because it does not launch a second model request. With the language model, resident ASR and resident TTS loaded together, the current board has little spare memory; these timings are deployment observations, not hard guarantees.
+On the connected RK3568 QSM with 2 GB RAM, the deployed model passed a real Chinese inquiry request. The observed run was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s. The compact 64-token case contract returned a useful first follow-up in about 7.5 seconds during the latest warm-board check, compared with roughly 17–37 seconds for the former verbose contract. Candidate ordering then completed in milliseconds because it does not launch a second model request. With the language model and resident ASR loaded together, the board now keeps the TTS model off-device, leaving more memory and CPU headroom; these timings are deployment observations, not hard guarantees.
 
 ## Offline Verification
 

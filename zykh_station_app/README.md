@@ -13,7 +13,7 @@
 - 药品页取药确认，默认调用真实外设网关并保留本地记录；
 - AI应急问询、风险提示、药品信息匹配、禁忌核验；
 - QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，支持云端失败自动切换；
-- QSM 上运行的 sherpa-onnx Paraformer 中文离线语音识别与常驻离线 TTS，本地模式不访问云端语音服务；
+- QSM 上运行的 sherpa-onnx Paraformer 中文离线语音识别与本地问询模型；离线 TTS 在主机生成 PCM，再通过低延迟流发送到 QSM 喇叭，本地模式不访问云端语音服务；
 - 联网时使用 Qwen3 实时 TTS 增量 PCM，边生成边送入 QSM 喇叭；
 - 本地记录聚合和待同步队列；
 - QSM real/mock 接入验证接口。
@@ -210,23 +210,22 @@ sh scripts/deploy_offline_ai.sh
 
 完整模型来源、哈希、资源占用、安全边界和断网验收见 [`docs/offline-ai.md`](docs/offline-ai.md)。
 
-首次部署板端离线中文语音模型：
+首次部署主机离线中文语音模型：
 
 ```bash
 cd zykh_station_app
-INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
+sh scripts/deploy_host_offline_tts.sh
 ```
 
-继续部署常驻离线 TTS 和本地 Paraformer 语音识别服务：
+旧的 `deploy_offline_tts.sh` 和 `deploy_local_tts_server.sh` 仍保留为兼容入口，但现在只转向主机部署，不会再把 TTS 模型安装到 QSM。继续部署本地 Paraformer 语音识别服务：
 
 ```bash
-bash scripts/deploy_local_tts_server.sh
 sh scripts/deploy_local_asr.sh
 ```
 
 `deploy_local_asr.sh` 从仓库根目录的 `QSM368ZP-offline-asr-migration*.zip` 校验并部署 Paraformer int8 模型，删除旧 Zipformer 目录，并预热板端 `6006` 常驻服务。本地模式先采集完整一句语音，用户停止后通常约 1 秒返回最终文本；联网模式仍使用 `qwen3-asr-flash-realtime`。前端只有在识别服务与 QSM 麦克风都就绪后才显示“正在听”。离线识别部署和验收见 [`docs/offline-asr.md`](docs/offline-asr.md)。
 
-语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时自动回退常驻板端模型。离线常驻服务使用异步生成/播放队列并在开始前预缓冲，避免生成速度低于播放速度时每句话之间出现断音。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时回退到主机已加载的离线 Sherpa-ONNX 模型。离线语音在主机生成 22.05kHz PCM，再通过 `19001` 播放流发送到 QSM，QSM 不再启动 TTS 模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 

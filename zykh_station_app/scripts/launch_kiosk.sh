@@ -617,6 +617,9 @@ set_kiosk_resolution
 start_audio_relay_if_needed
 prepare_chinese_input_method
 start_touch_keyboard_if_needed
+log "后台预热主机离线语音模型..."
+curl -sS --max-time 60 -X POST "$BACKEND_URL/api/audio/host/warmup" \
+  >"$RUN_DIR/host-tts-warmup.log" 2>&1 &
 
 BROWSER="$(find_browser || true)"
 if [ -z "$BROWSER" ]; then

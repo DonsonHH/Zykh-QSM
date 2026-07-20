@@ -218,8 +218,8 @@ class CloudSyncServiceTest(unittest.TestCase):
 
     def test_miniprogram_speak_command_announces_the_named_reminder(self) -> None:
         worker = FakeCloudSyncWorker()
-        with patch("app.services.cloud_sync_service.QsmClient") as client_class:
-            client_class.return_value.audio_speak.return_value = {"ok": True, "detail": "played"}
+        with patch("app.services.cloud_sync_service.get_host_offline_tts") as tts_factory:
+            tts_factory.return_value.speak_sync.return_value = {"ok": True, "detail": "played"}
 
             result = worker._execute_command(
                 "AUDIO_SPEAK",
@@ -232,11 +232,10 @@ class CloudSyncServiceTest(unittest.TestCase):
                 },
             )
 
-        client_class.return_value.audio_speak.assert_called_once_with(
+        tts_factory.return_value.speak_sync.assert_called_once_with(
             "张三，该服用藿香正气丸了。",
-            210,
+            volume=210,
             speed=None,
-            tts_mode="auto",
         )
         self.assertTrue(result["ok"])
 

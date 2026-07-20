@@ -1,67 +1,77 @@
-# QSM offline TTS
+# 主机离线 TTS
 
-## Purpose
+离线语音合成现在由主机 FastAPI 进程负责。主机加载本地 Sherpa-ONNX 中文 VITS 模型，生成 PCM 后通过现有低延迟音频流发送到 QSM 喇叭。QSM 不再加载、启动或执行离线 TTS 模型，只保留本地 ASR、离线问询模型和 PCM 播放。
 
-The QSM gateway can synthesize Chinese speech without Wi-Fi, SIM connectivity or an API key. It uses the aarch64 `sherpa-onnx` runtime and the INT8 `zh_CN-xiao_ya-medium` VITS model supplied in the local deployment archive. A persistent service keeps the model loaded, generates PCM into an asynchronous queue and prebuffers playback; the original per-request WAV script remains a compatibility fallback.
+## 运行边界
 
-The model and runtime are deployed to QSM but are not committed to Git:
+- 主机：模型加载、文本转 PCM、语音任务串行化、播放时长管理。
+- QSM：麦克风采集、离线 ASR、离线问询模型、PCM 播放和其他外设网关。
+- 在线网络：仍可使用主机上的 Qwen 实时 TTS；生成的 PCM 同样发送到 QSM 喇叭。
+- 本地模式：不请求云端 TTS，也不调用 QSM `/api/audio/speak`。
 
-```text
-/userdata/zykh_voice/runtime/
-/userdata/zykh_voice/models/tts/
-/userdata/zykh_app/scripts/offline_tts.sh
-/userdata/zykh_app/bin/local-tts-server
-/userdata/zykh_app/scripts/start_local_tts_server.sh
-```
+旧的 QSM `local-tts-server` 部署已停用；新项目启动脚本不会再拉起或部署它。
 
-## Routing
+## 主机部署
 
-`POST /api/audio/speak` supports three QSM request modes:
-
-- `offline`: only the board-side model is allowed; no cloud TTS request is made.
-- `auto`: cloud TTS is attempted first, then the board-side model if cloud synthesis fails.
-- `cloud`: cloud TTS is preferred, with the board-side model retained as the safety fallback.
-
-The host FastAPI service selects `offline` whenever the configured or detected network mode is local. It selects `auto` while Wi-Fi or SIM networking is available. Responses include the actual engine (`qwen-tts` or `offline-sherpa-onnx`) and an `offline` flag.
-
-## Deployment
-
-Place `智药康护-QSM368ZP离线TTS部署包(1).zip` in the repository root, connect exactly one QSM through ADB, then run:
+部署包只用于提取模型文件，不会上传到 QSM：
 
 ```bash
 cd zykh_station_app
-INSTALL_GATEWAY=1 PLAYBACK_TEST=1 sh scripts/deploy_offline_tts.sh
+sh scripts/deploy_host_offline_tts.sh
 ```
 
-The script checks aarch64 compatibility and free space, uploads the runtime and model, verifies key SHA-256 hashes, backs up and installs the current gateway when requested, generates a Chinese WAV entirely on QSM, and optionally plays it through the QSM speaker. Then deploy the persistent streamer:
+默认模型目录为 `zykh_station_app/data/host_tts/`，该目录属于运行数据，不提交到 Git。也可以通过 `HOST_OFFLINE_TTS_MODEL_ROOT` 指定其他本机目录。
 
-```bash
-bash scripts/deploy_local_tts_server.sh
+后端依赖包括：
+
+```text
+sherpa-onnx==1.13.4
+numpy<2
 ```
 
-## Verification
+启动后可以先预热模型，避免首次播报承担加载延迟：
 
 ```bash
-sh scripts/adb_forward.sh
+curl -X POST http://127.0.0.1:8000/api/audio/host/warmup
 curl http://127.0.0.1:8000/api/audio/status
-curl -X POST http://127.0.0.1:8000/api/audio/speak \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"离线语音播报测试成功。","mode":"offline","speed":1.2}'
 ```
 
-A successful offline response contains:
+## 配置
+
+```text
+HOST_OFFLINE_TTS_MODEL_ROOT=/path/to/zykh_station_app/data/host_tts
+HOST_OFFLINE_TTS_THREADS=4
+HOST_OFFLINE_TTS_TIMEOUT_SECONDS=45
+HOST_OFFLINE_TTS_OUTPUT=qsm
+```
+
+`HOST_OFFLINE_TTS_OUTPUT` 支持：
+
+- `qsm`：主机生成后发送到 QSM 喇叭；默认值。
+- `auto`：优先发送到 QSM，QSM 播放通道不可用时使用主机声卡。
+- `host`：只用主机声卡播放，适合没有 QSM 音频转发的开发机。
+
+## 接口
+
+`POST /api/audio/speak` 的 `mode=offline` 或本地网络模式会返回主机离线引擎，例如：
 
 ```json
 {
   "ok": true,
   "requested_mode": "offline",
-  "engine": "offline-sherpa-onnx",
-  "offline": true
+  "engine": "host-offline-sherpa-onnx",
+  "offline": true,
+  "raw": {
+    "mode": "host-offline-sherpa-onnx-pcm",
+    "sample_rate": 22050
+  }
 }
 ```
 
-On the verified board, the old process-per-request route took about 17.18 seconds for a short sentence because model loading consumed roughly 14 seconds. The resident service removes model reload cost. For multi-sentence text it now uses all four board CPU cores and a five-second audio prebuffer so generation cannot repeatedly starve the speaker. A real three-sentence check reported `underflow_count=0`, `max_queue_wait_ms=0`, first audio at about 7.7 seconds and completion at about 13.6 seconds. This deliberately trades a longer initial preparation for continuous playback. Online speech still uses Qwen realtime TTS and writes each PCM delta directly to QSM. The bundled voice model is restricted to non-commercial use; replace it or obtain suitable licensing before commercial distribution.
+`GET /api/audio/host/status` 和 `GET /api/audio/status` 会显示模型文件、Python 运行时和播放路线是否就绪。模型或播放设备不可用时返回结构化错误，不返回假成功。
 
-Offline speech recognition is deployed separately from TTS. See
-[`offline-asr.md`](offline-asr.md) for the resident Paraformer service,
-deployment bundle, ports and real-board verification.
+## 延迟说明
+
+模型在后端进程中只加载一次，`launch_kiosk.sh` 会在后台调用 `/api/audio/host/warmup`。每次播报只执行文本生成和 PCM 播放，不再等待 QSM 重复加载 TTS 模型，也不再让 TTS 与 QSM 本地问询模型争抢内存。
+
+在线 TTS 和主机离线 TTS 共用 QSM 的 PCM 播放端口 `19001`。启动前仍需执行 `scripts/adb_forward.sh`，但该脚本只建立 ASR、离线模型和音频播放端口，不会启动 QSM 离线 TTS。

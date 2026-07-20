@@ -117,6 +117,34 @@ PERL
     $changed = 1;
 }
 
+# Keep the legacy HTTP route harmless after TTS moved to the host. This avoids
+# accidentally starting the old board-side implementation if a stale client
+# still posts to the QSM gateway directly.
+if ($source !~ /ZYKH_STATION_HOST_TTS_ONLY/) {
+    my $pattern = qr{
+        if\s*\(\s*\$method\s+eq\s+'POST'\s*&&\s*\$path\s+eq\s+'/api/audio/speak'\s*\)\s*\{\s*
+        return\s+send_json\(\$client,\s*200,\s*speak_text\(\$req-\>\{params\}\)\);\s*
+        \}
+    }x;
+    my $replacement = <<'PERL';
+if ($method eq 'POST' && $path eq '/api/audio/speak') {
+        # ZYKH_STATION_HOST_TTS_ONLY
+        return send_json($client, 200, {
+            ok => 0,
+            disabled => 1,
+            mode => 'host-offline-tts-required',
+            error => '语音合成由主机完成，请调用主应用音频接口。',
+        });
+    }
+PERL
+    my $matches = () = $source =~ /$pattern/g;
+    die "Expected at most one legacy TTS route, found $matches\n" if $matches > 1;
+    if ($matches == 1) {
+        $source =~ s/$pattern/$replacement/;
+        $changed = 1;
+    }
+}
+
 if (!$changed) {
     print "Station gateway reliability fixes already installed.\n";
     exit 0;
