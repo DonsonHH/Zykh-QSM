@@ -15,7 +15,7 @@
     "test:inquiry-result-reset": "node scripts/test-inquiry-result-navigation-reset.mjs",
     "test:inquiry-offline": "node scripts/test-inquiry-offline-delay.mjs",
     "test:vitals-prewarm": "node scripts/test-vitals-prewarm.mjs",
-    "test:vitals-no-finger": "node scripts/test-vitals-no-finger-retry.mjs",
+    "test:vitals-retry-policy": "node scripts/test-vitals-retry-policy.mjs",
     "test:network-display": "node scripts/test-network-display-mode.mjs",
     "test:scan-layout": "node scripts/test-scan-layout.mjs",
     "build": "vite build",

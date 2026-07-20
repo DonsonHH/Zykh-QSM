@@ -41,7 +41,6 @@ export function Vitals({
   const phaseRef = useRef("idle");
   const automaticRetryRef = useRef(false);
   const automaticRetryTimerRef = useRef(null);
-  const lastNoFingerRetrySessionRef = useRef("");
   const measuring = activePhases.has(phase);
   const elapsedSeconds = Number(result?.elapsed_seconds || 0);
 
@@ -107,18 +106,6 @@ export function Vitals({
     setResult(data);
     setPhase(data.status || "failed");
     setErrorMessage(data.error_message || "");
-    if (shouldAutomaticallyRetryNoFinger(data)) {
-      const retryKey = String(data.session_id || data.updated_at || "");
-      if (retryKey && lastNoFingerRetrySessionRef.current === retryKey) return;
-      lastNoFingerRetrySessionRef.current = retryKey;
-      setErrorMessage("未检测到稳定手指信号，正在开始下一次测量，请继续放稳手指。");
-      automaticRetryTimerRef.current = window.setTimeout(
-        () => handleMeasure({ automatic: true }),
-        850
-      );
-      return;
-    }
-    if (data.status === "complete") lastNoFingerRetrySessionRef.current = "";
     if (shouldAutomaticallyRetrySpo2(data) && !automaticRetryRef.current) {
       automaticRetryRef.current = true;
       setErrorMessage("血氧信号未稳定，正在自动重新测量，请继续保持手指不动。");
@@ -148,10 +135,7 @@ export function Vitals({
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     window.clearTimeout(automaticRetryTimerRef.current);
-    if (!automatic) {
-      automaticRetryRef.current = false;
-      lastNoFingerRetrySessionRef.current = "";
-    }
+    if (!automatic) automaticRetryRef.current = false;
     const previousSession = sessionIdRef.current;
     setPhase("starting");
     setSessionId("");
@@ -186,7 +170,6 @@ export function Vitals({
   async function handleCancel({ exit = embedded } = {}) {
     window.clearTimeout(completionTimerRef.current);
     window.clearTimeout(automaticRetryTimerRef.current);
-    lastNoFingerRetrySessionRef.current = "";
     requestIdRef.current += 1;
     const currentSession = sessionId;
     setPhase("cancelled");
@@ -419,13 +402,5 @@ function shouldAutomaticallyRetrySpo2(result) {
   return result?.status === "failed"
     && hasReading(result?.heart_rate)
     && hasReading(result?.temperature)
-    && !hasReading(result?.spo2);
-}
-
-function shouldAutomaticallyRetryNoFinger(result) {
-  return result?.status === "failed"
-    && result?.hardware_started !== false
-    && result?.finger_detected === false
-    && !hasReading(result?.heart_rate)
     && !hasReading(result?.spo2);
 }
