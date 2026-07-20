@@ -821,7 +821,7 @@ class InquiryOrchestrator:
         extracted: InquiryExtractedInformation,
         interpretation: SymptomInterpretation,
     ) -> bool:
-        if interpretation.source != "local_llm":
+        if interpretation.source not in {"local_llm", "offline_rules"}:
             return False
         if interpretation.action_intent == "measure_vitals":
             return False

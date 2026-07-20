@@ -14,6 +14,8 @@ from urllib.request import Request, urlopen
 from .. import db
 from ..config import settings
 from .local_ai_client import LocalAiClient
+from .local_inquiry_status import local_inquiry_status
+from .offline_inquiry_rules import OfflineInquiryRules
 from .spoken_answer import is_contextual_negative_answer, is_uncertain_answer
 from .weather_context_service import WeatherContextService
 
@@ -68,6 +70,7 @@ class AiService:
     ) -> None:
         self.local_client = local_client or LocalAiClient()
         self.weather_context = weather_context or WeatherContextService()
+        self.offline_inquiry = OfflineInquiryRules()
 
     def status(self) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
@@ -76,10 +79,21 @@ class AiService:
             "mode": settings.ai_mode,
             "cloud_configured": bool(key),
             "cloud_model": settings.ai_model,
-            "local": self.local_client.status(),
+            "local": local_inquiry_status(self.local_client.status()),
+            "offline_inquiry_ready": self._use_offline_inquiry_rules(),
         }
 
     def warm_local(self) -> dict[str, Any]:
+        if (
+            (settings.ai_mode == "local" or self._network_local_mode())
+            and self._use_offline_inquiry_rules()
+        ):
+            return {
+                "ok": True,
+                "ready": True,
+                "mode": "offline_rules",
+                "message": "本地问询规则已就绪。",
+            }
         status = self.local_client.status()
         if not status.get("ready"):
             return {
@@ -311,12 +325,12 @@ class AiService:
             },
         }
         if settings.ai_mode == "local" or self._network_local_mode():
-            return self._extract_inquiry_local(transcript, existing, profile, "当前为离线模式。")
+            return self._offline_inquiry_extract(transcript, existing, profile, "当前为离线模式。")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key:
-            return self._extract_inquiry_local(transcript, existing, profile, "未配置云端密钥。")
+            return self._offline_inquiry_extract(transcript, existing, profile, "未配置云端密钥。")
         if settings.ai_mode == "auto" and not self._cloud_reachable():
-            return self._extract_inquiry_local(transcript, existing, profile, "云端网络不可用。")
+            return self._offline_inquiry_extract(transcript, existing, profile, "云端网络不可用。")
         environment_context = self.weather_context.inquiry_context(transcript, existing)
         if environment_context:
             user_payload["environment_context"] = environment_context
@@ -344,12 +358,14 @@ class AiService:
             purpose="inquiry_extract",
         )
         if not isinstance(parsed, dict):
-            return self._extract_inquiry_local(
+            fallback = self._offline_inquiry_extract(
                 transcript,
                 existing,
                 profile,
                 f"云端问询失败：{cloud_error or '未返回有效结构'}。",
             )
+            fallback["fallback_reason"] = cloud_error or "云端未返回有效结构"
+            return fallback
         return {"ok": True, "source": "cloud", **parsed}
 
     def rank_inquiry_candidates(
@@ -387,13 +403,11 @@ class AiService:
             ensure_ascii=False,
         )
         if settings.ai_mode == "local" or self._network_local_mode():
-            return self._rank_inquiry_candidates_local(system_prompt, user_prompt, "")
+            return self._offline_inquiry_rank(system_prompt, user_prompt, context, candidates, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
-            return self._rank_inquiry_candidates_local(
-                system_prompt,
-                user_prompt,
-                "云端排序不可用。",
+            return self._offline_inquiry_rank(
+                system_prompt, user_prompt, context, candidates, "云端排序不可用。"
             )
         payload: dict[str, Any] = {
             "model": settings.ai_model,
@@ -415,12 +429,55 @@ class AiService:
         return (
             {"ok": True, "source": "cloud", **parsed}
             if isinstance(parsed, dict)
-            else self._rank_inquiry_candidates_local(
+            else self._offline_inquiry_rank(
                 system_prompt,
                 user_prompt,
+                context,
+                candidates,
                 f"云端排序失败：{cloud_error or '未返回有效结构'}。",
             )
         )
+
+    @staticmethod
+    def _use_offline_inquiry_rules() -> bool:
+        # Tests and explicit legacy deployments can still exercise the old
+        # small-model adapter by setting OFFLINE_INQUIRY_MODE=model.
+        return str(getattr(settings, "offline_inquiry_mode", "model")).lower() == "rules"
+
+    def _offline_inquiry_extract(
+        self,
+        transcript: str,
+        existing: dict[str, Any],
+        profile: dict[str, Any],
+        reason: str,
+    ) -> dict[str, Any]:
+        if self._use_offline_inquiry_rules():
+            return self.offline_inquiry.extract(transcript, existing, profile)
+        return self._extract_inquiry_local(transcript, existing, profile, reason)
+
+    def _offline_inquiry_rank(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        context: dict[str, Any],
+        candidates: list[dict[str, Any]],
+        reason: str,
+    ) -> dict[str, Any]:
+        if self._use_offline_inquiry_rules():
+            return self.offline_inquiry.rank(context, candidates)
+        return self._rank_inquiry_candidates_local(system_prompt, user_prompt, reason)
+
+    def _offline_recommendation(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        option_ids: list[str],
+        context: dict[str, Any],
+        reason: str,
+    ) -> dict[str, Any]:
+        if self._use_offline_inquiry_rules():
+            return self.offline_inquiry.recommendation(context)
+        return self._generate_recommendation_local(system_prompt, user_prompt, option_ids, reason)
 
     def _rank_inquiry_candidates_local(
         self,
@@ -830,14 +887,11 @@ class AiService:
             ensure_ascii=False,
         )
         if settings.ai_mode == "local" or self._network_local_mode():
-            return self._generate_recommendation_local(system_prompt, user_prompt, option_ids, "")
+            return self._offline_recommendation(system_prompt, user_prompt, option_ids, context, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
-            return self._generate_recommendation_local(
-                system_prompt,
-                user_prompt,
-                option_ids,
-                "云端当前不可用。",
+            return self._offline_recommendation(
+                system_prompt, user_prompt, option_ids, context, "云端当前不可用。"
             )
 
         payload: dict[str, Any] = {
@@ -858,10 +912,11 @@ class AiService:
             purpose="inquiry_explain",
         )
         if not isinstance(parsed, dict):
-            return self._generate_recommendation_local(
+            return self._offline_recommendation(
                 system_prompt,
                 user_prompt,
                 option_ids,
+                context,
                 f"云端说明生成失败：{cloud_error or '未返回有效结构'}。",
             )
         return self._normalize_recommendation_language(parsed, option_ids, "cloud")

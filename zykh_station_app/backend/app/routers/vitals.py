@@ -11,7 +11,7 @@ from ..services.qsm_client import QsmClient
 from fastapi import APIRouter, HTTPException
 
 from ..db import now_text
-from ..schemas.qsm import QsmVitalsResponse, VitalsSessionResponse
+from ..schemas.qsm import QsmVitalsResponse, VitalsSessionResponse, VitalsSessionStartRequest
 
 router = APIRouter(prefix="/api/vitals", tags=["vitals"])
 
@@ -27,8 +27,13 @@ def prepare_vitals() -> dict[str, object]:
 
 
 @router.post("/session/start", response_model=VitalsSessionResponse)
-def start_vitals_session() -> VitalsSessionResponse:
-    return VitalsSessionResponse(**QsmClient().start_vitals_session())
+def start_vitals_session(
+    request: VitalsSessionStartRequest | None = None,
+) -> VitalsSessionResponse:
+    request = request or VitalsSessionStartRequest()
+    return VitalsSessionResponse(
+        **QsmClient().start_vitals_session(replace_active=request.replace_active)
+    )
 
 
 @router.get("/session/{session_id}", response_model=VitalsSessionResponse)

@@ -21,6 +21,7 @@ import {
   sendInquiryTurn
 } from "../api/inquiry.js";
 import { stopAudioPlayback } from "../api/audio.js";
+import { prepareQsmVitals } from "../api/qsm.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
@@ -81,6 +82,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const openingTreatmentRef = useRef(false);
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
+  const preparedVitalsRequestRef = useRef("");
   const {
     identity: faceIdentity,
     status: faceIdentityStatus,
@@ -261,8 +263,17 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     if (data.next_action !== "measure_vitals") {
       setVitalsFlow("chat");
       launchedVitalsRequestRef.current = "";
+      preparedVitalsRequestRef.current = "";
     }
   }
+
+  useEffect(() => {
+    if (!session || session.next_action !== "measure_vitals") return;
+    const requestKey = `${session.session_id}:${session.updated_at}`;
+    if (preparedVitalsRequestRef.current === requestKey) return;
+    preparedVitalsRequestRef.current = requestKey;
+    prepareQsmVitals().catch(() => null);
+  }, [session]);
 
   const handleReplyPlaybackStart = useCallback(() => {
     if (!session || session.next_action !== "measure_vitals" || attachingVitals) return;
@@ -366,6 +377,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setVitalsFlow("chat");
     setAttachingVitals(false);
     launchedVitalsRequestRef.current = "";
+    preparedVitalsRequestRef.current = "";
     window.clearTimeout(vitalsLaunchTimerRef.current);
     stopAudioPlayback().catch(() => null);
     clearFaceIdentity();

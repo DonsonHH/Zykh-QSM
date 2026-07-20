@@ -149,6 +149,7 @@ INQUIRY_TEMPERATURE_HIGH_AT=39
 INQUIRY_MEDIUM_CONFIDENCE_BELOW=0.65
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
+OFFLINE_INQUIRY_MODE=rules
 CLOUD_SYNC_ENABLED=true
 CLOUD_SYNC_DEVICE_ID=zykh-qsm-001
 CLOUD_SYNC_INTERVAL_SECONDS=2
@@ -176,7 +177,7 @@ real 模式用于本机访问外设网关。如果 real 模式不可用，后端
 
 当前硬件分工：摄像头、FF Camera 麦克风、AS608 指纹模块、体征、音频和药仓控制均接在 QSM。主机通过 `/api/camera/stream` 代理 QSM 的 MJPEG 画面，并把最近真实帧提供给扫码识别；不会回退到固定示例图。QSM 麦克风采集网关输出 `S16_LE/16kHz/单声道` PCM；联网时由云端实时识别，本地模式由 QSM 上的 sherpa-onnx WebSocket 服务逐段识别。人脸特征提取和比对在 QSM 运行，指纹模板保留在 AS608 内，主机 SQLite 只保存不含原始生物特征的服务对象映射。
 
-身体状态测量页进入时先调用 `/api/vitals/prepare` 启动传感器算法，点击“开始测量”后再通过 `/api/vitals/session/*` 采集本次新帧，并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；根据模块首次算法需要 5–10 秒、后续约每 1.28 秒更新一次的特性，冷启动累计稳定时间默认取 8 秒，页面预热时间会从中扣除，但正式采样仍至少保留 3 秒。采样会丢弃预热阶段缓存，并要求近期窗口内心率、血氧各有 2 帧有效值，避免相隔很久的旧值拼成一次结果。已有稳定心率但血氧仍为零时只延长一次血氧计算窗口；完全没有手指信号时不延长。完成、取消、异常及无人操作的预热超时均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。
+身体状态测量页进入时先调用 `/api/vitals/prepare` 启动传感器算法，点击“开始测量”后再通过 `/api/vitals/session/*` 采集本次新帧，并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；根据模块首次算法需要 5–10 秒、后续约每 1.28 秒更新一次的特性，冷启动累计稳定时间默认取 8 秒，页面预热时间会从中扣除，但正式采样仍至少保留 3 秒。采样会丢弃预热阶段缓存，并要求近期窗口内心率、血氧各有 2 帧有效值，避免相隔很久的旧值拼成一次结果。已有稳定心率但血氧仍为零时只延长一次血氧计算窗口并自动重测一次；重测前会同步取消旧会话、等待 UART 释放，再启动新会话，因此不会出现上一轮测量仍占用设备的错误。问询页在语音引导开始时即预热硬件，与首页入口使用同一套会话。完成、取消、异常及无人操作的预热超时均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。系统不会用随机数字补写未测得的血氧，避免模拟值进入病历、云同步和风险判断。
 
 AI 问询中的体征测量是当前问询会话的工具步骤。用户说明主要不适后，模型最多进行 3 轮症状补充；编排器随后依次补齐过敏/禁忌和本次已用药信息，再进入核心体征测量。模型可以在三轮内提前判断信息充足或需要测量，但不能无限重复症状问题。完成、失败或取消都会写回原会话并由同一个模型继续，不通过浏览器临时存储拼接两个页面。
 
@@ -197,7 +198,7 @@ AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境�
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
-`AI_MODE=auto` 默认先调用云端；密钥缺失、网络不可达或云请求失败时，会自动调用 QSM 上真实运行的 Qwen3.5 GGUF 模型。离线模型只做一次紧凑病例理解，候选药品在已经排除过期、无库存、非 OTC 和禁忌冲突项的安全池中完成快速语义排序，不再发起第二次耗时推理。两个模型通道都无法完成时，界面只会自然提示用户重新说明，不展示“规则兜底”或连接错误；紧急危险信号仍由本地硬边界直接拦截。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+`AI_MODE=auto` 默认先调用云端。当前演示配置 `OFFLINE_INQUIRY_MODE=rules`：密钥缺失、网络不可达或云请求失败时，不再等待 QSM 小模型，而由本机离线问询规则逐轮整理主诉、持续时间、本次用药、过敏禁忌和体征，并在已排除过期、无库存、非 OTC 和禁忌冲突项的安全药池中生成主方案及最多一个备选。问题措辞会在同一语义下稳定变化，界面仅显示“本地智能回复”，不会暴露内部规则或连接错误。需要恢复实验性板端小模型时可显式设置 `OFFLINE_INQUIRY_MODE=model`。紧急危险信号仍由本地硬边界直接拦截。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
 
 服务地点默认预设为成都。用户提到中暑、暴晒或高温不适时，云端问询会读取成都当前气温、体感温度和湿度作为环境背景；天气不能单独用于判断病因，也不能替代本次体征测量。相关配置为 `INQUIRY_LOCATION_NAME`、`INQUIRY_LOCATION_LATITUDE`、`INQUIRY_LOCATION_LONGITUDE` 和 `WEATHER_API_BASE`。
 

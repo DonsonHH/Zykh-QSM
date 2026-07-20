@@ -85,6 +85,10 @@ class VitalsSessionResponse(BaseModel):
     error_message: str | None = None
 
 
+class VitalsSessionStartRequest(BaseModel):
+    replace_active: bool = True
+
+
 class QsmCameraRecognition(BaseModel):
     medicine_id: str | None = None
     name: str

@@ -214,6 +214,16 @@ class QsmVitalsIntegrationTest(unittest.TestCase):
         read_full.assert_not_called()
         self.assertEqual(request.call_args.args[0], "/api/vitals/prepare")
 
+    def test_gateway_source_replaces_an_active_session_before_retrying(self) -> None:
+        source = (
+            BACKEND_ROOT.parent / "qsm_gateway" / "vitals_gateway.pl"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("start_session($request->{params})", source)
+        self.assertIn("replace_active", source)
+        self.assertIn("stop_active_session", source)
+        self.assertIn("write_uart_command(0x2A)", source)
+
     def test_top_level_failure_is_not_reported_as_real_measurement(self) -> None:
         result = self.read_vitals(QSM_FAILED_RESPONSE)
 

@@ -9,6 +9,7 @@ export function isLocalNetworkMode(networkStatus) {
     mode === "offline" ||
     transport === "local" ||
     aiMode === "local_llm" ||
+    aiMode === "offline_rules" ||
     aiMode === "rules_fallback" ||
     aiMode === "local_fallback" ||
     label.includes("本地")
@@ -93,12 +94,14 @@ function signalLabel(name, connected, bars, dbm, percent) {
 
 export function localNetworkCopy(networkStatus) {
   if (isLocalNetworkMode(networkStatus)) {
-    const localModelReady = Boolean(networkStatus?.local_ai?.ready) || networkStatus?.ai_mode === "local_llm";
+    const localModelReady =
+      Boolean(networkStatus?.local_ai?.ready) ||
+      ["local_llm", "offline_rules"].includes(String(networkStatus?.ai_mode || "").toLowerCase());
     return {
       title: "离线模式",
       status: localModelReady ? "本地问询可用" : "本地服务准备中",
       detail: localModelReady
-        ? "联网功能未使用，问询由设备内离线模型完成。"
+        ? "联网功能未使用，问询由设备内离线能力完成。"
         : "本地问询服务正在准备，请稍后重试。"
     };
   }

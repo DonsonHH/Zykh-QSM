@@ -205,6 +205,7 @@ class Settings:
     local_ai_model: str = _env("LOCAL_AI_MODEL", "Qwen3.5-0.8B-Q4_K_M")
     local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "45"))
     local_ai_health_timeout_seconds: float = float(_env("LOCAL_AI_HEALTH_TIMEOUT_SECONDS", "2"))
+    offline_inquiry_mode: str = _env("OFFLINE_INQUIRY_MODE", "rules").strip().lower()
     dashscope_api_base: str = _env(
         "DASHSCOPE_API_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",

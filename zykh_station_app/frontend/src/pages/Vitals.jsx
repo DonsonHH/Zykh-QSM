@@ -37,6 +37,10 @@ export function Vitals({
   const completionReportedRef = useRef(false);
   const completionTimerRef = useRef(null);
   const prewarmPromiseRef = useRef(Promise.resolve());
+  const sessionIdRef = useRef("");
+  const phaseRef = useRef("idle");
+  const automaticRetryRef = useRef(false);
+  const automaticRetryTimerRef = useRef(null);
   const measuring = activePhases.has(phase);
   const elapsedSeconds = Number(result?.elapsed_seconds || 0);
 
@@ -47,7 +51,19 @@ export function Vitals({
 
   useEffect(() => {
     prewarmPromiseRef.current = prepareQsmVitals().catch(() => null);
+    return () => {
+      window.clearTimeout(automaticRetryTimerRef.current);
+      const activeSession = sessionIdRef.current;
+      if (activeSession && activePhases.has(phaseRef.current)) {
+        cancelVitalsSession(activeSession).catch(() => undefined);
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    phaseRef.current = phase;
+  }, [phase, sessionId]);
 
   useEffect(() => {
     if (!sessionId || !activePhases.has(phase)) {
@@ -65,6 +81,7 @@ export function Vitals({
         }
       } catch (error) {
         if (disposed) return;
+        cancelVitalsSession(sessionId).catch(() => undefined);
         setErrorMessage(error.message || "体征设备状态读取失败，请重新测量。");
         setPhase("failed");
       }
@@ -89,19 +106,34 @@ export function Vitals({
     setResult(data);
     setPhase(data.status || "failed");
     setErrorMessage(data.error_message || "");
+    if (shouldAutomaticallyRetrySpo2(data) && !automaticRetryRef.current) {
+      automaticRetryRef.current = true;
+      setErrorMessage("血氧信号未稳定，正在自动重新测量，请继续保持手指不动。");
+      automaticRetryTimerRef.current = window.setTimeout(
+        () => handleMeasure({ automatic: true }),
+        850
+      );
+    }
   }
 
-  async function handleMeasure() {
+  async function handleMeasure({ automatic = false } = {}) {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    window.clearTimeout(automaticRetryTimerRef.current);
+    if (!automatic) automaticRetryRef.current = false;
+    const previousSession = sessionIdRef.current;
     setPhase("starting");
     setSessionId("");
     setResult(null);
     setErrorMessage("");
     completionReportedRef.current = false;
     try {
+      if (previousSession) {
+        await cancelVitalsSession(previousSession).catch(() => undefined);
+      }
+      prewarmPromiseRef.current = prepareQsmVitals().catch(() => null);
       await prewarmPromiseRef.current;
-      const data = await startVitalsSession();
+      const data = await startVitalsSession({ replaceActive: true });
       if (requestId !== requestIdRef.current) return;
       if (!data.hardware_started) {
         throw new Error(data.error_message || "体征设备未确认启动，请检查设备后重试。");
@@ -119,6 +151,7 @@ export function Vitals({
 
   async function handleCancel({ exit = embedded } = {}) {
     window.clearTimeout(completionTimerRef.current);
+    window.clearTimeout(automaticRetryTimerRef.current);
     requestIdRef.current += 1;
     const currentSession = sessionId;
     setPhase("cancelled");
@@ -345,4 +378,11 @@ function hasReading(value) {
 
 function hasCoreVitals(result) {
   return hasReading(result?.heart_rate) && hasReading(result?.spo2) && hasReading(result?.temperature);
+}
+
+function shouldAutomaticallyRetrySpo2(result) {
+  return result?.status === "failed"
+    && hasReading(result?.heart_rate)
+    && hasReading(result?.temperature)
+    && !hasReading(result?.spo2);
 }

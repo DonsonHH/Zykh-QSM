@@ -23,9 +23,12 @@ from app.services.qsm_client import QsmClient  # noqa: E402
 
 class _SessionHandler(BaseHTTPRequestHandler):
     cancelled = False
+    start_payload = None
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/vitals/session/start":
+            content_length = int(self.headers.get("Content-Length", "0"))
+            type(self).start_payload = json.loads(self.rfile.read(content_length) or b"{}")
             self._json(
                 {
                     "ok": True,
@@ -92,7 +95,11 @@ class _SessionHandler(BaseHTTPRequestHandler):
 
 class VitalsSessionClientTest(unittest.TestCase):
     def setUp(self) -> None:
-        handler = type("SessionHandler", (_SessionHandler,), {"cancelled": False})
+        handler = type(
+            "SessionHandler",
+            (_SessionHandler,),
+            {"cancelled": False, "start_payload": None},
+        )
         self.handler = handler
         self.server = HTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -114,6 +121,7 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertTrue(result["hardware_started"])
         self.assertEqual(result["status"], "starting")
         self.assertEqual(result["session_id"], "session-123")
+        self.assertEqual(self.handler.start_payload, {"replace_active": True})
 
     def test_status_preserves_core_and_optional_metrics(self) -> None:
         result = self.client.get_vitals_session("session-123")

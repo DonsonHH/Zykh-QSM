@@ -220,7 +220,7 @@ class QsmClient:
         payload["started"] = bool(payload.get("hardware_started"))
         return payload
 
-    def start_vitals_session(self) -> dict[str, Any]:
+    def start_vitals_session(self, *, replace_active: bool = True) -> dict[str, Any]:
         if self.mode != "real":
             session_id = f"mock-vitals-{int(time.time() * 1000)}"
             now = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -247,7 +247,7 @@ class QsmClient:
         payload, error = self._request_json(
             settings.qsm_vitals_session_start_path,
             method="POST",
-            payload={},
+            payload={"replace_active": replace_active},
             body_format="json",
             timeout=4,
             base_url=self.vitals_base_url,

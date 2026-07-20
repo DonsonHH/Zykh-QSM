@@ -72,7 +72,7 @@ sub route_request {
         return send_json($client, 200, prepare_hardware());
     }
     if ($method eq 'POST' && $path eq '/api/vitals/session/start') {
-        return send_json($client, 200, start_session());
+        return send_json($client, 200, start_session($request->{params}));
     }
     if ($method eq 'GET' && $path eq '/api/vitals/session/status') {
         return send_json($client, 200, session_status($request->{params}{session_id} || ''));
@@ -84,11 +84,14 @@ sub route_request {
 }
 
 sub start_session {
+    my ($params) = @_;
+    $params ||= {};
     my $current = read_json($CURRENT);
     if ($current && active_status($current->{status}) && process_alive($current->{worker_pid})) {
-        $current->{ok} = JSON::PP::false;
-        $current->{error_message} = 'A vitals measurement is already in progress';
-        return $current;
+        my $replace_active = ($params->{replace_active} || '') =~ /^(?:1|true|yes)$/i;
+        return busy_session($current) unless $replace_active;
+        my $stopped = stop_active_session($current, 'replaced');
+        return $stopped unless $stopped->{ok};
     }
 
     my ($prewarmed, $prewarm_age) = consume_prepared();
@@ -376,14 +379,57 @@ sub cancel_session {
     my $state = session_status($session_id);
     return $state if ($state->{status} || '') eq 'not_found';
     if (active_status($state->{status})) {
-        write_text(cancel_file($session_id), now_text());
-        $state->{ok} = JSON::PP::true;
-        $state->{status} = 'cancelled';
-        $state->{updated_at} = now_text();
-        write_json_atomic(state_file($session_id), $state);
-        write_json_atomic($CURRENT, $state);
+        return stop_active_session($state, 'cancelled');
     }
     return $state;
+}
+
+sub stop_active_session {
+    my ($state, $reason) = @_;
+    my $session_id = $state->{session_id} || '';
+    my $pid = int($state->{worker_pid} || 0);
+    return session_error($session_id, 'failed', 'Cannot stop an unnamed vitals session')
+        unless $session_id =~ /^vitals-[A-Za-z0-9-]+$/;
+
+    write_text(cancel_file($session_id), now_text());
+    my $deadline = time() + 2.6;
+    while ($pid > 0 && process_alive($pid) && time() < $deadline) {
+        sleep(0.08);
+    }
+    if ($pid > 0 && process_alive($pid)) {
+        # The measurement worker creates its own process group. Stop the UART
+        # reader and temperature child together so the serial lock is released.
+        kill('TERM', -$pid);
+        my $term_deadline = time() + 1.2;
+        sleep(0.06) while process_alive($pid) && time() < $term_deadline;
+        kill('KILL', -$pid) if process_alive($pid);
+    }
+
+    my $stop = write_uart_command(0x2A);
+    if (!$stop->{ok} && ($stop->{status} || '') eq 'busy') {
+        sleep(0.25);
+        $stop = write_uart_command(0x2A);
+    }
+    my $latest = read_json(state_file($session_id)) || $state;
+    $latest->{ok} = JSON::PP::true;
+    $latest->{status} = 'cancelled';
+    $latest->{hardware_started} = JSON::PP::false;
+    $latest->{worker_pid} = 0;
+    $latest->{cancel_reason} = $reason || 'cancelled';
+    $latest->{updated_at} = now_text();
+    $latest->{error_message} = undef;
+    write_json_atomic(state_file($session_id), $latest);
+    write_json_atomic($CURRENT, $latest);
+    return $latest;
+}
+
+sub busy_session {
+    my ($current) = @_;
+    my %copy = %{$current || {}};
+    $copy{ok} = JSON::PP::false;
+    $copy{status} = 'busy';
+    $copy{error_message} = '上一轮体征测量尚未结束，请稍后重试。';
+    return \%copy;
 }
 
 sub active_status {

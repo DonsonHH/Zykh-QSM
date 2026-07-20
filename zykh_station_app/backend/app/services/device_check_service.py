@@ -5,6 +5,7 @@ from ..schemas.device import DeviceCheckResponse
 from .qsm_camera_service import QsmCameraService
 from .qsm_client import QsmClient
 from .local_ai_client import LocalAiClient
+from .local_inquiry_status import local_inquiry_status
 from .fingerprint_service import FingerprintService
 
 
@@ -29,7 +30,7 @@ class DeviceCheckService:
         qsm_status = self.qsm_client.get_qsm_status()
         vitals = self.qsm_client.read_vitals()
         camera_status = self.qsm_camera.capabilities()
-        local_ai_status = self.local_ai.status()
+        local_ai_status = local_inquiry_status(self.local_ai.status())
         fingerprint_status = self.fingerprint.status()
 
         qsm_status_ok = qsm_status.connected if qsm_status.mode == "real" else True
@@ -51,7 +52,7 @@ class DeviceCheckService:
             warnings.append("外设摄像头暂不可用。")
             recommendations.append("请检查外设摄像头连接和摄像头网关服务。")
         if not local_ai_ok:
-            warnings.append("离线问询模型暂未就绪。")
+            warnings.append("离线问询暂未就绪。")
             recommendations.append("请运行 scripts/deploy_offline_ai.sh 或检查 QSM 模型进程。")
         if not fingerprint_ok:
             warnings.append("指纹模块暂不可用。")
