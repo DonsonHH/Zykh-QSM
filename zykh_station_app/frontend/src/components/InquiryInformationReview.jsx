@@ -16,7 +16,7 @@ import { chiefComplaint } from "../utils/inquiryFacts.js";
 import { isLocalNetworkMode } from "../utils/network.js";
 import { buildInformationReviewSpeech } from "../utils/inquirySpeech.js";
 
-const AUTO_CONFIRM_SECONDS = 10;
+const AUTO_CONFIRM_SECONDS = 15;
 
 export function InquiryInformationReview({
   session,
@@ -59,7 +59,7 @@ export function InquiryInformationReview({
       );
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [ready, session?.session_id]);
+  }, [session?.session_id]);
 
   useEffect(() => () => {
     playbackGenerationRef.current += 1;

@@ -3,7 +3,7 @@ const MAX_SPEECH_LENGTH = 260;
 export function buildInformationReviewSpeech(result) {
   const userName = String(result?.user_name || "").trim();
   const greeting = userName && userName !== "访客" ? `${userName}，` : "";
-  return `${greeting}请核对屏幕上的主要不适、持续时间、本次用药和过敏禁忌。信息无误请点击确认，需要修改可直接点选对应内容。`;
+  return `${greeting}请核对问询信息。无误请确认，需要修改请点选。`;
 }
 
 export function buildRecommendationSpeech(result, selectedOption) {

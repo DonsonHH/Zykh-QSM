@@ -5840,7 +5840,7 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   border-radius: inherit;
   background: var(--primary);
   transform-origin: left center;
-  animation: reviewAutoProgress 10s linear forwards;
+  animation: reviewAutoProgress 15s linear forwards;
 }
 
 @keyframes reviewAutoProgress {
