@@ -29,11 +29,19 @@ class VitalsRecord(BaseModel):
 
 class VitalsRepository:
     def append(self, record: VitalsRecord) -> VitalsRecord:
+        self._insert(record)
+        return record
+
+    def append_once(self, record: VitalsRecord) -> bool:
+        return self._insert(record, ignore_conflict=True)
+
+    @staticmethod
+    def _insert(record: VitalsRecord, *, ignore_conflict: bool = False) -> bool:
         db.init_db()
         with db.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO vitals_records(
+            cursor = conn.execute(
+                f"""
+                INSERT {"OR IGNORE " if ignore_conflict else ""}INTO vitals_records(
                   id, temperature, heart_rate, spo2,
                   systolic_pressure, diastolic_pressure, respiratory_rate,
                   microcirculation, fatigue, rr_interval, hrv_sdnn, hrv_rmssd,
@@ -64,7 +72,7 @@ class VitalsRepository:
                     record.measured_at,
                 ),
             )
-        return record
+        return cursor.rowcount > 0
 
     def latest(self) -> VitalsRecord | None:
         db.init_db()

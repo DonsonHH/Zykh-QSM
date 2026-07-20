@@ -345,11 +345,7 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                             "input_audio_format": "pcm",
                             "sample_rate": 16000,
                             "input_audio_transcription": {"language": "zh"},
-                            "turn_detection": {
-                                "type": "server_vad",
-                                "threshold": 0.2,
-                                "silence_duration_ms": 800,
-                            },
+                            "turn_detection": None,
                         },
                     },
                     ensure_ascii=False,
@@ -392,24 +388,28 @@ async def audio_asr_realtime(websocket: WebSocket) -> None:
                     )
 
             async def qsm_to_upstream() -> None:
-                try:
-                    while not stopped.is_set():
-                        audio = await mic_reader.read(3200)
-                        if not audio:
-                            break
-                        encoded = base64.b64encode(audio).decode("ascii")
-                        async with send_lock:
-                            await upstream.send(
-                                json.dumps(
-                                    {
-                                        "event_id": f"event-{uuid4().hex[:10]}",
-                                        "type": "input_audio_buffer.append",
-                                        "audio": encoded,
-                                    }
-                                )
+                while not stopped.is_set():
+                    audio = await mic_reader.read(3200)
+                    if not audio:
+                        if not stopped.is_set():
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "message": "麦克风采集意外中断，请重新录音。",
+                                }
                             )
-                finally:
-                    await commit_audio()
+                        return
+                    encoded = base64.b64encode(audio).decode("ascii")
+                    async with send_lock:
+                        await upstream.send(
+                            json.dumps(
+                                {
+                                    "event_id": f"event-{uuid4().hex[:10]}",
+                                    "type": "input_audio_buffer.append",
+                                    "audio": encoded,
+                                }
+                            )
+                        )
 
             async def client_control() -> str:
                 while True:
@@ -689,7 +689,10 @@ async def _open_qsm_mic_stream() -> tuple[asyncio.StreamReader, asyncio.StreamWr
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 80
     base_path = parsed.path.rstrip("/")
-    path = f"{base_path}{settings.qsm_mic_stream_path}?rate=16000&duration=45"
+    path = (
+        f"{base_path}{settings.qsm_mic_stream_path}"
+        f"?rate=16000&duration={settings.qsm_mic_stream_max_seconds}"
+    )
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(host, port),
         timeout=settings.qsm_mic_timeout_seconds,

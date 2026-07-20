@@ -62,7 +62,6 @@ export function InquiryChatStep({
   const wsRef = useRef(null);
   const partialTextRef = useRef("");
   const finishTimerRef = useRef(null);
-  const listenTimerRef = useRef(null);
   const finishedRef = useRef(false);
   const voicePhaseRef = useRef(VoicePhase.IDLE);
   const bottomRef = useRef(null);
@@ -224,8 +223,6 @@ export function InquiryChatStep({
       }
       moveVoice(VoiceEvent.READY);
       setVoiceMessage(data.offline ? "本地识别正在听，请自然说话。" : "正在听，请自然说话。");
-      window.clearTimeout(listenTimerRef.current);
-      listenTimerRef.current = window.setTimeout(() => stopVoice(true), 12000);
       return;
     }
     if (data.type === "error") {
@@ -234,8 +231,14 @@ export function InquiryChatStep({
     }
     if (data.type === "transcript" && data.text) {
       partialTextRef.current = data.text;
-      setVoiceMessage(data.final ? "语音已转成文字，请核对后发送。" : `识别中：${data.text}`);
-      if (data.final) completeTranscriptPreview(data.text);
+      if (voicePhaseRef.current === VoicePhase.LISTENING) {
+        setVoiceMessage("正在听，请继续说话，松开后再识别。");
+      } else {
+        setVoiceMessage(data.final ? "语音已转成文字，请核对后发送。" : "正在整理语音...");
+      }
+      if (data.final && voicePhaseRef.current === VoicePhase.TRANSCRIBING) {
+        completeTranscriptPreview(data.text);
+      }
     }
   }
 
@@ -254,7 +257,6 @@ export function InquiryChatStep({
 
   function stopVoice(commit = true) {
     window.clearTimeout(finishTimerRef.current);
-    window.clearTimeout(listenTimerRef.current);
     const ws = wsRef.current;
     if (commit && voicePhaseRef.current === VoicePhase.LISTENING && ws?.readyState === WebSocket.OPEN) {
       moveVoice(VoiceEvent.STOP);
@@ -420,9 +422,7 @@ export function InquiryChatStep({
           cancelGesture={cancelGesture}
           sending={sending}
           onClose={closeVoiceOverlay}
-          onRerecordStart={handleHoldStart}
-          onRerecordEnd={handleHoldEnd}
-          onRerecordCancel={handleHoldCancel}
+          onCancelSend={closeVoiceOverlay}
           onSend={() => send(transcriptPreview)}
         />
       ) : null}

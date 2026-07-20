@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import struct
 import sys
@@ -22,7 +23,7 @@ from app.services.qwen_realtime_tts import (  # noqa: E402
     audio_delta,
     session_update_event,
 )
-from app.routers.audio import _wait_for_cloud_asr_ready  # noqa: E402
+from app.routers.audio import _open_qsm_mic_stream, _wait_for_cloud_asr_ready, audio_asr_realtime  # noqa: E402
 
 
 class RealtimeAudioTest(unittest.TestCase):
@@ -91,6 +92,17 @@ class RealtimeAudioTest(unittest.TestCase):
 
 
 class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cloud_asr_waits_for_manual_commit_instead_of_silence_vad(self) -> None:
+        source = inspect.getsource(audio_asr_realtime)
+
+        self.assertNotIn('"type": "server_vad"', source)
+        self.assertIn('"type": "input_audio_buffer.commit"', source)
+
+    async def test_qsm_microphone_stream_is_not_limited_to_45_seconds(self) -> None:
+        source = inspect.getsource(_open_qsm_mic_stream)
+
+        self.assertNotIn("duration=45", source)
+
     async def test_local_audio_collection_stops_without_waiting_for_stream_eof(self) -> None:
         microphone = asyncio.StreamReader()
         microphone.feed_data(struct.pack("<hhhh", -1000, 0, 1000, 2000))

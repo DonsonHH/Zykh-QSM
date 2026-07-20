@@ -32,12 +32,14 @@ assert.equal(nextVoicePhase(VoicePhase.IDLE, VoiceEvent.READY), VoicePhase.IDLE,
 const root = fileURLToPath(new URL("../", import.meta.url));
 const chat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
 const voiceOverlay = await readFile(`${root}src/components/WxVoiceRecorderOverlay.jsx`, "utf8");
+const appCss = await readFile(`${root}src/styles/app.css`, "utf8");
 assert.match(chat, /onPointerDown=\{handleHoldStart\}/, "voice recording does not start on press-and-hold");
 assert.match(chat, /onPointerUp=\{handleHoldEnd\}/, "voice recording does not stop when the press is released");
 assert.match(chat, /transcriptPreview/, "recognized speech is sent without a confirmation preview");
 assert.match(voiceOverlay, /确认发送/, "transcript preview has no explicit send action");
-assert.match(voiceOverlay, /aria-label="重新录音"/, "transcript preview has no compact re-record action");
-assert.doesNotMatch(voiceOverlay, />按住重录</, "the secondary re-record action is still visually overemphasized");
+assert.match(voiceOverlay, /aria-label="取消发送"/, "transcript preview cannot return to the inquiry before sending");
+assert.match(voiceOverlay, /<X size=\{22\} \/>取消发送/, "the cancel-send action is not explicit enough for touch users");
+assert.doesNotMatch(voiceOverlay, /onRerecord(Start|End|Cancel)/, "the confirmation view still starts another recording session");
 assert.match(chat, /window\.addEventListener\("pointerup"/, "re-rendering the preview can lose the hold-release event");
 assert.match(chat, /window\.addEventListener\("pointermove"/, "the recording interaction has no slide-up cancel tracking");
 assert.match(chat, /holdStartYRef\.current - event\.clientY >= 84/, "the slide-up cancel threshold changed unexpectedly");
@@ -48,9 +50,17 @@ assert.match(voiceOverlay, /wx-voice-hold-surface/, "the recording surface has n
 assert.match(voiceOverlay, /wx-voice-review-toolbar/, "the transcript preview still uses two competing primary actions");
 assert.match(voiceOverlay, /上滑取消/, "the recording interaction does not explain the cancel gesture");
 assert.match(voiceOverlay, /WAVE_RATIOS/, "the waveform does not retain the reference's balanced 21-bar profile");
+assert.match(voiceOverlay, /wx-voice-diagonal-guide/, "recording has no lower-right to upper-left motion cue");
+assert.match(appCss, /@keyframes wxVoiceDiagonalGuide/, "the diagonal recording motion is not implemented");
 assert.doesNotMatch(chat, /voice-overlay-stage|voice-overlay-pulse/, "the rejected circular pulse recorder remains in use");
 assert.match(chat, /lang="zh-CN"/, "the keyboard input is not declared as Simplified Chinese");
 assert.doesNotMatch(chat, /if \(data\.final\) finishVoice\(data\.text\)/, "ASR final events still auto-send while the user is holding the button");
+assert.doesNotMatch(chat, /setTimeout\(\(\) => stopVoice\(true\), 12000\)/, "recording still stops automatically after 12 seconds");
+assert.match(
+  chat,
+  /data\.final && voicePhaseRef\.current === VoicePhase\.TRANSCRIBING/,
+  "cloud VAD can still finalize the transcript before the user releases the button"
+);
 assert.equal(normalizeVoiceTranscript("我有点头晕。"), "我有点头晕", "cloud ASR punctuation was not normalized");
 assert.equal(normalizeVoiceTranscript("我咳嗽．．"), "我咳嗽", "full-width trailing punctuation was not normalized");
 

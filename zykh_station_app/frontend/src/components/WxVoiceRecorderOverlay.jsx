@@ -14,9 +14,7 @@ export function WxVoiceRecorderOverlay({
   cancelGesture,
   sending,
   onClose,
-  onRerecordStart,
-  onRerecordEnd,
-  onRerecordCancel,
+  onCancelSend,
   onSend
 }) {
   const reviewing = Boolean(transcript);
@@ -45,15 +43,11 @@ export function WxVoiceRecorderOverlay({
           <div className="wx-voice-review-toolbar">
             <button
               type="button"
-              className="wx-voice-rerecord"
-              aria-label="重新录音"
-              title="重新录音"
-              onPointerDown={onRerecordStart}
-              onPointerUp={onRerecordEnd}
-              onPointerCancel={onRerecordCancel}
-              onContextMenu={(event) => event.preventDefault()}
+              className="wx-voice-cancel-send"
+              aria-label="取消发送"
+              onClick={onCancelSend}
             >
-              <Mic size={24} />
+              <X size={22} />取消发送
             </button>
             <button type="button" className="wx-voice-send" onClick={onSend} disabled={sending}>
               <Send size={22} />确认发送
@@ -98,6 +92,12 @@ export function WxVoiceRecorderOverlay({
                   ? "正在把语音整理成文字"
                   : "松开完成 · 上滑取消"}
           </p>
+
+          <span className="wx-voice-diagonal-guide" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
 
           <div className="wx-voice-hold-surface" aria-hidden="true">
             <span className="wx-voice-mic"><Mic size={39} strokeWidth={2.1} /></span>

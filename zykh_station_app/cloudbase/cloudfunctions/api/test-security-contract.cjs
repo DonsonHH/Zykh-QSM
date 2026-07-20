@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const Module = require("node:module");
 const path = require("node:path");
 
@@ -25,6 +26,19 @@ Module._load = function load(request, parent, isMain) {
 const cloudFunction = require(path.resolve(__dirname, "index.js"));
 
 async function run() {
+  const source = fs.readFileSync(path.resolve(__dirname, "index.js"), "utf8");
+  assert.match(source, /2\.2-vitals-history/, "vitals history schema revision was not advanced");
+  assert.match(
+    source,
+    /normalized\.createdAt = firstPresent\(\s*row\.measured_at/,
+    "vitals history is sorted by synchronization time instead of measurement time",
+  );
+  assert.match(
+    source,
+    /vitals: await tryListRows\(collections\.vitals/,
+    "station snapshots do not expose vitals history",
+  );
+
   const httpResult = await cloudFunction.main({
     httpMethod: "POST",
     body: JSON.stringify({

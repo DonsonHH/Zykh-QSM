@@ -62,6 +62,7 @@ class Settings:
     qsm_audio_timeout_seconds: float = float(_env("QSM_AUDIO_TIMEOUT_SECONDS", "120"))
     qsm_mic_api_base: str = _env("QSM_MIC_BASE_URL", "http://127.0.0.1:18082").rstrip("/")
     qsm_mic_timeout_seconds: float = float(_env("QSM_MIC_TIMEOUT_SECONDS", "5"))
+    qsm_mic_stream_max_seconds: int = max(60, int(_env("QSM_MIC_STREAM_MAX_SECONDS", "600")))
     qsm_mic_status_path: str = _env("QSM_MIC_STATUS_PATH", "/api/audio/capture/status")
     qsm_mic_stream_path: str = _env("QSM_MIC_STREAM_PATH", "/api/audio/capture/stream")
     qsm_mic_record_path: str = _env("QSM_MIC_RECORD_PATH", "/api/audio/capture/record")

@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+from app import db  # noqa: E402
+from app.repositories.sync_repository import SyncRepository  # noqa: E402
+from app.repositories.vitals_repository import VitalsRepository  # noqa: E402
+from app.routers.vitals import get_vitals_session  # noqa: E402
 from app.services.qsm_client import QsmClient  # noqa: E402
 
 
@@ -137,6 +144,49 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertGreater(result["heart_rate"], 0)
         self.assertGreater(result["spo2"], 0)
         self.assertGreater(result["temperature"], 0)
+
+
+class VitalsSessionPersistenceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "vitals-session.db"
+        self.db_patch = patch("app.db.settings", SimpleNamespace(db_path=self.db_path))
+        self.db_patch.start()
+        db.init_db()
+
+    def tearDown(self) -> None:
+        self.db_patch.stop()
+        self.temp_dir.cleanup()
+
+    def test_completed_session_is_persisted_once_for_cloud_sync(self) -> None:
+        payload = {
+            "ok": True,
+            "mode": "real",
+            "session_id": "session-cloud-123",
+            "status": "complete",
+            "hardware_started": True,
+            "temperature": 36.6,
+            "heart_rate": 72,
+            "spo2": 98,
+            "quality": "good",
+            "source": "UART-vitals",
+            "measured_at": "2026-07-20T14:30:00+08:00",
+        }
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            get_vitals_session("session-cloud-123")
+            get_vitals_session("session-cloud-123")
+
+        latest = VitalsRepository().latest()
+        self.assertEqual(VitalsRepository().count(), 1)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.id, "vitals-session-session-cloud-123")
+        self.assertEqual(latest.heart_rate, 72)
+        self.assertEqual(latest.spo2, 98)
+        self.assertEqual(latest.temperature, 36.6)
+        sync_status = SyncRepository().get_status()
+        self.assertEqual(sync_status.sync_status, "待同步")
+        self.assertEqual(sync_status.pending_count, 1)
 
 
 if __name__ == "__main__":

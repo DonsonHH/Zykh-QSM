@@ -10,7 +10,7 @@ use Encode qw(decode);
 $| = 1;
 
 my $PORT = int($ENV{QSM_AUDIO_CAPTURE_PORT} || 8082);
-my $MAX_DURATION = int($ENV{QSM_AUDIO_CAPTURE_MAX_SECONDS} || 45);
+my $MAX_DURATION = int($ENV{QSM_AUDIO_CAPTURE_MAX_SECONDS} || 600);
 
 my $server = IO::Socket::INET->new(
     LocalHost => '0.0.0.0',

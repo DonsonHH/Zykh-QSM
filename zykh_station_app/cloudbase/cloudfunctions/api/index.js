@@ -3,7 +3,7 @@ const cloud = require("wx-server-sdk");
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.1-miniprogram";
+const schemaRevision = "2.2-vitals-history";
 
 const collections = {
   devices: "devices",
@@ -403,7 +403,18 @@ async function upsertSnapshotBatch(data) {
   for (const row of data.rows || []) {
     const id = idForRow(row);
     ids.push(id);
-    await setDocument(collection, id, Object.assign(cleanData(row), {
+    const normalized = data.kind === "vitals" ? normalizeVitals(cleanData(row)) : cleanData(row);
+    if (data.kind === "vitals") {
+      normalized.createdAt = firstPresent(
+        row.measured_at,
+        row.measuredAt,
+        row.createdAt,
+        row.created_at,
+        normalized.createdAt,
+        nowText(),
+      );
+    }
+    await setDocument(collection, id, Object.assign(normalized, {
       deviceId: data.deviceId,
       syncOwner: "zykh_station_app",
       updatedAt: nowText(),
@@ -564,6 +575,7 @@ async function handleAction(payload, wxContext, isHttp = false) {
       serviceUsers: await tryListRows(collections.serviceUsers, data.deviceId, 100, "updatedAt"),
       plans: await tryListRows(collections.plans, data.deviceId, 100, "updatedAt"),
       inquiries: await listInquiries(data),
+      vitals: await tryListRows(collections.vitals, data.deviceId, 100, "createdAt"),
     };
     default: throw new Error(`unknown action: ${action}`);
   }

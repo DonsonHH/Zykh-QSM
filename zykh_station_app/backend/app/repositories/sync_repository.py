@@ -39,3 +39,14 @@ class SyncRepository:
                 (status.sync_status, status.pending_count, status.last_sync_at, status.network_mode),
             )
         return status
+
+    def mark_pending(self, count: int = 1) -> SyncStatus:
+        current = self.get_status()
+        return self.save_status(
+            current.model_copy(
+                update={
+                    "sync_status": "待同步",
+                    "pending_count": current.pending_count + max(1, count),
+                }
+            )
+        )
