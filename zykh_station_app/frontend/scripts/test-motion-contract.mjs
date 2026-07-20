@@ -110,7 +110,7 @@ assert.equal(
 );
 assert.match(
   vitalsPage,
-  /function handleMeasure\(\)[\s\S]*startVitalsSession\(\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
+  /function handleMeasure\([\s\S]{0,100}\)[\s\S]*startVitalsSession\([\s\S]{0,100}\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
   "the first measurement click does not start a hardware-confirmed QSM session"
 );
 assert.match(vitalsPage, /loadVitalsSession\(sessionId\)/, "vitals page does not poll the active QSM session");

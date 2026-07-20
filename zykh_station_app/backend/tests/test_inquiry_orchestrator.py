@@ -36,6 +36,7 @@ def case(
     used: str = "",
     allergy: str = "",
     risk: str = "low",
+    source: str = "cloud",
 ) -> SymptomInterpretation:
     return SymptomInterpretation(
         case_summary=f"用户描述{evidence}。",
@@ -58,7 +59,7 @@ def case(
         action_reason="由当前病例信息决定下一步",
         ai_risk_level=risk,
         confidence=0.9,
-        source="cloud",
+        source=source,
         available=True,
     )
 
@@ -213,6 +214,44 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIn("过敏", capped.reply)
         self.assertEqual(capped.stage, "clarification")
         self.assertEqual(capped.next_action, "ask")
+
+    def test_offline_rules_complete_three_details_before_generic_flow_advances(self) -> None:
+        service, _ = self.service(
+            [
+                case(source="offline_rules", concept="暑热不适", reply="有没有恶心、乏力或明显出汗？"),
+                case(source="offline_rules", concept="暑热不适", reply="之前有没有暴晒或在闷热环境停留？"),
+                case(source="offline_rules", concept="暑热不适", reply="休息、通风或补水后有没有缓解？"),
+                case(source="offline_rules", concept="暑热不适", reply="我先整理一下：目前主要是暑热不适。这种不舒服持续多久了？"),
+            ]
+        )
+        session = service.create_session(
+            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
+        )
+
+        first = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="天气很热，我有点中暑头晕"),
+        )
+        second = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="有一点恶心，也出了很多汗"),
+        )
+        third = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="刚才在太阳下走了很久"),
+        )
+        summarized = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="喝水休息以后好了一点"),
+        )
+
+        self.assertIn("恶心", first.reply)
+        self.assertIn("暴晒", second.reply)
+        self.assertIn("补水", third.reply)
+        self.assertIn("目前主要是暑热不适", summarized.reply)
+        self.assertIn("持续多久", summarized.reply)
+        self.assertEqual(summarized.stage, "clarification")
+        self.assertEqual(summarized.next_action, "ask")
 
     def test_capped_flow_advances_through_safety_questions_vitals_and_recommendation(self) -> None:
         service, _ = self.service(

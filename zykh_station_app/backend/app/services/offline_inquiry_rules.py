@@ -138,6 +138,80 @@ RULES = (
 )
 
 
+GENERIC_DETAIL_QUESTIONS = (
+    (
+        "不舒服主要在什么位置，最明显的感觉是什么？",
+        "请再说说最不舒服的位置和具体感觉。",
+    ),
+    (
+        "现在属于轻微、明显，还是已经影响正常活动？",
+        "这种不舒服目前对走路、吃饭或休息有影响吗？",
+    ),
+    (
+        "除了这个表现，还有没有其他同时出现的不舒服？",
+        "还伴有发热、疼痛、恶心或其他变化吗？",
+    ),
+)
+
+
+SYMPTOM_DETAIL_QUESTIONS = {
+    "heat": (
+        (
+            "除了头晕，有没有恶心、乏力或明显出汗？",
+            "现在有没有恶心、没力气或出汗很多？",
+            "头晕以外，会不会想吐、浑身没劲或大量出汗？",
+        ),
+        ("不舒服前有没有暴晒、在闷热环境停留或大量活动？", "出现症状前是不是晒了太阳、待在闷热处或活动较多？"),
+        ("休息、通风或补水以后有没有缓解？", "到凉快处休息或喝水以后，感觉有没有好一些？"),
+    ),
+    "wound": (
+        ("伤口在什么位置，大概有多深、多大？", "请说说受伤位置，伤口是浅表擦破还是比较深？"),
+        ("伤口现在还在出血吗，有没有异物留在里面？", "出血能止住吗，伤口里有没有看得见的异物？"),
+        ("现在有没有明显红肿、疼痛加重或活动受限？", "伤口周围有没有肿、热、明显疼痛或不好活动？"),
+    ),
+    "cold": (
+        ("现在最明显的是鼻塞流涕、怕冷，还是头痛？", "鼻塞、流鼻涕、发冷和头痛里，哪一项最明显？"),
+        ("有没有测到发热，或出现明显全身酸痛？", "现在有没有发热、发冷或浑身酸痛？"),
+        ("还伴有咳嗽、咽痛或呼吸不舒服吗？", "除了这些，有没有咳嗽、嗓子痛或呼吸费力？"),
+    ),
+    "fever": (
+        ("有没有量过体温，大概是多少？", "目前能确认体温升高吗，测到多少度？"),
+        ("有没有发冷、出汗或明显全身酸痛？", "发热时会不会发冷、出很多汗或浑身疼？"),
+        ("还伴有咳嗽、呕吐、皮疹或剧烈头痛吗？", "除了发热头痛，还有没有咳嗽、呕吐或其他明显变化？"),
+    ),
+    "cough": (
+        ("现在主要是干咳，还是有痰？", "咳嗽时有没有痰，痰大概是什么样？"),
+        ("有没有发热、胸闷或呼吸费力？", "咳嗽时会不会发热、胸口不舒服或喘不上气？"),
+        ("嗓子有没有明显疼痛，咳嗽会影响睡觉吗？", "现在嗓子疼不疼，夜里会不会咳得更明显？"),
+    ),
+    "diarrhea": (
+        ("今天大概腹泻了几次？", "从开始到现在大约拉了几次肚子？"),
+        ("大便是稀软还是水样，有没有血或黑色表现？", "排便主要是稀便还是水样，有没有异常颜色？"),
+        ("有没有明显口渴、乏力、腹痛或呕吐？", "现在会不会很渴、没力气、肚子痛或想吐？"),
+    ),
+    "stomach": (
+        ("不舒服主要在上腹、肚脐周围，还是其他位置？", "胃部不适最明显的位置在哪里？"),
+        ("是饭前明显、饭后明显，还是和进食关系不大？", "吃东西前后，哪一个时候更不舒服？"),
+        ("有没有持续呕吐、腹泻或疼痛明显加重？", "还伴有呕吐、拉肚子或越来越痛吗？"),
+    ),
+    "allergy": (
+        ("现在最明显的是鼻痒、喷嚏、流涕，还是鼻塞？", "鼻部症状里哪一项最明显？"),
+        ("症状是在接触灰尘、花粉或其他东西后出现的吗？", "这次发作前有没有接触可能的过敏原？"),
+        ("有没有喘憋、喉咙发紧或面唇肿胀？", "除了鼻部不适，有没有呼吸费力或嘴唇脸部肿胀？"),
+    ),
+    "skin_allergy": (
+        ("皮疹或瘙痒主要在什么位置？", "皮肤不适集中在哪里，范围大不大？"),
+        ("是在接触食物、药物或其他东西后出现的吗？", "出现皮疹前有没有吃药、吃特殊食物或接触新物品？"),
+        ("有没有呼吸费力、喉咙发紧或面唇肿胀？", "除了皮肤表现，有没有喘憋或脸、嘴唇肿胀？"),
+    ),
+    "pain": (
+        ("疼痛在什么位置，是扭伤、碰撞后出现的吗？", "请说说疼痛位置和出现前发生了什么。"),
+        ("现在还能正常活动和负重吗？", "走路、抬手或正常活动会不会明显受影响？"),
+        ("有没有明显肿胀、变形、发热或疼痛加重？", "疼痛处有没有肿起来、形状异常或越来越痛？"),
+    ),
+}
+
+
 class OfflineInquiryRules:
     """Fast deterministic inquiry path used only when cloud AI is unavailable."""
 
@@ -161,13 +235,14 @@ class OfflineInquiryRules:
         )
         rule = self._match_rule(f"{text}；{existing_text}")
         turn = max(1, int(existing.get("conversation_turns") or 1))
+        detail_question_index = self._detail_question_index(previous_question, rule)
 
         duration = str(existing.get("duration") or "").strip()
         used = str(existing.get("used_medicines") or "").strip()
         allergy = str(existing.get("allergy_or_contraindication") or "").strip()
         if self._asks_duration(previous_question):
             duration = self._duration(text) or text[:40]
-        else:
+        elif detail_question_index is None:
             duration = self._duration(text) or duration
         if self._asks_used_medicine(previous_question):
             used = self._used_medicine(text)
@@ -180,7 +255,20 @@ class OfflineInquiryRules:
 
         complaint_text = self._complaint(text, rule, previous_question, existing)
         observations = self._existing_observations(existing)
-        if rule and complaint_text and not self._is_context_answer(previous_question):
+        if detail_question_index is not None:
+            detail_concept = (
+                rule.concept
+                if rule
+                else str(existing.get("case_summary") or "身体不适").strip()
+            )
+            observations = self._upsert_observation(
+                observations,
+                f"{detail_concept}·补充{detail_question_index + 1}",
+                text,
+                turn,
+                confidence=0.86,
+            )
+        elif rule and complaint_text and not self._is_context_answer(previous_question):
             observations = self._upsert_observation(
                 observations,
                 rule.concept,
@@ -199,6 +287,13 @@ class OfflineInquiryRules:
         case_summary = rule.concept if rule else str(existing.get("case_summary") or "").strip()
         if not case_summary and complaint_text:
             case_summary = self._short_complaint(complaint_text)
+        detail_count = self._detail_answer_count(observations, case_summary)
+        downstream_started = self._downstream_started(existing)
+        summary_prefix = (
+            f"我先整理一下：目前主要是{case_summary}。"
+            if detail_count >= 3 and detail_question_index == 2
+            else ""
+        )
         risk_level, risk_signals = self._risk(text, existing_text)
         vitals = existing.get("vitals") if isinstance(existing.get("vitals"), dict) else {}
 
@@ -214,27 +309,35 @@ class OfflineInquiryRules:
                 turn,
             )
             reason = "等待明确主诉"
+        elif not downstream_started and detail_count < 3:
+            action = "ask"
+            detail_questions = self._detail_questions(rule)
+            reply = self._variant(detail_questions[detail_count], text, turn)
+            reason = f"补充主要不适信息（{detail_count + 1}/3）"
         elif not duration:
             action = "ask"
-            reply = self._variant(rule.followups if rule else (
+            duration_question = self._variant(rule.followups if rule else (
                 "这种不舒服持续多久了？", "大概从什么时候开始不舒服？", "现在这个情况有多长时间了？"
             ), text, turn)
+            reply = f"{summary_prefix}{duration_question}"
             reason = "补充持续时间"
         elif not used or used == "不确定":
             action = "ask"
-            reply = self._variant((
+            used_question = self._variant((
                 "这次不舒服以后有没有用过药？",
                 "出现这些不适后，你已经吃过或用过什么药吗？",
                 "本次不舒服期间是否已经用药？",
             ), text, turn)
+            reply = f"{summary_prefix}{used_question}"
             reason = "补充本次用药"
         elif not allergy or allergy == "不确定":
             action = "ask"
-            reply = self._variant((
+            allergy_question = self._variant((
                 "有没有药物过敏，或明确不能使用的药？",
                 "接下来确认安全信息：哪些药你过敏或不能用？",
                 "请告诉我有没有药物过敏或用药禁忌。",
             ), text, turn)
+            reply = f"{summary_prefix}{allergy_question}"
             reason = "补充过敏和禁忌"
         elif rule and rule.needs_vitals and not self._vitals_finished(vitals):
             action = "measure_vitals"
@@ -361,6 +464,55 @@ class OfflineInquiryRules:
         return [dict(item) for item in existing.get("observations") or [] if isinstance(item, dict)]
 
     @staticmethod
+    def _detail_questions(rule: OfflineSymptomRule | None) -> tuple[tuple[str, ...], ...]:
+        return SYMPTOM_DETAIL_QUESTIONS.get(
+            rule.key if rule else "",
+            GENERIC_DETAIL_QUESTIONS,
+        )
+
+    @classmethod
+    def _detail_question_index(
+        cls,
+        question: str,
+        rule: OfflineSymptomRule | None,
+    ) -> int | None:
+        compact = cls._clean(question)
+        if not compact:
+            return None
+        for index, variants in enumerate(cls._detail_questions(rule)):
+            if any(cls._clean(variant) in compact for variant in variants):
+                return index
+        return None
+
+    @staticmethod
+    def _detail_answer_count(observations: list[dict[str, Any]], case_summary: str) -> int:
+        prefix = f"{case_summary}·补充"
+        indexes = {
+            int(match.group(1))
+            for item in observations
+            if (
+                match := re.fullmatch(
+                    rf"{re.escape(prefix)}([1-3])",
+                    str(item.get("concept") or ""),
+                )
+            )
+        }
+        return len(indexes)
+
+    @classmethod
+    def _downstream_started(cls, existing: dict[str, Any]) -> bool:
+        if str(existing.get("used_medicines") or "").strip():
+            return True
+        if str(existing.get("allergy_or_contraindication") or "").strip():
+            return True
+        return any(
+            isinstance(message, dict)
+            and str(message.get("role") or "") == "assistant"
+            and cls._is_context_answer(str(message.get("content") or ""))
+            for message in existing.get("conversation") or []
+        )
+
+    @staticmethod
     def _upsert_observation(
         observations: list[dict[str, Any]],
         concept: str,
@@ -388,6 +540,8 @@ class OfflineInquiryRules:
         existing: dict[str, Any],
     ) -> str:
         if cls._is_context_answer(previous_question):
+            return ""
+        if cls._is_generic_answer(text):
             return ""
         if rule:
             return text

@@ -480,7 +480,10 @@ class InquiryOrchestrator:
             self._clear_decision(session)
             return self._commit(session)
         if interpretation.action_intent == "ask":
-            if self._symptom_followup_limit_reached(session):
+            if (
+                interpretation.source != "offline_rules"
+                and self._symptom_followup_limit_reached(session)
+            ):
                 return self._advance_after_symptom_collection(
                     session,
                     extracted,
@@ -821,7 +824,7 @@ class InquiryOrchestrator:
         extracted: InquiryExtractedInformation,
         interpretation: SymptomInterpretation,
     ) -> bool:
-        if interpretation.source not in {"local_llm", "offline_rules"}:
+        if interpretation.source != "local_llm":
             return False
         if interpretation.action_intent == "measure_vitals":
             return False

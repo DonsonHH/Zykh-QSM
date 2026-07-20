@@ -30,7 +30,7 @@ class OfflineInquiryRulesTest(unittest.TestCase):
     def setUp(self) -> None:
         self.rules = OfflineInquiryRules()
 
-    def test_heat_complaint_is_recorded_and_asks_one_question(self) -> None:
+    def test_heat_complaint_is_recorded_and_starts_symptom_followups(self) -> None:
         result = self.rules.extract(
             "我好像有点中暑头晕",
             {"conversation_turns": 1, "conversation": []},
@@ -41,7 +41,7 @@ class OfflineInquiryRulesTest(unittest.TestCase):
         self.assertEqual(result["source"], "offline_rules")
         self.assertEqual(result["case_summary"], "暑热不适")
         self.assertEqual(result["next_action"], "ask")
-        self.assertTrue(any(term in result["assistant_reply"] for term in ("多久", "什么时候", "多长时间")))
+        self.assertTrue(any(term in result["assistant_reply"] for term in ("恶心", "乏力", "出汗")))
         self.assertEqual(result["observations"][0]["evidence"], "我好像有点中暑头晕")
 
     def test_ai_service_local_mode_uses_rules_without_calling_board_model(self) -> None:
@@ -165,10 +165,13 @@ class OfflineInquiryRulesTest(unittest.TestCase):
                 self.assertEqual(extracted["case_summary"], case_summary)
                 self.assertEqual(ranked["options"][0]["medicine_ids"], [primary_id])
 
-    def test_heat_inquiry_collects_one_field_per_turn_in_expected_order(self) -> None:
+    def test_heat_inquiry_collects_three_symptom_details_then_summarizes(self) -> None:
         existing = {"conversation_turns": 1, "conversation": [], "vitals": {}}
         turns = (
-            ("我好像有点中暑头晕", ("持续", "什么时候", "多长时间")),
+            ("我好像有点中暑头晕", ("恶心", "乏力", "出汗")),
+            ("有一点恶心，也出了很多汗", ("暴晒", "闷热", "活动")),
+            ("刚才在太阳下走了很久", ("休息", "通风", "补水")),
+            ("喝水休息以后好了一点", ("目前主要是暑热不适", "持续", "多久")),
             ("半个小时", ("用过药", "吃过", "用药")),
             ("还没有用过药", ("过敏", "禁忌", "不能用")),
             ("我说没有啊", ("体征", "额温", "血氧")),
@@ -194,6 +197,12 @@ class OfflineInquiryRulesTest(unittest.TestCase):
         self.assertEqual(result["used_medicines"], "未使用")
         self.assertEqual(result["allergy_or_contraindication"], "无")
         self.assertEqual(result["next_action"], "measure_vitals")
+        detail_observations = [
+            item for item in result["observations"]
+            if item["concept"].startswith("暑热不适·补充")
+        ]
+        self.assertEqual(len(detail_observations), 3)
+        self.assertEqual(result["case_summary"], "暑热不适")
 
 
 if __name__ == "__main__":

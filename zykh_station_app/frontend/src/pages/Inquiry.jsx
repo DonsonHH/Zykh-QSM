@@ -29,6 +29,7 @@ import { InquiryInformationReview } from "../components/InquiryInformationReview
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
+import { offlineReplyDelayMs } from "../utils/inquiryTiming.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
@@ -243,8 +244,18 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   async function handleTurn(transcript) {
     if (!sessionId || sending) return;
     setSending(true);
+    const startedAt = performance.now();
     try {
       const data = await sendInquiryTurn(sessionId, transcript);
+      const delayMs = offlineReplyDelayMs(
+        data.source,
+        performance.now() - startedAt,
+        data.next_action
+      );
+      if (delayMs > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+      if (!mountedRef.current) return;
       handleSessionUpdate(data);
     } catch (error) {
       notify(error.message || "问询暂不可用，请重试");
