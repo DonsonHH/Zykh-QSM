@@ -85,7 +85,7 @@ class AiService:
 
     def warm_local(self) -> dict[str, Any]:
         if (
-            (settings.ai_mode == "local" or self._network_local_mode())
+            self._use_local_ai_runtime()
             and self._use_offline_inquiry_rules()
         ):
             return {
@@ -134,7 +134,7 @@ class AiService:
             return emergency
 
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return self._local_model_reply(message, "当前为离线模式。")
         if not key:
             return self._local_model_reply(message, "未配置云端密钥。")
@@ -193,7 +193,7 @@ class AiService:
 
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         local_reason = ""
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             local_reason = "当前为离线模式。"
         elif not key:
             local_reason = "未配置云端密钥。"
@@ -324,7 +324,7 @@ class AiService:
                 "confidence": 0.0,
             },
         }
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return self._offline_inquiry_extract(transcript, existing, profile, "当前为离线模式。")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key:
@@ -402,7 +402,7 @@ class AiService:
             {"case": context, "candidates": candidates},
             ensure_ascii=False,
         )
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return self._offline_inquiry_rank(system_prompt, user_prompt, context, candidates, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
@@ -886,7 +886,7 @@ class AiService:
             },
             ensure_ascii=False,
         )
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return self._offline_recommendation(system_prompt, user_prompt, option_ids, context, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
@@ -992,7 +992,7 @@ class AiService:
 
     def generate_inquiry_opening(self, user_name: str, has_profile: bool) -> dict[str, Any]:
         """Generate one conversational opening without letting the model control workflow."""
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return {"ok": False, "source": "assistant"}
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key or not self._cloud_reachable():
@@ -1695,7 +1695,7 @@ class AiService:
     def generate_medicine_guidance(self, medicine: dict[str, Any]) -> dict[str, Any]:
         """Generate structured reference text without presenting it as verified prescribing data."""
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if settings.ai_mode == "local" or self._network_local_mode():
+        if self._use_local_ai_runtime():
             return {"ok": False, "error_message": "当前为本地模式，未调用云端药品资料补全。"}
         if not key:
             return {"ok": False, "error_message": "未配置云端密钥，药品资料保持待核对状态。"}
@@ -2012,6 +2012,13 @@ class AiService:
     @staticmethod
     def _network_local_mode() -> bool:
         return db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() in {"local", "offline"}
+
+    def _use_local_ai_runtime(self) -> bool:
+        if settings.ai_mode == "local":
+            return True
+        return self._network_local_mode() and not bool(
+            getattr(settings, "ai_cloud_in_local_display", False)
+        )
 
     @staticmethod
     def _read_key(value: str, path) -> str:

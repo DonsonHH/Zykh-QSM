@@ -92,7 +92,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
 
   const networkDescription = useMemo(() => {
     if (values.network_mode === "local" || values.network_mode === "offline") {
-      return "当前使用本地问询能力，联网链路保持原状态。";
+      return "当前为本地模式，语音输入与播报在设备内完成。";
     }
     if (values.wifi_enabled && values.wifi_ssid) {
       return `已连接 ${values.wifi_ssid}`;
@@ -277,7 +277,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
               disabled={controlsLocked}
               onClick={() => update("network_mode", "local")}
             >
-              本地问询
+              本地模式
             </button>
           </div>
         </article>

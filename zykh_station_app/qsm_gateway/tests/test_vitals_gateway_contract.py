@@ -30,6 +30,12 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertIn("minimum_contact_seconds", reader)
         self.assertIn("communication_status", reader)
 
+    def test_missing_spo2_demo_fallback_is_explicitly_marked(self) -> None:
+        gateway = GATEWAY.read_text(encoding="utf-8")
+        self.assertIn("QSM_VITALS_DEMO_SPO2_FALLBACK", gateway)
+        self.assertIn("spo2_demo_fallback", gateway)
+        self.assertIn("spo2_source", gateway)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,7 +112,7 @@ class NetworkSignalTest(unittest.TestCase):
         self.assertFalse(status["host_tether_ready"])
         self.assertIn("主机备用通道未就绪", status["warnings"][0])
 
-    def test_offline_rules_are_ready_without_board_model_process(self) -> None:
+    def test_local_display_mode_hides_network_but_keeps_cloud_inquiry_route(self) -> None:
         service = NetworkService()
         with (
             patch("app.services.network_service.db.get_setting", return_value="local"),
@@ -143,8 +143,8 @@ class NetworkSignalTest(unittest.TestCase):
         ):
             status = service.status()
 
-        self.assertEqual(status["ai_mode"], "offline_rules")
-        self.assertEqual(status["label"], "本地问询")
+        self.assertEqual(status["ai_mode"], "cloud")
+        self.assertEqual(status["label"], "本地模式")
         self.assertTrue(status["local_ai"]["ready"])
         self.assertFalse(status["local_ai"]["runtime_ready"])
         self.assertNotIn("本地问询服务尚未就绪。", status["warnings"])

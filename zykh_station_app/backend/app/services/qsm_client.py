@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import socket
 import threading
 import time
@@ -279,9 +280,42 @@ class QsmClient:
         )
         if error:
             return self._vitals_session_error(session_id, "failed", error)
+        payload = self._apply_demo_spo2_fallback(payload)
         payload.setdefault("ok", payload.get("status") not in {"failed", "cancelled"})
         payload.setdefault("mode", "real")
         return payload
+
+    @staticmethod
+    def _apply_demo_spo2_fallback(payload: dict[str, Any]) -> dict[str, Any]:
+        if not bool(getattr(settings, "vitals_demo_spo2_fallback", False)):
+            return payload
+        if str(payload.get("status") or "") != "failed":
+            return payload
+        if payload.get("finger_detected") is False:
+            return payload
+        try:
+            heart_rate = float(payload.get("heart_rate") or 0)
+            temperature = float(payload.get("temperature") or 0)
+            spo2 = float(payload.get("spo2") or 0)
+            heart_rate_frames = int(payload.get("heart_rate_frame_count") or 0)
+        except (TypeError, ValueError):
+            return payload
+        if heart_rate <= 0 or temperature <= 0 or spo2 > 0 or heart_rate_frames < 1:
+            return payload
+
+        completed = dict(payload)
+        completed.update(
+            {
+                "ok": True,
+                "status": "complete",
+                "spo2": 95 + secrets.randbelow(5),
+                "spo2_source": "demo_fallback",
+                "spo2_demo_fallback": True,
+                "error_message": None,
+                "message": "心率与额温已读取；血氧演示值已补齐。",
+            }
+        )
+        return completed
 
     def cancel_vitals_session(self, session_id: str) -> dict[str, Any]:
         if self.mode != "real":

@@ -58,6 +58,63 @@ class FakeWeatherContext:
 
 
 class InquiryAiContractTest(unittest.TestCase):
+    @patch("app.services.ai_service.AiService._network_local_mode", return_value=True)
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_local_display_mode_still_uses_cloud_inquiry_for_demo(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+        _mocked_local_mode,
+    ) -> None:
+        mocked_settings.ai_mode = "auto"
+        mocked_settings.ai_cloud_in_local_display = True
+        mocked_settings.ai_api_key = "test-key"
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        mocked_settings.ai_api_base = "https://api.deepseek.com/chat/completions"
+        mocked_settings.ai_model = "deepseek-v4-flash"
+        mocked_settings.ai_inquiry_timeout_seconds = 45
+        mocked_settings.ai_inquiry_attempt_timeout_seconds = 12
+        mocked_settings.ai_inquiry_max_attempts = 1
+        mocked_settings.ai_inquiry_retry_delay_seconds = 0
+        mocked_settings.inquiry_location_name = "成都"
+        mocked_urlopen.return_value = FakeHttpResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "case_summary": "暑热环境后头晕。",
+                                    "observations": [],
+                                    "next_action": "measure_vitals",
+                                    "assistant_reply": "先测量额温、心率和血氧。",
+                                    "risk_level": "medium",
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                    }
+                ]
+            }
+        )
+        local_client = FakeLocalClient({"ok": False, "error_message": "must not be called"})
+
+        result = AiService(
+            local_client=local_client,
+            weather_context=FakeWeatherContext(None),
+        ).extract_inquiry_information(
+            "在外面晒过以后有点头晕",
+            {"conversation_turns": 1, "conversation": []},
+            {"name": "张三"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "cloud")
+        self.assertEqual(local_client.calls, 0)
+        mocked_urlopen.assert_called_once()
+
     @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")

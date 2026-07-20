@@ -3,6 +3,10 @@ export function isLocalNetworkMode(networkStatus) {
   const transport = String(networkStatus?.transport || "").toLowerCase();
   const aiMode = String(networkStatus?.ai_mode || "").toLowerCase();
   const label = String(networkStatus?.label || "");
+  const wifiConnected = Boolean(
+    networkStatus?.wifi_connected || networkStatus?.wifi?.connected
+  );
+  const simEnabled = networkStatus?.sim_enabled ?? networkStatus?.sim?.enabled ?? true;
 
   return (
     mode === "local" ||
@@ -12,7 +16,8 @@ export function isLocalNetworkMode(networkStatus) {
     aiMode === "offline_rules" ||
     aiMode === "rules_fallback" ||
     aiMode === "local_fallback" ||
-    label.includes("本地")
+    label.includes("本地") ||
+    (!wifiConnected && simEnabled === false)
   );
 }
 
@@ -98,11 +103,11 @@ export function localNetworkCopy(networkStatus) {
       Boolean(networkStatus?.local_ai?.ready) ||
       ["local_llm", "offline_rules"].includes(String(networkStatus?.ai_mode || "").toLowerCase());
     return {
-      title: "离线模式",
-      status: localModelReady ? "本地问询可用" : "本地服务准备中",
+      title: "本地模式",
+      status: "本地语音可用",
       detail: localModelReady
-        ? "联网功能未使用，问询由设备内离线能力完成。"
-        : "本地问询服务正在准备，请稍后重试。"
+        ? "语音输入与播报由设备内能力完成。"
+        : "本地语音服务正在准备，请稍后重试。"
     };
   }
 

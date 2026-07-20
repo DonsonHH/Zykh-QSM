@@ -139,6 +139,7 @@ QSM_VITALS_PREFER_FULL=false
 DISPENSE_DRY_RUN=false
 ENABLE_REAL_DISPENSE=1
 AI_MODE=auto
+AI_CLOUD_IN_LOCAL_DISPLAY=true
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_MODEL=deepseek-v4-flash
 AI_ENABLE_THINKING=true
@@ -150,6 +151,8 @@ INQUIRY_MEDIUM_CONFIDENCE_BELOW=0.65
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 OFFLINE_INQUIRY_MODE=rules
+NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
+VITALS_DEMO_SPO2_FALLBACK=true
 CLOUD_SYNC_ENABLED=true
 CLOUD_SYNC_DEVICE_ID=zykh-qsm-001
 CLOUD_SYNC_INTERVAL_SECONDS=2
@@ -198,7 +201,9 @@ AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境�
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
-`AI_MODE=auto` 默认先调用云端。当前演示配置 `OFFLINE_INQUIRY_MODE=rules`：密钥缺失、网络不可达或云请求失败时，不再等待 QSM 小模型，而由本机离线问询规则逐轮整理主诉、持续时间、本次用药、过敏禁忌和体征，并在已排除过期、无库存、非 OTC 和禁忌冲突项的安全药池中生成主方案及最多一个备选。问题措辞会在同一语义下稳定变化，界面仅显示“本地智能回复”，不会暴露内部规则或连接错误。需要恢复实验性板端小模型时可显式设置 `OFFLINE_INQUIRY_MODE=model`。紧急危险信号仍由本地硬边界直接拦截。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+`AI_MODE=auto` 默认调用 DeepSeek。演示配置 `AI_CLOUD_IN_LOCAL_DISPLAY=true` 会把设置页的“本地模式”作为显示与语音运行模式：顶部隐藏 Wi-Fi/SIM 状态，ASR 与 TTS 继续在本地运行，但问询仍通过保留的 SIM 通道调用 DeepSeek。`NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true` 表示关闭设置页的数据网络开关时只改变可见状态，不关闭 QSM `usb0` 或主机共享路由。云请求确实失败时仍可由 `OFFLINE_INQUIRY_MODE` 指定的能力安全收尾。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+
+演示测量默认启用 `VITALS_DEMO_SPO2_FALLBACK=true`。只有心率、额温和手指接触均已由真实设备确认、且完整测量窗口内仅血氧未稳定时，系统才补入 `95-99` 的演示整数；记录会标记 `spo2_source=demo_fallback`，真实血氧一旦可用始终优先使用。
 
 服务地点默认预设为成都。用户提到中暑、暴晒或高温不适时，云端问询会读取成都当前气温、体感温度和湿度作为环境背景；天气不能单独用于判断病因，也不能替代本次体征测量。相关配置为 `INQUIRY_LOCATION_NAME`、`INQUIRY_LOCATION_LATITUDE`、`INQUIRY_LOCATION_LONGITUDE` 和 `WEATHER_API_BASE`。
 

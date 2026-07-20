@@ -24,6 +24,7 @@ from app.services.qsm_client import QsmClient  # noqa: E402
 class _SessionHandler(BaseHTTPRequestHandler):
     cancelled = False
     start_payload = None
+    status_payload = None
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/vitals/session/start":
@@ -56,7 +57,8 @@ class _SessionHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path.startswith("/api/vitals/session/status"):
             self._json(
-                {
+                type(self).status_payload
+                or {
                     "ok": True,
                     "session_id": "session-123",
                     "status": "complete",
@@ -98,7 +100,7 @@ class VitalsSessionClientTest(unittest.TestCase):
         handler = type(
             "SessionHandler",
             (_SessionHandler,),
-            {"cancelled": False, "start_payload": None},
+            {"cancelled": False, "start_payload": None, "status_payload": None},
         )
         self.handler = handler
         self.server = HTTPServer(("127.0.0.1", 0), handler)
@@ -136,6 +138,38 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertEqual(result["ambient_temperature"], 24.8)
         self.assertTrue(result["reference_ready"])
         self.assertEqual(result["quality"], "good")
+
+    def test_status_uses_demo_spo2_only_when_other_core_readings_are_real(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "elapsed_seconds": 18.0,
+            "heart_rate": 76,
+            "spo2": None,
+            "temperature": 36.4,
+            "finger_detected": True,
+            "heart_rate_frame_count": 3,
+            "spo2_frame_count": 0,
+            "source": "UART8-vitals-24B+GY-614",
+            "error_message": "血氧仍未稳定。",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "complete")
+        self.assertGreaterEqual(result["spo2"], 95)
+        self.assertLessEqual(result["spo2"], 99)
+        self.assertTrue(result["spo2_demo_fallback"])
+        self.assertEqual(result["spo2_source"], "demo_fallback")
 
     def test_cancel_calls_board_session_gateway(self) -> None:
         result = self.client.cancel_vitals_session("session-123")

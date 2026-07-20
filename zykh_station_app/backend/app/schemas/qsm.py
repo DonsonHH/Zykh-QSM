@@ -26,6 +26,8 @@ class QsmVitalsResponse(BaseModel):
     temperature: float | None = None
     heart_rate: int | None = None
     spo2: int | None = None
+    spo2_source: str | None = None
+    spo2_demo_fallback: bool | None = None
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None
@@ -58,6 +60,8 @@ class VitalsSessionResponse(BaseModel):
     temperature: float | None = None
     heart_rate: int | None = None
     spo2: int | None = None
+    spo2_source: str | None = None
+    spo2_demo_fallback: bool | None = None
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None

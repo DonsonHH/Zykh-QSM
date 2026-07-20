@@ -73,8 +73,16 @@ def _persist_completed_session(response: VitalsSessionResponse) -> None:
         body_temperature=response.body_temperature,
         ambient_temperature=response.ambient_temperature,
         status="available",
-        source=response.source or response.mode,
-        sensor_model=response.source or "",
+        source=(
+            f"{response.source or response.mode}+SpO2-demo"
+            if response.spo2_demo_fallback
+            else response.source or response.mode
+        ),
+        sensor_model=(
+            f"{response.source or ''}+SpO2-demo"
+            if response.spo2_demo_fallback
+            else response.source or ""
+        ),
         error_message="",
         measured_at=measured_at,
     )

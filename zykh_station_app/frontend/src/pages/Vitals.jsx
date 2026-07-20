@@ -36,7 +36,7 @@ export function Vitals({
   const requestIdRef = useRef(0);
   const completionReportedRef = useRef(false);
   const completionTimerRef = useRef(null);
-  const prewarmPromiseRef = useRef(Promise.resolve());
+  const prewarmPromiseRef = useRef(null);
   const sessionIdRef = useRef("");
   const phaseRef = useRef("idle");
   const automaticRetryRef = useRef(false);
@@ -50,7 +50,7 @@ export function Vitals({
   const coreComplete = hasCoreVitals(result);
 
   useEffect(() => {
-    prewarmPromiseRef.current = prepareQsmVitals().catch(() => null);
+    ensureVitalsPrepared();
     return () => {
       window.clearTimeout(automaticRetryTimerRef.current);
       const activeSession = sessionIdRef.current;
@@ -116,6 +116,21 @@ export function Vitals({
     }
   }
 
+  function ensureVitalsPrepared() {
+    if (!prewarmPromiseRef.current) {
+      prewarmPromiseRef.current = prepareQsmVitals()
+        .then((data) => {
+          if (!data?.hardware_started) prewarmPromiseRef.current = null;
+          return data;
+        })
+        .catch(() => {
+          prewarmPromiseRef.current = null;
+          return null;
+        });
+    }
+    return prewarmPromiseRef.current;
+  }
+
   async function handleMeasure({ automatic = false } = {}) {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
@@ -131,9 +146,12 @@ export function Vitals({
       if (previousSession) {
         await cancelVitalsSession(previousSession).catch(() => undefined);
       }
-      prewarmPromiseRef.current = prepareQsmVitals().catch(() => null);
-      await prewarmPromiseRef.current;
+      let prepared = await ensureVitalsPrepared();
+      if (!prepared?.hardware_started) {
+        prepared = await ensureVitalsPrepared();
+      }
       const data = await startVitalsSession({ replaceActive: true });
+      prewarmPromiseRef.current = null;
       if (requestId !== requestIdRef.current) return;
       if (!data.hardware_started) {
         throw new Error(data.error_message || "体征设备未确认启动，请检查设备后重试。");

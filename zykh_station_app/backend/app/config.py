@@ -139,6 +139,14 @@ class Settings:
         "yes",
         "on",
     }
+    network_keep_sim_transport_when_hidden: bool = _env(
+        "NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN", "true"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     admin_debug_pin: str = _env("ADMIN_DEBUG_PIN", "1145")
     admin_session_minutes: int = int(_env("ADMIN_SESSION_MINUTES", "30"))
     admin_allow_system_actions: bool = _env("ADMIN_ALLOW_SYSTEM_ACTIONS", "true").strip().lower() in {
@@ -160,6 +168,14 @@ class Settings:
     local_camera_capture_cmd: str = _env("LOCAL_CAMERA_CAPTURE_CMD", "")
     medicine_scan_cmd: str = _env("MEDICINE_SCAN_CMD", "")
     ai_mode: str = _env("AI_MODE", "auto").strip().lower()
+    ai_cloud_in_local_display: bool = _env(
+        "AI_CLOUD_IN_LOCAL_DISPLAY", "true"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     ai_api_base: str = _env(
         "AI_API_BASE",
         "https://api.deepseek.com/chat/completions",
@@ -206,6 +222,14 @@ class Settings:
     local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "45"))
     local_ai_health_timeout_seconds: float = float(_env("LOCAL_AI_HEALTH_TIMEOUT_SECONDS", "2"))
     offline_inquiry_mode: str = _env("OFFLINE_INQUIRY_MODE", "rules").strip().lower()
+    vitals_demo_spo2_fallback: bool = _env(
+        "VITALS_DEMO_SPO2_FALLBACK", "true"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     dashscope_api_base: str = _env(
         "DASHSCOPE_API_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",

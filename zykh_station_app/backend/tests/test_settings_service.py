@@ -117,6 +117,51 @@ class SettingsServiceTest(unittest.TestCase):
         run.assert_called_once_with(["nmcli", "radio", "wifi", "off"])
         self.assertEqual(db.get_setting("wifi_enabled"), "false")
 
+    def test_hiding_sim_for_demo_does_not_stop_physical_transport(self) -> None:
+        service = SettingsService()
+        with (
+            patch(
+                "app.services.settings_service.settings",
+                SimpleNamespace(
+                    network_keep_sim_transport_when_hidden=True,
+                    network_preferred_mode="sim",
+                ),
+            ),
+            patch("app.services.settings_service.NetworkService.disable_host_tether") as disable,
+            patch.object(service, "_run") as run,
+        ):
+            warning = service._set_sim(False)
+
+        self.assertEqual(warning, "")
+        self.assertEqual(db.get_setting("sim_enabled"), "false")
+        disable.assert_not_called()
+        run.assert_not_called()
+
+    def test_wifi_can_switch_off_with_hidden_sim_transport(self) -> None:
+        service = SettingsService()
+        db.set_setting("sim_enabled", "false")
+        db.set_setting("network_mode", "local")
+        command_result = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with (
+            patch(
+                "app.services.settings_service.settings",
+                SimpleNamespace(
+                    network_keep_sim_transport_when_hidden=True,
+                    network_preferred_mode="sim",
+                ),
+            ),
+            patch(
+                "app.services.settings_service.NetworkService.start_4g",
+                side_effect=lambda: db.set_setting("network_mode", "sim") or {"ok": True},
+            ) as start_4g,
+            patch.object(service, "_run", return_value=command_result),
+        ):
+            warning = service._set_wifi(False)
+
+        self.assertEqual(warning, "")
+        start_4g.assert_called_once_with()
+        self.assertEqual(db.get_setting("network_mode"), "local")
+
 
 if __name__ == "__main__":
     unittest.main()

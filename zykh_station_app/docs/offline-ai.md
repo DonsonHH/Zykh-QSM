@@ -80,6 +80,8 @@ adb shell 'sh /userdata/zykh_station_app/local-ai/start_local_ai.sh'
 
 ```text
 AI_MODE=auto
+AI_CLOUD_IN_LOCAL_DISPLAY=true
+NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_CHAT_PATH=/v1/chat/completions
@@ -100,9 +102,11 @@ LOCAL_AI_CACHE_RAM=64
 
 Modes:
 
-- `AI_MODE=auto`: cloud first; use QSM offline model on missing key, failed connectivity or cloud request error.
+- `AI_MODE=auto`: cloud first; use the configured fallback only after a real cloud request failure.
 - `AI_MODE=local`: always use the QSM offline model.
 - `AI_MODE=cloud`: request cloud first, but still fail safely to the offline model if the request cannot complete.
+- `AI_CLOUD_IN_LOCAL_DISPLAY=true`: the terminal may visibly enter local mode while inquiry still uses DeepSeek through the retained SIM transport. ASR and TTS remain local.
+- `NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true`: hiding the SIM switch does not stop QSM `usb0` or remove the host tether route.
 
 Inquiry-session source values remain internal diagnostics. The terminal UI uses
 accessible icons and natural retry guidance instead of exposing channel names,

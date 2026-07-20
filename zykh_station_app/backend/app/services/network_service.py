@@ -56,9 +56,14 @@ class NetworkService:
         local_ai = local_inquiry_status(LocalAiClient().status())
         local_ai_ready = bool(local_ai.get("ready"))
         local_rule_mode = local_ai.get("mode") == "offline_rules"
-        local_label = "本地问询" if local_rule_mode else "离线模型" if local_ai_ready else "离线问询"
+        cloud_in_local_display = bool(getattr(settings, "ai_cloud_in_local_display", False))
+        local_label = "本地模式"
         local_ai_mode = "offline_rules" if local_rule_mode else "local_llm" if local_ai_ready else "local_unavailable"
-        local_warnings = [] if local_ai_ready else ["本地问询服务尚未就绪。"]
+        local_warnings = (
+            []
+            if cloud_in_local_display or local_ai_ready
+            else ["本地问询服务尚未就绪。"]
+        )
         sim_enabled = self._bool_setting("sim_enabled", True)
         sim_identity = self._sim_identity(qsm_network, qsm_at)
 
@@ -70,7 +75,7 @@ class NetworkService:
                 "status": "offline",
                 "signal": "none",
                 "label": local_label,
-                "ai_mode": local_ai_mode,
+                "ai_mode": "cloud" if cloud_in_local_display else local_ai_mode,
                 "local_ai": local_ai,
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
@@ -85,7 +90,7 @@ class NetworkService:
                 **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
-                "warnings": ["当前手动切换到离线模式。", *local_warnings],
+                "warnings": ["当前显示为本地模式。", *local_warnings],
             }
 
         if wifi["wifi_connected"]:

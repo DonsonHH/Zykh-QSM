@@ -13,6 +13,8 @@
     "test:inquiry-guest": "node scripts/test-inquiry-guest-session.mjs",
     "test:inquiry-vitals": "node scripts/test-inquiry-vitals-flow.mjs",
     "test:inquiry-offline": "node scripts/test-inquiry-offline-delay.mjs",
+    "test:vitals-prewarm": "node scripts/test-vitals-prewarm.mjs",
+    "test:network-display": "node scripts/test-network-display-mode.mjs",
     "test:scan-layout": "node scripts/test-scan-layout.mjs",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
