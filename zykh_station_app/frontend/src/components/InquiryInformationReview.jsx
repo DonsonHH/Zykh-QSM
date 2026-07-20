@@ -32,10 +32,11 @@ export function InquiryInformationReview({
   const confirmRef = useRef(onConfirm);
   const draftRef = useRef(draft);
   const initialRef = useRef(draft);
-  const spokenKeyRef = useRef("");
+  const networkStatusRef = useRef(networkStatus);
   const playbackGenerationRef = useRef(0);
   confirmRef.current = onConfirm;
   draftRef.current = draft;
+  networkStatusRef.current = networkStatus;
   const extracted = session?.extracted_information || {};
   const vitals = session?.vitals || {};
   const autoActive = ready && !interacted && !saving;
@@ -50,21 +51,15 @@ export function InquiryInformationReview({
 
   useEffect(() => {
     if (!session?.session_id) return;
-    const key = `${session.session_id}:${ready ? "ready" : "review"}`;
-    if (spokenKeyRef.current === key) return;
-    spokenKeyRef.current = key;
     const timer = window.setTimeout(() => {
       playReviewSpeech(
         buildInformationReviewSpeech(session),
-        networkStatus,
+        networkStatusRef.current,
         playbackGenerationRef
       );
     }, 180);
-    return () => {
-      window.clearTimeout(timer);
-      if (spokenKeyRef.current === key) spokenKeyRef.current = "";
-    };
-  }, [networkStatus, ready, session]);
+    return () => window.clearTimeout(timer);
+  }, [ready, session?.session_id]);
 
   useEffect(() => () => {
     playbackGenerationRef.current += 1;

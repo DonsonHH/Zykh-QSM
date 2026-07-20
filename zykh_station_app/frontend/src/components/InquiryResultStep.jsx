@@ -61,35 +61,34 @@ export function InquiryResultStep({
   const requiresExistingDirection = Boolean(
     selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
   );
-  const lastRecommendationKeyRef = useRef("");
+  const networkStatusRef = useRef(networkStatus);
   const spokenActionKeysRef = useRef(new Set());
   const playbackGenerationRef = useRef(0);
+  networkStatusRef.current = networkStatus;
 
   useEffect(() => {
     if (!result?.session_id) return;
-    const key = `recommendation:${result.session_id}:${selectedOption?.option_id || "none"}`;
-    if (lastRecommendationKeyRef.current === key) return;
-    lastRecommendationKeyRef.current = key;
     const timer = window.setTimeout(() => {
       playResultSpeech(
         buildRecommendationSpeech(result, selectedOption),
-        networkStatus,
+        networkStatusRef.current,
         playbackGenerationRef
       );
     }, 180);
-    return () => {
-      window.clearTimeout(timer);
-      if (lastRecommendationKeyRef.current === key) lastRecommendationKeyRef.current = "";
-    };
-  }, [networkStatus, result, selectedOption]);
+    return () => window.clearTimeout(timer);
+  }, [result?.session_id, selectedOption?.option_id]);
 
   useEffect(() => {
     if (!actionFinished || !actionMessage) return;
     const key = `action:${result?.session_id}:${actionStatus}`;
     if (spokenActionKeysRef.current.has(key)) return;
     spokenActionKeysRef.current.add(key);
-    playResultSpeech(buildActionSpeech(actionMessage), networkStatus, playbackGenerationRef);
-  }, [actionFinished, actionMessage, actionStatus, networkStatus, result?.session_id]);
+    playResultSpeech(
+      buildActionSpeech(actionMessage),
+      networkStatusRef.current,
+      playbackGenerationRef
+    );
+  }, [actionFinished, actionMessage, actionStatus, result?.session_id]);
 
   useEffect(() => () => {
     playbackGenerationRef.current += 1;
@@ -119,7 +118,7 @@ export function InquiryResultStep({
     const cabinetText = selectedOption?.medicines?.map((medicine) => `${medicine.slot}号柜`).join("、") || "对应药柜";
     playResultSpeech(
       `方案已确认，三秒后将依次打开${cabinetText}，请准备取药。`,
-      networkStatus,
+      networkStatusRef.current,
       playbackGenerationRef
     );
     setCountdown(3);
