@@ -21,7 +21,6 @@ import {
   sendInquiryTurn
 } from "../api/inquiry.js";
 import { stopAudioPlayback } from "../api/audio.js";
-import { prepareQsmVitals } from "../api/qsm.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
@@ -30,6 +29,7 @@ import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
 import { offlineReplyDelayMs } from "../utils/inquiryTiming.js";
+import { isLocalNetworkMode } from "../utils/network.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
@@ -83,7 +83,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const openingTreatmentRef = useRef(false);
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
-  const preparedVitalsRequestRef = useRef("");
   const resetOnResultLeaveRef = useRef(false);
   const {
     identity: faceIdentity,
@@ -145,6 +144,14 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       spo2
     };
   }, [displayedUser, session]);
+  const waitForReplyPresentation = useCallback((data) => {
+    const delayMs = offlineReplyDelayMs(
+      data?.source,
+      isLocalNetworkMode(networkStatus)
+    );
+    if (delayMs <= 0) return Promise.resolve();
+    return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  }, [networkStatus]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -203,7 +210,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       service_user_id: selectedUserId,
       guest_name: guestUser?.name || "访客"
     })
-      .then((data) => {
+      .then(async (data) => {
+        await waitForReplyPresentation(data);
         if (!mountedRef.current || creatingRef.current !== creationToken) return;
         setSession(data);
         setSessionId(data.session_id);
@@ -218,7 +226,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       .finally(() => {
         if (creatingRef.current === creationToken) creatingRef.current = false;
       });
-  }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
+  }, [guestUser, identityConfirmed, selectedUserId, sessionId, waitForReplyPresentation]);
 
   function refreshUsers() {
     return loadServiceUsers().then((data) => setServiceUsers(data.users || [])).catch(() => setServiceUsers([]));
@@ -254,17 +262,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   async function handleTurn(transcript) {
     if (!sessionId || sending) return;
     setSending(true);
-    const startedAt = performance.now();
     try {
       const data = await sendInquiryTurn(sessionId, transcript);
-      const delayMs = offlineReplyDelayMs(
-        data.source,
-        performance.now() - startedAt,
-        data.next_action
-      );
-      if (delayMs > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-      }
+      await waitForReplyPresentation(data);
       if (!mountedRef.current) return;
       handleSessionUpdate(data);
     } catch (error) {
@@ -284,17 +284,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     if (data.next_action !== "measure_vitals") {
       setVitalsFlow("chat");
       launchedVitalsRequestRef.current = "";
-      preparedVitalsRequestRef.current = "";
     }
   }
-
-  useEffect(() => {
-    if (!session || session.next_action !== "measure_vitals") return;
-    const requestKey = `${session.session_id}:${session.updated_at}`;
-    if (preparedVitalsRequestRef.current === requestKey) return;
-    preparedVitalsRequestRef.current = requestKey;
-    prepareQsmVitals().catch(() => null);
-  }, [session]);
 
   const handleReplyPlaybackStart = useCallback(() => {
     if (!session || session.next_action !== "measure_vitals" || attachingVitals) return;
@@ -323,6 +314,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         hrv_rmssd: vitals.hrv_rmssd || null,
         measured_at: vitals.measured_at || new Date().toISOString()
       });
+      await waitForReplyPresentation(updated);
+      if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
     } catch (error) {
@@ -330,7 +323,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     } finally {
       setAttachingVitals(false);
     }
-  }, [attachingVitals, notify, sessionId]);
+  }, [attachingVitals, notify, sessionId, waitForReplyPresentation]);
 
   const handleVitalsExit = useCallback(async (outcome) => {
     if (!sessionId || attachingVitals) return;
@@ -341,6 +334,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         error_message: outcome?.error_message || "",
         measured_at: new Date().toISOString()
       });
+      await waitForReplyPresentation(updated);
+      if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
     } catch (error) {
@@ -349,7 +344,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     } finally {
       setAttachingVitals(false);
     }
-  }, [attachingVitals, notify, sessionId]);
+  }, [attachingVitals, notify, sessionId, waitForReplyPresentation]);
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
     if (!sessionId || openingTreatmentRef.current) return;
@@ -398,7 +393,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setVitalsFlow("chat");
     setAttachingVitals(false);
     launchedVitalsRequestRef.current = "";
-    preparedVitalsRequestRef.current = "";
     window.clearTimeout(vitalsLaunchTimerRef.current);
     stopAudioPlayback().catch(() => null);
     clearFaceIdentity();
@@ -421,6 +415,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
           ...information,
           finalize: resultReady
         });
+        await waitForReplyPresentation(updated);
+        if (!mountedRef.current) return;
         handleSessionUpdate(updated);
         setRevisingResult(false);
         setResultConfirmed(updated.stage === "result");

@@ -17,6 +17,8 @@ assert.match(inquiry, /status:\s*"complete"/, "complete vitals are not attached 
 assert.match(inquiry, /"failed"\s*:\s*"cancelled"/, "failed and cancelled measurements do not return to AI");
 assert.doesNotMatch(inquiry, /onNavigate\("vitals"/, "AI inquiry still navigates to a separate vitals page");
 assert.doesNotMatch(inquiry, /zykh-latest-vitals/, "AI vitals still depend on sessionStorage result transfer");
+assert.doesNotMatch(inquiry, /prepareQsmVitals/, "AI inquiry must not prewarm outside the shared Vitals component");
+assert.doesNotMatch(inquiry, /preparedVitalsRequestRef/, "AI inquiry still owns duplicate vitals prewarm state");
 assert.doesNotMatch(sessionUtils, /INQUIRY_VITALS_AWAITING_KEY/, "legacy vitals transfer state remains");
 
 assert.match(chat, /utterance\.onend\s*=\s*\(\)\s*=>\s*resolve\(true\)/, "browser TTS does not expose actual playback completion");
