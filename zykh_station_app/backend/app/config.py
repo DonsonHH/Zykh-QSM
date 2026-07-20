@@ -222,6 +222,10 @@ class Settings:
         "语速适中，停顿自然，吐字清晰，语气温和，适合家庭康护终端播报。",
     )
     qwen_realtime_tts_timeout_seconds: float = float(_env("QWEN_REALTIME_TTS_TIMEOUT_SECONDS", "30"))
+    qwen_realtime_tts_max_drain_seconds: float = max(
+        8.0,
+        float(_env("QWEN_REALTIME_TTS_MAX_DRAIN_SECONDS", "90")),
+    )
     qwen_vision_model: str = _env("QWEN_VISION_MODEL", "qwen3.6-flash")
     showapi_app_key_file: Path = Path(_env("SHOWAPI_APP_KEY_FILE", "/userdata/zykh_app/data/showapi-app-key.txt"))
     sync_endpoint: str = _env("SYNC_ENDPOINT", "")

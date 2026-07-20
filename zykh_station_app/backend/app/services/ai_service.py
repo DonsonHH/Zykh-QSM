@@ -493,7 +493,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.35,
-            "max_tokens": 520,
+            "max_tokens": 220,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
@@ -525,7 +525,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.25,
-            max_tokens=240,
+            max_tokens=180,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
@@ -643,20 +643,41 @@ class AiService:
         reason: str,
     ) -> dict[str, Any]:
         system_prompt = self._local_inquiry_system_prompt()
+        answer_target = self._pending_answer_target(existing)
+        if self._is_contextual_answer(transcript, answer_target):
+            expanded = {
+                "case_summary": str(existing.get("case_summary") or "").strip(),
+                "observations": [],
+                "uncertainties": [],
+                "history_relationship": {},
+                "duration": str(existing.get("duration") or "").strip(),
+                "used_medicines": str(existing.get("used_medicines") or "").strip(),
+                "allergy_or_contraindication": str(existing.get("allergy_or_contraindication") or "").strip(),
+                "next_question": "",
+                "assistant_reply": "",
+                "reason": "",
+                "next_action": "ask",
+                "risk_level": "low",
+                "risk_signals": [],
+                "confidence": 0.0,
+            }
+            self._apply_contextual_answer(expanded, transcript, answer_target, existing)
+            self._complete_local_inquiry(expanded, existing)
+            return {"ok": True, "source": "local_llm", **expanded}
         compact_existing = {
             "t": int(existing.get("conversation_turns") or 0),
-            "s": str(existing.get("case_summary") or "")[:140],
+            "s": str(existing.get("case_summary") or "")[:80],
             "f": [
                 {
                     "c": str(item.get("concept") or "")[:40],
                     "s": str(item.get("status") or "")[:10],
-                    "e": str(item.get("evidence") or "")[:70],
+                    "e": str(item.get("evidence") or "")[:40],
                     "t": int(item.get("source_turn") or 0),
                 }
                 for item in existing.get("observations") or []
                 if isinstance(item, dict)
-            ][:12],
-            "u": list(existing.get("uncertainties") or [])[:6],
+            ][:6],
+            "u": list(existing.get("uncertainties") or [])[:3],
             "du": str(existing.get("duration") or "")[:40],
             "m": str(existing.get("used_medicines") or "")[:60],
             "a": str(existing.get("allergy_or_contraindication") or "")[:60],
@@ -673,15 +694,16 @@ class AiService:
                 }
                 for item in existing.get("recent_history") or []
                 if isinstance(item, dict)
-            ][:3],
+            ][:1],
             "c": [
                 {
                     "r": str(message.get("role") or "")[:1],
-                    "x": str(message.get("content") or "")[:80],
+                    "x": str(message.get("content") or "")[:36],
                 }
                 for message in (existing.get("conversation") or [])[-6:]
                 if isinstance(message, dict)
             ],
+            "target": answer_target,
         }
         compact_profile = {
             "age": profile.get("age") or 0,
@@ -699,7 +721,7 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=64,
+            max_tokens=40,
             response_format={"type": "json_object"},
         )
         if not result.get("ok"):
@@ -711,23 +733,22 @@ class AiService:
             parsed,
             transcript=transcript,
             source_turn=max(1, int(existing.get("conversation_turns") or 1)),
+            suppress_observations=self._is_contextual_answer(transcript, answer_target),
         )
+        self._apply_contextual_answer(expanded, transcript, answer_target, existing)
         self._complete_local_inquiry(expanded, existing)
         return {"ok": True, "source": "local_llm", **expanded}
 
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
         return (
-            "你是家庭健康问询助手，不诊断、不选药、不控制硬件。"
-            "只输出一行紧凑JSON，键按此顺序："
-            "{\"n\":\"ask\",\"q\":\"一个简短问题\",\"s\":\"20字内摘要\","
-            "\"d\":[\"头晕\"],\"p\":[\"暑湿不适\"],\"du\":\"\",\"m\":\"\",\"a\":\"\","
-            "\"k\":\"low\",\"g\":[],\"c\":0.8}。"
-            "n只能ask|measure_vitals|analyze|escalate|end；d最多3个主诉词；"
-            "p最多2个护理或药品用途方向。示例值不是固定答案，必须按用户实际描述填写。"
-            "先读known.c，不重复已回答内容；said已经包含症状时，禁止复制开场白再次问哪里不舒服；"
-            "每轮只问一件事。"
-            "主诉明确且体征会影响判断时才measure_vitals。不得输出JSON以外文字。"
+            "你是家庭健康问询助手，不诊断、不选药、不控硬件。"
+            "只理解said本轮新增信息，不重写known。"
+            "只输出一行最小JSON，省略未变化键；可用n、q、f、du、m、a。"
+            "n只能ask、measure_vitals、analyze、escalate、end；q只问一件事；"
+            "f最多2项，每项是主诉、present或absent、用户原话。"
+            "target是上一问要回答的字段；没有、还没、不清楚要填target，不能当新症状。"
+            "主诉明确且体征必要时才measure_vitals。"
         )
 
     @classmethod
@@ -737,11 +758,16 @@ class AiService:
         *,
         transcript: str = "",
         source_turn: int = 1,
+        suppress_observations: bool = False,
     ) -> dict[str, Any]:
         if "observations" in payload:
+            if suppress_observations:
+                return {**payload, "observations": []}
             return payload
         observations: list[dict[str, Any]] = []
-        raw_facts = payload.get("f") if isinstance(payload.get("f"), list) else []
+        raw_facts = [] if suppress_observations else (
+            payload.get("f") if isinstance(payload.get("f"), list) else []
+        )
         for item in raw_facts:
             if isinstance(item, dict):
                 concept = str(item.get("concept") or item.get("c") or "").strip()
@@ -768,7 +794,7 @@ class AiService:
                     "confidence": confidence,
                 }
             )
-        if not observations:
+        if not observations and not suppress_observations:
             raw_dimensions = payload.get("d") if isinstance(payload.get("d"), list) else []
             for value in raw_dimensions[:3]:
                 concept = cls._compact_text(value, 28)
@@ -782,7 +808,9 @@ class AiService:
                             "confidence": payload.get("c") or 0.7,
                         }
                     )
-        raw_intents = payload.get("p") if isinstance(payload.get("p"), list) else []
+        raw_intents = [] if suppress_observations else (
+            payload.get("p") if isinstance(payload.get("p"), list) else []
+        )
         for value in raw_intents[:2]:
             concept = cls._compact_text(value, 28)
             if not concept or concept in {item.get("concept") for item in observations}:
@@ -796,7 +824,7 @@ class AiService:
                     "confidence": payload.get("c") or 0.65,
                 }
             )
-        if not observations and transcript:
+        if not observations and transcript and not suppress_observations:
             concept = cls._local_complaint_concept(
                 str(payload.get("s") or ""),
                 transcript,
@@ -811,20 +839,43 @@ class AiService:
                 }
             )
         return {
-            "case_summary": str(payload.get("s") or "").strip(),
+            "case_summary": str(payload.get("s") or payload.get("case_summary") or "").strip(),
             "observations": observations,
             "uncertainties": payload.get("u") if isinstance(payload.get("u"), list) else [],
             "history_relationship": payload.get("h") if isinstance(payload.get("h"), dict) else {},
-            "duration": str(payload.get("du") or "").strip(),
-            "used_medicines": str(payload.get("m") or "").strip(),
-            "allergy_or_contraindication": str(payload.get("a") or "").strip(),
-            "next_question": str(payload.get("q") or "").strip(),
-            "assistant_reply": str(payload.get("r") or payload.get("q") or "").strip(),
+            "duration": str(payload.get("du") or payload.get("duration") or "").strip(),
+            "used_medicines": str(
+                payload.get("m")
+                or payload.get("used_medicines")
+                or payload.get("medications_taken")
+                or ""
+            ).strip(),
+            "allergy_or_contraindication": str(
+                payload.get("a")
+                or payload.get("allergy_or_contraindication")
+                or payload.get("allergies")
+                or ""
+            ).strip(),
+            "next_question": str(
+                payload.get("q") or payload.get("next_question") or payload.get("question") or ""
+            ).strip(),
+            "assistant_reply": str(
+                payload.get("r")
+                or payload.get("assistant_reply")
+                or payload.get("q")
+                or payload.get("next_question")
+                or payload.get("question")
+                or ""
+            ).strip(),
             "reason": str(payload.get("x") or "").strip(),
-            "next_action": str(payload.get("n") or "ask").strip(),
-            "risk_level": str(payload.get("k") or "low").strip(),
-            "risk_signals": payload.get("g") if isinstance(payload.get("g"), list) else [],
-            "confidence": payload.get("c") or 0,
+            "next_action": str(payload.get("n") or payload.get("next_action") or "ask").strip(),
+            "risk_level": str(payload.get("k") or payload.get("risk_level") or "low").strip(),
+            "risk_signals": (
+                payload.get("g")
+                if isinstance(payload.get("g"), list)
+                else payload.get("risk_flags") if isinstance(payload.get("risk_flags"), list) else []
+            ),
+            "confidence": payload.get("c") or payload.get("confidence") or 0,
         }
 
     @classmethod
@@ -833,6 +884,8 @@ class AiService:
         expanded: dict[str, Any],
         existing: dict[str, Any],
     ) -> None:
+        if not str(expanded.get("case_summary") or "").strip():
+            expanded["case_summary"] = str(existing.get("case_summary") or "").strip()
         if str(expanded.get("case_summary") or "").strip() in {
             "20字内摘要",
             "病例摘要",
@@ -842,6 +895,12 @@ class AiService:
             expanded["case_summary"] = "、".join(
                 str(item.get("concept") or "").strip()
                 for item in observations
+                if isinstance(item, dict) and str(item.get("concept") or "").strip()
+            )[:60]
+        if not str(expanded.get("case_summary") or "").strip():
+            expanded["case_summary"] = "、".join(
+                str(item.get("concept") or "").strip()
+                for item in expanded.get("observations") or []
                 if isinstance(item, dict) and str(item.get("concept") or "").strip()
             )[:60]
         for target, source in (
@@ -860,12 +919,15 @@ class AiService:
             for item in expanded.get("observations") or []
             if isinstance(item, dict) and str(item.get("concept") or "").strip()
         ]
-        if action == "ask" and observations:
+        if action == "ask" and (observations or expanded.get("case_summary")):
             if cls._generic_opening_question(reply) and not cls._generic_opening_question(question):
                 reply = question
             if cls._generic_opening_question(question or reply):
                 question = ""
                 reply = ""
+        if action == "ask" and not cls._looks_like_question(question or reply):
+            question = ""
+            reply = ""
         if action == "ask" and cls._question_repeats_known_complaint(question, expanded):
             question = ""
             reply = ""
@@ -893,8 +955,130 @@ class AiService:
                 "什么地方不舒服",
                 "说说哪里不舒服",
                 "今天有什么不舒服",
+                "现在感觉如何",
+                "目前感觉如何",
             )
         )
+
+    @staticmethod
+    def _looks_like_question(value: str) -> bool:
+        compact = re.sub(r"\s+", "", value or "")
+        if not compact:
+            return False
+        return compact.endswith(("？", "?")) or any(
+            term in compact
+            for term in (
+                "多久",
+                "多长时间",
+                "有没有",
+                "是否",
+                "哪里",
+                "哪儿",
+                "什么",
+                "如何",
+                "怎么",
+                "吗",
+                "呢",
+            )
+        )
+
+    @classmethod
+    def _pending_answer_target(cls, existing: dict[str, Any]) -> dict[str, str]:
+        conversation = existing.get("conversation") or []
+        for message in reversed(conversation):
+            if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+                continue
+            question = re.sub(r"\s+", "", str(message.get("content") or ""))
+            if any(term in question for term in ("过敏", "禁忌", "不能使用", "不能用")):
+                return {"field": "allergy_or_contraindication", "question": question[:80]}
+            if any(term in question for term in ("用过药", "用药", "吃过药", "吃药", "服药")):
+                return {"field": "used_medicines", "question": question[:80]}
+            if any(term in question for term in ("持续", "多久", "多长时间")):
+                return {"field": "duration", "question": question[:80]}
+            if cls._generic_opening_question(question):
+                return {"field": "chief_complaint", "question": question[:80]}
+            return {"field": "clinical_follow_up", "question": question[:80]}
+        return {"field": "", "question": ""}
+
+    @staticmethod
+    def _is_contextual_answer(transcript: str, target: dict[str, str]) -> bool:
+        field = target.get("field")
+        if field == "duration":
+            return bool(AiService._duration_context_value(transcript))
+        compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
+        if field == "clinical_follow_up":
+            return compact in {"没有", "还没有", "没", "无", "暂时没有"}
+        if field not in {"used_medicines", "allergy_or_contraindication"}:
+            return False
+        if compact in {"没有", "还没有", "没", "无", "暂时没有", "不知道", "不清楚", "不确定"}:
+            return True
+        if field == "used_medicines":
+            return any(
+                term in compact
+                for term in ("没吃药", "没有吃药", "没用药", "没有用药", "还没用药", "还没有用药", "未使用药物", "用过药", "吃过药", "已用药")
+            )
+        return any(term in compact for term in ("没有过敏", "无过敏", "没有禁忌", "无禁忌", "对药物过敏", "药物过敏", "不能用"))
+
+    @classmethod
+    def _apply_contextual_answer(
+        cls,
+        expanded: dict[str, Any],
+        transcript: str,
+        target: dict[str, str],
+        existing: dict[str, Any],
+    ) -> None:
+        if not cls._is_contextual_answer(transcript, target):
+            return
+        expanded["observations"] = []
+        expanded["case_summary"] = str(existing.get("case_summary") or "").strip()
+        compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
+        uncertain = compact in {"不知道", "不清楚", "不确定"}
+        if target.get("field") == "used_medicines":
+            if uncertain:
+                expanded["used_medicines"] = "不确定"
+            elif any(term in compact for term in ("用过药", "吃过药", "已用药")):
+                expanded["used_medicines"] = transcript[:120]
+            else:
+                expanded["used_medicines"] = "未使用"
+        elif target.get("field") == "allergy_or_contraindication":
+            expanded["allergy_or_contraindication"] = "不确定" if uncertain else "无"
+        elif target.get("field") == "duration":
+            expanded["duration"] = cls._duration_context_value(transcript)
+        elif target.get("field") == "clinical_follow_up":
+            concept = cls._follow_up_concept(target.get("question") or "")
+            if concept:
+                expanded["observations"] = [
+                    {
+                        "concept": concept,
+                        "status": "absent",
+                        "evidence": cls._compact_text(transcript, 100),
+                        "source_turn": 0,
+                        "confidence": 1.0,
+                    }
+                ]
+
+    @staticmethod
+    def _duration_context_value(transcript: str) -> str:
+        match = re.search(
+            r"(?:刚刚|刚才|刚开始|没多久|今天|昨晚|昨天|前天|"
+            r"(?:大约|大概|差不多)?(?:半|[零一二两三四五六七八九十百\d]+)"
+            r"(?:分钟?|小时|钟头|天|周|星期|个月|月|年)(?:半|左右|上下|多)?)",
+            transcript or "",
+        )
+        if not match:
+            return ""
+        value = match.group(0)
+        for prefix in ("大约", "大概", "差不多"):
+            value = value.removeprefix(prefix)
+        return value
+
+    @classmethod
+    def _follow_up_concept(cls, question: str) -> str:
+        value = re.sub(r"[\s？?。！!]", "", question or "")
+        value = re.sub(r"^(?:请问)?(?:您|你)?(?:现在|目前)?", "", value)
+        value = re.sub(r"^(?:有没有|有无|是否|会不会|是不是)(?:出现|伴有|伴随)?", "", value)
+        value = re.sub(r"(?:吗|呢)$", "", value)
+        return cls._compact_text(value, 28)
 
     @classmethod
     def _local_complaint_concept(cls, summary: str, transcript: str) -> str:
@@ -938,6 +1122,16 @@ class AiService:
             },
             transcript=transcript,
             source_turn=max(1, int(existing.get("conversation_turns") or 1)),
+            suppress_observations=cls._is_contextual_answer(
+                transcript,
+                cls._pending_answer_target(existing),
+            ),
+        )
+        cls._apply_contextual_answer(
+            expanded,
+            transcript,
+            cls._pending_answer_target(existing),
+            existing,
         )
         cls._complete_local_inquiry(expanded, existing)
         return {

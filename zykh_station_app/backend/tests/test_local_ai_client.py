@@ -317,11 +317,84 @@ class AiServiceOfflineTest(unittest.TestCase):
             {"age": 65},
         )
 
-        self.assertEqual(client.last_kwargs["max_tokens"], 64)
+        self.assertEqual(client.last_kwargs["max_tokens"], 40)
         self.assertLess(len(client.last_messages[0]["content"]), 520)
         self.assertIn('"f"', client.last_messages[1]["content"])
         self.assertEqual(result["observations"][0]["concept"], "暑热后头晕")
         self.assertEqual(result["next_question"], "有没有恶心或腹泻？")
+
+    @patch("app.services.ai_service.settings")
+    def test_local_inquiry_prompt_names_the_field_answered_by_a_short_reply(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"n":"ask","q":"有没有药物过敏？","m":"未使用"}',
+            }
+        )
+        existing = {
+            "conversation_turns": 4,
+            "case_summary": "暑热后头晕",
+            "duration": "半天多",
+            "conversation": [
+                {"role": "user", "content": "我有些中暑头晕"},
+                {"role": "assistant", "content": "这种不舒服大概持续多久了？"},
+                {"role": "user", "content": "半天多"},
+                {"role": "assistant", "content": "这次不舒服以后有没有用过药？"},
+            ],
+        }
+
+        result = AiService(local_client=client).extract_inquiry_information("药", existing, {})
+        prompt = json.loads(client.last_messages[1]["content"])
+
+        self.assertEqual(prompt["known"]["target"]["field"], "used_medicines")
+        self.assertEqual(result["used_medicines"], "未使用")
+
+    @patch("app.services.ai_service.settings")
+    def test_explicit_duration_answer_is_merged_without_calling_the_small_model(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient({"ok": True, "reply": '{"duration":"半天多"}'})
+        existing = {
+            "conversation_turns": 2,
+            "case_summary": "晒后头晕",
+            "duration": "",
+            "conversation": [
+                {"role": "assistant", "content": "这种不舒服大概持续多久了？"},
+            ],
+        }
+
+        result = AiService(local_client=client).extract_inquiry_information("半天多", existing, {})
+
+        self.assertEqual(client.last_messages, [])
+        self.assertEqual(result["duration"], "半天多")
+        self.assertEqual(result["observations"], [])
+        self.assertEqual(result["next_question"], "这次不舒服以后有没有用过药？")
+
+    @patch("app.services.ai_service.settings")
+    def test_short_no_to_a_clinical_follow_up_becomes_an_absent_fact(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient({"ok": True, "reply": '{"n":"ask"}'})
+        existing = {
+            "conversation_turns": 3,
+            "case_summary": "晒后头晕",
+            "conversation": [
+                {"role": "assistant", "content": "有没有恶心或腹泻？"},
+            ],
+        }
+
+        result = AiService(local_client=client).extract_inquiry_information("没有", existing, {})
+
+        self.assertEqual(client.last_messages, [])
+        self.assertEqual(result["observations"][0]["concept"], "恶心或腹泻")
+        self.assertEqual(result["observations"][0]["status"], "absent")
+        self.assertEqual(result["observations"][0]["evidence"], "没有")
+        self.assertEqual(result["next_question"], "这种不舒服大概持续多久了？")
 
     @patch("app.services.ai_service.settings")
     def test_partial_small_model_json_continues_with_one_natural_question(self, mocked_settings) -> None:
@@ -346,6 +419,27 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertEqual(result["next_action"], "ask")
         self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
         self.assertEqual(result["observations"][0]["evidence"], "在外面晒了以后有点头晕")
+
+    @patch("app.services.ai_service.settings")
+    def test_small_model_fragment_is_not_shown_as_a_follow_up_question(self, mocked_settings) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+        client = FakeLocalClient(
+            {
+                "ok": True,
+                "reply": '{"target":"头晕","question":"头晕","answer":"头晕"}',
+            }
+        )
+
+        result = AiService(local_client=client).extract_inquiry_information(
+            "我今天在外面晒后有点头晕",
+            {"conversation_turns": 1, "conversation": []},
+            {},
+        )
+
+        self.assertEqual(result["assistant_reply"], "这种不舒服大概持续多久了？")
+        self.assertEqual(result["next_question"], result["assistant_reply"])
 
     @patch("app.services.ai_service.settings")
     def test_local_model_cannot_repeat_the_opening_after_extracting_a_complaint(

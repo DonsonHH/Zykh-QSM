@@ -262,6 +262,11 @@ class SymptomInterpreter:
         transcript: str,
         existing: dict[str, Any],
     ) -> None:
+        pending_field = cls._pending_answer_field(existing)
+        contextual_short_answer = cls._is_contextual_short_answer(transcript, pending_field)
+        if contextual_short_answer:
+            interpretation.observations = []
+            interpretation.case_summary = str(existing.get("case_summary") or "").strip()
         interpretation.duration = (
             interpretation.duration
             or cls.duration_answer(transcript)
@@ -269,12 +274,18 @@ class SymptomInterpreter:
         )
         interpretation.used_medicines = (
             interpretation.used_medicines
-            or cls.used_medicine_answer(transcript)
+            or cls.used_medicine_answer(
+                transcript,
+                allow_short_answer=pending_field == "used_medicines",
+            )
             or str(existing.get("used_medicines") or "").strip()
         )
         interpretation.allergy_or_contraindication = (
             interpretation.allergy_or_contraindication
-            or cls.allergy_answer(transcript)
+            or cls.allergy_answer(
+                transcript,
+                allow_short_answer=pending_field == "allergy_or_contraindication",
+            )
             or str(existing.get("allergy_or_contraindication") or "").strip()
         )
 
@@ -289,7 +300,18 @@ class SymptomInterpreter:
             bool(interpretation.allergy_or_contraindication)
             and any(term in question for term in ("过敏", "禁忌", "不能使用"))
         )
-        if interpretation.action_intent != "ask" or not asks_answered_field:
+        pending_answered = (
+            pending_field == "duration" and bool(interpretation.duration)
+        ) or (
+            pending_field == "used_medicines" and bool(interpretation.used_medicines)
+        ) or (
+            pending_field == "allergy_or_contraindication"
+            and bool(interpretation.allergy_or_contraindication)
+        )
+        should_advance = asks_answered_field or (
+            pending_answered and cls._is_generic_opening_question(question)
+        )
+        if interpretation.action_intent != "ask" or not should_advance:
             return
         if not interpretation.used_medicines:
             next_question = "这次不舒服以后有没有用过药？"
@@ -302,6 +324,43 @@ class SymptomInterpreter:
             return
         interpretation.follow_up_question = next_question
         interpretation.assistant_reply = next_question
+
+    @classmethod
+    def _pending_answer_field(cls, existing: dict[str, Any]) -> str:
+        for message in reversed(existing.get("conversation") or []):
+            if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+                continue
+            question = re.sub(r"\s+", "", str(message.get("content") or ""))
+            if any(term in question for term in ("过敏", "禁忌", "不能使用", "不能用")):
+                return "allergy_or_contraindication"
+            if any(term in question for term in ("用过药", "用药", "吃过药", "吃药", "服药")):
+                return "used_medicines"
+            if any(term in question for term in ("持续", "多久", "多长时间")):
+                return "duration"
+            return ""
+        return ""
+
+    @staticmethod
+    def _is_contextual_short_answer(transcript: str, pending_field: str) -> bool:
+        if pending_field not in {"used_medicines", "allergy_or_contraindication"}:
+            return False
+        compact = re.sub(r"[\s，。！？,.!?]", "", transcript or "")
+        return compact in {"没有", "还没有", "没", "无", "暂时没有", "不知道", "不清楚", "不确定"}
+
+    @staticmethod
+    def _is_generic_opening_question(question: str) -> bool:
+        compact = re.sub(r"\s+", "", question or "")
+        return any(
+            phrase in compact
+            for phrase in (
+                "哪里不舒服",
+                "哪儿不舒服",
+                "什么地方不舒服",
+                "今天有什么不舒服",
+                "现在感觉如何",
+                "目前感觉如何",
+            )
+        )
 
     @staticmethod
     def _short_text(value: object, limit: int) -> str:

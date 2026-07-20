@@ -626,6 +626,7 @@ class InquiryOrchestrator:
         ]
         if include_current_transcript:
             messages.append({"role": "user", "content": include_current_transcript})
+        messages = messages[-6:]
         context = session.extracted_information.model_dump()
         context["symptoms_text"] = self._chief_complaint(
             session.extracted_information.observations,

@@ -125,6 +125,39 @@ class StaleDurationQuestionAiService:
         }
 
 
+class MisreadContextualNoAiService:
+    def extract_inquiry_information(self, *_args, **_kwargs):
+        return {
+            "ok": True,
+            "source": "local_llm",
+            "case_summary": "没有",
+            "observations": [
+                {
+                    "concept": "头晕",
+                    "status": "present",
+                    "evidence": "没有",
+                    "source_turn": 4,
+                    "confidence": 0.72,
+                },
+                {
+                    "concept": "暑湿不适",
+                    "status": "present",
+                    "evidence": "没有",
+                    "source_turn": 4,
+                    "confidence": 0.66,
+                },
+            ],
+            "duration": "",
+            "used_medicines": "",
+            "allergy_or_contraindication": "",
+            "next_action": "ask",
+            "next_question": "请问您现在感觉如何？",
+            "assistant_reply": "请问您现在感觉如何？",
+            "risk_level": "low",
+            "confidence": 0.72,
+        }
+
+
 class SymptomInterpreterTest(unittest.TestCase):
     def test_open_case_keeps_a_concept_outside_any_fixed_symptom_whitelist(self) -> None:
         result = SymptomInterpreter(ai_service=OpenCaseAiService()).interpret(
@@ -192,6 +225,33 @@ class SymptomInterpreterTest(unittest.TestCase):
         self.assertEqual(result.used_medicines, "未使用")
         self.assertEqual(result.follow_up_question, "有没有药物过敏或明确不能使用的药？")
         self.assertEqual(result.assistant_reply, result.follow_up_question)
+
+    def test_short_no_is_bound_to_the_previous_medicine_question(self) -> None:
+        existing = {
+            "conversation_turns": 4,
+            "case_summary": "暑热后头晕，已经持续半天多。",
+            "duration": "半天多",
+            "used_medicines": "",
+            "allergy_or_contraindication": "",
+            "conversation": [
+                {"role": "user", "content": "我有些中暑头晕"},
+                {"role": "assistant", "content": "这种不舒服大概持续多久了？"},
+                {"role": "user", "content": "半天多"},
+                {"role": "assistant", "content": "这次不舒服以后有没有用过药？"},
+            ],
+        }
+
+        result = SymptomInterpreter(ai_service=MisreadContextualNoAiService()).interpret(
+            "没有",
+            existing,
+        )
+
+        self.assertEqual(result.case_summary, existing["case_summary"])
+        self.assertEqual(result.duration, "半天多")
+        self.assertEqual(result.used_medicines, "未使用")
+        self.assertEqual(result.follow_up_question, "有没有药物过敏或明确不能使用的药？")
+        self.assertEqual(result.assistant_reply, result.follow_up_question)
+        self.assertFalse(any(item.evidence == "没有" for item in result.observations))
 
 
 if __name__ == "__main__":

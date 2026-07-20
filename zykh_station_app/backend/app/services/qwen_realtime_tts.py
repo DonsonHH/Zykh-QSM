@@ -188,7 +188,16 @@ class QwenRealtimeTts:
         elapsed = max(0.0, (time.monotonic() if now is None else now) - first_audio_at)
         # The QSM endpoint starts aplay with a small socket buffer. Keep the
         # stream alive until generated PCM plus that tail has reached the DAC.
-        return round(max(0.35, min(8.0, pcm_duration - elapsed + 0.45)), 3)
+        return round(
+            max(
+                0.35,
+                min(
+                    settings.qwen_realtime_tts_max_drain_seconds,
+                    pcm_duration - elapsed + 0.45,
+                ),
+            ),
+            3,
+        )
 
     @staticmethod
     async def _open_qsm_output() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:

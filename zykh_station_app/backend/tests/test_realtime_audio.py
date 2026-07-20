@@ -90,6 +90,14 @@ class RealtimeAudioTest(unittest.TestCase):
         self.assertEqual(QwenRealtimeTts.playback_drain_seconds(audio_bytes, 10.0, now=20.0), 0.35)
         self.assertEqual(QwenRealtimeTts.playback_drain_seconds(0, 10.0, now=10.0), 0.0)
 
+    def test_qwen_tts_does_not_cut_a_long_unplayed_pcm_tail_at_eight_seconds(self) -> None:
+        audio_bytes = 24000 * 2 * 30
+
+        self.assertEqual(
+            QwenRealtimeTts.playback_drain_seconds(audio_bytes, 10.0, now=15.0),
+            25.45,
+        )
+
 
 class CloudAsrReadinessTest(unittest.IsolatedAsyncioTestCase):
     async def test_cloud_asr_waits_for_manual_commit_instead_of_silence_vad(self) -> None:
