@@ -24,7 +24,11 @@ export function isLocalNetworkMode(networkStatus) {
 export function getNetworkIndicators(networkStatus) {
   const explicitLocalMode = isLocalNetworkMode(networkStatus);
   const rawWifiConnected = Boolean(networkStatus?.wifi_connected || networkStatus?.wifi?.connected);
-  const rawSimConnected = Boolean(networkStatus?.sim_connected || networkStatus?.sim?.connected);
+  const rawSimConnected = Boolean(
+    networkStatus?.sim_connected ||
+    networkStatus?.qsm_sim_connected ||
+    networkStatus?.sim?.connected
+  );
   const rawSimPresent = Boolean(networkStatus?.sim_present || networkStatus?.sim?.present || rawSimConnected);
   const rawSimEnabled = networkStatus?.sim_enabled ?? networkStatus?.sim?.enabled ?? true;
   const wifiConnected = explicitLocalMode ? false : rawWifiConnected;

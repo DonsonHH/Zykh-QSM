@@ -48,10 +48,11 @@ class NetworkService:
             "sim_signal_sample": sim_metrics["sample"],
             "sim_signal_sample_age_seconds": sim_metrics["sample_age_seconds"],
         }
-        sim_connected = bool(
+        sim_transport_ready = bool(
             (qsm_connected and host_tether_ready)
             or (sim_ip and sim_route and reachable)
         )
+        sim_connected = bool(qsm_connected or sim_transport_ready)
         sim_present = bool(qsm_sim_present or sim_ip)
         local_ai = local_inquiry_status(LocalAiClient().status())
         local_ai_ready = bool(local_ai.get("ready"))
@@ -117,7 +118,15 @@ class NetworkService:
                 **sim_signal_data,
                 "simulated": False,
                 "source": "host",
-                "warnings": [] if (not sim_enabled or sim_connected) else ["SIM 备用链路未连通。"],
+                "warnings": (
+                    []
+                    if not sim_enabled or sim_transport_ready
+                    else [
+                        "SIM 数据网络已连接，主机备用通道未就绪。"
+                        if qsm_connected
+                        else "SIM 数据网络未连通。"
+                    ]
+                ),
             }
 
         if qsm_connected and host_tether_ready:
@@ -163,7 +172,7 @@ class NetworkService:
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
                 **wifi,
                 "sim_present": True,
-                "sim_connected": False,
+                "sim_connected": qsm_connected,
                 "qsm_sim_connected": qsm_connected,
                 "host_tether_ready": host_tether_ready,
                 "sim_signal": str(qsm_network.get("signal") or "weak"),
