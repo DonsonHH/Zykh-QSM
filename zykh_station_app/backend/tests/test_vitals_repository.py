@@ -48,6 +48,40 @@ class VitalsRepositoryTest(unittest.TestCase):
         self.assertIsNotNone(latest)
         self.assertEqual(latest.id, "valid")
 
+    def test_latest_complete_core_skips_newer_partial_measurement(self) -> None:
+        original_path = settings.db_path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            object.__setattr__(settings, "db_path", Path(temp_dir) / "station.db")
+            try:
+                repository = VitalsRepository()
+                repository.append(
+                    VitalsRecord(
+                        id="complete",
+                        temperature=36.5,
+                        heart_rate=73,
+                        spo2=97,
+                        status="available",
+                        source="real",
+                        measured_at="2026-07-14 10:00:00",
+                    )
+                )
+                repository.append(
+                    VitalsRecord(
+                        id="newer-partial",
+                        temperature=36.7,
+                        status="partial",
+                        source="real",
+                        measured_at="2026-07-14 10:02:00",
+                    )
+                )
+
+                latest = repository.latest_complete_core()
+            finally:
+                object.__setattr__(settings, "db_path", original_path)
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.id, "complete")
+
 
 if __name__ == "__main__":
     unittest.main()

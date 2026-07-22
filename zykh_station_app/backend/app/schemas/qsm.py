@@ -87,6 +87,8 @@ class VitalsSessionResponse(BaseModel):
     updated_at: str | None = None
     measured_at: str | None = None
     error_message: str | None = None
+    historical_fallback: bool = False
+    historical_measured_at: str | None = None
 
 
 class VitalsSessionStartRequest(BaseModel):

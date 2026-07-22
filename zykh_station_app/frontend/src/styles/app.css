@@ -6496,13 +6496,37 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   min-width: 0;
   min-height: 86px;
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  overflow: hidden;
   border: 1px solid #e3edf8;
   border-radius: 18px;
   background: var(--surface-soft);
   padding: 10px 12px;
+}
+
+.service-user-details,
+.service-user-heading {
+  min-width: 0;
+}
+
+.service-user-details {
+  overflow: hidden;
+}
+
+.service-user-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.service-user-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .service-user-icon,
@@ -6547,8 +6571,19 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   white-space: nowrap;
 }
 
-.service-user-card em {
-  align-self: start;
+.service-user-card p,
+.service-user-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.service-user-heading em {
+  flex: 0 0 auto;
   border-radius: 999px;
   background: #effcf7;
   color: #087c68;
@@ -6655,7 +6690,8 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .today-plan-list,
-.recent-record-list {
+.recent-record-list,
+.service-user-list {
   overflow-x: hidden;
   overflow-y: auto;
   align-content: start;
@@ -6665,22 +6701,26 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 }
 
 .today-plan-list::-webkit-scrollbar,
-.recent-record-list::-webkit-scrollbar {
+.recent-record-list::-webkit-scrollbar,
+.service-user-list::-webkit-scrollbar {
   width: 6px;
 }
 
 .today-plan-list::-webkit-scrollbar-thumb,
-.recent-record-list::-webkit-scrollbar-thumb {
+.recent-record-list::-webkit-scrollbar-thumb,
+.service-user-list::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: #b7cae2;
 }
 
 .today-plan-list article {
-  min-height: 50px;
+  min-width: 0;
+  min-height: 64px;
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr) 82px;
+  grid-template-columns: 54px minmax(0, 1fr) 70px;
   align-items: center;
   gap: 8px;
+  overflow: hidden;
   border: 1px solid #e3edf8;
   border-radius: 16px;
   background: var(--surface-soft);
@@ -6710,9 +6750,12 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
 .today-plan-list span {
   display: block;
   margin-top: 1px;
+  overflow: hidden;
   color: var(--muted);
   font-size: 14px;
   font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .today-plan-list svg {

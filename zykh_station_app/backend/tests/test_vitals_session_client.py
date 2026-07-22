@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
-from app.repositories.vitals_repository import VitalsRepository  # noqa: E402
+from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.routers.vitals import get_vitals_session  # noqa: E402
 from app.services.qsm_client import QsmClient  # noqa: E402
 
@@ -229,6 +229,65 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         sync_status = SyncRepository().get_status()
         self.assertEqual(sync_status.sync_status, "待同步")
         self.assertEqual(sync_status.pending_count, 1)
+
+    def test_unstable_finger_signal_reuses_last_complete_core_without_persisting(self) -> None:
+        VitalsRepository().append(
+            VitalsRecord(
+                id="previous-complete",
+                temperature=36.4,
+                heart_rate=75,
+                spo2=98,
+                status="available",
+                source="UART-vitals",
+                measured_at="2026-07-20T10:20:00+08:00",
+            )
+        )
+        payload = {
+            "ok": False,
+            "mode": "real",
+            "session_id": "session-unstable-finger",
+            "status": "failed",
+            "hardware_started": True,
+            "temperature": 36.6,
+            "heart_rate": None,
+            "spo2": None,
+            "source": "UART-vitals",
+            "error_message": "手指信号未稳定。",
+        }
+
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            response = get_vitals_session("session-unstable-finger")
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.status, "complete")
+        self.assertEqual(response.temperature, 36.6)
+        self.assertEqual(response.heart_rate, 75)
+        self.assertEqual(response.spo2, 98)
+        self.assertTrue(response.historical_fallback)
+        self.assertEqual(response.historical_measured_at, "2026-07-20T10:20:00+08:00")
+        self.assertEqual(VitalsRepository().count(), 1)
+
+    def test_unstable_finger_signal_stays_failed_without_history(self) -> None:
+        payload = {
+            "ok": False,
+            "mode": "real",
+            "session_id": "session-no-history",
+            "status": "failed",
+            "hardware_started": True,
+            "temperature": 36.5,
+            "heart_rate": None,
+            "spo2": None,
+            "error_message": "手指信号未稳定。",
+        }
+
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            response = get_vitals_session("session-no-history")
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.status, "failed")
+        self.assertFalse(response.historical_fallback)
 
 
 if __name__ == "__main__":

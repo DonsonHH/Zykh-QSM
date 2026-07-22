@@ -111,6 +111,28 @@ class VitalsRepository:
             ).fetchone()
         return VitalsRecord(**dict(row)) if row else None
 
+    def latest_complete_core(self) -> VitalsRecord | None:
+        """Return the latest record containing all three core measurements."""
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, temperature, heart_rate, spo2,
+                       systolic_pressure, diastolic_pressure, respiratory_rate,
+                       microcirculation, fatigue, rr_interval, hrv_sdnn, hrv_rmssd,
+                       body_temperature, ambient_temperature,
+                       status, source, sensor_model, error_message, measured_at
+                FROM vitals_records
+                WHERE status IN ('available', 'partial')
+                  AND temperature IS NOT NULL AND temperature > 0
+                  AND heart_rate IS NOT NULL AND heart_rate > 0
+                  AND spo2 IS NOT NULL AND spo2 > 0
+                ORDER BY measured_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return VitalsRecord(**dict(row)) if row else None
+
     def count(self) -> int:
         db.init_db()
         with db.connect() as conn:

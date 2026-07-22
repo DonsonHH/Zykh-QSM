@@ -13,14 +13,16 @@ export function ServiceUserList({ users = [] }) {
             <span className="service-user-icon" aria-hidden="true">
               <UserRound size={24} />
             </span>
-            <div>
-              <strong>{user.name}</strong>
+            <div className="service-user-details">
+              <div className="service-user-heading">
+                <strong>{user.name}</strong>
+                <em>{user.status}</em>
+              </div>
               <p>
                 {user.age}岁 · {user.profile}
               </p>
               <small>{user.note}</small>
             </div>
-            <em>{user.status}</em>
           </article>
         ))}
         {users.length === 0 && <p className="empty-list-note">暂无服务对象记录</p>}

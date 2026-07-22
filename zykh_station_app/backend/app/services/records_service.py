@@ -413,14 +413,14 @@ class RecordsService:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
-        seed_version = "family-demo-v5-cabinet-consistent"
+        seed_version = "family-demo-v6-grandparent-child"
         demo_plans = (
-            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "按既往医嘱1片"),
+            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "1片（按既往处方）"),
             ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", "zhangsan", "1片"),
             ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "zhangsan", "每侧鼻孔1喷"),
-            ("plan-demo-lisi-lactulose", "07:30", "早餐时", "slot-06-lactulose", "lisi", "10毫升"),
-            ("plan-demo-lisi-bifid", "13:00", "午饭后", "slot-09-bifid-triple", "lisi", "2粒"),
-            ("plan-demo-lisi-hydrotalcite", "20:00", "晚饭后1至2小时", "slot-12-hydrotalcite", "lisi", "1片，嚼服"),
+            ("plan-demo-lisi-lactulose", "07:30", "早餐时", "slot-06-lactulose", "lisi", "10毫升（维持量）"),
+            ("plan-demo-lisi-budesonide-morning", "08:00", "早晨", "slot-18-budesonide-nasal", "lisi", "每侧鼻孔1喷（监护人协助）"),
+            ("plan-demo-lisi-budesonide-evening", "20:30", "睡前", "slot-18-budesonide-nasal", "lisi", "每侧鼻孔1喷（监护人协助）"),
         )
         with db.connect() as conn:
             seed = conn.execute("SELECT value FROM app_settings WHERE key='today_plan_seed_version'").fetchone()
@@ -448,11 +448,11 @@ class RecordsService:
                 conn.execute(
                     """
                     UPDATE service_users
-                    SET age=67,
-                        profile='高血压；常年性过敏性鼻炎；维生素与矿物质补充计划',
+                    SET age=70,
+                        profile='高血压；常年性过敏性鼻炎；李四的爷爷和主要照护人',
                         allergies='头孢类药物禁忌',
-                        note='降压药按既往医嘱使用；鼻喷剂和营养补充剂已建立家庭计划',
-                        status='家庭成员'
+                        note='父母外出工作时负责照护李四；本人降压药和鼻喷剂按既往医嘱使用',
+                        status='家庭监护人'
                     WHERE id=?
                     """,
                     (primary_user["id"],),
@@ -461,15 +461,21 @@ class RecordsService:
                 conn.execute(
                     """
                     UPDATE service_users
-                    SET age=63,
-                        profile='功能性便秘；胃酸相关胃部不适；肠道菌群失调史',
+                    SET age=8,
+                        profile='8岁儿童；体重约25公斤；季节性过敏性鼻炎；功能性便秘',
                         allergies='无已知药物过敏',
-                        note='肠胃调理药品按既往医嘱和说明书计划使用',
-                        status='家庭成员'
+                        note='张三的孙子；父母工作日外出，由张三照护；儿童用药需由监护人核验',
+                        status='儿童家庭成员'
                     WHERE id=?
                     """,
                     (secondary_user["id"],),
                 )
+            conn.execute(
+                """
+                DELETE FROM today_plans
+                WHERE id IN ('plan-demo-lisi-bifid', 'plan-demo-lisi-hydrotalcite')
+                """
+            )
             for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
                 user = demo_users.get(user_id)
                 medicine = conn.execute(

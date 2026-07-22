@@ -21,6 +21,7 @@ import { isLocalNetworkMode } from "../utils/network.js";
 import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
 import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
+import { inquiryReplyStreamProfile } from "../utils/inquiryStreaming.js";
 import { WxVoiceRecorderOverlay } from "./WxVoiceRecorderOverlay.jsx";
 
 function speakLocally(text) {
@@ -75,6 +76,8 @@ export function InquiryChatStep({
   const listening = voicePhase === VoicePhase.LISTENING;
   const transcribingVoice = voicePhase === VoicePhase.TRANSCRIBING;
   const voiceOverlayOpen = preparingVoice || listening || transcribingVoice || Boolean(transcriptPreview);
+  const localDisplayMode = isLocalNetworkMode(networkStatus);
+  const streamProfile = inquiryReplyStreamProfile(session.source, localDisplayMode);
   const lastAssistantId = useMemo(
     () => [...(session.messages || [])].reverse().find((message) => message.role === "assistant")?.id || "",
     [session.messages]
@@ -91,16 +94,16 @@ export function InquiryChatStep({
     setStreamedReply("");
     let index = 0;
     const timer = window.setInterval(() => {
-      index = Math.min(reply.length, index + 4);
+      index = Math.min(reply.length, index + streamProfile.chunkSize);
       setStreamedReply(reply.slice(0, index));
       if (index >= reply.length) {
         window.clearInterval(timer);
         setStreaming(false);
         playReply(reply, true);
       }
-    }, 42);
+    }, streamProfile.intervalMs);
     return () => window.clearInterval(timer);
-  }, [session.reply]);
+  }, [session.reply, streamProfile.chunkSize, streamProfile.intervalMs]);
 
   useEffect(() => () => {
     stopVoice(false);
@@ -162,7 +165,7 @@ export function InquiryChatStep({
 
   async function send(text) {
     const content = String(text || "").trim();
-    if (!content || sending) return;
+    if (!content || sending || streaming) return;
     setLocalPending(content);
     setTranscriptPreview("");
     setKeyboardText("");
@@ -177,7 +180,7 @@ export function InquiryChatStep({
 
   async function startVoice() {
     interruptPlayback();
-    if (voicePhaseRef.current !== VoicePhase.IDLE || sending) return;
+    if (voicePhaseRef.current !== VoicePhase.IDLE || sending || streaming) return;
 
     finishedRef.current = false;
     partialTextRef.current = "";
@@ -390,12 +393,12 @@ export function InquiryChatStep({
               aria-label="手动输入问询内容"
             />
             <button type="button" className="icon-action" onClick={() => setKeyboardOpen(false)} aria-label="关闭键盘输入"><X size={21} /></button>
-            <button type="submit" className="primary-action" disabled={!keyboardText.trim() || sending}><Send size={20} />发送</button>
+            <button type="submit" className="primary-action" disabled={!keyboardText.trim() || sending || streaming}><Send size={20} />发送</button>
           </form>
         ) : (
           <div className="chat-voice-bar hold-to-talk">
             <div className={`voice-status chat-voice-status ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`} aria-live="polite">{voiceMessage}</div>
-            <button type="button" className="chat-keyboard-button" onClick={() => setKeyboardOpen(true)} aria-label="打开屏幕键盘"><Keyboard size={24} /></button>
+            <button type="button" className="chat-keyboard-button" onClick={() => setKeyboardOpen(true)} disabled={streaming} aria-label="打开屏幕键盘"><Keyboard size={24} /></button>
             <button
               className={`voice-chat-button compact ${preparingVoice ? "preparing" : listening ? "listening" : transcribingVoice || sending ? "processing" : ""}`}
               type="button"
@@ -403,7 +406,7 @@ export function InquiryChatStep({
               onPointerUp={handleHoldEnd}
               onPointerCancel={handleHoldCancel}
               onContextMenu={(event) => event.preventDefault()}
-              disabled={sending || transcribingVoice}
+              disabled={sending || transcribingVoice || streaming}
               aria-pressed={listening}
             >
               {listening ? <StrokeDrawIcon icon={Mic} size={23} strokeWidth={2.2} mode="yoyo" />

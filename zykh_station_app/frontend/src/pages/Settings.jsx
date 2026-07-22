@@ -80,6 +80,7 @@ function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange, disa
 
 export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const [values, setValues] = useState(DEFAULT_SETTINGS);
+  const [simDisplayEnabled, setSimDisplayEnabled] = useState(DEFAULT_SETTINGS.sim_enabled);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState("loading");
   const [testing, setTesting] = useState(false);
@@ -117,6 +118,7 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         valuesRef.current = next;
         savedValuesRef.current = next;
         setValues(next);
+        setSimDisplayEnabled(Boolean(next.sim_enabled));
         setSaveState("saved");
       })
       .catch((error) => {
@@ -256,10 +258,10 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           <div className="basic-setting-toggle-row">
             <div>
               <strong>数据网络</strong>
-              <span>{!values.sim_enabled ? "已关闭" : values.sim_connected ? `${values.sim_operator || "移动网络"}已连接` : "等待数据网络"}</span>
+              <span>{!simDisplayEnabled ? "已关闭" : values.sim_connected ? `${values.sim_operator || "移动网络"}已连接` : "等待数据网络"}</span>
               <small>{values.sim_phone_number || "模块未提供号码"}{values.sim_operator_code ? ` · ${values.sim_operator_code}` : ""}</small>
             </div>
-            <SettingsSwitch checked={values.sim_enabled} disabled={controlsLocked} onChange={(next) => update("sim_enabled", next)} label="切换数据网络" />
+            <SettingsSwitch checked={simDisplayEnabled} disabled={controlsLocked} onChange={setSimDisplayEnabled} label="切换数据网络显示" />
           </div>
           <div className="network-mode-control" aria-label="问询运行模式">
             <button

@@ -284,7 +284,7 @@ export function Vitals({
             ) : null}
             <div className="vitals-status-card">
               <span aria-hidden="true"><ShieldCheck size={24} /></span>
-              <div><strong>{status.summary}</strong>{status.tone === "warn" ? <p>{status.detail}</p> : null}</div>
+              <div><strong>{status.summary}</strong>{status.detail ? <p>{status.detail}</p> : null}</div>
             </div>
           </>
         ) : (

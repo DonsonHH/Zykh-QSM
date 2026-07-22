@@ -17,7 +17,11 @@ assert.match(inquiry, /status:\s*"complete"/, "complete vitals are not attached 
 assert.match(inquiry, /"failed"\s*:\s*"cancelled"/, "failed and cancelled measurements do not return to AI");
 assert.doesNotMatch(inquiry, /onNavigate\("vitals"/, "AI inquiry still navigates to a separate vitals page");
 assert.doesNotMatch(inquiry, /zykh-latest-vitals/, "AI vitals still depend on sessionStorage result transfer");
-assert.doesNotMatch(inquiry, /prepareQsmVitals/, "AI inquiry must not prewarm outside the shared Vitals component");
+assert.doesNotMatch(
+  inquiry,
+  /prepareQsmVitals|startVitalsSession|loadVitalsSession|cancelVitalsSession/,
+  "AI inquiry owns a second QSM measurement implementation instead of sharing the home Vitals component"
+);
 assert.doesNotMatch(inquiry, /preparedVitalsRequestRef/, "AI inquiry still owns duplicate vitals prewarm state");
 assert.doesNotMatch(sessionUtils, /INQUIRY_VITALS_AWAITING_KEY/, "legacy vitals transfer state remains");
 
@@ -28,6 +32,10 @@ assert.match(chat, /preservePlaybackOnExitRef/, "entering vitals interrupts the 
 assert.match(vitals, /completionReportedRef/, "embedded vitals can submit the same result repeatedly");
 assert.match(vitals, /onComplete\?\.\(result\)/, "completed vitals do not return to AI");
 assert.match(vitals, /onExit\?\.\(\{\s*status:\s*"cancelled"/, "cancelled vitals do not return to AI");
+assert.match(vitals, /prepareQsmVitals/, "shared Vitals component does not own device prewarm");
+assert.match(vitals, /startVitalsSession/, "shared Vitals component does not own measurement start");
+assert.match(vitals, /loadVitalsSession/, "shared Vitals component does not own session polling");
+assert.match(vitals, /cancelVitalsSession/, "shared Vitals component does not own cancellation");
 assert.doesNotMatch(vitals, /zykh-latest-vitals/, "vitals page still writes a cross-page handoff");
 
 console.log("inquiry vitals tool flow: ok");

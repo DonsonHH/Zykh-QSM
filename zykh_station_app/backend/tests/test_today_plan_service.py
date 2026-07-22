@@ -38,16 +38,35 @@ class TodayPlanServiceTest(unittest.TestCase):
         self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "李四": 3})
         self.assertEqual(
             {plan.timing_label for plan in plans},
-            {"早餐时", "早餐后", "午饭后", "晚饭后1至2小时", "睡前"},
+            {"早餐时", "早餐后", "早晨", "午饭后", "睡前"},
         )
         self.assertIn("slot-21-amlodipine", {plan.medicine_id for plan in plans})
         self.assertTrue(all(plan.status == "待执行" for plan in plans))
         users = {user.name: user for user in self.service.list_service_users()}
-        self.assertEqual(users["张三"].age, 67)
+        self.assertEqual(users["张三"].age, 70)
         self.assertIn("常年性过敏性鼻炎", users["张三"].profile)
+        self.assertIn("李四的爷爷", users["张三"].profile)
         self.assertEqual(users["张三"].allergies, "头孢类药物禁忌")
-        self.assertEqual(users["李四"].age, 63)
+        self.assertEqual(users["张三"].status, "家庭监护人")
+        self.assertEqual(users["李四"].age, 8)
+        self.assertIn("体重约25公斤", users["李四"].profile)
+        self.assertIn("季节性过敏性鼻炎", users["李四"].profile)
         self.assertIn("功能性便秘", users["李四"].profile)
+        self.assertEqual(users["李四"].status, "儿童家庭成员")
+
+        child_plans = [plan for plan in plans if plan.target_user == "李四"]
+        self.assertEqual(
+            Counter(plan.medicine_id for plan in child_plans),
+            {"slot-18-budesonide-nasal": 2, "slot-06-lactulose": 1},
+        )
+        self.assertIn("10毫升（维持量）", {plan.dose for plan in child_plans})
+        self.assertTrue(
+            all(
+                "监护人协助" in plan.dose
+                for plan in child_plans
+                if plan.medicine_id == "slot-18-budesonide-nasal"
+            )
+        )
 
     def test_plan_crud_keeps_normalized_links_and_does_not_reseed_after_delete(self) -> None:
         default_plans = self.service.list_today_plans()

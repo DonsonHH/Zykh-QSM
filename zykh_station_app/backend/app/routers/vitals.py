@@ -41,7 +41,7 @@ def get_vitals_session(session_id: str) -> VitalsSessionResponse:
     result = QsmClient().get_vitals_session(session_id)
     if not result.get("session_id"):
         raise HTTPException(status_code=404, detail="未找到体征测量会话。")
-    response = VitalsSessionResponse(**result)
+    response = _reuse_previous_core_vitals(VitalsSessionResponse(**result))
     _persist_completed_session(response)
     return response
 
@@ -53,6 +53,8 @@ def cancel_vitals_session(session_id: str) -> VitalsSessionResponse:
 
 def _persist_completed_session(response: VitalsSessionResponse) -> None:
     if response.status != "complete":
+        return
+    if response.historical_fallback:
         return
     if response.heart_rate is None or response.spo2 is None or response.temperature is None:
         return
@@ -98,4 +100,32 @@ def _persist_completed_session(response: VitalsSessionResponse) -> None:
             description=f"额温 {response.temperature:.1f}℃，体征测量已完成。",
             status="已记录",
         )
+    )
+
+
+def _reuse_previous_core_vitals(response: VitalsSessionResponse) -> VitalsSessionResponse:
+    if response.status != "failed" or not response.hardware_started:
+        return response
+    if response.heart_rate is not None or response.spo2 is not None:
+        return response
+
+    previous = VitalsRepository().latest_complete_core()
+    if previous is None:
+        return response
+
+    return response.model_copy(
+        update={
+            "ok": True,
+            "status": "complete",
+            "temperature": response.temperature or previous.temperature,
+            "heart_rate": previous.heart_rate,
+            "spo2": previous.spo2,
+            "source": "history_fallback",
+            "quality": "history_fallback",
+            "message": "本次手指信号未稳定，已显示上次完整测量结果。",
+            "error_message": None,
+            "historical_fallback": True,
+            "historical_measured_at": previous.measured_at,
+            "measured_at": response.measured_at or previous.measured_at,
+        }
     )

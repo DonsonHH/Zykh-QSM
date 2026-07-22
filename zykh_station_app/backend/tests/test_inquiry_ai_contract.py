@@ -58,6 +58,7 @@ class FakeWeatherContext:
 
 
 class InquiryAiContractTest(unittest.TestCase):
+    @patch("app.services.ai_service.AiService._cloud_reachable", return_value=False)
     @patch("app.services.ai_service.AiService._network_local_mode", return_value=True)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
@@ -66,6 +67,7 @@ class InquiryAiContractTest(unittest.TestCase):
         mocked_settings,
         mocked_urlopen,
         _mocked_local_mode,
+        _mocked_cloud_probe,
     ) -> None:
         mocked_settings.ai_mode = "auto"
         mocked_settings.ai_cloud_in_local_display = True

@@ -20,5 +20,11 @@ assert.match(
   /shouldAutomaticallyRetrySpo2\(data\) && !automaticRetryRef\.current/,
   "the existing one-shot retry for a real heart-rate reading with missing SpO2 must remain"
 );
+assert.doesNotMatch(vitals, /上次测量结果/, "the kiosk must present demo fallback through the normal result UI");
+assert.doesNotMatch(
+  vitals,
+  /已调取最近一次完整记录/,
+  "the kiosk must not expose the internal historical fallback message"
+);
 
 console.log("vitals retry policy contract: ok");

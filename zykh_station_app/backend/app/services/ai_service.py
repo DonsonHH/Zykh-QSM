@@ -138,7 +138,7 @@ class AiService:
             return self._local_model_reply(message, "当前为离线模式。")
         if not key:
             return self._local_model_reply(message, "未配置云端密钥。")
-        if settings.ai_mode == "auto" and not self._cloud_reachable():
+        if not self._should_attempt_cloud():
             return self._local_model_reply(message, "当前未检测到可用云端网络。")
 
         payload = {
@@ -197,7 +197,7 @@ class AiService:
             local_reason = "当前为离线模式。"
         elif not key:
             local_reason = "未配置云端密钥。"
-        elif settings.ai_mode == "auto" and not self._cloud_reachable():
+        elif not self._should_attempt_cloud():
             local_reason = "当前未检测到可用云端网络。"
         if local_reason:
             yield from self._stream_local(message, context, local_reason)
@@ -329,7 +329,7 @@ class AiService:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
         if not key:
             return self._offline_inquiry_extract(transcript, existing, profile, "未配置云端密钥。")
-        if settings.ai_mode == "auto" and not self._cloud_reachable():
+        if not self._should_attempt_cloud():
             return self._offline_inquiry_extract(transcript, existing, profile, "云端网络不可用。")
         environment_context = self.weather_context.inquiry_context(transcript, existing)
         if environment_context:
@@ -405,7 +405,7 @@ class AiService:
         if self._use_local_ai_runtime():
             return self._offline_inquiry_rank(system_prompt, user_prompt, context, candidates, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
+        if not key or not self._should_attempt_cloud():
             return self._offline_inquiry_rank(
                 system_prompt, user_prompt, context, candidates, "云端排序不可用。"
             )
@@ -889,7 +889,7 @@ class AiService:
         if self._use_local_ai_runtime():
             return self._offline_recommendation(system_prompt, user_prompt, option_ids, context, "")
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if not key or (settings.ai_mode == "auto" and not self._cloud_reachable()):
+        if not key or not self._should_attempt_cloud():
             return self._offline_recommendation(
                 system_prompt, user_prompt, option_ids, context, "云端当前不可用。"
             )
@@ -995,7 +995,7 @@ class AiService:
         if self._use_local_ai_runtime():
             return {"ok": False, "source": "assistant"}
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        if not key or not self._cloud_reachable():
+        if not key or not self._should_attempt_cloud():
             return {"ok": False, "source": "assistant"}
 
         system_prompt = (
@@ -2012,6 +2012,15 @@ class AiService:
     @staticmethod
     def _network_local_mode() -> bool:
         return db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() in {"local", "offline"}
+
+    def _should_attempt_cloud(self) -> bool:
+        if settings.ai_mode != "auto":
+            return True
+        if self._network_local_mode() and bool(
+            getattr(settings, "ai_cloud_in_local_display", False)
+        ):
+            return True
+        return self._cloud_reachable()
 
     def _use_local_ai_runtime(self) -> bool:
         if settings.ai_mode == "local":

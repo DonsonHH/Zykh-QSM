@@ -28,8 +28,6 @@ import { InquiryInformationReview } from "../components/InquiryInformationReview
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
-import { offlineReplyDelayMs } from "../utils/inquiryTiming.js";
-import { isLocalNetworkMode } from "../utils/network.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
@@ -144,15 +142,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       spo2
     };
   }, [displayedUser, session]);
-  const waitForReplyPresentation = useCallback((data) => {
-    const delayMs = offlineReplyDelayMs(
-      data?.source,
-      isLocalNetworkMode(networkStatus)
-    );
-    if (delayMs <= 0) return Promise.resolve();
-    return new Promise((resolve) => window.setTimeout(resolve, delayMs));
-  }, [networkStatus]);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -210,8 +199,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       service_user_id: selectedUserId,
       guest_name: guestUser?.name || "访客"
     })
-      .then(async (data) => {
-        await waitForReplyPresentation(data);
+      .then((data) => {
         if (!mountedRef.current || creatingRef.current !== creationToken) return;
         setSession(data);
         setSessionId(data.session_id);
@@ -226,7 +214,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       .finally(() => {
         if (creatingRef.current === creationToken) creatingRef.current = false;
       });
-  }, [guestUser, identityConfirmed, selectedUserId, sessionId, waitForReplyPresentation]);
+  }, [guestUser, identityConfirmed, selectedUserId, sessionId]);
 
   function refreshUsers() {
     return loadServiceUsers().then((data) => setServiceUsers(data.users || [])).catch(() => setServiceUsers([]));
@@ -264,7 +252,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setSending(true);
     try {
       const data = await sendInquiryTurn(sessionId, transcript);
-      await waitForReplyPresentation(data);
       if (!mountedRef.current) return;
       handleSessionUpdate(data);
     } catch (error) {
@@ -314,7 +301,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         hrv_rmssd: vitals.hrv_rmssd || null,
         measured_at: vitals.measured_at || new Date().toISOString()
       });
-      await waitForReplyPresentation(updated);
       if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
@@ -323,7 +309,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     } finally {
       setAttachingVitals(false);
     }
-  }, [attachingVitals, notify, sessionId, waitForReplyPresentation]);
+  }, [attachingVitals, notify, sessionId]);
 
   const handleVitalsExit = useCallback(async (outcome) => {
     if (!sessionId || attachingVitals) return;
@@ -334,7 +320,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         error_message: outcome?.error_message || "",
         measured_at: new Date().toISOString()
       });
-      await waitForReplyPresentation(updated);
       if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
@@ -344,7 +329,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     } finally {
       setAttachingVitals(false);
     }
-  }, [attachingVitals, notify, sessionId, waitForReplyPresentation]);
+  }, [attachingVitals, notify, sessionId]);
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
     if (!sessionId || openingTreatmentRef.current) return;
@@ -415,7 +400,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
           ...information,
           finalize: resultReady
         });
-        await waitForReplyPresentation(updated);
         if (!mountedRef.current) return;
         handleSessionUpdate(updated);
         setRevisingResult(false);
