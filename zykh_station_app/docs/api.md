@@ -206,6 +206,25 @@ Starts a QSM measurement session. A successful response requires `hardware_start
 
 Returns the real device stage: `starting`, `waiting_finger`, `stabilizing`, `complete`, `failed` or `cancelled`. `complete` requires heart rate, SpO2 and forehead temperature; auxiliary values are optional.
 
+Session responses preserve device diagnostics instead of collapsing every failure
+into one message:
+
+- `stable_core` and `communication_status` distinguish stable measurements,
+  healthy UART traffic with zero algorithm values, and gateway transport loss;
+- `valid_frame_count`, `contact_frame_count`, `heart_rate_frame_count`,
+  `spo2_frame_count`, `first_heart_rate_frame` and `first_spo2_frame` describe
+  the received sample window;
+- `prewarmed`, `prewarm_age`, `minimum_measurement_seconds` and
+  `spo2_stabilization_extended` describe session timing decisions;
+- `temperature_source`, `heart_rate_source` and `spo2_source` distinguish
+  live sensors, demo fallback and historical fallback;
+- `failure_reason` provides a stable machine-readable failure category such as
+  `no_finger`, `no_protocol_frames`, `temperature_unavailable`,
+  `transport_error` or `session_not_found`, while `error_message` remains the
+  user-facing explanation;
+- `cancel_reason=replaced` identifies a session stopped by a newer measurement;
+  normal cancellation leaves `failure_reason` unset.
+
 ### POST /api/vitals/session/{session_id}/cancel
 
 Cancels the session and causes the board reader to send stop byte `0x2A`.

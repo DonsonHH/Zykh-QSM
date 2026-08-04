@@ -233,6 +233,94 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertEqual(payload["spo2_percent"], 98)
         self.assertTrue(payload["finger_detected"])
 
+    def test_timeout_with_valid_zero_frames_reports_no_finger_instead_of_transport_failure(self) -> None:
+        no_finger = frame(
+            heart_rate=0,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            started = threading.Event()
+            stopped = threading.Event()
+
+            def emulate_sensor() -> None:
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 3
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            if 0x24 in os.read(master_fd, 128):
+                                started.set()
+                        except OSError:
+                            break
+                    now = time.monotonic()
+                    if not started.is_set() or now - last_frame_at < 0.08:
+                        continue
+                    try:
+                        os.write(master_fd, no_finger)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_sensor, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            started_at = time.monotonic()
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "1",
+                        "--stabilization-grace",
+                        "0",
+                        "--spo2-grace",
+                        "0",
+                        "--minimum-measurement-seconds",
+                        "0",
+                        "--minimum-contact-seconds",
+                        "0",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=4,
+                )
+                elapsed = time.monotonic() - started_at
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertGreaterEqual(elapsed, 0.9)
+        self.assertEqual(payload["status"], "awaiting_finger")
+        self.assertFalse(payload["stable_core"])
+        self.assertFalse(payload["finger_detected"])
+        self.assertEqual(payload["communication_status"], "receiving_protocol_frames")
+        self.assertGreater(payload["valid_frame_count"], 0)
+        self.assertEqual(payload["heart_rate_frame_count"], 0)
+        self.assertEqual(payload["spo2_frame_count"], 0)
+
     def test_extends_only_after_contact_when_spo2_needs_more_time(self) -> None:
         no_finger = frame(
             heart_rate=0,

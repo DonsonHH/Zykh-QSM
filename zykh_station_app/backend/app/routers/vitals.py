@@ -120,6 +120,12 @@ def _reuse_previous_core_vitals(response: VitalsSessionResponse) -> VitalsSessio
             "temperature": response.temperature or previous.temperature,
             "heart_rate": previous.heart_rate,
             "spo2": previous.spo2,
+            "temperature_source": (
+                response.temperature_source
+                or ("gy614_sensor" if response.temperature is not None else "history_fallback")
+            ),
+            "heart_rate_source": "history_fallback",
+            "spo2_source": "history_fallback",
             "source": "history_fallback",
             "quality": "history_fallback",
             "message": "本次手指信号未稳定，已显示上次完整测量结果。",

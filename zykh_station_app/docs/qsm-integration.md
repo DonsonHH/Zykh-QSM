@@ -156,6 +156,16 @@ The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, val
 
 The 8085 gateway owns one measurement session at a time. It runs UART8 and GY-614 reads concurrently and retries the UART start sequence once only when no valid protocol frame appears after two seconds. The module vendor specifies 5–10 seconds for the initial algorithm result and about 1.28 seconds for later updates. The gateway therefore targets 8 seconds of cumulative cold-start stabilization: time already spent in `/api/vitals/prepare` is deducted, while a user-started measurement always keeps at least 3 seconds for two update periods. A real contact/heart-rate signal opens a 12-second adaptive stabilization window. Two heart-rate and two SpO2 values must occur in the recent signal window; old isolated values cannot complete a session. If heart rate is already stable while SpO2 is still zero, one targeted 8-second SpO2 grace window is allowed. Sessions with no heart-rate signal are not extended. `communication_status=receiving_protocol_frames` distinguishes a healthy UART transport with zero algorithm values from `no_protocol_frames`. Heart rate, SpO2 and forehead temperature are all required for `complete`; blood pressure and HRV are never synthesized and do not delay completion. Each cold session sends `0x2A`, clears stale UART input, then sends `0x24`; a prepared session keeps the running algorithm and flushes only stale input. Cancellation, completion and read failure all stop the module with `0x2A`.
 
+The session interface carries diagnostics end to end. `stable_core`, frame counts,
+first-valid-frame positions, prewarm timing, SpO2 extension state and
+`communication_status` remain visible through FastAPI. Metric provenance uses
+`gy614_sensor`, `uart8_sensor`, `demo_fallback` and `history_fallback`; host-to-gateway
+transport failures use `failure_reason=transport_error`, and a replaced session retains
+`cancel_reason=replaced`. Normal cancellation uses `cancel_reason` only and leaves
+`failure_reason` unset; a UART stop failure remains attached to the cancelled session
+instead of being cleared. These fields are observational in phase one: they do not
+yet change retry, timeout, fallback or completion policy.
+
 ## Supported adapter methods
 
 - `health_check()`

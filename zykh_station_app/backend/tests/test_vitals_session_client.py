@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -24,14 +25,24 @@ from app.services.qsm_client import QsmClient  # noqa: E402
 class _SessionHandler(BaseHTTPRequestHandler):
     cancelled = False
     start_payload = None
+    start_response_payload = None
     status_payload = None
+    drop_start_requests = 0
+    drop_cancel_requests = 0
+    drop_status_requests = 0
+    status_delay_seconds = 0.0
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/vitals/session/start":
+            if type(self).drop_start_requests > 0:
+                type(self).drop_start_requests -= 1
+                self.close_connection = True
+                return
             content_length = int(self.headers.get("Content-Length", "0"))
             type(self).start_payload = json.loads(self.rfile.read(content_length) or b"{}")
             self._json(
-                {
+                type(self).start_response_payload
+                or {
                     "ok": True,
                     "session_id": "session-123",
                     "status": "starting",
@@ -42,6 +53,10 @@ class _SessionHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path.startswith("/api/vitals/session/cancel"):
+            if type(self).drop_cancel_requests > 0:
+                type(self).drop_cancel_requests -= 1
+                self.close_connection = True
+                return
             type(self).cancelled = True
             self._json(
                 {
@@ -56,6 +71,14 @@ class _SessionHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.startswith("/api/vitals/session/status"):
+            if type(self).drop_status_requests > 0:
+                type(self).drop_status_requests -= 1
+                self.close_connection = True
+                return
+            if type(self).status_delay_seconds > 0:
+                delay = type(self).status_delay_seconds
+                type(self).status_delay_seconds = 0.0
+                time.sleep(delay)
             self._json(
                 type(self).status_payload
                 or {
@@ -89,7 +112,10 @@ class _SessionHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -100,7 +126,16 @@ class VitalsSessionClientTest(unittest.TestCase):
         handler = type(
             "SessionHandler",
             (_SessionHandler,),
-            {"cancelled": False, "start_payload": None, "status_payload": None},
+            {
+                "cancelled": False,
+                "start_payload": None,
+                "start_response_payload": None,
+                "status_payload": None,
+                "drop_start_requests": 0,
+                "drop_cancel_requests": 0,
+                "drop_status_requests": 0,
+                "status_delay_seconds": 0.0,
+            },
         )
         self.handler = handler
         self.server = HTTPServer(("127.0.0.1", 0), handler)
@@ -124,6 +159,34 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertEqual(result["status"], "starting")
         self.assertEqual(result["session_id"], "session-123")
         self.assertEqual(self.handler.start_payload, {"replace_active": True})
+
+    def test_start_transport_failure_exposes_machine_readable_diagnostics(self) -> None:
+        self.handler.drop_start_requests = 1
+
+        result = self.client.start_vitals_session()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["communication_status"], "gateway_unreachable")
+        self.assertEqual(result["failure_reason"], "transport_error")
+
+    def test_start_rejection_preserves_gateway_failure_diagnostics(self) -> None:
+        self.handler.start_response_payload = {
+            "ok": False,
+            "session_id": "session-rejected",
+            "status": "failed",
+            "hardware_started": False,
+            "communication_status": "gateway_available",
+            "failure_reason": "hardware_start_timeout",
+            "error_message": "hardware did not acknowledge start",
+        }
+
+        result = self.client.start_vitals_session()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["session_id"], "session-rejected")
+        self.assertEqual(result["communication_status"], "gateway_available")
+        self.assertEqual(result["failure_reason"], "hardware_start_timeout")
 
     def test_status_preserves_core_and_optional_metrics(self) -> None:
         result = self.client.get_vitals_session("session-123")
@@ -169,6 +232,8 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertGreaterEqual(result["spo2"], 95)
         self.assertLessEqual(result["spo2"], 99)
         self.assertTrue(result["spo2_demo_fallback"])
+        self.assertEqual(result["temperature_source"], "gy614_sensor")
+        self.assertEqual(result["heart_rate_source"], "uart8_sensor")
         self.assertEqual(result["spo2_source"], "demo_fallback")
 
     def test_cancel_calls_board_session_gateway(self) -> None:
@@ -176,6 +241,43 @@ class VitalsSessionClientTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "cancelled")
         self.assertTrue(self.handler.cancelled)
+
+    def test_cancel_transport_failure_exposes_machine_readable_diagnostics(self) -> None:
+        self.handler.drop_cancel_requests = 1
+
+        result = self.client.cancel_vitals_session("session-123")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["session_id"], "session-123")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["communication_status"], "gateway_unreachable")
+        self.assertEqual(result["failure_reason"], "transport_error")
+
+    def test_transient_status_disconnect_is_classified_without_losing_next_result(self) -> None:
+        self.handler.drop_status_requests = 1
+
+        interrupted = self.client.get_vitals_session("session-123")
+        recovered = self.client.get_vitals_session("session-123")
+
+        self.assertFalse(interrupted["ok"])
+        self.assertEqual(interrupted["status"], "failed")
+        self.assertEqual(interrupted["communication_status"], "gateway_unreachable")
+        self.assertEqual(interrupted["failure_reason"], "transport_error")
+        self.assertIn("暂不可用", interrupted["error_message"])
+        self.assertEqual(recovered["status"], "complete")
+        self.assertEqual(recovered["heart_rate"], 74)
+
+    def test_status_timeout_is_classified_and_keeps_session_identity(self) -> None:
+        self.handler.status_delay_seconds = 3.2
+
+        result = self.client.get_vitals_session("session-123")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["session_id"], "session-123")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["communication_status"], "gateway_unreachable")
+        self.assertEqual(result["failure_reason"], "transport_error")
+        self.assertIn("超时", result["error_message"])
 
     def test_mock_session_is_complete_with_three_core_values(self) -> None:
         started = QsmClient(mode="mock").start_vitals_session()
@@ -230,6 +332,76 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         self.assertEqual(sync_status.sync_status, "待同步")
         self.assertEqual(sync_status.pending_count, 1)
 
+    def test_session_response_preserves_gateway_diagnostics_and_provenance(self) -> None:
+        payload = {
+            "ok": True,
+            "mode": "real",
+            "session_id": "session-diagnostics",
+            "status": "complete",
+            "hardware_started": True,
+            "temperature": 36.6,
+            "heart_rate": 72,
+            "spo2": 98,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "uart8_sensor",
+            "stable_core": True,
+            "communication_status": "receiving_protocol_frames",
+            "valid_frame_count": 8,
+            "contact_frame_count": 6,
+            "heart_rate_frame_count": 5,
+            "spo2_frame_count": 4,
+            "first_heart_rate_frame": 3,
+            "first_spo2_frame": 5,
+            "spo2_stabilization_extended": True,
+            "prewarmed": True,
+            "prewarm_age": 2.4,
+            "minimum_measurement_seconds": 5.6,
+            "failure_reason": None,
+            "source": "UART8-vitals-24B+GY-614",
+            "measured_at": "2026-08-04T21:00:00+08:00",
+        }
+
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            response = get_vitals_session("session-diagnostics")
+
+        self.assertTrue(response.stable_core)
+        self.assertEqual(response.communication_status, "receiving_protocol_frames")
+        self.assertEqual(response.valid_frame_count, 8)
+        self.assertEqual(response.contact_frame_count, 6)
+        self.assertEqual(response.heart_rate_frame_count, 5)
+        self.assertEqual(response.spo2_frame_count, 4)
+        self.assertEqual(response.first_heart_rate_frame, 3)
+        self.assertEqual(response.first_spo2_frame, 5)
+        self.assertTrue(response.spo2_stabilization_extended)
+        self.assertTrue(response.prewarmed)
+        self.assertEqual(response.prewarm_age, 2.4)
+        self.assertEqual(response.minimum_measurement_seconds, 5.6)
+        self.assertEqual(response.temperature_source, "gy614_sensor")
+        self.assertEqual(response.heart_rate_source, "uart8_sensor")
+        self.assertEqual(response.spo2_source, "uart8_sensor")
+        self.assertIsNone(response.failure_reason)
+
+    def test_replaced_session_preserves_cancel_reason(self) -> None:
+        payload = {
+            "ok": True,
+            "mode": "real",
+            "session_id": "session-replaced",
+            "status": "cancelled",
+            "hardware_started": False,
+            "communication_status": "receiving_protocol_frames",
+            "cancel_reason": "replaced",
+            "updated_at": "2026-08-04T21:00:00+08:00",
+        }
+
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            response = get_vitals_session("session-replaced")
+
+        self.assertEqual(response.status, "cancelled")
+        self.assertEqual(response.cancel_reason, "replaced")
+
     def test_unstable_finger_signal_reuses_last_complete_core_without_persisting(self) -> None:
         VitalsRepository().append(
             VitalsRecord(
@@ -251,6 +423,7 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
             "temperature": 36.6,
             "heart_rate": None,
             "spo2": None,
+            "temperature_source": "gy614_sensor",
             "source": "UART-vitals",
             "error_message": "手指信号未稳定。",
         }
@@ -264,6 +437,9 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         self.assertEqual(response.temperature, 36.6)
         self.assertEqual(response.heart_rate, 75)
         self.assertEqual(response.spo2, 98)
+        self.assertEqual(response.temperature_source, "gy614_sensor")
+        self.assertEqual(response.heart_rate_source, "history_fallback")
+        self.assertEqual(response.spo2_source, "history_fallback")
         self.assertTrue(response.historical_fallback)
         self.assertEqual(response.historical_measured_at, "2026-07-20T10:20:00+08:00")
         self.assertEqual(VitalsRepository().count(), 1)

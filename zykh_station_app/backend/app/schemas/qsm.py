@@ -60,6 +60,8 @@ class VitalsSessionResponse(BaseModel):
     temperature: float | None = None
     heart_rate: int | None = None
     spo2: int | None = None
+    temperature_source: str | None = None
+    heart_rate_source: str | None = None
     spo2_source: str | None = None
     spo2_demo_fallback: bool | None = None
     systolic_pressure: int | None = None
@@ -81,7 +83,17 @@ class VitalsSessionResponse(BaseModel):
     contact_frame_count: int | None = None
     heart_rate_frame_count: int | None = None
     spo2_frame_count: int | None = None
+    first_heart_rate_frame: int | None = None
+    first_spo2_frame: int | None = None
+    stable_core: bool | None = None
+    communication_status: str | None = None
     stabilization_extended: bool | None = None
+    spo2_stabilization_extended: bool | None = None
+    prewarmed: bool | None = None
+    prewarm_age: float | None = None
+    minimum_measurement_seconds: float | None = None
+    failure_reason: str | None = None
+    cancel_reason: str | None = None
     source: str | None = None
     started_at: str | None = None
     updated_at: str | None = None
