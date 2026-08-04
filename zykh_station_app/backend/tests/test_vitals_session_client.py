@@ -332,6 +332,35 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         self.assertEqual(sync_status.sync_status, "待同步")
         self.assertEqual(sync_status.pending_count, 1)
 
+    def test_demo_spo2_session_is_not_persisted_or_marked_for_sync(self) -> None:
+        payload = {
+            "ok": True,
+            "mode": "real",
+            "session_id": "session-demo-spo2",
+            "status": "complete",
+            "hardware_started": True,
+            "temperature": 36.6,
+            "heart_rate": 72,
+            "spo2": 97,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "demo_fallback",
+            "spo2_demo_fallback": True,
+            "source": "UART8-vitals-24B+GY-614",
+            "measured_at": "2026-08-05T00:12:00+08:00",
+        }
+
+        with patch("app.routers.vitals.QsmClient") as client_class:
+            client_class.return_value.get_vitals_session.return_value = payload
+            response = get_vitals_session("session-demo-spo2")
+
+        self.assertEqual(response.status, "complete")
+        self.assertEqual(response.spo2_source, "demo_fallback")
+        self.assertTrue(response.spo2_demo_fallback)
+        self.assertEqual(VitalsRepository().count(), 0)
+        sync_status = SyncRepository().get_status()
+        self.assertEqual(sync_status.pending_count, 0)
+
     def test_session_response_preserves_gateway_diagnostics_and_provenance(self) -> None:
         payload = {
             "ok": True,
@@ -402,7 +431,7 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         self.assertEqual(response.status, "cancelled")
         self.assertEqual(response.cancel_reason, "replaced")
 
-    def test_unstable_finger_signal_reuses_last_complete_core_without_persisting(self) -> None:
+    def test_unstable_finger_signal_attaches_history_without_completing_session(self) -> None:
         VitalsRepository().append(
             VitalsRecord(
                 id="previous-complete",
@@ -432,17 +461,23 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
             client_class.return_value.get_vitals_session.return_value = payload
             response = get_vitals_session("session-unstable-finger")
 
-        self.assertTrue(response.ok)
-        self.assertEqual(response.status, "complete")
+        self.assertFalse(response.ok)
+        self.assertEqual(response.status, "failed")
         self.assertEqual(response.temperature, 36.6)
-        self.assertEqual(response.heart_rate, 75)
-        self.assertEqual(response.spo2, 98)
+        self.assertIsNone(response.heart_rate)
+        self.assertIsNone(response.spo2)
         self.assertEqual(response.temperature_source, "gy614_sensor")
-        self.assertEqual(response.heart_rate_source, "history_fallback")
-        self.assertEqual(response.spo2_source, "history_fallback")
+        self.assertIsNone(response.heart_rate_source)
+        self.assertIsNone(response.spo2_source)
         self.assertTrue(response.historical_fallback)
+        self.assertEqual(response.historical_temperature, 36.4)
+        self.assertEqual(response.historical_heart_rate, 75)
+        self.assertEqual(response.historical_spo2, 98)
+        self.assertEqual(response.historical_source, "UART-vitals")
         self.assertEqual(response.historical_measured_at, "2026-07-20T10:20:00+08:00")
+        self.assertEqual(response.error_message, "手指信号未稳定。")
         self.assertEqual(VitalsRepository().count(), 1)
+        self.assertEqual(SyncRepository().get_status().pending_count, 0)
 
     def test_unstable_finger_signal_stays_failed_without_history(self) -> None:
         payload = {

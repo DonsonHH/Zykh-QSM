@@ -269,7 +269,10 @@ class CloudSyncWorker:
                        respiratory_rate, microcirculation, fatigue, rr_interval, hrv_sdnn, hrv_rmssd,
                        body_temperature, ambient_temperature, status, source, sensor_model,
                        error_message, measured_at
-                FROM vitals_records ORDER BY measured_at DESC LIMIT 100
+                FROM vitals_records
+                WHERE source NOT LIKE '%SpO2-demo%'
+                  AND sensor_model NOT LIKE '%SpO2-demo%'
+                ORDER BY measured_at DESC LIMIT 100
                 """
             ).fetchall()
         vitals = []

@@ -100,6 +100,10 @@ class VitalsSessionResponse(BaseModel):
     measured_at: str | None = None
     error_message: str | None = None
     historical_fallback: bool = False
+    historical_temperature: float | None = None
+    historical_heart_rate: int | None = None
+    historical_spo2: int | None = None
+    historical_source: str | None = None
     historical_measured_at: str | None = None
 
 

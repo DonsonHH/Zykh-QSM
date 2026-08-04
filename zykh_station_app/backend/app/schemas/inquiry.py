@@ -101,6 +101,10 @@ class InquiryVitalsRequest(BaseModel):
     temperature: float | None = Field(default=None, gt=0, lt=50)
     heart_rate: int | None = Field(default=None, gt=0, lt=260)
     spo2: int | None = Field(default=None, gt=0, le=100)
+    temperature_source: str | None = None
+    heart_rate_source: str | None = None
+    spo2_source: str | None = None
+    spo2_demo_fallback: bool = False
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None
@@ -111,6 +115,10 @@ class InquiryVitalsRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_core_vitals_when_complete(self) -> "InquiryVitalsRequest":
+        if self.status == "complete" and (
+            self.spo2_demo_fallback or self.spo2_source == "demo_fallback"
+        ):
+            raise ValueError("演示血氧不得作为完成的问询体征保存。")
         if self.status == "complete" and (
             self.temperature is None or self.heart_rate is None or self.spo2 is None
         ):

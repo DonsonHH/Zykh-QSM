@@ -16,6 +16,7 @@
     "test:inquiry-offline": "node scripts/test-inquiry-reply-streaming.mjs",
     "test:vitals-prewarm": "node scripts/test-vitals-prewarm.mjs",
     "test:vitals-retry-policy": "node scripts/test-vitals-retry-policy.mjs",
+    "test:vitals-history": "node scripts/test-vitals-history-display.mjs",
     "test:network-display": "node scripts/test-network-display-mode.mjs",
     "test:scan-layout": "node scripts/test-scan-layout.mjs",
     "build": "vite build",

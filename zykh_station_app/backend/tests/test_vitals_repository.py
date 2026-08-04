@@ -82,6 +82,43 @@ class VitalsRepositoryTest(unittest.TestCase):
         self.assertIsNotNone(latest)
         self.assertEqual(latest.id, "complete")
 
+    def test_latest_complete_core_skips_legacy_demo_spo2_record(self) -> None:
+        original_path = settings.db_path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            object.__setattr__(settings, "db_path", Path(temp_dir) / "station.db")
+            try:
+                repository = VitalsRepository()
+                repository.append(
+                    VitalsRecord(
+                        id="real-complete",
+                        temperature=36.5,
+                        heart_rate=73,
+                        spo2=97,
+                        status="available",
+                        source="UART8-vitals-24B+GY-614",
+                        measured_at="2026-07-14 10:00:00",
+                    )
+                )
+                repository.append(
+                    VitalsRecord(
+                        id="legacy-demo",
+                        temperature=36.6,
+                        heart_rate=74,
+                        spo2=98,
+                        status="available",
+                        source="UART8-vitals-24B+GY-614+SpO2-demo",
+                        sensor_model="UART8-vitals-24B+GY-614+SpO2-demo",
+                        measured_at="2026-07-14 10:02:00",
+                    )
+                )
+
+                latest = repository.latest_complete_core()
+            finally:
+                object.__setattr__(settings, "db_path", original_path)
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.id, "real-complete")
+
 
 if __name__ == "__main__":
     unittest.main()

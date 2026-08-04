@@ -116,6 +116,17 @@ class FakeGuestArchiveService:
 
 
 class InquiryOrchestratorTest(unittest.TestCase):
+    def test_demo_spo2_cannot_be_attached_as_complete_inquiry_vitals(self) -> None:
+        with self.assertRaisesRegex(ValueError, "演示血氧"):
+            InquiryVitalsRequest(
+                status="complete",
+                temperature=36.6,
+                heart_rate=72,
+                spo2=97,
+                spo2_source="demo_fallback",
+                spo2_demo_fallback=True,
+            )
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "inquiry.db"

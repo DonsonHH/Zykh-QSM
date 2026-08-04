@@ -24,6 +24,41 @@ def _present_legacy_reply(content: str, source: str) -> tuple[str, str]:
     return content, source
 
 
+def _present_stored_vitals(conn, payload: str) -> dict[str, object] | None:
+    if not payload:
+        return None
+    vitals = json.loads(payload)
+    if vitals.get("status") != "complete":
+        return vitals
+    core = (
+        vitals.get("measured_at"),
+        vitals.get("temperature"),
+        vitals.get("heart_rate"),
+        vitals.get("spo2"),
+    )
+    if any(value is None or value == "" for value in core):
+        return vitals
+    legacy_demo = conn.execute(
+        """
+        SELECT 1
+        FROM vitals_records
+        WHERE (source LIKE '%SpO2-demo%' OR sensor_model LIKE '%SpO2-demo%')
+          AND measured_at=? AND temperature=? AND heart_rate=? AND spo2=?
+        LIMIT 1
+        """,
+        core,
+    ).fetchone()
+    if legacy_demo is None:
+        return vitals
+    return {
+        "status": "failed",
+        "spo2_source": "demo_fallback",
+        "spo2_demo_fallback": True,
+        "measured_at": vitals["measured_at"],
+        "error_message": "历史问询中的演示血氧已隔离，不作为真实测量使用。",
+    }
+
+
 class InquiryRepository:
     def list_records(self) -> list[InquiryResult]:
         db.init_db()
@@ -165,6 +200,7 @@ class InquiryRepository:
             row = conn.execute("SELECT * FROM inquiry_sessions WHERE session_id=?", (session_id,)).fetchone()
             if row is None:
                 return None
+            vitals = _present_stored_vitals(conn, row["vitals_json"])
             message_rows = conn.execute(
                 """
                 SELECT id, role, content, source, created_at
@@ -199,7 +235,7 @@ class InquiryRepository:
             model_action_intent=values.get("model_action_intent", "ask") or "ask",
             action_reason=values.get("action_reason", ""),
             extracted_information=json.loads(values["extracted_json"] or "{}"),
-            vitals=json.loads(values["vitals_json"]) if values["vitals_json"] else None,
+            vitals=vitals,
             risk_level=values["risk_level"] or None,
             risk_reasons=json.loads(values["risk_reasons_json"] or "[]"),
             next_action=values["next_action"],

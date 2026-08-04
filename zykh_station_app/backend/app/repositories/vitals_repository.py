@@ -127,6 +127,8 @@ class VitalsRepository:
                   AND temperature IS NOT NULL AND temperature > 0
                   AND heart_rate IS NOT NULL AND heart_rate > 0
                   AND spo2 IS NOT NULL AND spo2 > 0
+                  AND source NOT LIKE '%SpO2-demo%'
+                  AND sensor_model NOT LIKE '%SpO2-demo%'
                 ORDER BY measured_at DESC
                 LIMIT 1
                 """

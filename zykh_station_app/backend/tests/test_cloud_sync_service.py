@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
+from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.cloud_sync_service import CloudSyncError, CloudSyncWorker  # noqa: E402
 
 
@@ -152,6 +154,91 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(row["target_user_name"], "张三")
         self.assertEqual(row["symptoms_summary"], "轻微头晕")
         self.assertEqual(row["updatedAt"], "2026-07-19 08:03:00")
+
+    def test_snapshot_excludes_legacy_demo_spo2_records(self) -> None:
+        repository = VitalsRepository()
+        repository.append(
+            VitalsRecord(
+                id="real-vitals",
+                temperature=36.5,
+                heart_rate=73,
+                spo2=97,
+                status="available",
+                source="UART8-vitals-24B+GY-614",
+                measured_at="2026-07-14 10:00:00",
+            )
+        )
+        repository.append(
+            VitalsRecord(
+                id="legacy-demo-vitals",
+                temperature=36.6,
+                heart_rate=74,
+                spo2=98,
+                status="available",
+                source="UART8-vitals-24B+GY-614+SpO2-demo",
+                sensor_model="UART8-vitals-24B+GY-614+SpO2-demo",
+                measured_at="2026-07-14 10:02:00",
+            )
+        )
+
+        snapshot = CloudSyncWorker._build_snapshot()
+
+        self.assertEqual([row["id"] for row in snapshot["vitals"]], ["real-vitals"])
+
+    def test_snapshot_quarantines_legacy_inquiry_vitals_linked_to_demo_spo2(self) -> None:
+        measured_at = "2026-07-14T10:02:00+08:00"
+        VitalsRepository().append(
+            VitalsRecord(
+                id="legacy-demo-vitals",
+                temperature=36.6,
+                heart_rate=74,
+                spo2=98,
+                status="available",
+                source="UART8-vitals-24B+GY-614+SpO2-demo",
+                sensor_model="UART8-vitals-24B+GY-614+SpO2-demo",
+                measured_at=measured_at,
+            )
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inquiry_sessions(
+                  session_id, user_name, stage, reply, source, vitals_json,
+                  next_action, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-demo-inquiry",
+                    "访客",
+                    "result",
+                    "问询已完成",
+                    "cloud",
+                    json.dumps(
+                        {
+                            "status": "complete",
+                            "temperature": 36.6,
+                            "heart_rate": 74,
+                            "spo2": 98,
+                            "measured_at": measured_at,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "show_recommendation",
+                    "历史问询",
+                    measured_at,
+                    measured_at,
+                ),
+            )
+
+        snapshot = CloudSyncWorker._build_snapshot()
+
+        inquiry = next(row for row in snapshot["inquiries"] if row["inquiry_id"] == "legacy-demo-inquiry")
+        self.assertEqual(inquiry["vitals"]["status"], "failed")
+        self.assertEqual(inquiry["vitals"]["spo2_source"], "demo_fallback")
+        self.assertTrue(inquiry["vitals"]["spo2_demo_fallback"])
+        self.assertNotIn("temperature", inquiry["vitals"])
+        self.assertNotIn("heart_rate", inquiry["vitals"])
+        self.assertNotIn("spo2", inquiry["vitals"])
 
     def test_ack_failure_never_reexecutes_completed_hardware_command(self) -> None:
         worker = AckFailureWorker()
