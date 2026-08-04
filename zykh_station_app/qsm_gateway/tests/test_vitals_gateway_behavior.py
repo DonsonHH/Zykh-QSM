@@ -243,6 +243,17 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         self.assertEqual(result["communication_status"], "gateway_available")
         self.assertEqual(result["failure_reason"], "session_not_found")
 
+    def test_cancelled_measurement_is_not_classified_as_failure(self) -> None:
+        self.start_gateway("wait")
+
+        started = self.request("POST", "/api/vitals/session/start", {"replace_active": True})
+        cancel_file = self.temp / "gateway" / "data" / f"{started['session_id']}-cancel"
+        cancel_file.write_text("cancel requested", encoding="utf-8")
+        result = self.wait_for_terminal_status(str(started["session_id"]))
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result.get("failure_reason"))
+
     def test_replacing_an_active_session_cancels_the_old_session_with_reason(self) -> None:
         self.start_gateway("wait")
 
@@ -256,6 +267,7 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         self.assertNotEqual(first["session_id"], second["session_id"])
         self.assertEqual(first_status["status"], "cancelled")
         self.assertEqual(first_status["cancel_reason"], "replaced")
+        self.assertIsNone(first_status.get("failure_reason"))
         self.assertFalse(first_status["hardware_started"])
         self.assertTrue(second["hardware_started"])
 
@@ -265,6 +277,7 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
             {"session_id": second["session_id"]},
         )
         self.assertEqual(cancelled["status"], "cancelled")
+        self.assertIsNone(cancelled.get("failure_reason"))
 
     def test_cancel_preserves_uart_stop_failure_diagnostics(self) -> None:
         self.start_gateway("wait", uart_device=str(self.temp / "missing-uart"))

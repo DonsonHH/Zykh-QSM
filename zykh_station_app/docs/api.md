@@ -222,7 +222,8 @@ into one message:
   `no_finger`, `no_protocol_frames`, `temperature_unavailable`,
   `transport_error` or `session_not_found`, while `error_message` remains the
   user-facing explanation;
-- `cancel_reason=replaced` identifies a session stopped by a newer measurement.
+- `cancel_reason=replaced` identifies a session stopped by a newer measurement;
+  normal cancellation leaves `failure_reason` unset.
 
 ### POST /api/vitals/session/{session_id}/cancel
 

@@ -237,7 +237,6 @@ sub run_measurement {
             $error = '心率与血氧已完成，额温未读取，请对准额温传感器后重试。';
         }
     }
-    $failure_reason = 'cancelled' if $cancelled;
     my $state = {
         ok => $complete ? JSON::PP::true : JSON::PP::false,
         mode => 'real',

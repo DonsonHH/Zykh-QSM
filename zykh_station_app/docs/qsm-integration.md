@@ -161,9 +161,10 @@ first-valid-frame positions, prewarm timing, SpO2 extension state and
 `communication_status` remain visible through FastAPI. Metric provenance uses
 `gy614_sensor`, `uart8_sensor`, `demo_fallback` and `history_fallback`; host-to-gateway
 transport failures use `failure_reason=transport_error`, and a replaced session retains
-`cancel_reason=replaced`. A UART stop failure remains attached to the cancelled
-session instead of being cleared. These fields are observational in phase one:
-they do not yet change retry, timeout, fallback or completion policy.
+`cancel_reason=replaced`. Normal cancellation uses `cancel_reason` only and leaves
+`failure_reason` unset; a UART stop failure remains attached to the cancelled session
+instead of being cleared. These fields are observational in phase one: they do not
+yet change retry, timeout, fallback or completion policy.
 
 ## Supported adapter methods
 
