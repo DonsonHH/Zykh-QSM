@@ -166,6 +166,17 @@ transport failures use `failure_reason=transport_error`, and a replaced session 
 instead of being cleared. These fields are observational in phase one: they do not
 yet change retry, timeout, fallback or completion policy.
 
+Phase two adds a data-truth boundary without changing retry or timeout policy.
+`spo2_source=demo_fallback` may still support an explicitly labelled live demo,
+but that session is never written to `vitals_records` or marked for cloud sync.
+Existing records carrying the legacy `SpO2-demo` marker are excluded from cloud
+snapshots and from selection as the previous complete measurement.
+Legacy inquiry vitals that exactly match one of those marked records are exposed
+as a failed, quarantined demo without their numeric readings.
+An unstable current session remains `failed`; the previous complete measurement
+is exposed only through `historical_*` reference fields and is rendered separately
+from the current result.
+
 ## Supported adapter methods
 
 - `health_check()`

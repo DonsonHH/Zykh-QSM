@@ -42,6 +42,10 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
         temperature=_float_or_none(vitals.get("temperature_c")),
         heart_rate=_int_or_none(vitals.get("heart_rate")),
         spo2=_int_or_none(vitals.get("spo2")),
+        temperature_source=_str_or_none(vitals.get("temperature_source")),
+        heart_rate_source=_str_or_none(vitals.get("heart_rate_source")),
+        spo2_source=_str_or_none(vitals.get("spo2_source")),
+        spo2_demo_fallback=_bool_or_none(vitals.get("spo2_demo_fallback")),
         systolic_pressure=_int_or_none(vitals.get("systolic_pressure")),
         diastolic_pressure=_int_or_none(vitals.get("diastolic_pressure")),
         respiratory_rate=_int_or_none(vitals.get("respiratory_rate")),
@@ -63,6 +67,8 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
         measured_at=now_text(),
         error_message=vitals.get("error_message") if isinstance(vitals.get("error_message"), str) else None,
     )
+    if _has_non_real_provenance(response):
+        return response
     VitalsRepository().append(
         VitalsRecord(
             id=f"vitals-{uuid4().hex[:12]}",
@@ -186,6 +192,35 @@ def _float_or_none(value: object) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _str_or_none(value: object) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _has_non_real_provenance(response: QsmVitalsResponse) -> bool:
+    if response.spo2_demo_fallback:
+        return True
+    non_real_sources = {
+        "demo",
+        "mock",
+        "demo_fallback",
+        "history_fallback",
+        "historical_fallback",
+    }
+    provenance = (
+        response.mode,
+        response.source,
+        response.quality,
+        response.temperature_source,
+        response.heart_rate_source,
+        response.spo2_source,
+    )
+    return any(
+        str(value).strip().lower() in non_real_sources
+        for value in provenance
+        if value is not None
+    )
 
 
 def _int_or_none(value: object) -> int | None:

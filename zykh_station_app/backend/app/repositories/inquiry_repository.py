@@ -16,12 +16,55 @@ _LEGACY_TECHNICAL_REPLY_MARKERS = (
     "本地兜底",
 )
 _LEGACY_RETRY_REPLY = "这一轮没有完整整理好，请重新开始问询，并重新说明现在最不舒服的地方。"
+_LEGACY_DEMO_REVIEW_REPLY = "该历史问询包含已隔离的演示体征，原风险和用药结论已失效，请由值守员重新复核。"
+_LEGACY_DEMO_REVIEW_REASON = "历史演示体征已隔离，无法可靠重算原结论。"
 
 
 def _present_legacy_reply(content: str, source: str) -> tuple[str, str]:
     if any(marker in content for marker in _LEGACY_TECHNICAL_REPLY_MARKERS):
         return _LEGACY_RETRY_REPLY, "assistant"
     return content, source
+
+
+def _present_stored_vitals(conn, payload: str) -> tuple[dict[str, object] | None, bool]:
+    if not payload:
+        return None, False
+    vitals = json.loads(payload)
+    if vitals.get("status") != "complete":
+        return vitals, False
+    core = (
+        vitals.get("measured_at"),
+        vitals.get("temperature"),
+        vitals.get("heart_rate"),
+        vitals.get("spo2"),
+    )
+    if any(value is None or value == "" for value in core):
+        return vitals, False
+    legacy_demo = conn.execute(
+        """
+        SELECT 1
+        FROM vitals_records
+        WHERE id LIKE 'vitals-session-%'
+          AND status='available'
+          AND source=sensor_model
+          AND source LIKE '%+SpO2-demo'
+          AND measured_at=? AND temperature=? AND heart_rate=? AND spo2=?
+        LIMIT 1
+        """,
+        core,
+    ).fetchone()
+    if legacy_demo is None:
+        return vitals, False
+    return (
+        {
+            "status": "failed",
+            "spo2_source": "demo_fallback",
+            "spo2_demo_fallback": True,
+            "measured_at": vitals["measured_at"],
+            "error_message": "历史问询中的演示血氧已隔离，不作为真实测量使用。",
+        },
+        True,
+    )
 
 
 class InquiryRepository:
@@ -165,6 +208,7 @@ class InquiryRepository:
             row = conn.execute("SELECT * FROM inquiry_sessions WHERE session_id=?", (session_id,)).fetchone()
             if row is None:
                 return None
+            vitals, legacy_demo_quarantined = _present_stored_vitals(conn, row["vitals_json"])
             message_rows = conn.execute(
                 """
                 SELECT id, role, content, source, created_at
@@ -176,10 +220,19 @@ class InquiryRepository:
             ).fetchall()
         values = dict(row)
         reply, source = _present_legacy_reply(values["reply"], values["source"])
+        extracted_information = json.loads(values["extracted_json"] or "{}")
+        if legacy_demo_quarantined:
+            reply = _LEGACY_DEMO_REVIEW_REPLY
+            source = "legacy_data_quarantine"
+            extracted_information["ai_risk_level"] = None
+            extracted_information["ai_risk_reasons"] = []
         messages = []
         for raw_message in message_rows:
             message = dict(raw_message)
-            if message["role"] == "assistant":
+            if legacy_demo_quarantined and message["role"] != "user":
+                message["content"] = _LEGACY_DEMO_REVIEW_REPLY
+                message["source"] = "legacy_data_quarantine"
+            elif message["role"] == "assistant":
                 message["content"], message["source"] = _present_legacy_reply(
                     message["content"],
                     message["source"],
@@ -192,31 +245,63 @@ class InquiryRepository:
             user_age=values["user_age"],
             user_profile=values["user_profile"],
             user_allergies=values["user_allergies"],
-            stage=values["stage"],
+            stage="escalated" if legacy_demo_quarantined else values["stage"],
             reply=reply,
             source=source,
-            reasoning_summary=values.get("reasoning_summary", ""),
-            model_action_intent=values.get("model_action_intent", "ask") or "ask",
-            action_reason=values.get("action_reason", ""),
-            extracted_information=json.loads(values["extracted_json"] or "{}"),
-            vitals=json.loads(values["vitals_json"]) if values["vitals_json"] else None,
-            risk_level=values["risk_level"] or None,
-            risk_reasons=json.loads(values["risk_reasons_json"] or "[]"),
-            next_action=values["next_action"],
-            primary_candidate=json.loads(values["primary_candidate_json"])
-            if values["primary_candidate_json"]
-            else None,
-            alternative_candidate=json.loads(values["alternative_candidate_json"])
-            if values["alternative_candidate_json"]
-            else None,
-            treatment_options=json.loads(values.get("treatment_options_json") or "[]"),
-            can_view_medicines=bool(values["can_view_medicines"]),
-            selected_option_id=values.get("selected_option_id", ""),
-            action_status=values.get("action_status", "idle") or "idle",
-            action_message=values.get("action_message", ""),
-            action_progress_index=int(values.get("action_progress_index", 0) or 0),
-            action_total_items=int(values.get("action_total_items", 0) or 0),
-            action_items=json.loads(values.get("action_items_json") or "[]"),
+            reasoning_summary=(
+                _LEGACY_DEMO_REVIEW_REASON
+                if legacy_demo_quarantined
+                else values.get("reasoning_summary", "")
+            ),
+            model_action_intent=(
+                "escalate"
+                if legacy_demo_quarantined
+                else values.get("model_action_intent", "ask") or "ask"
+            ),
+            action_reason=(
+                _LEGACY_DEMO_REVIEW_REASON
+                if legacy_demo_quarantined
+                else values.get("action_reason", "")
+            ),
+            extracted_information=extracted_information,
+            vitals=vitals,
+            risk_level=None if legacy_demo_quarantined else values["risk_level"] or None,
+            risk_reasons=(
+                []
+                if legacy_demo_quarantined
+                else json.loads(values["risk_reasons_json"] or "[]")
+            ),
+            next_action="escalate" if legacy_demo_quarantined else values["next_action"],
+            primary_candidate=None
+            if legacy_demo_quarantined or not values["primary_candidate_json"]
+            else json.loads(values["primary_candidate_json"]),
+            alternative_candidate=None
+            if legacy_demo_quarantined or not values["alternative_candidate_json"]
+            else json.loads(values["alternative_candidate_json"]),
+            treatment_options=[]
+            if legacy_demo_quarantined
+            else json.loads(values.get("treatment_options_json") or "[]"),
+            can_view_medicines=False
+            if legacy_demo_quarantined
+            else bool(values["can_view_medicines"]),
+            selected_option_id=""
+            if legacy_demo_quarantined
+            else values.get("selected_option_id", ""),
+            action_status="idle"
+            if legacy_demo_quarantined
+            else values.get("action_status", "idle") or "idle",
+            action_message=""
+            if legacy_demo_quarantined
+            else values.get("action_message", ""),
+            action_progress_index=0
+            if legacy_demo_quarantined
+            else int(values.get("action_progress_index", 0) or 0),
+            action_total_items=0
+            if legacy_demo_quarantined
+            else int(values.get("action_total_items", 0) or 0),
+            action_items=[]
+            if legacy_demo_quarantined
+            else json.loads(values.get("action_items_json") or "[]"),
             messages=messages,
             title=values["title"],
             created_at=values["created_at"],

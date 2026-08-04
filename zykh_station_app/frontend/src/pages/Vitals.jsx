@@ -98,9 +98,16 @@ export function Vitals({
       return undefined;
     }
     completionReportedRef.current = true;
-    completionTimerRef.current = window.setTimeout(() => onComplete?.(result), 1800);
+    const disposition = inquiryVitalsDisposition(result);
+    completionTimerRef.current = window.setTimeout(() => {
+      if (disposition.kind === "complete") {
+        onComplete?.(result);
+        return;
+      }
+      onExit?.(disposition.outcome);
+    }, 1800);
     return () => window.clearTimeout(completionTimerRef.current);
-  }, [coreComplete, embedded, onComplete, phase, result]);
+  }, [coreComplete, embedded, onComplete, onExit, phase, result]);
 
   function applySession(data) {
     setResult(data);
@@ -286,6 +293,7 @@ export function Vitals({
               <span aria-hidden="true"><ShieldCheck size={24} /></span>
               <div><strong>{status.summary}</strong>{status.detail ? <p>{status.detail}</p> : null}</div>
             </div>
+            <HistoricalVitalsReference result={result} />
           </>
         ) : (
           <ResultPlaceholder
@@ -308,6 +316,33 @@ function ResultPlaceholder({ phase, elapsedSeconds, targetSeconds }) {
         <span className="vitals-result-heart"><HeartPulse size={132} strokeWidth={1.65} /></span>
       </div>
       {measuring ? <span className="vitals-measure-progress" aria-hidden="true"><i style={{ transform: `scaleX(${progress})` }} /></span> : null}
+    </div>
+  );
+}
+
+export function HistoricalVitalsReference({ result }) {
+  if (!result?.historical_fallback) return null;
+
+  const readings = [];
+  if (hasReading(result.historical_heart_rate)) {
+    readings.push(`${Math.round(result.historical_heart_rate)}次/分`);
+  }
+  if (hasReading(result.historical_spo2)) {
+    readings.push(`${Math.round(result.historical_spo2)}%`);
+  }
+  if (hasReading(result.historical_temperature)) {
+    readings.push(`${Number(result.historical_temperature).toFixed(1)}℃`);
+  }
+  if (!readings.length) return null;
+
+  const measuredAt = String(result.historical_measured_at || "").replace("T", " ").slice(0, 16);
+  return (
+    <div className="vitals-status-card vitals-history-reference" aria-label="历史体征参考">
+      <span aria-hidden="true"><HeartPulse size={24} /></span>
+      <div>
+        <strong>上次完整测量 · 仅供参考</strong>
+        <p>{readings.join(" · ")}{measuredAt ? ` · ${measuredAt}` : ""}</p>
+      </div>
     </div>
   );
 }
@@ -336,7 +371,7 @@ function buildAuxiliaryMetrics(result) {
   return metrics;
 }
 
-function describeVitals(result, errorMessage, phase) {
+export function describeVitals(result, errorMessage, phase) {
   if (activePhases.has(phase)) {
     if (Number(result?.heart_rate_frame_count || 0) > 0 && Number(result?.spo2_frame_count || 0) === 0) {
       return { tone: "active", title: "血氧正在稳定", summary: "心率信号已读取，请保持手指不动", detail: "" };
@@ -355,10 +390,44 @@ function describeVitals(result, errorMessage, phase) {
   if (errorMessage || phase === "failed" || result?.ok === false) {
     return describeVitalsFailure(result, errorMessage);
   }
+  if (isDemoSpo2(result)) {
+    return {
+      tone: "warn",
+      title: "演示结果",
+      summary: "血氧为演示值，本次结果未保存",
+      detail: "心率与额温来自设备，血氧仅用于现场演示。"
+    };
+  }
   if (hasCoreVitals(result)) {
     return { tone: "good", title: "测量完成", summary: "心率、血氧与额温已记录", detail: "" };
   }
   return { tone: "idle", title: "结果预览", summary: "准备测量", detail: "" };
+}
+
+export function inquiryVitalsDisposition(result) {
+  if (isDemoSpo2(result)) {
+    return {
+      kind: "exit",
+      outcome: {
+        status: "failed",
+        error_message: "血氧为演示值，本次体征未写入问询。"
+      }
+    };
+  }
+  if (result?.status !== "complete" || result?.historical_fallback) {
+    return {
+      kind: "exit",
+      outcome: {
+        status: result?.status === "cancelled" ? "cancelled" : "failed",
+        error_message: result?.error_message || "本次体征测量未完成。"
+      }
+    };
+  }
+  return { kind: "complete" };
+}
+
+function isDemoSpo2(result) {
+  return Boolean(result?.spo2_demo_fallback || result?.spo2_source === "demo_fallback");
 }
 
 function describeVitalsFailure(result, errorMessage) {

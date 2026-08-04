@@ -289,18 +289,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     if (!sessionId || attachingVitals) return;
     setAttachingVitals(true);
     try {
-      const updated = await attachInquiryVitals(sessionId, {
-        status: "complete",
-        temperature: vitals.temperature,
-        heart_rate: vitals.heart_rate,
-        spo2: vitals.spo2,
-        systolic_pressure: vitals.systolic_pressure || null,
-        diastolic_pressure: vitals.diastolic_pressure || null,
-        respiratory_rate: vitals.respiratory_rate || null,
-        hrv_sdnn: vitals.hrv_sdnn || null,
-        hrv_rmssd: vitals.hrv_rmssd || null,
-        measured_at: vitals.measured_at || new Date().toISOString()
-      });
+      const updated = await attachInquiryVitals(sessionId, buildInquiryVitalsPayload(vitals));
       if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
@@ -516,6 +505,25 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       </section>
     </main>
   );
+}
+
+export function buildInquiryVitalsPayload(vitals) {
+  return {
+    status: "complete",
+    temperature: vitals.temperature,
+    heart_rate: vitals.heart_rate,
+    spo2: vitals.spo2,
+    temperature_source: vitals.temperature_source || null,
+    heart_rate_source: vitals.heart_rate_source || null,
+    spo2_source: vitals.spo2_source || null,
+    spo2_demo_fallback: Boolean(vitals.spo2_demo_fallback),
+    systolic_pressure: vitals.systolic_pressure || null,
+    diastolic_pressure: vitals.diastolic_pressure || null,
+    respiratory_rate: vitals.respiratory_rate || null,
+    hrv_sdnn: vitals.hrv_sdnn || null,
+    hrv_rmssd: vitals.hrv_rmssd || null,
+    measured_at: vitals.measured_at || new Date().toISOString()
+  };
 }
 
 const symptomDimensionLabels = {

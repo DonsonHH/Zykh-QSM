@@ -134,6 +134,7 @@ class InquiryOrchestrator:
         )
 
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
+        self._require_current_real_vitals(request)
         session = self._required_session(session_id)
         session.vitals = request.model_dump(exclude_none=True)
         self.repository.append_message(
@@ -805,6 +806,43 @@ class InquiryOrchestrator:
             item.status == "present" and bool(item.evidence.strip())
             for item in extracted.observations
         )
+
+    @staticmethod
+    def _require_current_real_vitals(request: InquiryVitalsRequest) -> None:
+        sources = {
+            request.temperature_source,
+            request.heart_rate_source,
+            request.spo2_source,
+        }
+        readings = (
+            request.temperature,
+            request.heart_rate,
+            request.spo2,
+            request.systolic_pressure,
+            request.diastolic_pressure,
+            request.respiratory_rate,
+            request.hrv_sdnn,
+            request.hrv_rmssd,
+        )
+        forbidden_sources = {"demo_fallback", "history_fallback", "historical_fallback"}
+        if (
+            request.spo2_demo_fallback
+            or request.historical_fallback
+            or bool(sources & forbidden_sources)
+            or (request.status != "complete" and any(value is not None for value in readings))
+            or (
+                request.status == "complete"
+                and (
+                    request.temperature is None
+                    or request.heart_rate is None
+                    or request.spo2 is None
+                    or request.temperature_source != "gy614_sensor"
+                    or request.heart_rate_source != "uart8_sensor"
+                    or request.spo2_source != "uart8_sensor"
+                )
+            )
+        ):
+            raise ValueError("只有本次真实测量可以进入问询体征。")
 
     @staticmethod
     def _has_complete_vitals(session: InquirySessionResponse) -> bool:

@@ -217,13 +217,25 @@ into one message:
 - `prewarmed`, `prewarm_age`, `minimum_measurement_seconds` and
   `spo2_stabilization_extended` describe session timing decisions;
 - `temperature_source`, `heart_rate_source` and `spo2_source` distinguish
-  live sensors, demo fallback and historical fallback;
+  live sensors from demo fallback in the current session;
+- `historical_temperature`, `historical_heart_rate`, `historical_spo2`,
+  `historical_source` and `historical_measured_at` expose the previous complete
+  measurement as a separate reference without changing the current session;
 - `failure_reason` provides a stable machine-readable failure category such as
   `no_finger`, `no_protocol_frames`, `temperature_unavailable`,
   `transport_error` or `session_not_found`, while `error_message` remains the
   user-facing explanation;
 - `cancel_reason=replaced` identifies a session stopped by a newer measurement;
   normal cancellation leaves `failure_reason` unset.
+
+Responses with `spo2_source=demo_fallback` remain available for an explicitly
+labelled demonstration but are not persisted or included in cloud sync. When a
+current sensor session fails, it remains `failed`; historical values never fill
+the current `heart_rate`, `spo2` or `temperature` fields. Legacy records marked
+with `SpO2-demo` are also excluded from cloud snapshots and historical references.
+If an older inquiry contains the same timestamp and core readings as one of those
+records, its stored vitals are presented as a quarantined failed demo without the
+numeric readings, including when the inquiry enters a cloud snapshot.
 
 ### POST /api/vitals/session/{session_id}/cancel
 

@@ -4,17 +4,24 @@ import json
 import sys
 import threading
 import time
+import tempfile
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.qsm_client import QsmClient  # noqa: E402
+from app import db  # noqa: E402
+from app.repositories.device_action_repository import DeviceActionRepository  # noqa: E402
+from app.repositories.sync_repository import SyncRepository  # noqa: E402
+from app.repositories.vitals_repository import VitalsRepository  # noqa: E402
 from app.routers.qsm import qsm_vitals  # noqa: E402
+from app.routers.vitals import read_all_vitals  # noqa: E402
+from app.services.qsm_client import QsmClient  # noqa: E402
 
 
 QSM_RESPONSE = {
@@ -254,6 +261,95 @@ class QsmVitalsIntegrationTest(unittest.TestCase):
         self.assertEqual(response.status, "unavailable")
         self.assertIsNone(response.temperature)
         self.assertEqual(response.error_message, "sensor timeout")
+
+    def test_parser_preserves_upstream_metric_provenance(self) -> None:
+        payload = json.loads(json.dumps(QSM_RESPONSE))
+        payload["vitals"].update(
+            {
+                "temperature_source": "gy614_sensor",
+                "heart_rate_source": "uart8_sensor",
+                "spo2_source": "demo_fallback",
+                "spo2_demo_fallback": True,
+            }
+        )
+
+        result = QsmClient(mode="real")._parse_vitals(payload)
+
+        self.assertEqual(result["temperature_source"], "gy614_sensor")
+        self.assertEqual(result["heart_rate_source"], "uart8_sensor")
+        self.assertEqual(result["spo2_source"], "demo_fallback")
+        self.assertTrue(result["spo2_demo_fallback"])
+
+    def test_parser_preserves_explicit_aggregate_demo_provenance(self) -> None:
+        payload = json.loads(json.dumps(QSM_RESPONSE))
+        payload["source"] = "demo"
+
+        result = QsmClient(mode="real")._parse_vitals(payload)
+
+        self.assertEqual(result["source"], "demo")
+
+    def test_read_all_demo_source_has_no_persistent_side_effects(self) -> None:
+        client = QsmClient(mode="real")
+        client.read_full_vitals = lambda: {
+            "temperature_c": 36.6,
+            "heart_rate": 74,
+            "spo2": 97,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "demo_fallback",
+            "spo2_demo_fallback": True,
+            "source": "real",
+            "quality": "demo",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "read-all-demo.db"
+            with (
+                patch("app.db.settings", SimpleNamespace(db_path=db_path)),
+                patch("app.routers.qsm.QsmClient", return_value=client),
+            ):
+                db.init_db()
+                response = read_all_vitals()
+
+                self.assertEqual(response.spo2_source, "demo_fallback")
+                self.assertTrue(response.spo2_demo_fallback)
+                self.assertEqual(VitalsRepository().count(), 0)
+                self.assertEqual(SyncRepository().get_status().pending_count, 0)
+                self.assertEqual(DeviceActionRepository().list_records(), [])
+
+    def test_read_all_rejects_demo_provenance_from_every_upstream_field(self) -> None:
+        cases = {
+            "temperature source": {"temperature_source": "demo_fallback"},
+            "heart rate source": {"heart_rate_source": "mock"},
+            "aggregate source": {"source": "demo"},
+            "quality": {"quality": "demo"},
+        }
+        for label, provenance in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                client = QsmClient(mode="real")
+                client.read_full_vitals = lambda provenance=provenance: {
+                    "temperature_c": 36.6,
+                    "heart_rate": 74,
+                    "spo2": 97,
+                    "temperature_source": "gy614_sensor",
+                    "heart_rate_source": "uart8_sensor",
+                    "spo2_source": "uart8_sensor",
+                    "spo2_demo_fallback": False,
+                    "source": "real",
+                    "quality": "stable",
+                    **provenance,
+                }
+                db_path = Path(temp_dir) / "read-all-demo-provenance.db"
+                with (
+                    patch("app.db.settings", SimpleNamespace(db_path=db_path)),
+                    patch("app.routers.qsm.QsmClient", return_value=client),
+                ):
+                    db.init_db()
+                    read_all_vitals()
+
+                    self.assertEqual(VitalsRepository().count(), 0)
+                    self.assertEqual(SyncRepository().get_status().pending_count, 0)
+                    self.assertEqual(DeviceActionRepository().list_records(), [])
 
 
 if __name__ == "__main__":

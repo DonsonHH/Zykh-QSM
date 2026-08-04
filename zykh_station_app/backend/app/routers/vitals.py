@@ -41,7 +41,7 @@ def get_vitals_session(session_id: str) -> VitalsSessionResponse:
     result = QsmClient().get_vitals_session(session_id)
     if not result.get("session_id"):
         raise HTTPException(status_code=404, detail="未找到体征测量会话。")
-    response = _reuse_previous_core_vitals(VitalsSessionResponse(**result))
+    response = _attach_previous_vitals_reference(VitalsSessionResponse(**result))
     _persist_completed_session(response)
     return response
 
@@ -55,6 +55,8 @@ def _persist_completed_session(response: VitalsSessionResponse) -> None:
     if response.status != "complete":
         return
     if response.historical_fallback:
+        return
+    if response.spo2_demo_fallback or response.spo2_source == "demo_fallback":
         return
     if response.heart_rate is None or response.spo2 is None or response.temperature is None:
         return
@@ -103,7 +105,7 @@ def _persist_completed_session(response: VitalsSessionResponse) -> None:
     )
 
 
-def _reuse_previous_core_vitals(response: VitalsSessionResponse) -> VitalsSessionResponse:
+def _attach_previous_vitals_reference(response: VitalsSessionResponse) -> VitalsSessionResponse:
     if response.status != "failed" or not response.hardware_started:
         return response
     if response.heart_rate is not None or response.spo2 is not None:
@@ -115,23 +117,12 @@ def _reuse_previous_core_vitals(response: VitalsSessionResponse) -> VitalsSessio
 
     return response.model_copy(
         update={
-            "ok": True,
-            "status": "complete",
-            "temperature": response.temperature or previous.temperature,
-            "heart_rate": previous.heart_rate,
-            "spo2": previous.spo2,
-            "temperature_source": (
-                response.temperature_source
-                or ("gy614_sensor" if response.temperature is not None else "history_fallback")
-            ),
-            "heart_rate_source": "history_fallback",
-            "spo2_source": "history_fallback",
-            "source": "history_fallback",
-            "quality": "history_fallback",
-            "message": "本次手指信号未稳定，已显示上次完整测量结果。",
-            "error_message": None,
+            "message": "本次手指信号未稳定；已附上一次完整测量供参考。",
             "historical_fallback": True,
+            "historical_temperature": previous.temperature,
+            "historical_heart_rate": previous.heart_rate,
+            "historical_spo2": previous.spo2,
+            "historical_source": previous.source,
             "historical_measured_at": previous.measured_at,
-            "measured_at": response.measured_at or previous.measured_at,
         }
     )
