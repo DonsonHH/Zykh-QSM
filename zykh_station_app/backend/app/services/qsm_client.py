@@ -254,12 +254,22 @@ class QsmClient:
             base_url=self.vitals_base_url,
         )
         if error:
-            return self._vitals_session_error("", "failed", error)
+            return self._vitals_session_error(
+                "",
+                "failed",
+                error,
+                communication_status="gateway_unreachable",
+                failure_reason="transport_error",
+            )
         if not payload.get("hardware_started"):
             return self._vitals_session_error(
                 str(payload.get("session_id") or ""),
                 "failed",
                 str(payload.get("error_message") or "体征设备未确认启动。"),
+                communication_status=str(
+                    payload.get("communication_status") or "gateway_available"
+                ),
+                failure_reason=str(payload.get("failure_reason") or "hardware_start_failed"),
             )
         payload.setdefault("ok", True)
         payload.setdefault("mode", "real")
@@ -279,7 +289,13 @@ class QsmClient:
             base_url=self.vitals_base_url,
         )
         if error:
-            return self._vitals_session_error(session_id, "failed", error)
+            return self._vitals_session_error(
+                session_id,
+                "failed",
+                error,
+                communication_status="gateway_unreachable",
+                failure_reason="transport_error",
+            )
         payload = self._apply_demo_spo2_fallback(payload)
         payload.setdefault("ok", payload.get("status") not in {"failed", "cancelled"})
         payload.setdefault("mode", "real")
@@ -315,6 +331,8 @@ class QsmClient:
                 "message": "心率与额温已读取；血氧演示值已补齐。",
             }
         )
+        completed.setdefault("temperature_source", "gy614_sensor")
+        completed.setdefault("heart_rate_source", "uart8_sensor")
         return completed
 
     def cancel_vitals_session(self, session_id: str) -> dict[str, Any]:
@@ -333,18 +351,34 @@ class QsmClient:
             base_url=self.vitals_base_url,
         )
         if error:
-            return self._vitals_session_error(session_id, "failed", error)
+            return self._vitals_session_error(
+                session_id,
+                "failed",
+                error,
+                communication_status="gateway_unreachable",
+                failure_reason="transport_error",
+            )
         payload.setdefault("ok", True)
         payload.setdefault("mode", "real")
         return payload
 
-    def _vitals_session_error(self, session_id: str, status: str, message: str) -> dict[str, Any]:
+    def _vitals_session_error(
+        self,
+        session_id: str,
+        status: str,
+        message: str,
+        *,
+        communication_status: str | None = None,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "ok": False,
             "mode": self.mode,
             "session_id": session_id,
             "status": status,
             "hardware_started": False,
+            "communication_status": communication_status,
+            "failure_reason": failure_reason,
             "error_message": message,
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }

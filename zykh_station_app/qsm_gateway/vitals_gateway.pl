@@ -61,7 +61,7 @@ while (my $client = $server->accept()) {
         my $request = read_request($client);
         route_request($client, $request) if $request;
     };
-    send_json($client, 500, session_error('', 'failed', "$@")) if $@;
+    send_json($client, 500, session_error('', 'failed', "$@", 'internal_error')) if $@;
     close $client;
     exit 0;
 }
@@ -82,7 +82,11 @@ sub route_request {
     if ($method eq 'POST' && $path eq '/api/vitals/session/cancel') {
         return send_json($client, 200, cancel_session($request->{params}{session_id} || ''));
     }
-    return send_json($client, 404, session_error('', 'not_found', 'Vitals session API not found'));
+    return send_json(
+        $client,
+        404,
+        session_error('', 'not_found', 'Vitals session API not found', 'api_not_found'),
+    );
 }
 
 sub start_session {
@@ -116,7 +120,8 @@ sub start_session {
     write_json_atomic($CURRENT, $state);
 
     my $pid = fork();
-    return session_error($session_id, 'failed', "Cannot fork vitals worker: $!") unless defined $pid;
+    return session_error($session_id, 'failed', "Cannot fork vitals worker: $!", 'worker_start_failed')
+        unless defined $pid;
     if (!$pid) {
         $SIG{CHLD} = 'DEFAULT';
         setsid();
@@ -138,7 +143,12 @@ sub start_session {
         sleep(0.05);
     }
     write_text(cancel_file($session_id), now_text());
-    return session_error($session_id, 'failed', 'Vitals hardware did not acknowledge start command');
+    return session_error(
+        $session_id,
+        'failed',
+        'Vitals hardware did not acknowledge start command',
+        'hardware_start_timeout',
+    );
 }
 
 sub run_measurement {
@@ -203,21 +213,31 @@ sub run_measurement {
         && defined($temperature) && $temperature > 0;
     my $status = $cancelled ? 'cancelled' : $complete ? 'complete' : 'failed';
     my $error = '';
+    my $failure_reason;
     if (!$complete && !$cancelled) {
-        if ((!defined($heart_rate) || $heart_rate <= 0) && (!defined($spo2) || $spo2 <= 0)) {
+        if (($uart->{communication_status} || '') eq 'no_protocol_frames') {
+            $failure_reason = 'no_protocol_frames';
+            $error = '未收到体征模块协议帧，请检查串口连接和模块供电后重试。';
+        } elsif ((!defined($heart_rate) || $heart_rate <= 0) && (!defined($spo2) || $spo2 <= 0)) {
+            $failure_reason = $uart->{finger_detected} ? 'core_not_stable' : 'no_finger';
             $error = $uart->{finger_detected}
                 ? '已检测到手指，心率与血氧仍未稳定，请保持不动后重试。'
                 : '未检测到稳定的手指信号，请用指腹完整覆盖传感器后重试。';
         } elsif (!defined($spo2) || $spo2 <= 0) {
+            $failure_reason = 'spo2_not_stable';
             $error = '已读取到心率，血氧仍未稳定，请保持手指不动后重试。';
         } elsif (!defined($heart_rate) || $heart_rate <= 0) {
+            $failure_reason = 'heart_rate_not_stable';
             $error = '已读取到血氧，心率仍未稳定，请保持手指不动后重试。';
         } elsif (!$uart->{stable_core}) {
+            $failure_reason = 'core_not_stable';
             $error = '心率和血氧出现过读数，但近期信号不连续，请保持手指完整覆盖后重试。';
         } elsif (!defined($temperature) || $temperature <= 0) {
+            $failure_reason = 'temperature_unavailable';
             $error = '心率与血氧已完成，额温未读取，请对准额温传感器后重试。';
         }
     }
+    $failure_reason = 'cancelled' if $cancelled;
     my $state = {
         ok => $complete ? JSON::PP::true : JSON::PP::false,
         mode => 'real',
@@ -228,7 +248,13 @@ sub run_measurement {
         temperature => $temperature,
         heart_rate => $heart_rate,
         spo2 => $spo2,
-        spo2_source => $spo2_demo_fallback ? 'demo_fallback' : 'sensor',
+        temperature_source => defined($temperature) && $temperature > 0 ? 'gy614_sensor' : undef,
+        heart_rate_source => defined($heart_rate) && $heart_rate > 0 ? 'uart8_sensor' : undef,
+        spo2_source => $spo2_demo_fallback
+            ? 'demo_fallback'
+            : defined($spo2) && $spo2 > 0
+                ? 'uart8_sensor'
+                : undef,
         spo2_demo_fallback => $spo2_demo_fallback ? JSON::PP::true : JSON::PP::false,
         systolic_pressure => positive_or_undef($uart->{systolic_pressure}),
         diastolic_pressure => positive_or_undef($uart->{diastolic_pressure}),
@@ -262,6 +288,7 @@ sub run_measurement {
         started_at => $started_at,
         updated_at => now_text(),
         measured_at => now_text(),
+        failure_reason => $failure_reason,
         error_message => $error || undef,
         worker_pid => $$,
         prewarmed => $prewarmed ? JSON::PP::true : JSON::PP::false,
@@ -331,14 +358,14 @@ sub consume_prepared {
 
 sub write_uart_command {
     my ($command, %options) = @_;
-    return session_error('', 'failed', "Vitals UART device does not exist: $UART_DEVICE")
+    return session_error('', 'failed', "Vitals UART device does not exist: $UART_DEVICE", 'uart_device_missing')
         unless -e $UART_DEVICE;
     my $lock_path = $ENV{VITALS_UART_LOCK_FILE} || '/tmp/zykh-vitals-uart8.lock';
     open my $lock_fh, '>>', $lock_path
-        or return session_error('', 'failed', "Cannot open UART lock: $!");
+        or return session_error('', 'failed', "Cannot open UART lock: $!", 'uart_lock_error');
     if (!flock($lock_fh, LOCK_EX | LOCK_NB)) {
         close $lock_fh;
-        return session_error('', 'busy', 'Vitals UART is already in use');
+        return session_error('', 'busy', 'Vitals UART is already in use', 'uart_busy');
     }
     my @stty = (
         'stty', '-F', $UART_DEVICE, '9600', 'cs8', '-cstopb', '-parenb',
@@ -353,12 +380,12 @@ sub write_uart_command {
     }
     if ($stty_rc != 0) {
         close $lock_fh;
-        return session_error('', 'failed', "Failed to configure $UART_DEVICE");
+        return session_error('', 'failed', "Failed to configure $UART_DEVICE", 'uart_config_error');
     }
     my $uart;
     if (!sysopen($uart, $UART_DEVICE, O_RDWR | O_NOCTTY)) {
         close $lock_fh;
-        return session_error('', 'failed', "Cannot open $UART_DEVICE: $!");
+        return session_error('', 'failed', "Cannot open $UART_DEVICE: $!", 'uart_open_error');
     }
     binmode($uart);
     if ($options{reset_first}) {
@@ -369,7 +396,12 @@ sub write_uart_command {
     my $written = syswrite($uart, pack('C', $command));
     close $uart;
     close $lock_fh;
-    return session_error('', 'failed', "Failed to write UART command 0x" . sprintf('%02X', $command))
+    return session_error(
+        '',
+        'failed',
+        "Failed to write UART command 0x" . sprintf('%02X', $command),
+        'uart_write_error',
+    )
         unless defined($written) && $written == 1;
     return {
         ok => JSON::PP::true,
@@ -382,9 +414,11 @@ sub write_uart_command {
 
 sub session_status {
     my ($session_id) = @_;
-    return session_error('', 'not_found', 'session_id is required') unless $session_id =~ /^vitals-[A-Za-z0-9-]+$/;
+    return session_error('', 'not_found', 'session_id is required', 'invalid_session_id')
+        unless $session_id =~ /^vitals-[A-Za-z0-9-]+$/;
     my $state = read_json(state_file($session_id));
-    return session_error($session_id, 'not_found', 'Vitals session not found') unless $state;
+    return session_error($session_id, 'not_found', 'Vitals session not found', 'session_not_found')
+        unless $state;
     return $state;
 }
 
@@ -402,7 +436,7 @@ sub stop_active_session {
     my ($state, $reason) = @_;
     my $session_id = $state->{session_id} || '';
     my $pid = int($state->{worker_pid} || 0);
-    return session_error($session_id, 'failed', 'Cannot stop an unnamed vitals session')
+    return session_error($session_id, 'failed', 'Cannot stop an unnamed vitals session', 'invalid_session_id')
         unless $session_id =~ /^vitals-[A-Za-z0-9-]+$/;
 
     write_text(cancel_file($session_id), now_text());
@@ -431,7 +465,13 @@ sub stop_active_session {
     $latest->{worker_pid} = 0;
     $latest->{cancel_reason} = $reason || 'cancelled';
     $latest->{updated_at} = now_text();
-    $latest->{error_message} = undef;
+    if (!$stop->{ok}) {
+        $latest->{communication_status} = $stop->{communication_status};
+        $latest->{failure_reason} = $stop->{failure_reason} || 'uart_stop_failed';
+        $latest->{error_message} = $stop->{error_message};
+    } else {
+        $latest->{error_message} = undef;
+    }
     write_json_atomic(state_file($session_id), $latest);
     write_json_atomic($CURRENT, $latest);
     return $latest;
@@ -442,6 +482,8 @@ sub busy_session {
     my %copy = %{$current || {}};
     $copy{ok} = JSON::PP::false;
     $copy{status} = 'busy';
+    $copy{communication_status} = 'gateway_available';
+    $copy{failure_reason} = 'session_busy';
     $copy{error_message} = '上一轮体征测量尚未结束，请稍后重试。';
     return \%copy;
 }
@@ -476,13 +518,15 @@ sub positive_or_undef {
 }
 
 sub session_error {
-    my ($session_id, $status, $message) = @_;
+    my ($session_id, $status, $message, $failure_reason) = @_;
     return {
         ok => JSON::PP::false,
         mode => 'real',
         session_id => $session_id || '',
         status => $status,
         hardware_started => JSON::PP::false,
+        communication_status => 'gateway_available',
+        failure_reason => $failure_reason || 'gateway_error',
         updated_at => now_text(),
         error_message => $message,
     };
