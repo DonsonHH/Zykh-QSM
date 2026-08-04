@@ -127,6 +127,41 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 spo2_demo_fallback=True,
             )
 
+    def test_failed_demo_spo2_with_measurements_is_rejected_by_schema(self) -> None:
+        with self.assertRaisesRegex(ValueError, "非完成状态"):
+            InquiryVitalsRequest(
+                status="failed",
+                temperature=36.6,
+                heart_rate=72,
+                spo2=97,
+                temperature_source="gy614_sensor",
+                heart_rate_source="uart8_sensor",
+                spo2_source="demo_fallback",
+                spo2_demo_fallback=True,
+            )
+
+    def test_historical_vitals_cannot_be_attached_as_current_complete_measurement(self) -> None:
+        with self.assertRaisesRegex(ValueError, "历史体征"):
+            InquiryVitalsRequest(
+                status="complete",
+                temperature=36.6,
+                heart_rate=72,
+                spo2=97,
+                temperature_source="history_fallback",
+                heart_rate_source="history_fallback",
+                spo2_source="history_fallback",
+                historical_fallback=True,
+            )
+
+    def test_complete_inquiry_vitals_require_live_metric_provenance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "实时来源"):
+            InquiryVitalsRequest(
+                status="complete",
+                temperature=36.6,
+                heart_rate=72,
+                spo2=97,
+            )
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "inquiry.db"
@@ -157,6 +192,87 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
     def create(self, service: InquiryOrchestrator):
         return service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
+
+    def test_orchestrator_rejects_bypassed_failed_demo_without_side_effects(self) -> None:
+        service, interpreter = self.service([case(action="analyze")])
+        session = self.create(service)
+        bypassed = InquiryVitalsRequest.model_construct(
+            status="failed",
+            temperature=36.6,
+            heart_rate=72,
+            spo2=97,
+            temperature_source="gy614_sensor",
+            heart_rate_source="uart8_sensor",
+            spo2_source="demo_fallback",
+            spo2_demo_fallback=True,
+            historical_fallback=False,
+            measured_at="2026-08-05T01:20:00+08:00",
+            error_message="",
+        )
+
+        with self.assertRaisesRegex(ValueError, "本次真实测量"):
+            service.attach_vitals(session.session_id, bypassed)
+
+        self.assertIsNone(service.get_session(session.session_id).vitals)
+        self.assertEqual(interpreter.contexts, [])
+        with db.connect() as conn:
+            tool_messages = conn.execute(
+                "SELECT COUNT(*) AS count FROM inquiry_messages WHERE session_id=? AND source='vitals_tool'",
+                (session.session_id,),
+            ).fetchone()["count"]
+        self.assertEqual(tool_messages, 0)
+
+    def test_orchestrator_rejects_bypassed_complete_vitals_without_live_provenance(self) -> None:
+        service, interpreter = self.service([case(action="analyze")])
+        session = self.create(service)
+        bypassed = InquiryVitalsRequest.model_construct(
+            status="complete",
+            temperature=36.6,
+            heart_rate=72,
+            spo2=97,
+            temperature_source=None,
+            heart_rate_source=None,
+            spo2_source=None,
+            spo2_demo_fallback=False,
+            historical_fallback=False,
+            measured_at="2026-08-05T01:21:00+08:00",
+            error_message="",
+        )
+
+        with self.assertRaisesRegex(ValueError, "本次真实测量"):
+            service.attach_vitals(session.session_id, bypassed)
+
+        self.assertIsNone(service.get_session(session.session_id).vitals)
+        self.assertEqual(interpreter.contexts, [])
+
+    def test_orchestrator_rejects_bypassed_historical_reference_without_side_effects(self) -> None:
+        service, interpreter = self.service([case(action="analyze")])
+        session = self.create(service)
+        bypassed = InquiryVitalsRequest.model_construct(
+            status="complete",
+            temperature=36.4,
+            heart_rate=75,
+            spo2=98,
+            temperature_source="history_fallback",
+            heart_rate_source="history_fallback",
+            spo2_source="history_fallback",
+            spo2_demo_fallback=False,
+            historical_fallback=True,
+            measured_at="2026-07-20T10:20:00+08:00",
+            error_message="",
+        )
+
+        with self.assertRaisesRegex(ValueError, "本次真实测量"):
+            service.attach_vitals(session.session_id, bypassed)
+
+        self.assertIsNone(service.get_session(session.session_id).vitals)
+        self.assertEqual(interpreter.contexts, [])
+        with db.connect() as conn:
+            tool_messages = conn.execute(
+                "SELECT COUNT(*) AS count FROM inquiry_messages WHERE session_id=? AND source='vitals_tool'",
+                (session.session_id,),
+            ).fetchone()["count"]
+        self.assertEqual(tool_messages, 0)
 
     def test_registered_identity_is_loaded_once_per_session(self) -> None:
         service, _ = self.service([])
@@ -315,6 +431,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 temperature=36.4,
                 heart_rate=78,
                 spo2=98,
+                temperature_source="gy614_sensor",
+                heart_rate_source="uart8_sensor",
+                spo2_source="uart8_sensor",
             ),
         )
         self.assertEqual(result.next_action, "show_recommendation")
@@ -535,7 +654,14 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         resumed = service.attach_vitals(
             session.session_id,
-            InquiryVitalsRequest(temperature=36.5, heart_rate=76, spo2=98),
+            InquiryVitalsRequest(
+                temperature=36.5,
+                heart_rate=76,
+                spo2=98,
+                temperature_source="gy614_sensor",
+                heart_rate_source="uart8_sensor",
+                spo2_source="uart8_sensor",
+            ),
         )
 
         self.assertEqual(resumed.next_action, "ask")

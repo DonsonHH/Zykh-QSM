@@ -105,6 +105,7 @@ class InquiryVitalsRequest(BaseModel):
     heart_rate_source: str | None = None
     spo2_source: str | None = None
     spo2_demo_fallback: bool = False
+    historical_fallback: bool = False
     systolic_pressure: int | None = None
     diastolic_pressure: int | None = None
     respiratory_rate: int | None = None
@@ -115,14 +116,39 @@ class InquiryVitalsRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_core_vitals_when_complete(self) -> "InquiryVitalsRequest":
+        if self.status != "complete" and any(
+            value is not None
+            for value in (
+                self.temperature,
+                self.heart_rate,
+                self.spo2,
+                self.systolic_pressure,
+                self.diastolic_pressure,
+                self.respiratory_rate,
+                self.hrv_sdnn,
+                self.hrv_rmssd,
+            )
+        ):
+            raise ValueError("非完成状态不得携带体征测量数值。")
         if self.status == "complete" and (
             self.spo2_demo_fallback or self.spo2_source == "demo_fallback"
         ):
             raise ValueError("演示血氧不得作为完成的问询体征保存。")
+        if self.historical_fallback or any(
+            source in {"history_fallback", "historical_fallback"}
+            for source in (self.temperature_source, self.heart_rate_source, self.spo2_source)
+        ):
+            raise ValueError("历史体征不得作为本次问询体征保存。")
         if self.status == "complete" and (
             self.temperature is None or self.heart_rate is None or self.spo2 is None
         ):
             raise ValueError("测量完成时必须包含额温、心率和血氧。")
+        if self.status == "complete" and (
+            self.temperature_source != "gy614_sensor"
+            or self.heart_rate_source != "uart8_sensor"
+            or self.spo2_source != "uart8_sensor"
+        ):
+            raise ValueError("完成的问询体征必须包含本次设备实时来源。")
         return self
 
 

@@ -19,6 +19,7 @@ from app import db  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.routers.vitals import get_vitals_session  # noqa: E402
+from app.services.cloud_sync_service import CloudSyncWorker  # noqa: E402
 from app.services.qsm_client import QsmClient  # noqa: E402
 
 
@@ -478,6 +479,12 @@ class VitalsSessionPersistenceTest(unittest.TestCase):
         self.assertEqual(response.error_message, "手指信号未稳定。")
         self.assertEqual(VitalsRepository().count(), 1)
         self.assertEqual(SyncRepository().get_status().pending_count, 0)
+        snapshot_vitals = CloudSyncWorker._build_snapshot()["vitals"]
+        self.assertEqual([item["id"] for item in snapshot_vitals], ["previous-complete"])
+        self.assertFalse(
+            any(key.startswith("historical_") for item in snapshot_vitals for key in item),
+            "historical reference fields must not become a cloud vitals snapshot",
+        )
 
     def test_unstable_finger_signal_stays_failed_without_history(self) -> None:
         payload = {

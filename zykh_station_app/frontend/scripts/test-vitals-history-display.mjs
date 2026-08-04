@@ -57,6 +57,24 @@ try {
     },
     "demo SpO2 must not enter inquiry persistence as a complete measurement"
   );
+  assert.deepEqual(
+    module.inquiryVitalsDisposition({
+      status: "failed",
+      historical_fallback: true,
+      historical_temperature: 36.4,
+      historical_heart_rate: 75,
+      historical_spo2: 98,
+      error_message: "手指信号未稳定。"
+    }),
+    {
+      kind: "exit",
+      outcome: {
+        status: "failed",
+        error_message: "手指信号未稳定。"
+      }
+    },
+    "historical reference values must not complete an embedded inquiry measurement"
+  );
   const inquiryModule = await vite.ssrLoadModule("/src/pages/Inquiry.jsx");
   assert.equal(
     typeof inquiryModule.buildInquiryVitalsPayload,
@@ -75,6 +93,11 @@ try {
   });
   assert.equal(inquiryPayload.spo2_source, "demo_fallback");
   assert.equal(inquiryPayload.spo2_demo_fallback, true);
+  assert.equal(
+    Object.keys(inquiryPayload).some((key) => key.startsWith("historical_")),
+    false,
+    "historical reference fields must never enter the Inquiry payload"
+  );
 
   assert.equal(
     typeof module.HistoricalVitalsReference,

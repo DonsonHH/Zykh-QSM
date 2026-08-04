@@ -473,6 +473,42 @@ class QsmClient:
                 temperature = self._first_present(temperature, ("body_temp_c", "target_temp_c"))
             if self._is_zeroish(temperature):
                 temperature = None
+            temperature_source = self._first_present(gy614, ("temperature_source",))
+            if temperature_source is None:
+                temperature_source = self._first_present(temperature_payload, ("temperature_source",))
+            if temperature_source is None:
+                temperature_source = self._first_present(
+                    vitals,
+                    ("temperature_source",),
+                    fallback=self._first_present(payload, ("temperature_source",)),
+                )
+            heart_rate_source = self._first_present(
+                integrated,
+                ("heart_rate_source",),
+                fallback=self._first_present(
+                    vitals,
+                    ("heart_rate_source",),
+                    fallback=self._first_present(payload, ("heart_rate_source",)),
+                ),
+            )
+            spo2_source = self._first_present(
+                integrated,
+                ("spo2_source",),
+                fallback=self._first_present(
+                    vitals,
+                    ("spo2_source",),
+                    fallback=self._first_present(payload, ("spo2_source",)),
+                ),
+            )
+            spo2_demo_fallback = self._first_present(
+                integrated,
+                ("spo2_demo_fallback",),
+                fallback=self._first_present(
+                    vitals,
+                    ("spo2_demo_fallback",),
+                    fallback=self._first_present(payload, ("spo2_demo_fallback",), fallback=False),
+                ),
+            )
             finger_detected = self._first_present(integrated, ("finger_detected",))
             if finger_detected is None:
                 finger_detected = self._first_present(vitals, ("finger_detected",))
@@ -542,6 +578,21 @@ class QsmClient:
             if finger_detected is False:
                 quality = quality or "no_finger"
             errors = [item for item in (integrated_error, gy614_error, str(payload.get("error") or "")) if item]
+            aggregate_source = "real"
+            recognized_sources = {
+                "real",
+                "demo",
+                "mock",
+                "demo_fallback",
+                "history_fallback",
+                "historical_fallback",
+                "unavailable",
+                "fallback",
+            }
+            for candidate in (payload.get("source"), vitals.get("source"), payload.get("mode")):
+                if str(candidate or "").strip().lower() in recognized_sources:
+                    aggregate_source = str(candidate)
+                    break
             has_usable_value = any(
                 value is not None
                 for value in (temperature, heart_rate, spo2, systolic_pressure, diastolic_pressure, respiratory_rate)
@@ -552,6 +603,10 @@ class QsmClient:
                 "temperature_c": temperature,
                 "heart_rate": heart_rate,
                 "spo2": spo2,
+                "temperature_source": temperature_source,
+                "heart_rate_source": heart_rate_source,
+                "spo2_source": spo2_source,
+                "spo2_demo_fallback": bool(spo2_demo_fallback),
                 "systolic_pressure": systolic_pressure,
                 "diastolic_pressure": diastolic_pressure,
                 "respiratory_rate": respiratory_rate,
@@ -563,7 +618,7 @@ class QsmClient:
                 "sensor_body_temperature": sensor_body_temperature,
                 "ambient_temperature": ambient_temperature,
                 "reference_ready": bool(reference_ready),
-                "source": "real",
+                "source": aggregate_source,
                 "finger_detected": finger_detected,
                 "quality": quality,
                 "message": message,

@@ -187,9 +187,18 @@ class CloudSyncServiceTest(unittest.TestCase):
 
     def test_snapshot_quarantines_legacy_inquiry_vitals_linked_to_demo_spo2(self) -> None:
         measured_at = "2026-07-14T10:02:00+08:00"
+        candidate = {
+            "id": "medicine-legacy",
+            "name": "旧候选药品",
+            "category": "感冒用药",
+            "slot": "8",
+            "stock": 4,
+            "unit": "盒",
+            "safety_note": "旧结论",
+        }
         VitalsRepository().append(
             VitalsRecord(
-                id="legacy-demo-vitals",
+                id="vitals-session-legacy-demo",
                 temperature=36.6,
                 heart_rate=74,
                 spo2=98,
@@ -204,8 +213,10 @@ class CloudSyncServiceTest(unittest.TestCase):
                 """
                 INSERT INTO inquiry_sessions(
                   session_id, user_name, stage, reply, source, vitals_json,
-                  next_action, title, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  risk_level, risk_reasons_json, next_action, primary_candidate_json,
+                  alternative_candidate_json, treatment_options_json, can_view_medicines,
+                  title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "legacy-demo-inquiry",
@@ -223,9 +234,53 @@ class CloudSyncServiceTest(unittest.TestCase):
                         },
                         ensure_ascii=False,
                     ),
+                    "medium",
+                    json.dumps(["血氧偏低"], ensure_ascii=False),
                     "show_recommendation",
+                    json.dumps(candidate, ensure_ascii=False),
+                    json.dumps({**candidate, "id": "medicine-alternative"}, ensure_ascii=False),
+                    json.dumps(
+                        [
+                            {
+                                "option_id": "option-legacy",
+                                "label": "旧候选方案",
+                                "when": "旧风险成立时",
+                                "medicines": [{**candidate, "role": "主要对症"}],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    1,
                     "历史问询",
                     measured_at,
+                    measured_at,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO inquiry_messages(id, session_id, role, content, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-demo-conclusion",
+                    "legacy-demo-inquiry",
+                    "assistant",
+                    "风险中等，建议查看旧候选药品。",
+                    "cloud",
+                    measured_at,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO inquiry_messages(id, session_id, role, content, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-demo-vitals-tool",
+                    "legacy-demo-inquiry",
+                    "system",
+                    "体征测量完成：额温 36.6℃，心率 74次/分，血氧 98%。",
+                    "vitals_tool",
                     measured_at,
                 ),
             )
@@ -239,6 +294,71 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertNotIn("temperature", inquiry["vitals"])
         self.assertNotIn("heart_rate", inquiry["vitals"])
         self.assertNotIn("spo2", inquiry["vitals"])
+        self.assertIsNone(inquiry["risk_level"])
+        self.assertEqual(inquiry["risk_reasons"], [])
+        self.assertIsNone(inquiry["primary_candidate"])
+        self.assertIsNone(inquiry["alternative_candidate"])
+        self.assertEqual(inquiry["treatment_options"], [])
+        self.assertFalse(inquiry["can_view_medicines"])
+        self.assertEqual(inquiry["stage"], "escalated")
+        self.assertEqual(inquiry["next_action"], "escalate")
+        self.assertNotIn("旧候选药品", json.dumps(inquiry, ensure_ascii=False))
+        self.assertNotIn("体征测量完成", json.dumps(inquiry, ensure_ascii=False))
+
+    def test_similar_real_vitals_with_incomplete_legacy_signature_are_not_quarantined(self) -> None:
+        measured_at = "2026-07-14T10:04:00+08:00"
+        VitalsRepository().append(
+            VitalsRecord(
+                id="vitals-session-real-measurement",
+                temperature=36.6,
+                heart_rate=74,
+                spo2=98,
+                status="available",
+                source="UART8-vitals-24B+GY-614",
+                sensor_model="UART8-vitals-24B+GY-614+SpO2-demo",
+                measured_at=measured_at,
+            )
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inquiry_sessions(
+                  session_id, user_name, stage, reply, source, vitals_json,
+                  risk_level, next_action, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "real-inquiry-with-similar-values",
+                    "访客",
+                    "result",
+                    "问询已完成",
+                    "cloud",
+                    json.dumps(
+                        {
+                            "status": "complete",
+                            "temperature": 36.6,
+                            "heart_rate": 74,
+                            "spo2": 98,
+                            "measured_at": measured_at,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "low",
+                    "show_recommendation",
+                    "真实问询",
+                    measured_at,
+                    measured_at,
+                ),
+            )
+
+        snapshot = CloudSyncWorker._build_snapshot()
+
+        inquiry = next(
+            row for row in snapshot["inquiries"] if row["inquiry_id"] == "real-inquiry-with-similar-values"
+        )
+        self.assertEqual(inquiry["vitals"]["status"], "complete")
+        self.assertEqual(inquiry["vitals"]["spo2"], 98)
+        self.assertEqual(inquiry["risk_level"], "low")
 
     def test_ack_failure_never_reexecutes_completed_hardware_command(self) -> None:
         worker = AckFailureWorker()

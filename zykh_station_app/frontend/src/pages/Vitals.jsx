@@ -414,6 +414,15 @@ export function inquiryVitalsDisposition(result) {
       }
     };
   }
+  if (result?.status !== "complete" || result?.historical_fallback) {
+    return {
+      kind: "exit",
+      outcome: {
+        status: result?.status === "cancelled" ? "cancelled" : "failed",
+        error_message: result?.error_message || "本次体征测量未完成。"
+      }
+    };
+  }
   return { kind: "complete" };
 }
 
