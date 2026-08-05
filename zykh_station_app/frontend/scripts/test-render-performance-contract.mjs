@@ -9,6 +9,7 @@ const styleFiles = [
   "styles/admin.css",
   "styles/design-polish.css",
   "styles/motion-system.css",
+  "styles/touch-keyboard.css",
   "styles/adaptive-layout.css"
 ];
 const styles = (await Promise.all(
@@ -47,18 +48,23 @@ for (const selector of [".idle-wake-area h1", ".idle-reminder-icon"]) {
 
 assert.doesNotMatch(
   launcher,
-  /command -v onboard|onboard --size/,
-  "the kiosk launcher must not start the legacy Onboard keyboard"
+  /command -v onboard|onboard --size|screen-keyboard-enabled/,
+  "the kiosk launcher must not depend on a legacy or incompatible desktop keyboard"
 );
 assert.match(
   launcher,
-  /org\.gnome\.desktop\.a11y\.applications screen-keyboard-enabled true/,
-  "the kiosk launcher does not enable the current GNOME screen keyboard"
+  /KIOSK_APP_URL=.*touchKeyboard=0/,
+  "the kiosk launcher cannot disable the app keyboard when explicitly requested"
+);
+assert.doesNotMatch(
+  launcher,
+  /TouchVirtualKeyboard/,
+  "the kiosk still requests the incompatible Chromium desktop keyboard bridge"
 );
 assert.match(
-  launcher,
-  /--enable-features=TouchVirtualKeyboard/,
-  "Chromium touch-keyboard integration is missing"
+  await readFile(`${root}src/App.jsx`, "utf8"),
+  /<TouchKeyboard enabled=\{touchKeyboardEnabled\}/,
+  "the kiosk shell does not render its reliable app keyboard fallback"
 );
 
 const finiteIdleMotion = [...styles.matchAll(/\.idle-wake-button\s*\{([^}]*)\}/g)]

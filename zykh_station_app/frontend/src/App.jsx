@@ -16,9 +16,9 @@ import { Vitals } from "./pages/Vitals.jsx";
 import { Settings } from "./pages/Settings.jsx";
 import { IdleScreen } from "./pages/IdleScreen.jsx";
 import { AdminConsole } from "./pages/AdminConsole.jsx";
+import { TouchKeyboard } from "./components/TouchKeyboard.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 import { clearInquirySession } from "./utils/inquirySession.js";
-import { enableTouchKeyboardForEvent } from "./utils/touchKeyboard.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
 const MemoHome = memo(Home);
@@ -49,6 +49,7 @@ function transitionKind(currentPage, nextPage, requestedKind) {
 export function App() {
   const initialParams = new URLSearchParams(window.location.search);
   const initialPage = initialParams.get("page") || "home";
+  const touchKeyboardEnabled = initialParams.get("touchKeyboard") !== "0";
   const startsIdle = initialPage === "home" && initialParams.get("awake") !== "1";
   const [page, setPage] = useState(initialPage);
   const [idle, setIdle] = useState(startsIdle);
@@ -104,12 +105,6 @@ export function App() {
   useEffect(() => () => {
     window.clearTimeout(pageTransitionTimerRef.current);
     delete document.documentElement.dataset.pageTransition;
-  }, []);
-
-  useEffect(() => {
-    const showKeyboard = (event) => enableTouchKeyboardForEvent(event);
-    document.addEventListener("pointerdown", showKeyboard, true);
-    return () => document.removeEventListener("pointerdown", showKeyboard, true);
   }, []);
 
   useEffect(() => {
@@ -343,6 +338,7 @@ export function App() {
         <div className={`toast ${toast ? "show" : ""}`} aria-live="polite">
           {toast}
         </div>
+        <TouchKeyboard enabled={touchKeyboardEnabled} />
       </section>
     </div>
   );

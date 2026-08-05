@@ -21,8 +21,6 @@ BROWSER_PID=""
 AUDIO_RELAY_PID=""
 AUDIO_RELAY_PROCESS_GROUP="0"
 AUDIO_RELAY_STARTED="0"
-TOUCH_KEYBOARD_PREVIOUS=""
-TOUCH_KEYBOARD_SETTING_CHANGED="0"
 CLEANUP_STARTED="0"
 KIOSK_GUARD_STARTED="0"
 KIOSK_GUARD_DONE="$RUN_DIR/kiosk-cleanup.$$.done"
@@ -110,30 +108,10 @@ stop_browser() {
 
 start_touch_keyboard_if_needed() {
   if [ "$KIOSK_TOUCH_KEYBOARD" != "1" ]; then
+    log "应用内屏幕键盘已关闭。"
     return 0
   fi
-  if ! command -v gsettings >/dev/null 2>&1; then
-    warn "未找到系统屏幕键盘设置；文本区域仍会请求 Chromium 虚拟键盘。"
-    return 0
-  fi
-  TOUCH_KEYBOARD_PREVIOUS="$(gsettings get org.gnome.desktop.a11y.applications screen-keyboard-enabled 2>/dev/null || true)"
-  if [ "$TOUCH_KEYBOARD_PREVIOUS" != "true" ]; then
-    if gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true >/dev/null 2>&1; then
-      TOUCH_KEYBOARD_SETTING_CHANGED="1"
-    else
-      warn "未能启用 GNOME 屏幕键盘；文本区域仍会请求 Chromium 虚拟键盘。"
-      return 0
-    fi
-  fi
-  log "新版系统屏幕键盘已就绪，点按可编辑区域会自动弹出。"
-}
-
-stop_touch_keyboard() {
-  if [ "$TOUCH_KEYBOARD_SETTING_CHANGED" = "1" ] && command -v gsettings >/dev/null 2>&1; then
-    gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled "$TOUCH_KEYBOARD_PREVIOUS" >/dev/null 2>&1 || true
-  fi
-  TOUCH_KEYBOARD_PREVIOUS=""
-  TOUCH_KEYBOARD_SETTING_CHANGED="0"
+  log "新版应用内屏幕键盘已就绪，点按可编辑区域会自动弹出。"
 }
 
 prepare_chinese_input_method() {
@@ -205,7 +183,6 @@ cleanup_once() {
   trap - EXIT
   trap '' HUP INT QUIT TERM
   stop_browser
-  stop_touch_keyboard
   stop_audio_relay
   restore_resolution
   if [ "$KIOSK_GUARD_STARTED" = "1" ]; then
@@ -660,21 +637,28 @@ if [ -z "$BROWSER" ]; then
   exit 1
 fi
 
-log "全屏打开：$APP_URL"
+KIOSK_APP_URL="$APP_URL"
+if [ "$KIOSK_TOUCH_KEYBOARD" != "1" ]; then
+  case "$KIOSK_APP_URL" in
+    *\?*) KIOSK_APP_URL="${KIOSK_APP_URL}&touchKeyboard=0" ;;
+    *) KIOSK_APP_URL="${KIOSK_APP_URL}?touchKeyboard=0" ;;
+  esac
+fi
+
+log "全屏打开：$KIOSK_APP_URL"
 if [ "${KIOSK_DRY_RUN:-0}" = "1" ]; then
   log "dry-run：将使用 $BROWSER 打开 kiosk 页面。"
   exit 0
 fi
 
 set -- "$BROWSER" \
-  --kiosk "$APP_URL" \
+  --kiosk "$KIOSK_APP_URL" \
   --start-fullscreen \
   --window-position=0,0 \
   --window-size="${KIOSK_WIDTH},${KIOSK_HEIGHT}" \
   --force-device-scale-factor="$KIOSK_SCALE" \
   --disable-pinch \
   --force-renderer-accessibility \
-  --enable-features=TouchVirtualKeyboard \
   --overscroll-history-navigation=0 \
   --no-first-run \
   --use-fake-ui-for-media-stream \

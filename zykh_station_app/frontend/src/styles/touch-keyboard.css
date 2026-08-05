@@ -1,0 +1,152 @@
+.touch-keyboard {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  z-index: 1000;
+  width: min(900px, calc(100vw - 24px));
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  border: 1px solid #aebed2;
+  border-radius: 24px;
+  background: #eef3f9;
+  box-shadow: 0 18px 54px rgba(19, 42, 73, 0.28);
+  padding: 10px 12px 12px;
+  color: #17243a;
+  animation: touch-keyboard-enter 180ms var(--ease-fluid, ease-out) both;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.touch-keyboard-header {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  padding-left: 8px;
+}
+
+.touch-keyboard-header > span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: #42566f;
+  font-size: 16px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-keyboard-header button,
+.touch-key {
+  min-width: 48px;
+  min-height: 48px;
+  border: 1px solid #b8c6d7;
+  background: #ffffff;
+  color: #16243a;
+  box-shadow: 0 2px 0 rgba(64, 86, 115, 0.18);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.touch-keyboard-header button {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 15px;
+}
+
+.touch-keyboard-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.touch-keyboard-row {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+}
+
+.touch-key {
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  gap: 7px;
+  border-radius: 12px;
+  font-size: 21px;
+  line-height: 1;
+}
+
+.touch-key:active,
+.touch-key.active {
+  transform: translateY(1px);
+  border-color: #78a9e8;
+  background: #dceafe;
+  box-shadow: none;
+}
+
+.touch-key-shift,
+.touch-key-backspace,
+.touch-key-clear {
+  background: #dfe7f1;
+}
+
+.touch-key-space {
+  flex: 5 1 0;
+}
+
+.touch-key-done {
+  flex: 2 1 0;
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.touch-keyboard-numeric {
+  width: min(520px, calc(100vw - 24px));
+}
+
+.touch-keyboard-numeric .touch-key-0 {
+  flex: 4 1 0;
+}
+
+@keyframes touch-keyboard-enter {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touch-keyboard { animation: none !important; }
+}
+
+@media (max-height: 650px) {
+  .touch-keyboard {
+    bottom: 6px;
+    padding: 7px 9px 9px;
+  }
+
+  .touch-keyboard-header {
+    min-height: 34px;
+    margin-bottom: 5px;
+  }
+
+  .touch-keyboard-rows,
+  .touch-keyboard-row {
+    gap: 5px;
+  }
+
+  .touch-keyboard-header button,
+  .touch-key {
+    min-height: 44px;
+  }
+
+  .touch-key { height: 44px; }
+}

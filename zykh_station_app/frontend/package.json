@@ -26,6 +26,7 @@
     "test:render-boundaries": "node scripts/test-render-boundaries.mjs",
     "test:render-performance": "node scripts/test-render-performance-contract.mjs",
     "test:visual-contrast": "node scripts/test-visual-contrast.mjs",
+    "test:touch-keyboard": "node scripts/test-touch-keyboard.mjs",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
