@@ -1,0 +1,994 @@
+/*
+ * Native responsive kiosk layout.
+ *
+ * The app frame always uses the real viewport. Individual page components grow
+ * at larger landscape resolutions; no whole-frame zoom or transform is used.
+ */
+
+/* Shared chrome is sized as its own component. */
+.brand-mark {
+  width: clamp(68px, 4.6vw, 88px);
+  height: clamp(68px, 4.6vw, 88px);
+}
+
+.brand-block {
+  gap: clamp(10px, 0.8vw, 16px);
+}
+
+.brand-block h1 {
+  font-size: clamp(31px, 2.05vw, 39px);
+}
+
+.clock-block {
+  min-width: clamp(142px, 9vw, 174px);
+}
+
+.clock-block strong {
+  font-size: clamp(30px, 2vw, 38px);
+}
+
+.clock-block span {
+  font-size: clamp(13px, 0.86vw, 16px);
+}
+
+.status-controls {
+  grid-template-columns:
+    clamp(142px, 9vw, 174px)
+    clamp(132px, 8.3vw, 160px)
+    clamp(56px, 3.75vw, 68px);
+  gap: clamp(10px, 0.7vw, 14px);
+}
+
+.network-icons,
+.system-check-button {
+  min-height: clamp(56px, 4vw, 68px);
+}
+
+.system-check-button {
+  width: clamp(56px, 3.75vw, 68px);
+}
+
+.bottom-nav {
+  width: 100%;
+  height: 100%;
+  min-height: 64px;
+  max-height: none;
+  gap: clamp(8px, 0.7vw, 14px);
+  padding: clamp(6px, 0.55vw, 10px);
+}
+
+.bottom-nav button {
+  height: 100%;
+  min-height: 52px;
+  gap: clamp(8px, 0.65vw, 13px);
+  font-size: clamp(20px, 1.45vw, 27px);
+}
+
+.bottom-nav-icon {
+  width: clamp(28px, 1.8vw, 34px);
+  height: clamp(28px, 1.8vw, 34px);
+}
+
+.bottom-nav-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+@media (min-width: 1440px) and (min-height: 800px) {
+  /* Home: independently enlarge the assistant, medication tasks, and vitals CTA. */
+  .hero-grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(520px, 0.8fr);
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .hero-grid > .inquiry-entry-card {
+    gap: 24px;
+    padding: clamp(28px, 1.8vw, 36px);
+  }
+
+  .inquiry-assistant-stage {
+    grid-template-columns: clamp(210px, 13.5vw, 260px) minmax(0, 1fr);
+    gap: clamp(34px, 2.4vw, 48px);
+    padding: 20px 16px;
+  }
+
+  .inquiry-assistant-portrait {
+    width: clamp(210px, 13.5vw, 260px);
+    height: clamp(210px, 13.5vw, 260px);
+  }
+
+  .inquiry-assistant-portrait > .stroke-draw-icon,
+  .inquiry-assistant-portrait > .stroke-draw-icon svg {
+    width: clamp(104px, 6.5vw, 126px);
+    height: clamp(104px, 6.5vw, 126px);
+  }
+
+  .inquiry-assistant-mic {
+    width: 62px;
+    height: 62px;
+    right: 18px;
+    bottom: 18px;
+  }
+
+  .inquiry-assistant-content > p {
+    margin-bottom: 16px;
+    font-size: clamp(27px, 1.65vw, 32px);
+  }
+
+  .inquiry-assistant-content > strong {
+    max-width: 560px;
+    font-size: clamp(38px, 2.45vw, 47px);
+  }
+
+  .inquiry-capability-strip {
+    gap: 14px;
+    margin-top: 34px;
+  }
+
+  .inquiry-capability-strip article {
+    min-height: 96px;
+    gap: 11px;
+  }
+
+  .inquiry-capability-strip article svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .inquiry-capability-strip span {
+    font-size: 20px;
+  }
+
+  .hero-grid > .inquiry-entry-card .primary-action {
+    height: 78px;
+    min-height: 78px;
+    font-size: 27px;
+  }
+
+  .home-side-stack {
+    grid-template-rows: minmax(0, 1fr) 148px;
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .home-side-stack .medication-summary-card {
+    gap: 18px;
+    padding: 24px;
+  }
+
+  .card-heading.compact .card-icon {
+    width: 54px;
+    height: 54px;
+  }
+
+  .card-heading.compact h2 {
+    font-size: 33px;
+  }
+
+  .home-plan-picker-trigger {
+    min-height: 62px;
+    padding-inline: 18px 12px;
+    font-size: 18px;
+  }
+
+  .home-medication-list {
+    grid-auto-rows: 106px;
+    align-content: center;
+    gap: 12px;
+  }
+
+  .home-medication-row {
+    min-height: 106px;
+    grid-template-columns: 86px minmax(0, 1fr) 82px;
+    gap: 14px;
+    padding: 12px;
+  }
+
+  .home-medication-time {
+    font-size: 24px;
+  }
+
+  .home-medication-detail > span,
+  .home-medication-detail > small {
+    font-size: 16px;
+  }
+
+  .home-medication-detail > span strong,
+  .home-medication-detail > strong {
+    font-size: 20px;
+  }
+
+  .home-medication-action {
+    min-height: 68px;
+    font-size: 16px;
+  }
+
+  .home-side-stack .quick-action {
+    height: 148px;
+    min-height: 148px;
+    grid-template-columns: 86px minmax(0, 1fr) 210px;
+    gap: 24px;
+    padding: 18px 24px;
+  }
+
+  .home-side-stack .quick-icon {
+    width: 86px;
+    height: 86px;
+  }
+
+  .home-side-stack .quick-action strong {
+    font-size: 32px;
+  }
+
+  .quick-copy small {
+    font-size: 19px;
+  }
+
+  .home-side-stack .quick-action-cta {
+    min-height: 76px;
+    font-size: 23px;
+  }
+
+  /* Medicines: enlarge each inventory row and widen the safety detail column. */
+  .medicines-page {
+    grid-template-columns: minmax(0, 2.08fr) minmax(440px, 0.92fr);
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .medicines-main-panel {
+    grid-template-rows: 78px minmax(0, 1fr);
+    gap: 16px;
+    padding: 26px;
+  }
+
+  .medicines-heading h2 {
+    font-size: 36px;
+  }
+
+  .medicines-stock-summary,
+  .scan-button,
+  .medicine-view-toggle {
+    min-height: 64px;
+  }
+
+  .medicine-view-toggle {
+    height: 64px;
+  }
+
+  .medicine-view-toggle button {
+    min-width: 78px;
+    min-height: 54px;
+    font-size: 18px;
+  }
+
+  .scan-button {
+    height: 64px;
+    padding-inline: 22px;
+    font-size: 20px;
+  }
+
+  .medicines-stock-summary {
+    padding-inline: 18px;
+    font-size: 19px;
+  }
+
+  .medicine-grid {
+    grid-auto-rows: 104px;
+    gap: 14px;
+  }
+
+  .medicine-card {
+    min-height: 102px;
+    grid-template-columns: 62px minmax(0, 1fr) 70px;
+    gap: 14px;
+    padding: 12px 14px;
+  }
+
+  .medicine-type-icon {
+    width: 58px;
+    height: 58px;
+  }
+
+  .medicine-card-copy strong {
+    font-size: 19px;
+  }
+
+  .medicine-card-copy small {
+    font-size: 16px;
+  }
+
+  .medicine-card-meta em {
+    min-width: 68px;
+    min-height: 62px;
+  }
+
+  .medicine-card-meta b {
+    font-size: 30px;
+  }
+
+  .medicine-detail-panel {
+    gap: 16px;
+    padding: 24px;
+  }
+
+  .medicine-detail-scroll {
+    gap: 15px;
+  }
+
+  .detail-heading h2 {
+    font-size: 31px;
+  }
+
+  .detail-icon {
+    width: 62px;
+    height: 62px;
+  }
+
+  .detail-section {
+    padding: 15px 17px;
+  }
+
+  .detail-section h3 {
+    font-size: 20px;
+  }
+
+  .detail-copy {
+    font-size: 17px;
+    line-height: 1.42;
+  }
+
+  .detail-action {
+    height: 70px;
+    min-height: 70px;
+    font-size: 25px;
+  }
+
+  /* Inquiry: use the added width for context and the added height for identity/chat controls. */
+  .inquiry-page.conversation-layout {
+    grid-template-columns: clamp(410px, 23.5vw, 452px) minmax(0, 1fr);
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .inquiry-user-card.dynamic {
+    grid-template-rows: 78px 78px minmax(0, 1fr);
+    gap: 14px;
+    padding: 24px;
+  }
+
+  .context-heading.user-context-heading {
+    grid-template-columns: 64px minmax(0, 1fr) 56px;
+    gap: 15px;
+  }
+
+  .context-heading.user-context-heading > svg {
+    width: 64px;
+    height: 64px;
+  }
+
+  .context-heading .user-context-copy h2 {
+    font-size: 34px;
+  }
+
+  .identity-confirmation-icon {
+    width: 56px;
+    height: 56px;
+  }
+
+  .context-profile-tags span,
+  .context-profile-summary p,
+  .inquiry-live-summary > header,
+  .inquiry-live-summary > header strong {
+    font-size: 16px;
+  }
+
+  .inquiry-fact-list {
+    grid-template-rows: 72px 66px minmax(82px, 1fr);
+    gap: 11px;
+  }
+
+  .inquiry-live-summary article strong {
+    font-size: 19px;
+  }
+
+  .inquiry-core-vitals {
+    grid-template-rows: 30px minmax(0, 1fr);
+    padding: 10px 13px;
+  }
+
+  .inquiry-page.conversation-layout .inquiry-flow-card.chat-only {
+    padding: 22px;
+  }
+
+  .inquiry-identity-gate {
+    grid-template-rows: minmax(250px, 1fr) auto auto;
+    gap: 24px;
+    padding: 38px 56px;
+  }
+
+  .inquiry-identity-visual {
+    width: 230px;
+    height: 230px;
+  }
+
+  .inquiry-identity-scanning-icon {
+    width: 138px;
+    height: 138px;
+  }
+
+  .inquiry-identity-copy span {
+    font-size: 20px;
+  }
+
+  .inquiry-identity-copy h2 {
+    margin-block: 10px 12px;
+    font-size: 43px;
+  }
+
+  .inquiry-identity-copy p {
+    max-width: 760px;
+    font-size: 21px;
+  }
+
+  .inquiry-identity-actions {
+    width: min(760px, 100%);
+  }
+
+  .inquiry-identity-actions button,
+  .inquiry-identity-retry {
+    min-height: 74px;
+    font-size: 22px;
+  }
+
+  .inquiry-page.conversation-layout .chat-main-panel {
+    grid-template-rows: 72px minmax(0, 1fr) 80px;
+    gap: 16px;
+    padding: 22px;
+  }
+
+  /* Records: give summary, people, activity and plan rows their own larger rhythm. */
+  .records-page {
+    grid-template-rows: 132px minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .record-summary-grid,
+  .records-main-grid,
+  .records-side-stack {
+    gap: 18px;
+  }
+
+  .record-summary-card {
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+    gap: 20px;
+    padding: 24px 28px;
+  }
+
+  .record-summary-card > span {
+    width: 70px;
+    height: 70px;
+  }
+
+  .record-summary-card p {
+    font-size: 21px;
+  }
+
+  .record-summary-card strong {
+    font-size: 48px;
+  }
+
+  .records-main-grid {
+    grid-template-columns: 370px minmax(0, 1fr) 440px;
+  }
+
+  .records-panel,
+  .sync-status-card {
+    padding: 22px;
+  }
+
+  .records-panel-heading h2,
+  .sync-status-card h2 {
+    font-size: 30px;
+  }
+
+  .service-users-panel,
+  .recent-records-panel {
+    grid-template-rows: 42px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .service-user-list,
+  .recent-record-list,
+  .today-plan-list {
+    gap: 12px;
+  }
+
+  .service-user-card {
+    min-height: 108px;
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  .service-user-icon,
+  .recent-record-icon {
+    width: 52px;
+    height: 52px;
+  }
+
+  .service-user-card strong,
+  .recent-record-row strong,
+  .today-plan-list strong {
+    font-size: 20px;
+  }
+
+  .recent-record-row {
+    min-height: 72px;
+    grid-template-columns: 52px minmax(120px, 0.72fr) minmax(0, 1.28fr) auto;
+    gap: 14px;
+    padding: 9px 14px;
+  }
+
+  .today-plan-list article {
+    min-height: 82px;
+    grid-template-columns: 66px minmax(0, 1fr) 86px;
+    padding: 10px 14px;
+  }
+
+  .today-plan-list time {
+    font-size: 20px;
+  }
+
+  .sync-status-card {
+    grid-template-columns: minmax(0, 1fr) 164px;
+  }
+
+  .sync-status-card button {
+    min-height: 70px;
+    font-size: 20px;
+  }
+
+  /* Scan: expand the live framing surface and make result controls easier to reach. */
+  .scan-page {
+    grid-template-columns: minmax(0, 1.38fr) minmax(440px, 0.62fr);
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .scan-capture-panel,
+  .scan-result-panel {
+    padding: 28px;
+  }
+
+  .scan-capture-panel {
+    grid-template-rows: 78px minmax(0, 1fr) 74px;
+    gap: 16px;
+  }
+
+  .scan-heading h2,
+  .scan-result-heading h2 {
+    font-size: 35px;
+  }
+
+  .scan-heading .icon-action,
+  .scan-result-heading > span {
+    width: 66px;
+    min-height: 66px;
+  }
+
+  .scan-live-status-row {
+    min-height: 74px;
+    padding: 13px 18px;
+  }
+
+  .scan-live-status-row strong {
+    font-size: 21px;
+  }
+
+  .scan-live-status-row span,
+  .scan-meta-grid span {
+    font-size: 17px;
+  }
+
+  .scan-empty-state strong {
+    font-size: 32px;
+  }
+
+  .scan-empty-state p {
+    font-size: 20px;
+  }
+
+  .scan-meta-grid strong {
+    font-size: 21px;
+  }
+
+  .scan-result-actions .primary-action {
+    height: 70px;
+    min-height: 70px;
+  }
+
+  /* Vitals: enlarge the two positioning guides and the result/status hierarchy. */
+  .vitals-page {
+    grid-template-columns: minmax(0, 1.2fr) minmax(480px, 0.8fr);
+    gap: clamp(18px, 1.15vw, 24px);
+  }
+
+  .vitals-guide-panel,
+  .vitals-result-panel {
+    padding: 26px;
+  }
+
+  .vitals-guide-panel {
+    grid-template-rows: 62px minmax(0, 1fr) 76px;
+    gap: 18px;
+  }
+
+  .vitals-result-panel {
+    grid-template-rows: 62px minmax(0, 1fr) 88px;
+    gap: 14px;
+  }
+
+  .vitals-page-heading h2,
+  .vitals-result-heading h2 {
+    font-size: 36px;
+  }
+
+  .vitals-back-button,
+  .vitals-result-heading > span {
+    width: 62px;
+    height: 62px;
+  }
+
+  .vitals-visual-guide {
+    gap: 20px;
+  }
+
+  .vitals-pose-card {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    justify-content: stretch;
+    gap: clamp(10px, 1.5vh, 16px);
+    padding: clamp(16px, 2vh, 22px);
+  }
+
+  .vitals-pose-graphic {
+    width: 100%;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .vitals-pose-label {
+    min-height: clamp(54px, 6.5vh, 70px);
+    grid-template-columns: clamp(48px, 5.6vh, 60px) minmax(0, 1fr);
+    margin-top: 0;
+  }
+
+  .vitals-pose-icon {
+    width: clamp(48px, 5.6vh, 60px);
+    height: clamp(48px, 5.6vh, 60px);
+  }
+
+  .vitals-pose-label strong {
+    font-size: 28px;
+  }
+
+  .vitals-action-row .primary-action {
+    min-height: 76px;
+    font-size: 25px;
+  }
+
+  .vitals-result-visual {
+    width: 390px;
+    height: 390px;
+  }
+
+  .vitals-result-heart {
+    width: 210px;
+    height: 210px;
+  }
+
+  .vitals-metric {
+    grid-template-columns: 50px minmax(0, 1fr);
+    padding: 14px 16px;
+  }
+
+  .vitals-metric-icon {
+    width: 50px;
+    height: 50px;
+  }
+
+  .vitals-metric-label {
+    font-size: 17px;
+  }
+
+  .vitals-metric strong {
+    font-size: 26px;
+  }
+
+  .vitals-status-card {
+    grid-template-columns: 54px minmax(0, 1fr);
+    padding: 13px 16px;
+  }
+
+  .vitals-status-card > span {
+    width: 54px;
+    height: 54px;
+  }
+
+  .vitals-status-card strong {
+    font-size: 21px;
+  }
+
+  /* Basic settings: enlarge each control instead of stretching the panel. */
+  .basic-settings-page {
+    grid-template-rows: 72px minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .basic-settings-header .icon-action {
+    width: 66px;
+    height: 66px;
+    min-height: 66px;
+  }
+
+  .basic-settings-title h2 {
+    font-size: 32px;
+  }
+
+  .basic-settings-title span {
+    font-size: 17px;
+  }
+
+  .admin-entry-button {
+    height: 64px;
+    min-height: 64px;
+    font-size: 18px;
+  }
+
+  .basic-settings-grid {
+    gap: 20px;
+  }
+
+  .basic-settings-panel {
+    gap: 18px;
+    padding: 24px;
+  }
+
+  .basic-settings-panel > header h3 {
+    font-size: 25px;
+  }
+
+  .basic-setting-toggle-row {
+    min-height: 82px;
+    padding: 12px 16px;
+  }
+
+  .basic-setting-toggle-row strong,
+  .basic-settings-range-label strong,
+  .idle-time-setting strong {
+    font-size: 19px;
+  }
+
+  .basic-setting-toggle-row span,
+  .basic-setting-toggle-row small {
+    font-size: 15px;
+  }
+
+  .network-mode-control {
+    min-height: 68px;
+  }
+
+  .network-mode-control button {
+    min-height: 56px;
+    font-size: 17px;
+  }
+
+  .settings-test-sound {
+    min-height: 64px;
+    font-size: 18px;
+  }
+
+  .idle-time-setting {
+    min-height: 78px;
+    padding-inline: 16px;
+  }
+
+  /* Admin: dense by design, but use the extra pixels for touch and legibility. */
+  .admin-console {
+    grid-template-columns: 280px minmax(0, 1fr);
+    font-size: 15px;
+  }
+
+  .admin-sidebar {
+    padding: 24px 18px 18px;
+  }
+
+  .admin-sidebar-brand {
+    min-height: 68px;
+  }
+
+  .admin-brand-image {
+    width: 56px;
+    height: 56px;
+  }
+
+  .admin-sidebar-brand strong {
+    font-size: 20px;
+  }
+
+  .admin-sidebar nav {
+    gap: 8px;
+    margin-top: 24px;
+  }
+
+  .admin-sidebar nav button {
+    height: 52px;
+    gap: 13px;
+    padding-inline: 14px;
+    font-size: 16px;
+  }
+
+  .admin-sidebar-actions button {
+    height: 46px;
+    font-size: 14px;
+  }
+
+  .admin-workspace {
+    padding: 30px 32px;
+  }
+
+  .admin-view {
+    gap: 20px;
+  }
+
+  .admin-page-heading {
+    min-height: 66px;
+  }
+
+  .admin-page-heading h2 {
+    font-size: 30px;
+  }
+
+  .admin-page-heading p {
+    font-size: 15px;
+  }
+
+  .admin-button,
+  .admin-button.compact {
+    height: 46px;
+    min-height: 46px;
+    font-size: 15px;
+  }
+
+  .admin-login-panel {
+    width: 480px;
+    border-radius: 20px;
+    padding: 40px;
+  }
+
+  .admin-login-panel .brand-logo-image {
+    width: 92px;
+    height: 92px;
+  }
+
+  .admin-login-copy {
+    margin-top: 14px;
+  }
+
+  .admin-login-copy h1 {
+    font-size: 32px;
+  }
+
+  .admin-login-copy p {
+    margin-top: 8px;
+    font-size: 17px;
+  }
+
+  .admin-login-panel form {
+    margin-top: 28px;
+  }
+
+  .admin-login-panel label > span {
+    margin-bottom: 9px;
+    font-size: 15px;
+  }
+
+  .admin-login-panel label > div {
+    height: 60px;
+    gap: 11px;
+    border-radius: 13px;
+    padding-inline: 15px;
+    font-size: 18px;
+  }
+
+  .admin-login-submit {
+    height: 60px;
+    margin-top: 18px;
+    border-radius: 13px;
+    font-size: 18px;
+  }
+
+  .admin-login-exit {
+    height: 46px;
+    margin-top: 16px;
+    font-size: 15px;
+  }
+
+  /* Idle is a standalone page, so its clock, wake target and reminder grow independently. */
+  .idle-screen {
+    padding: 46px 58px 42px;
+  }
+
+  .idle-brand > span {
+    width: 84px;
+    height: 84px;
+  }
+
+  .idle-brand strong {
+    font-size: 32px;
+  }
+
+  .idle-wake-area {
+    min-width: 560px;
+  }
+
+  .idle-time {
+    margin-bottom: 32px;
+  }
+
+  .idle-time strong {
+    font-size: 142px;
+  }
+
+  .idle-time span {
+    font-size: 28px;
+  }
+
+  .idle-wake-button {
+    width: 260px;
+    height: 260px;
+    min-height: 260px;
+  }
+
+  .handwritten-hello {
+    width: 360px;
+    height: 108px;
+  }
+
+  .idle-wake-area h1 {
+    margin-top: 34px;
+    font-size: 44px;
+  }
+
+  .idle-medication-reminder {
+    width: min(820px, calc(100vw - 160px));
+    min-height: 226px;
+    grid-template-columns: 150px minmax(0, 1fr);
+    column-gap: 30px;
+    padding: 28px 36px;
+  }
+}
+
+/* Preserve the 1280x720 component geometry while tightening only genuinely short viewports. */
+@media (max-height: 650px) {
+  .kiosk-frame {
+    grid-template-rows: 66px minmax(0, 1fr) 62px;
+    gap: 8px;
+    padding: 16px;
+  }
+
+  .brand-mark {
+    width: 56px;
+    height: 56px;
+  }
+
+  .brand-block h1 {
+    font-size: 27px;
+  }
+
+  .clock-block strong {
+    font-size: 26px;
+  }
+
+  .bottom-nav button {
+    min-height: 48px;
+    font-size: 19px;
+  }
+}

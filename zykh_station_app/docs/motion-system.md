@@ -14,14 +14,15 @@
 当前只允许以下位置使用 `StrokeDrawIcon`：
 
 ```text
-components/TopBar.jsx          品牌 Logo
 components/InquiryChatStep.jsx 录音中的麦克风、分析中的助手
+components/InquiryEntryCard.jsx 首页问询入口的一次性助手描边
+components/DispenseConfirmModal.jsx 取药确认中的人脸与指纹采集
 pages/IdleScreen.jsx           息屏页中央唤醒图标
 pages/Scan.jsx                 扫码核验进行状态
 pages/Vitals.jsx               测量中的额温与指尖引导
 ```
 
-首页快捷入口、网络、导航、返回、结果、同步、成功和告警图标全部保持静态。
+网络、导航、返回、结果、同步、成功和告警图标全部保持静态；导航仅使用轻量的颜色和缩放状态反馈，不再逐路径重绘。问询身份确认入口改为单个图标的轻微呼吸反馈，避免页面刚挂载时同时创建多条 SVG 动画。
 
 ## 实现
 

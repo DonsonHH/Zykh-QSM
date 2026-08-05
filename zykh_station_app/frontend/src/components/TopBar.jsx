@@ -5,8 +5,10 @@ import {
 import { formatClock, formatDay } from "../utils/time.js";
 import { BrandLogoImage } from "./BrandLogoImage.jsx";
 import { NetworkStatusIcons } from "./NetworkStatusIcons.jsx";
+import { useMinuteClock } from "../hooks/useMinuteClock.js";
 
-export function TopBar({ networkStatus, now, onOpenSystemCheck }) {
+export function TopBar({ networkStatus, onOpenSystemCheck }) {
+  const now = useMinuteClock();
   const dayText = formatDay(now);
   const [dateText, weekText = ""] = dayText.split(/(?=星期)/);
 

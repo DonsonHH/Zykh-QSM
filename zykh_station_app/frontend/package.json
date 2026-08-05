@@ -21,6 +21,8 @@
     "test:vitals-transport-recovery": "node scripts/test-vitals-transport-recovery.mjs",
     "test:network-display": "node scripts/test-network-display-mode.mjs",
     "test:scan-layout": "node scripts/test-scan-layout.mjs",
+    "test:kiosk-ui": "node scripts/test-kiosk-layout-performance.mjs",
+    "test:render-boundaries": "node scripts/test-render-boundaries.mjs",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
