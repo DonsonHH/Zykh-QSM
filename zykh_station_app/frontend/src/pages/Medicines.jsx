@@ -10,7 +10,6 @@ import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
 
 function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
   const gridRef = useRef(null);
-  const pendingFocusIndexRef = useRef(null);
   const [viewport, setViewport] = useState({ height: 320, scrollTop: 0, rowHeight: 80, gap: 12 });
   const [renderedRowCount, setRenderedRowCount] = useState(1);
 
@@ -65,15 +64,6 @@ function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
     setViewport((current) => ({ ...current, scrollTop: nextScrollTop }));
   }, [medicines, selectedMedicine?.id, stride, viewport.height, viewport.rowHeight]);
 
-  useLayoutEffect(() => {
-    const pendingIndex = pendingFocusIndexRef.current;
-    if (pendingIndex === null) return;
-    const option = gridRef.current?.querySelector(`[data-medicine-index="${pendingIndex}"]`);
-    if (!option) return;
-    option.focus();
-    pendingFocusIndexRef.current = null;
-  }, [firstRow, renderedLastRow, selectedMedicine?.id]);
-
   function visibleRange(scrollTop, currentViewport = viewport) {
     const currentStride = currentViewport.rowHeight + currentViewport.gap;
     return {
@@ -109,8 +99,10 @@ function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
     event.preventDefault();
     nextIndex = Math.max(0, Math.min(nextIndex, medicines.length - 1));
     if (nextIndex === index) return;
-    pendingFocusIndexRef.current = nextIndex;
     onSelect(medicines[nextIndex]);
+    window.requestAnimationFrame(() => {
+      gridRef.current?.querySelector(`[data-medicine-index="${nextIndex}"]`)?.focus();
+    });
   }
 
   return (

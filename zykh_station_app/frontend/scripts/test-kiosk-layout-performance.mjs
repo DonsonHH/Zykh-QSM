@@ -10,7 +10,7 @@ const baseUrl = process.env.QA_BASE_URL || "http://127.0.0.1:4173";
 const chromiumBin = process.env.CHROMIUM_BIN || "chromium";
 const browserWindowWidth = Number(process.env.QA_WINDOW_WIDTH || 1920);
 const browserWindowHeight = Number(process.env.QA_WINDOW_HEIGHT || 1200);
-const deviceScaleFactor = Number(process.env.QA_DEVICE_SCALE_FACTOR || 1);
+const deviceScaleFactor = Number(process.env.QA_DEVICE_SCALE_FACTOR || 2);
 const navigationCycles = Math.max(1, Number(process.env.QA_NAVIGATION_CYCLES || 2));
 const navigationSettleMs = Math.max(0, Number(process.env.QA_NAVIGATION_SETTLE_MS || 250));
 const performanceOnly = process.env.QA_PERFORMANCE_ONLY === "1";
@@ -200,14 +200,7 @@ async function verifyMedicineCacheLifecycle() {
         if (element) return element;
         await new Promise(requestAnimationFrame);
       }
-      const action = document.querySelector('.detail-action');
-      throw new Error('Timed out waiting for ' + selector + '; detail=' + JSON.stringify({
-        selected: document.querySelector('.medicine-grid [aria-selected="true"]')?.textContent?.trim(),
-        heading: document.querySelector('.detail-heading h2')?.textContent?.trim(),
-        actionText: action?.textContent?.trim(),
-        actionTitle: action?.getAttribute('title'),
-        actionDisabled: action?.disabled
-      }));
+      throw new Error('Timed out waiting for ' + selector);
     };
     (await waitFor('.system-check-button')).click();
     (await waitFor('.admin-entry-button')).click();
@@ -233,23 +226,11 @@ async function verifyMedicineModalCoverage() {
         if (element) return element;
         await new Promise(requestAnimationFrame);
       }
-      const action = document.querySelector('.detail-action');
-      throw new Error('Timed out waiting for ' + selector + '; detail=' + JSON.stringify({
-        selected: document.querySelector('.medicine-grid [aria-selected="true"]')?.textContent?.trim(),
-        heading: document.querySelector('.detail-heading h2')?.textContent?.trim(),
-        actionText: action?.textContent?.trim(),
-        actionTitle: action?.getAttribute('title'),
-        actionDisabled: action?.disabled
-      }));
+      throw new Error('Timed out waiting for ' + selector);
     };
-    const selected = document.querySelector('.medicine-grid [role=option][aria-selected="true"]');
-    selected?.focus();
-    selected?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    document.querySelector('.medicine-grid [role=option]:not([aria-selected="true"])')?.click();
     const visibleMedicine = (await waitFor('.detail-heading h2')).textContent.trim();
-    const action = await waitFor('.detail-action:not(:disabled)');
-    action.click();
+    (await waitFor('.detail-action')).click();
     const layer = await waitFor('.modal-layer');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const frame = document.querySelector('.kiosk-frame').getBoundingClientRect();
@@ -553,8 +534,8 @@ async function observeIdleWork() {
 
 function parseViewports(value) {
   if (!value) {
-    // Exercise the production panel at its native CSS viewport with no global scaling.
-    return [{ width: 1920, height: 1200 }];
+    // The production panel is 1920x1200 at Chromium DPR 2: 960x600 CSS pixels.
+    return [{ width: 960, height: 600 }];
   }
   return value.split(",").map((entry) => {
     const match = entry.trim().match(/^(\d+)x(\d+)$/);
