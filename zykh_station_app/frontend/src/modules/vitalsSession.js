@@ -28,6 +28,14 @@ export function isDemoSpo2(result) {
   return Boolean(result?.spo2_demo_fallback || result?.spo2_source === "demo_fallback");
 }
 
+export function vitalsTemperaturePresentation(result) {
+  const fingertipFallback = result?.temperature_source === "uart8_fingertip_reference";
+  return {
+    label: fingertipFallback ? "指温参考" : "额温",
+    showSeparateFingerTemperature: hasVitalsReading(result?.body_temperature) && !fingertipFallback
+  };
+}
+
 export function shouldAutomaticallyRetrySpo2(result) {
   return result?.status === "failed"
     && hasVitalsReading(result?.heart_rate)

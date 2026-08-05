@@ -20,6 +20,7 @@ import {
   inquiryVitalsDisposition,
   isDemoSpo2,
   isVitalsSessionActive,
+  vitalsTemperaturePresentation,
   useVitalsSession
 } from "../modules/vitalsSession.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
@@ -142,7 +143,8 @@ export function Vitals({
 
   const status = useMemo(() => describeVitals(result, errorMessage, phase), [errorMessage, phase, result]);
   const auxiliaryMetrics = useMemo(() => buildAuxiliaryMetrics(result), [result]);
-  const hasFingerTemperature = hasReading(result?.body_temperature);
+  const temperaturePresentation = vitalsTemperaturePresentation(result);
+  const hasFingerTemperature = temperaturePresentation.showSeparateFingerTemperature;
 
   async function handleBack() {
     if (embedded) {
@@ -228,7 +230,7 @@ export function Vitals({
             <div className={`vitals-metric-grid ${hasFingerTemperature ? "four" : "three"}`}>
               <Metric icon={HeartPulse} label="心率" value={formatMetric(result.heart_rate, "次/分", 0)} tone="heart" primary />
               <Metric icon={Activity} label="血氧" value={formatMetric(result.spo2, "%", 0)} tone="oxygen" primary />
-              <Metric icon={Thermometer} label="额温" value={formatMetric(result.temperature, "℃", 1)} tone="forehead" />
+              <Metric icon={Thermometer} label={temperaturePresentation.label} value={formatMetric(result.temperature, "℃", 1)} tone="forehead" />
               {hasFingerTemperature ? <Metric icon={Fingerprint} label="指温参考" value={formatMetric(result.body_temperature, "℃", 2)} tone="finger" /> : null}
             </div>
             {auxiliaryMetrics.length ? (
@@ -350,11 +352,12 @@ export function describeVitals(result, errorMessage, phase) {
       tone: "warn",
       title: "演示结果",
       summary: "血氧为演示值，本次结果未保存",
-      detail: "心率与额温来自设备，血氧仅用于现场演示。"
+      detail: "心率与温度来自设备，血氧仅用于现场演示。"
     };
   }
   if (hasCoreVitals(result)) {
-    return { tone: "good", title: "测量完成", summary: "心率、血氧与额温已记录", detail: "" };
+    const temperatureLabel = vitalsTemperaturePresentation(result).label;
+    return { tone: "good", title: "测量完成", summary: `心率、血氧与${temperatureLabel}已记录`, detail: "" };
   }
   return { tone: "idle", title: "结果预览", summary: "准备测量", detail: "" };
 }

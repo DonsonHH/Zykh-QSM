@@ -138,8 +138,7 @@ select:focus-visible {
 .modal-layer,
 .system-check-layer,
 .admin-dialog-backdrop {
-  background: rgba(15, 28, 46, 0.42);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 28, 46, 0.68);
 }
 
 /* Dense detail content should not compete with the fixed primary action. */

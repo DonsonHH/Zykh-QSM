@@ -14,6 +14,15 @@ const vite = await createServer({
 
 try {
   const sessionModule = await vite.ssrLoadModule("/src/modules/vitalsSession.js");
+  assert.deepEqual(
+    sessionModule.vitalsTemperaturePresentation({
+      temperature: 36.42,
+      body_temperature: 36.42,
+      temperature_source: "uart8_fingertip_reference"
+    }),
+    { label: "指温参考", showSeparateFingerTemperature: false },
+    "a fingertip fallback must not be presented as a forehead-temperature reading"
+  );
   assert.equal(
     sessionModule.shouldAutomaticallyRetrySpo2({
       status: "failed",

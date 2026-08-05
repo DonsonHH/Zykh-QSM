@@ -301,7 +301,7 @@ sub read_uart_frames {
                 && $measurement_old_enough
                 && $contact_old_enough;
         }
-        if (!$start_retried && time() - $started_at >= 2) {
+        if (!$options->{prewarmed} && !$start_retried && time() - $started_at >= 2) {
             # Any valid 24-byte frame proves the module is already running.
             # Restarting while SpO2 is stabilizing resets its measurement window.
             if (!@frames) {

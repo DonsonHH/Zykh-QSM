@@ -88,13 +88,20 @@ class VitalsSessionModule:
         if not VitalsRepository().append_once(record):
             return
         SyncRepository().mark_pending()
+        temperature_label = (
+            "指温参考"
+            if response.temperature_source == "uart8_fingertip_reference"
+            else "额温"
+        )
         DeviceActionRepository().append(
             DeviceActionRecord(
                 id=f"device-{uuid4().hex[:12]}",
                 created_at=measured_at,
                 type="体征读取",
                 title=f"心率 {response.heart_rate}次/分，血氧 {response.spo2}%",
-                description=f"额温 {response.temperature:.1f}℃，体征测量已完成。",
+                description=(
+                    f"{temperature_label} {response.temperature:.1f}℃，体征测量已完成。"
+                ),
                 status="已记录",
             )
         )

@@ -63,6 +63,90 @@ def frame(
 
 
 class VitalsUart8ParserTest(unittest.TestCase):
+    def test_cold_prewarm_is_not_reset_before_delayed_first_frames_arrive(self) -> None:
+        measured = frame(
+            heart_rate=74,
+            spo2=98,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=16,
+            body_temperature=(36, 42),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            commands: list[int] = []
+            stopped = threading.Event()
+
+            def emulate_cold_sensor() -> None:
+                ready_at = time.monotonic() + 2.4
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 5
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            command_bytes = os.read(master_fd, 128)
+                        except OSError:
+                            break
+                        commands.extend(command_bytes)
+                        if 0x24 in command_bytes:
+                            ready_at = time.monotonic() + 2.4
+                    now = time.monotonic()
+                    if now < ready_at or now - last_frame_at < 0.12:
+                        continue
+                    try:
+                        os.write(master_fd, measured)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_cold_sensor, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "4",
+                        "--stable-frames",
+                        "2",
+                        "--minimum-measurement-seconds",
+                        "2.6",
+                        "--minimum-contact-seconds",
+                        "0.1",
+                        "--prewarmed",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=7,
+                )
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn(0x24, commands, "a confirmed cold prewarm must not be reset after only two seconds")
+        self.assertEqual(payload["heart_rate_bpm"], 74)
+        self.assertEqual(payload["spo2_percent"], 98)
+
     def test_prewarmed_measurement_uses_fresh_frames_and_a_minimum_window(self) -> None:
         measured = frame(
             heart_rate=74,

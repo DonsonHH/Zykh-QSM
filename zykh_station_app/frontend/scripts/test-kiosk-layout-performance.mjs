@@ -14,6 +14,7 @@ const deviceScaleFactor = Number(process.env.QA_DEVICE_SCALE_FACTOR || 2);
 const navigationCycles = Math.max(1, Number(process.env.QA_NAVIGATION_CYCLES || 2));
 const navigationSettleMs = Math.max(0, Number(process.env.QA_NAVIGATION_SETTLE_MS || 250));
 const performanceOnly = process.env.QA_PERFORMANCE_ONLY === "1";
+const modalOnly = process.env.QA_MODAL_ONLY === "1";
 const skipNavigation = process.env.QA_SKIP_NAVIGATION === "1";
 const idleObserveMs = Math.max(0, Number(process.env.QA_IDLE_OBSERVE_MS || 36000));
 const headful = process.env.QA_HEADFUL === "1";
@@ -228,11 +229,33 @@ async function verifyMedicineModalCoverage() {
       }
       throw new Error('Timed out waiting for ' + selector);
     };
-    document.querySelector('.medicine-grid [role=option]:not([aria-selected="true"])')?.click();
-    const visibleMedicine = (await waitFor('.detail-heading h2')).textContent.trim();
+    const current = await waitFor('.medicine-grid [role=option][aria-selected="true"]');
+    current.focus();
+    current.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    const first = await waitFor('.medicine-grid [data-medicine-index="0"][aria-selected="true"]');
+    const visibleMedicine = first.querySelector('.medicine-card-copy > strong')?.textContent.trim() || '';
+    const detailDeadline = performance.now() + 5000;
+    while (performance.now() < detailDeadline) {
+      const heading = document.querySelector('.detail-heading h2')?.textContent.trim();
+      const action = document.querySelector('.detail-action');
+      if (heading === visibleMedicine && action && !action.disabled) break;
+      await new Promise(requestAnimationFrame);
+    }
+    const frameGaps = [];
+    let previousFrame = 0;
+    let collecting = true;
+    const tick = (timestamp) => {
+      if (previousFrame) frameGaps.push(timestamp - previousFrame);
+      previousFrame = timestamp;
+      if (collecting) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    await new Promise(requestAnimationFrame);
+    const startedAt = performance.now();
     (await waitFor('.detail-action')).click();
     const layer = await waitFor('.modal-layer');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    collecting = false;
     const frame = document.querySelector('.kiosk-frame').getBoundingClientRect();
     const bounds = layer.getBoundingClientRect();
     const navBounds = document.querySelector('.bottom-nav').getBoundingClientRect();
@@ -245,9 +268,49 @@ async function verifyMedicineModalCoverage() {
       coversFrame: Math.abs(bounds.top - frame.top) <= 1 && Math.abs(bounds.left - frame.left) <= 1 &&
         Math.abs(bounds.right - frame.right) <= 1 && Math.abs(bounds.bottom - frame.bottom) <= 1,
       capturesNavigation: navigationHit === layer || layer.contains(navigationHit),
-      medicineMatches: visibleMedicine === dialogMedicine
+      medicineMatches: visibleMedicine === dialogMedicine,
+      backdropFilter: getComputedStyle(layer).backdropFilter || getComputedStyle(layer).webkitBackdropFilter || 'none',
+      openMs: performance.now() - startedAt,
+      maxFrameGapMs: Math.max(0, ...frameGaps)
     };
     document.querySelector('.modal-close')?.click();
+    return result;
+  })()`);
+}
+
+async function verifyHomeTaskPickerPerformance() {
+  return evaluate(`(async () => {
+    const waitFor = async (selector) => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const element = document.querySelector(selector);
+        if (element) return element;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Timed out waiting for ' + selector);
+    };
+    const trigger = await waitFor('.home-plan-picker-trigger');
+    const frameGaps = [];
+    let previousFrame = 0;
+    let collecting = true;
+    const tick = (timestamp) => {
+      if (previousFrame) frameGaps.push(timestamp - previousFrame);
+      previousFrame = timestamp;
+      if (collecting) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    await new Promise(requestAnimationFrame);
+    const startedAt = performance.now();
+    trigger.click();
+    const layer = await waitFor('.home-task-picker-layer');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    collecting = false;
+    const result = {
+      openMs: performance.now() - startedAt,
+      maxFrameGapMs: Math.max(0, ...frameGaps),
+      backdropFilter: getComputedStyle(layer).backdropFilter || getComputedStyle(layer).webkitBackdropFilter || 'none'
+    };
+    document.querySelector('.home-task-picker-close')?.click();
     return result;
   })()`);
 }
@@ -603,11 +666,14 @@ try {
   let medicineKeyboardNavigation = null;
   let medicineModalCoverage = null;
   let medicineCacheLifecycle = null;
+  let homeTaskPickerPerformance = null;
   if (!performanceOnly) {
+    await navigate("home");
+    homeTaskPickerPerformance = await verifyHomeTaskPickerPerformance();
     await navigate("medicines");
-    medicineKeyboardNavigation = await verifyMedicineKeyboardNavigation();
+    medicineKeyboardNavigation = modalOnly ? null : await verifyMedicineKeyboardNavigation();
     medicineModalCoverage = await verifyMedicineModalCoverage();
-    medicineCacheLifecycle = await verifyMedicineCacheLifecycle();
+    medicineCacheLifecycle = modalOnly ? null : await verifyMedicineCacheLifecycle();
   }
 
   const adminConsoleLayouts = {};
@@ -660,6 +726,7 @@ try {
       navigationCycles,
       navigationSettleMs,
       performanceOnly,
+      modalOnly,
       skipNavigation,
       idleObserveMs
     },
@@ -667,6 +734,7 @@ try {
     medicineKeyboardNavigation,
     medicineModalCoverage,
     medicineCacheLifecycle,
+    homeTaskPickerPerformance,
     adminConsoleLayouts,
     navigation,
     longTasks: navigationResult.longTasks,
@@ -697,6 +765,10 @@ try {
         .sort((first, second) => (second.blockingDuration || 0) - (first.blockingDuration || 0))
         .slice(0, 5),
       performanceMetrics: report.performanceMetrics,
+      modalPerformance: {
+        pendingTasks: report.homeTaskPickerPerformance,
+        dispenseConfirm: report.medicineModalCoverage
+      },
       idleObservation: report.idleObservation,
       layoutDiagnostics: Object.fromEntries(
         Object.entries(report.layouts).map(([viewport, pageLayouts]) => [viewport, Object.fromEntries(
@@ -756,10 +828,28 @@ try {
     );
   }
   if (medicineModalCoverage) {
-    assert.deepEqual(
-      medicineModalCoverage,
-      { coversFrame: true, capturesNavigation: true, medicineMatches: true },
-      "the dispense confirmation does not cover the full kiosk or uses a different medicine than the visible detail"
+    assert.equal(medicineModalCoverage.coversFrame, true, "the dispense confirmation does not cover the full kiosk");
+    assert.equal(medicineModalCoverage.capturesNavigation, true, "the dispense confirmation does not capture navigation");
+    assert.equal(medicineModalCoverage.medicineMatches, true, "the dispense confirmation uses a different medicine than the visible detail");
+    assert.equal(medicineModalCoverage.backdropFilter, "none", "the dispense confirmation uses a live backdrop filter");
+    assert.ok(
+      medicineModalCoverage.openMs <= Number(process.env.QA_MAX_MODAL_OPEN_MS || 300),
+      `the dispense confirmation opens in ${medicineModalCoverage.openMs.toFixed(1)}ms`
+    );
+    assert.ok(
+      medicineModalCoverage.maxFrameGapMs <= Number(process.env.QA_MAX_MODAL_FRAME_GAP_MS || 84),
+      `the dispense confirmation blocks a frame for ${medicineModalCoverage.maxFrameGapMs.toFixed(1)}ms`
+    );
+  }
+  if (homeTaskPickerPerformance) {
+    assert.equal(homeTaskPickerPerformance.backdropFilter, "none", "the full pending-task picker uses a live backdrop filter");
+    assert.ok(
+      homeTaskPickerPerformance.openMs <= Number(process.env.QA_MAX_MODAL_OPEN_MS || 300),
+      `the full pending-task picker opens in ${homeTaskPickerPerformance.openMs.toFixed(1)}ms`
+    );
+    assert.ok(
+      homeTaskPickerPerformance.maxFrameGapMs <= Number(process.env.QA_MAX_MODAL_FRAME_GAP_MS || 84),
+      `the full pending-task picker blocks a frame for ${homeTaskPickerPerformance.maxFrameGapMs.toFixed(1)}ms`
     );
   }
 

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { BellRing, HeartHandshake, Pill } from "lucide-react";
 import { BrandLogoImage } from "../components/BrandLogoImage.jsx";
 import { NetworkStatusIcons } from "../components/NetworkStatusIcons.jsx";
-import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 import { useMinuteClock } from "../hooks/useMinuteClock.js";
 import { formatClock, formatDay } from "../utils/time.js";
 import { getMedicationReminders } from "../utils/medicationReminder.js";
@@ -69,15 +68,7 @@ export function IdleScreen({ networkStatus, medication, onWake }) {
         ) : (
           <>
             <button type="button" className="idle-wake-button">
-              <StrokeDrawIcon
-                icon={HeartHandshake}
-                size={160}
-                strokeWidth={1.9}
-                className="idle-wake-glyph"
-                mode="yoyo"
-                pace="idle"
-                active
-              />
+              <HeartHandshake size={160} strokeWidth={1.9} className="idle-wake-glyph" aria-hidden="true" />
             </button>
             <h1>轻触屏幕开始使用</h1>
           </>

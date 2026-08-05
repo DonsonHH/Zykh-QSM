@@ -199,6 +199,12 @@ sub run_measurement {
     if (!defined $temperature && ref($gy->{temperature}) eq 'HASH') {
         $temperature = first_number($gy->{temperature}, qw(body_temp_c target_temp_c temperature_c));
     }
+    my $body_temperature = first_number($uart, qw(body_temperature_c body_temperature));
+    my $temperature_source = defined($temperature) && $temperature > 0 ? 'gy614_sensor' : undef;
+    if ((!defined($temperature) || $temperature <= 0) && defined($body_temperature) && $body_temperature > 0) {
+        $temperature = $body_temperature;
+        $temperature_source = 'uart8_fingertip_reference';
+    }
     my $heart_rate = first_number($uart, qw(heart_rate_bpm heart_rate));
     my $spo2 = first_number($uart, qw(spo2_percent spo2));
     my $cancelled = -e $cancel_file;
@@ -250,7 +256,7 @@ sub run_measurement {
         temperature => $temperature,
         heart_rate => $heart_rate,
         spo2 => $spo2,
-        temperature_source => defined($temperature) && $temperature > 0 ? 'gy614_sensor' : undef,
+        temperature_source => $temperature_source,
         heart_rate_source => defined($heart_rate) && $heart_rate > 0 ? 'uart8_sensor' : undef,
         spo2_source => $spo2_demo_fallback
             ? 'demo_fallback'
@@ -266,14 +272,16 @@ sub run_measurement {
         rr_interval => positive_or_undef($uart->{rr_interval}),
         hrv_sdnn => positive_or_undef($uart->{hrv_sdnn}),
         hrv_rmssd => positive_or_undef($uart->{hrv_rmssd}),
-        body_temperature => first_number($uart, qw(body_temperature_c body_temperature)),
+        body_temperature => $body_temperature,
         ambient_temperature => first_number($uart, qw(ambient_temperature_c ambient_temperature)),
         reference_ready => $uart->{reference_ready} ? JSON::PP::true : JSON::PP::false,
         finger_detected => $uart->{finger_detected} ? JSON::PP::true : JSON::PP::false,
         quality => $uart->{quality} || undef,
         message => $spo2_demo_fallback
-            ? '心率与额温已读取；血氧演示值已补齐。'
-            : $uart->{message} || undef,
+            ? '心率与温度已读取；血氧演示值已补齐。'
+            : ($temperature_source || '') eq 'uart8_fingertip_reference'
+                ? '额温未读取；已采用本次指温参考值。'
+                : $uart->{message} || undef,
         sample_count => int($uart->{sample_count} || 0),
         valid_frame_count => int($uart->{valid_frame_count} || 0),
         communication_status => $uart->{communication_status} || undef,

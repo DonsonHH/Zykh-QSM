@@ -67,6 +67,7 @@ write_json($output, {
     status => $success ? 'measured' : 'awaiting_finger',
     heart_rate_bpm => $success ? 74 : 0,
     spo2_percent => $success ? 98 : 0,
+    body_temperature_c => $success ? 36.42 : undef,
     stable_core => $success ? JSON::PP::true : JSON::PP::false,
     communication_status => $no_frames ? 'no_protocol_frames' : 'receiving_protocol_frames',
     finger_detected => $success ? JSON::PP::true : JSON::PP::false,
@@ -224,7 +225,7 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         self.assertIn("fake GY-614 diagnostic", gy_log_text)
         self.assertIn("fake GY-614 output", gy_log_text)
 
-    def test_missing_gy614_reader_is_recorded_in_the_session_log(self) -> None:
+    def test_missing_gy614_uses_fingertip_temperature_reference(self) -> None:
         self.gy_reader.unlink()
         self.start_gateway("success")
 
@@ -233,8 +234,11 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         result = self.wait_for_terminal_status(session_id)
 
         gy_log = self.temp / "gateway" / "logs" / f"{session_id}-gy614.log"
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["failure_reason"], "temperature_unavailable")
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["temperature"], 36.42)
+        self.assertEqual(result["body_temperature"], 36.42)
+        self.assertEqual(result["temperature_source"], "uart8_fingertip_reference")
+        self.assertIsNone(result["failure_reason"])
         self.assertIn("GY-614 reader not found", gy_log.read_text(encoding="utf-8"))
         self.assertIn(str(self.gy_reader), gy_log.read_text(encoding="utf-8"))
 

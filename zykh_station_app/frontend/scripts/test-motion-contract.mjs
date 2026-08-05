@@ -8,7 +8,6 @@ const allowedDrawFiles = new Set([
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
   "components/InquiryEntryCard.jsx",
-  "pages/IdleScreen.jsx",
   "pages/Scan.jsx",
   "pages/Vitals.jsx"
 ]);
@@ -64,8 +63,8 @@ assert.match(topBar, /<BrandLogoImage/, "brand logo does not use the supplied st
 assert.doesNotMatch(topBar, /StrokeDrawIcon/, "top bar brand logo should stay static");
 
 const idleScreen = await readFile(`${sourceRoot}/pages/IdleScreen.jsx`, "utf8");
-assert.match(idleScreen, /icon=\{HeartHandshake\}/, "idle screen does not use the original simple heart-handshake glyph");
-assert.match(idleScreen, /pace="idle"/, "idle screen icon does not use the slower isolated pace");
+assert.match(idleScreen, /<HeartHandshake/, "idle screen does not use the original simple heart-handshake glyph");
+assert.doesNotMatch(idleScreen, /StrokeDrawIcon|mode="yoyo"/, "idle screen keeps an infinite programmatic SVG animation");
 assert.doesNotMatch(idleScreen, /HandwrittenHello|<HandwrittenHello/, "idle screen still renders the Hello animation");
 
 const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
@@ -88,7 +87,7 @@ assert.match(styles, /prefers-reduced-motion:\s*reduce/, "reduced motion fallbac
 const appStyles = await readFile(`${sourceRoot}/styles/app.css`, "utf8");
 assert.match(appStyles, /--motion-phase-duration:\s*1600ms/, "normal CSS motion phase did not return to 1.6 seconds");
 assert.match(appStyles, /--motion-cycle-duration:\s*3200ms/, "normal CSS motion cycle did not return to 3.2 seconds");
-assert.match(appStyles, /idle-wake-prompt[\s\S]*4200ms/, "idle wake prompt does not gently fade");
+assert.doesNotMatch(appStyles, /idle-(?:background-breathe|wake-prompt|reminder-breathe)/, "idle screen keeps a continuous paint animation");
 assert.match(appStyles, /inquiry-identity-scanning-icon[\s\S]*1800ms[\s\S]*transform:\s*scale/, "identity progress cue is not compositor-friendly");
 assert.doesNotMatch(appStyles, /::view-transition-/, "native page snapshot transitions returned to the kiosk shell");
 assert.match(appStyles, /button:not\(:disabled\):active[\s\S]*scale:\s*0\.97/, "touch press feedback is missing");
