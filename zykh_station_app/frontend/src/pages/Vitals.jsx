@@ -109,26 +109,46 @@ const failureReasonPresentations = {
   }
 };
 
-export function createVitalsPollPolicy() {
+export function createVitalsPollPolicy(sessionId = "") {
   let consecutiveTransportFailures = 0;
+  let stopRequested = false;
   return {
     observe(result) {
+      if (!sessionId || result?.session_id !== sessionId) {
+        return { kind: "ignore", reason: "stale_session" };
+      }
+      if (stopRequested) {
+        return { kind: "ignore", reason: "stop_already_requested" };
+      }
       if (result?.failure_reason !== "transport_error") {
         consecutiveTransportFailures = 0;
         return { kind: "accept" };
       }
       consecutiveTransportFailures += 1;
       if (consecutiveTransportFailures >= maxConsecutiveTransportFailures) {
+        stopRequested = true;
         return {
           kind: "stop",
+          sessionId,
           consecutiveFailures: consecutiveTransportFailures
         };
       }
       return {
         kind: "retry",
+        sessionId,
         delayMs: transportRetryDelayMs,
         consecutiveFailures: consecutiveTransportFailures
       };
+    },
+    requestCancel(requestedSessionId) {
+      if (!sessionId || requestedSessionId !== sessionId) {
+        return { kind: "ignore", reason: "stale_session" };
+      }
+      if (stopRequested) {
+        return { kind: "ignore", reason: "stop_already_requested" };
+      }
+      stopRequested = true;
+      return { kind: "stop", sessionId };
     }
   };
 }
@@ -146,6 +166,15 @@ export function normalizeVitalsStartFailure(data, fallbackMessage = "体征设�
       structured?.failure_reason || (structured ? "hardware_start_failed" : "transport_error"),
     error_message: structured?.error_message || fallbackMessage
   };
+}
+
+export function cancelVitalsSessionNow(sessionId, cancelSession = cancelVitalsSession) {
+  if (!sessionId) return Promise.resolve();
+  try {
+    return Promise.resolve(cancelSession(sessionId)).catch(() => undefined);
+  } catch {
+    return Promise.resolve();
+  }
 }
 
 export function Vitals({
@@ -178,13 +207,19 @@ export function Vitals({
   const hasFingerTemperature = hasReading(result?.body_temperature);
   const coreComplete = hasCoreVitals(result);
 
+  function requestBoardCancellation(activeSession) {
+    const action = pollPolicyRef.current.requestCancel(activeSession);
+    if (action.kind !== "stop") return Promise.resolve();
+    return cancelVitalsSessionNow(action.sessionId);
+  }
+
   useEffect(() => {
     ensureVitalsPrepared();
     return () => {
       window.clearTimeout(automaticRetryTimerRef.current);
       const activeSession = sessionIdRef.current;
       if (activeSession && activePhases.has(phaseRef.current)) {
-        cancelVitalsSession(activeSession).catch(() => undefined);
+        requestBoardCancellation(activeSession);
       }
     };
   }, []);
@@ -205,6 +240,7 @@ export function Vitals({
         const data = await loadVitalsSession(sessionId);
         if (disposed) return;
         const pollAction = pollPolicyRef.current.observe(data);
+        if (pollAction.kind === "ignore") return;
         if (pollAction.kind === "retry") {
           setResult({ ...data, transport_retrying: true });
           setErrorMessage(data.error_message || "体征通信短暂中断，正在恢复连接。");
@@ -212,7 +248,7 @@ export function Vitals({
           return;
         }
         if (pollAction.kind === "stop") {
-          cancelVitalsSession(sessionId).catch(() => undefined);
+          cancelVitalsSessionNow(pollAction.sessionId);
           applySession({ ...data, transport_retrying: false });
           return;
         }
@@ -232,8 +268,9 @@ export function Vitals({
           error_message: error.message || "体征设备状态读取失败。"
         };
         const pollAction = pollPolicyRef.current.observe(transportFailure);
+        if (pollAction.kind === "ignore") return;
         if (pollAction.kind === "stop") {
-          cancelVitalsSession(sessionId).catch(() => undefined);
+          cancelVitalsSessionNow(pollAction.sessionId);
           applySession({ ...transportFailure, transport_retrying: false });
           return;
         }
@@ -267,7 +304,8 @@ export function Vitals({
 
   function applySession(data) {
     setResult(data);
-    setPhase(data.status || "failed");
+    phaseRef.current = data.status || "failed";
+    setPhase(phaseRef.current);
     setErrorMessage(data.error_message || "");
     if (shouldAutomaticallyRetrySpo2(data) && !automaticRetryRef.current) {
       automaticRetryRef.current = true;
@@ -299,17 +337,19 @@ export function Vitals({
     requestIdRef.current = requestId;
     window.clearTimeout(automaticRetryTimerRef.current);
     if (!automatic) automaticRetryRef.current = false;
-    pollPolicyRef.current = createVitalsPollPolicy();
     const previousSession = sessionIdRef.current;
+    const previousCancellation = previousSession
+      ? requestBoardCancellation(previousSession)
+      : Promise.resolve();
+    pollPolicyRef.current = createVitalsPollPolicy();
+    sessionIdRef.current = "";
     setPhase("starting");
     setSessionId("");
     setResult(null);
     setErrorMessage("");
     completionReportedRef.current = false;
     try {
-      if (previousSession) {
-        await cancelVitalsSession(previousSession).catch(() => undefined);
-      }
+      await previousCancellation;
       let prepared = await ensureVitalsPrepared();
       if (!prepared?.hardware_started) {
         prepared = await ensureVitalsPrepared();
@@ -326,6 +366,8 @@ export function Vitals({
         notify?.(failure.error_message);
         return;
       }
+      pollPolicyRef.current = createVitalsPollPolicy(data.session_id);
+      sessionIdRef.current = data.session_id;
       setSessionId(data.session_id);
       applySession(data);
     } catch (error) {
@@ -340,10 +382,12 @@ export function Vitals({
     window.clearTimeout(completionTimerRef.current);
     window.clearTimeout(automaticRetryTimerRef.current);
     requestIdRef.current += 1;
-    const currentSession = sessionId;
+    const currentSession = sessionIdRef.current || sessionId;
+    sessionIdRef.current = "";
+    phaseRef.current = "cancelled";
     setPhase("cancelled");
     if (currentSession) {
-      await cancelVitalsSession(currentSession).catch(() => undefined);
+      await requestBoardCancellation(currentSession);
     }
     setSessionId("");
     setResult(null);

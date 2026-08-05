@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
@@ -18,19 +19,21 @@ try {
     "Vitals must expose its session polling policy through a runtime interface"
   );
 
-  const policy = module.createVitalsPollPolicy();
+  const policy = module.createVitalsPollPolicy("vitals-transport-recovery");
+  const firstRetry = policy.observe({
+    status: "failed",
+    session_id: "vitals-transport-recovery",
+    failure_reason: "transport_error"
+  });
   assert.deepEqual(
-    policy.observe({
-      status: "failed",
-      session_id: "vitals-transport-recovery",
-      failure_reason: "transport_error"
-    }),
+    firstRetry,
     {
       kind: "retry",
+      sessionId: "vitals-transport-recovery",
       delayMs: 700,
       consecutiveFailures: 1
     },
-    "one transport error must keep the current session alive for a short retry"
+    "one transport error must retry the original session after a short delay"
   );
   assert.deepEqual(
     policy.observe({
@@ -40,6 +43,7 @@ try {
     }),
     {
       kind: "retry",
+      sessionId: "vitals-transport-recovery",
       delayMs: 700,
       consecutiveFailures: 2
     },
@@ -53,13 +57,38 @@ try {
     }),
     {
       kind: "stop",
+      sessionId: "vitals-transport-recovery",
       consecutiveFailures: 3
     },
     "only consecutive communication failures may stop the board measurement"
   );
+  assert.deepEqual(
+    policy.observe({
+      status: "failed",
+      session_id: "vitals-transport-recovery",
+      failure_reason: "transport_error"
+    }),
+    {
+      kind: "ignore",
+      reason: "stop_already_requested"
+    },
+    "a stopped polling state must not emit a second board cancellation"
+  );
+  assert.deepEqual(
+    policy.requestCancel("vitals-transport-recovery"),
+    {
+      kind: "ignore",
+      reason: "stop_already_requested"
+    },
+    "cleanup after the third communication failure must not cancel the same session again"
+  );
 
-  const recoveryPolicy = module.createVitalsPollPolicy();
-  recoveryPolicy.observe({ status: "failed", failure_reason: "transport_error" });
+  const recoveryPolicy = module.createVitalsPollPolicy("vitals-transport-recovery");
+  recoveryPolicy.observe({
+    status: "failed",
+    session_id: "vitals-transport-recovery",
+    failure_reason: "transport_error"
+  });
   assert.deepEqual(
     recoveryPolicy.observe({
       status: "stabilizing",
@@ -71,13 +100,140 @@ try {
     "a recovered status response must resume the existing session"
   );
   assert.deepEqual(
-    recoveryPolicy.observe({ status: "failed", failure_reason: "transport_error" }),
+    recoveryPolicy.observe({
+      status: "failed",
+      session_id: "vitals-transport-recovery",
+      failure_reason: "transport_error"
+    }),
     {
       kind: "retry",
+      sessionId: "vitals-transport-recovery",
       delayMs: 700,
       consecutiveFailures: 1
     },
     "a recovered connection must reset the consecutive failure count"
+  );
+
+  const measurementFailurePolicy = module.createVitalsPollPolicy("vitals-no-finger");
+  assert.deepEqual(
+    measurementFailurePolicy.observe({
+      status: "failed",
+      session_id: "vitals-no-finger",
+      failure_reason: "no_finger"
+    }),
+    { kind: "accept" },
+    "a real measurement failure must be shown immediately instead of entering communication retry"
+  );
+
+  const replacementPolicy = module.createVitalsPollPolicy("vitals-new-session");
+  assert.deepEqual(
+    replacementPolicy.observe({
+      status: "complete",
+      session_id: "vitals-old-session",
+      failure_reason: null,
+      heart_rate: 72,
+      spo2: 98,
+      temperature: 36.5
+    }),
+    {
+      kind: "ignore",
+      reason: "stale_session"
+    },
+    "a late response from the replaced session must not overwrite the new measurement"
+  );
+
+  for (const trigger of ["user cancellation", "page unmount"]) {
+    const cleanupPolicy = module.createVitalsPollPolicy(
+      `vitals-${trigger.replace(" ", "-")}`
+    );
+    assert.deepEqual(
+      cleanupPolicy.requestCancel(`vitals-${trigger.replace(" ", "-")}`),
+      {
+        kind: "stop",
+        sessionId: `vitals-${trigger.replace(" ", "-")}`
+      },
+      `${trigger} must request immediate board cleanup`
+    );
+  }
+
+  assert.equal(
+    typeof module.cancelVitalsSessionNow,
+    "function",
+    "Vitals must expose its immediate session cleanup boundary"
+  );
+
+  const oneShotPolicy = module.createVitalsPollPolicy("vitals-one-shot-stop");
+  const boardCancellations = [];
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const action = oneShotPolicy.observe({
+      status: "failed",
+      session_id: "vitals-one-shot-stop",
+      failure_reason: "transport_error"
+    });
+    if (action.kind === "stop") {
+      await module.cancelVitalsSessionNow(action.sessionId, async (sessionId) => {
+        boardCancellations.push(sessionId);
+      });
+    }
+  }
+  const cleanupAfterStop = oneShotPolicy.requestCancel("vitals-one-shot-stop");
+  if (cleanupAfterStop.kind === "stop") {
+    await module.cancelVitalsSessionNow(cleanupAfterStop.sessionId, async (sessionId) => {
+      boardCancellations.push(sessionId);
+    });
+  }
+  assert.deepEqual(
+    boardCancellations,
+    ["vitals-one-shot-stop"],
+    "the third consecutive transport failure must emit exactly one board cancellation"
+  );
+
+  for (const trigger of ["user cancellation", "page unmount"]) {
+    let cancelledSessionId = "";
+    let releaseCancellation;
+    const pendingCancellation = new Promise((resolve) => {
+      releaseCancellation = resolve;
+    });
+    const cancellation = module.cancelVitalsSessionNow(
+      `vitals-${trigger.replace(" ", "-")}`,
+      (sessionId) => {
+        cancelledSessionId = sessionId;
+        return pendingCancellation;
+      }
+    );
+    assert.equal(
+      cancelledSessionId,
+      `vitals-${trigger.replace(" ", "-")}`,
+      `${trigger} must issue board cleanup immediately without awaiting the response`
+    );
+    releaseCancellation({ ok: true });
+    await cancellation;
+  }
+
+  const vitalsSource = await readFile(`${root}src/pages/Vitals.jsx`, "utf8");
+  assert.ok(
+    vitalsSource.includes("requestBoardCancellation(activeSession);"),
+    "page unmount must use the tested immediate cleanup boundary"
+  );
+  assert.ok(
+    vitalsSource.includes("await requestBoardCancellation(currentSession);"),
+    "explicit user cancellation must use the tested immediate cleanup boundary"
+  );
+  assert.ok(
+    vitalsSource.includes('if (pollAction.kind === "ignore") return;'),
+    "ignored stale responses must not reach the component state setters"
+  );
+  assert.ok(
+    vitalsSource.includes("createVitalsPollPolicy(data.session_id)"),
+    "the polling policy must bind itself to the newly started session"
+  );
+  assert.ok(
+    vitalsSource.includes("sessionIdRef.current = data.session_id;"),
+    "a newly started session must be available to unmount cleanup before the next effect"
+  );
+  assert.ok(
+    vitalsSource.includes('phaseRef.current = data.status || "failed";'),
+    "unmount cleanup must synchronously know whether the current session is still active"
   );
 } finally {
   await vite.close();

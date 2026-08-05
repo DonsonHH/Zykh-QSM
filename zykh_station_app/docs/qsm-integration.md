@@ -182,9 +182,11 @@ poll it again after 700 ms; any healthy status response resets that failure coun
 Only an explicit user cancellation or a third consecutive communication failure
 causes the UI to request board-side cancellation. A transient browser-to-host
 request failure follows the same policy and no longer cancels the board session
-immediately. This phase does not change the 18-second measurement timeout, the
-12-second contact stabilization window, the one-time 8-second SpO2 grace window,
-or the UART8 start/stop/frame protocol.
+immediately. The cancellation request is latched per session so overlapping
+cleanup cannot send it twice, and a late response whose `session_id` no longer
+matches the active measurement is ignored. This phase does not change the
+18-second measurement timeout, the 12-second contact stabilization window, the
+one-time 8-second SpO2 grace window, or the UART8 start/stop/frame protocol.
 
 ## Supported adapter methods
 
