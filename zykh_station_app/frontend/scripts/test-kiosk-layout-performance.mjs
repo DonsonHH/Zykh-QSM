@@ -457,14 +457,20 @@ async function measureHomeVisualContract() {
     const card = list.closest('.medication-summary-card');
     const cardBounds = card.getBoundingClientRect();
     const cardStyle = getComputedStyle(card);
+    const firstRowBounds = rows[0].getBoundingClientRect();
     const lastRowBounds = rows.at(-1).getBoundingClientRect();
     const inquiryStyle = getComputedStyle(inquiry);
     const result = {
       ready: true,
+      medicationTopGap: Math.round((
+        firstRowBounds.top - list.getBoundingClientRect().top
+      ) * 10) / 10,
       medicationBottomGap: Math.round((
         cardBounds.bottom - parseFloat(cardStyle.paddingBottom) - lastRowBounds.bottom
       ) * 10) / 10,
       medicationRowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height * 10) / 10),
+      medicationBorderWidth: parseFloat(cardStyle.borderTopWidth),
+      medicationBorderColor: cardStyle.borderTopColor,
       inquiryBorderWidth: parseFloat(inquiryStyle.borderTopWidth),
       inquiryBorderStyle: inquiryStyle.borderTopStyle,
       inquiryBorderColor: inquiryStyle.borderTopColor
@@ -871,12 +877,18 @@ try {
 
   assert.equal(homeVisualContract.ready, true, "home visual contract could not find its cards");
   assert.ok(
-    homeVisualContract.medicationBottomGap <= 8,
-    `three home medication rows leave ${homeVisualContract.medicationBottomGap}px of unused space`
+    homeVisualContract.medicationRowHeights.every((height) => height === 72),
+    `three home medication rows no longer preserve their compact 72px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
   );
   assert.ok(
-    homeVisualContract.inquiryBorderWidth >= 2 && homeVisualContract.inquiryBorderStyle === "solid",
-    `home inquiry card edge is only ${homeVisualContract.inquiryBorderWidth}px ${homeVisualContract.inquiryBorderStyle}`
+    Math.abs(homeVisualContract.medicationTopGap - homeVisualContract.medicationBottomGap) <= 2,
+    `three home medication rows have unbalanced whitespace: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+  );
+  assert.ok(
+    homeVisualContract.inquiryBorderWidth === homeVisualContract.medicationBorderWidth &&
+      homeVisualContract.inquiryBorderColor === homeVisualContract.medicationBorderColor &&
+      homeVisualContract.inquiryBorderStyle === "solid",
+    `home card borders are inconsistent: inquiry ${homeVisualContract.inquiryBorderWidth}px ${homeVisualContract.inquiryBorderColor}, medication ${homeVisualContract.medicationBorderWidth}px ${homeVisualContract.medicationBorderColor}`
   );
   if (medicineCacheLifecycle) {
     assert.deepEqual(

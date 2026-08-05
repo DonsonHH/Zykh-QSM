@@ -7885,13 +7885,7 @@ a:focus-visible {
 
 .home-medication-list.is-full {
   flex: 1 1 auto;
-  grid-template-rows: repeat(3, minmax(0, 1fr));
-  grid-auto-rows: unset;
-  align-content: stretch;
-}
-
-.home-medication-list.is-full .home-medication-row {
-  min-height: 0;
+  align-content: center;
 }
 
 .home-medication-row {
@@ -8052,7 +8046,7 @@ a:focus-visible {
 
 .hero-grid > .inquiry-entry-card {
   gap: 18px;
-  border-color: #d8e3f5;
+  border-color: var(--border-strong);
   padding: 26px;
 }
 
