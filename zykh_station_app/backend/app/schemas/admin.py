@@ -112,7 +112,7 @@ class AdminMedicinesResponse(BaseModel):
 
 
 class AdminMedicineUpdateRequest(MedicineUpdateRequest):
-    pass
+    package_verified: bool | None = None
 
 
 class AdminTodayPlansResponse(BaseModel):

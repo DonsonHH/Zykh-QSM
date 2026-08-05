@@ -78,6 +78,7 @@ def init_db() -> None:
         _ensure_column(conn, "medicines", "dosage", "TEXT DEFAULT ''")
         _ensure_column(conn, "medicines", "guidance_source", "TEXT DEFAULT 'pending'")
         _ensure_column(conn, "medicines", "guidance_review_required", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "medicines", "package_verified", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "medicines", "guidance_updated_at", "TEXT DEFAULT ''")
         conn.execute(
             """

@@ -14,10 +14,16 @@ class MedicineKnowledgeRepository:
     def __init__(self, medicine_repository: MedicineRepository | None = None) -> None:
         self.medicine_repository = medicine_repository or MedicineRepository()
 
-    def safe_candidate_pool(self, context_text: str) -> list[CandidateMedicine]:
+    def safe_candidate_pool(
+        self,
+        context_text: str,
+        *,
+        existing_direction_ids: set[str] | None = None,
+    ) -> list[CandidateMedicine]:
+        directed_ids = existing_direction_ids or set()
         candidates: list[CandidateMedicine] = []
         for medicine in self.medicine_repository.list_all():
-            if not self._eligible(medicine, context_text):
+            if not self._eligible(medicine, context_text, directed_ids):
                 continue
             if not medicine.indications.strip() or not medicine.dosage.strip():
                 continue
@@ -35,7 +41,7 @@ class MedicineKnowledgeRepository:
                     indications=medicine.indications,
                     dosage=medicine.dosage,
                     match_reason="",
-                    requires_existing_direction=False,
+                    requires_existing_direction=not medicine.is_otc,
                 )
             )
         return candidates
@@ -59,7 +65,7 @@ class MedicineKnowledgeRepository:
             if not isinstance(raw_ids, list):
                 continue
             selected: list[CandidateMedicine] = []
-            for raw_id in raw_ids[:3]:
+            for raw_id in raw_ids[:4]:
                 candidate = allowed.get(str(raw_id or "").strip())
                 if candidate is not None and candidate.id not in {item.id for item in selected}:
                     selected.append(candidate)
@@ -136,16 +142,23 @@ class MedicineKnowledgeRepository:
         }
 
     @staticmethod
-    def _eligible(medicine: Medicine, context_text: str) -> bool:
+    def _eligible(medicine: Medicine, context_text: str, directed_ids: set[str] | None = None) -> bool:
+        has_existing_direction = medicine.id in (directed_ids or set())
         if medicine.stock <= 0:
             return False
-        if not medicine.is_otc or medicine.category == "慢病常用":
+        if not medicine.package_verified:
             return False
-        if MedicineKnowledgeRepository._expired(medicine.expire_date):
+        if (not medicine.is_otc or medicine.category == "慢病常用") and not has_existing_direction:
             return False
+        if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
+            return False
+        return not MedicineKnowledgeRepository.has_allergy_conflict(medicine, context_text)
+
+    @staticmethod
+    def has_allergy_conflict(medicine: Medicine, context_text: str) -> bool:
         conflict_text = " ".join([medicine.name, *medicine.contraindications]).lower()
         allergies = MedicineKnowledgeRepository._allergy_terms(context_text)
-        return not any(
+        return any(
             allergy not in {"无", "没有", "不确定"} and len(allergy) >= 2 and allergy in conflict_text
             for allergy in allergies
         )
@@ -155,21 +168,45 @@ class MedicineKnowledgeRepository:
         terms: list[str] = []
         for raw in re.split(r"[\s,，、;；/]+", value.lower()):
             term = raw.strip()
-            for marker in ("药物过敏", "过敏", "禁忌", "不能使用", "不能用", "不耐受"):
+            if re.search(r"(?:没有|并没有|没|无|否认).{0,6}(?:过敏|禁忌|不耐受)", term):
+                continue
+            for marker in (
+                "药物过敏史", "过敏史", "不耐受史", "禁忌史",
+                "药物过敏", "过敏", "禁忌", "不能使用", "不能用", "不耐受",
+            ):
                 term = term.replace(marker, "")
-            term = term.strip()
-            if term:
-                terms.append(term)
+            term = re.sub(r"^(?:我|本人|患者)?(?:曾经|曾|有|对|存在|明确)+", "", term)
+            term = re.sub(r"(?:类药物|药物|类|史|我|本人|患者|或|和|与|及)+$", "", term).strip()
+            terms.extend(
+                candidate
+                for candidate in (
+                    re.sub(r"(?:类药物|药物|类|史|我|本人|患者)+$", "", part).strip()
+                    for part in re.split(r"[和与及或]+", term)
+                )
+                if candidate
+            )
         return terms
 
     @staticmethod
-    def _expired(value: str) -> bool:
-        normalized = value.strip().replace(".", "-").replace("/", "-")
-        parts = normalized.split("-")
-        try:
-            year = int(parts[0])
-            month = int(parts[1]) if len(parts) > 1 else 12
-        except (ValueError, IndexError):
+    def is_expired(value: str, reference_date: date | None = None) -> bool:
+        match = re.fullmatch(
+            r"(\d{4})[-./](\d{1,2})(?:[-./](\d{1,2}))?",
+            str(value or "").strip(),
+        )
+        if not match:
             return True
-        today = date.today()
+        try:
+            year, month = int(match.group(1)), int(match.group(2))
+            day = int(match.group(3)) if match.group(3) else None
+            if day is not None:
+                expires_on = date(year, month, day)
+            else:
+                # Month-only package dates remain valid through that calendar month.
+                date(year, month, 1)
+                expires_on = None
+        except ValueError:
+            return True
+        today = reference_date or date.today()
+        if expires_on is not None:
+            return expires_on < today
         return (year, month) < (today.year, today.month)

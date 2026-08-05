@@ -24,6 +24,7 @@ import {
 
 const efficacyTypes = [
   { pattern: /感冒发热/, icon: Thermometer, tone: "orange" },
+  { pattern: /解热镇痛/, icon: Thermometer, tone: "orange" },
   { pattern: /营养补充/, icon: Sparkles, tone: "teal" },
   { pattern: /抗菌药/, icon: ShieldPlus, tone: "rose" },
   { pattern: /咳嗽咽喉|咽喉口腔/, icon: Wind, tone: "cyan" },

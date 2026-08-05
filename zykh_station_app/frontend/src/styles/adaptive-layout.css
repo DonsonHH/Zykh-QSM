@@ -993,8 +993,8 @@
   }
 }
 
-/* 1920x1200 at 200% exposes a 960x600 CSS viewport. Size each component for
- * that 16:10 workspace; never scale or stretch the complete kiosk frame. */
+/* Compact 16:10 fallback. Production 1920x1200 uses the component-specific
+ * wide-screen rules above, never a scaled or stretched kiosk frame. */
 @media (max-width: 1100px) and (max-height: 650px) {
   .kiosk-frame {
     grid-template-rows: 58px minmax(0, 1fr) 56px;
@@ -1533,7 +1533,7 @@
     font-size: 17px;
   }
 
-  /* Settings: preserve three independent control groups in the 960x600 workspace. */
+  /* Settings: preserve three independent control groups in a compact workspace. */
   .basic-settings-page {
     grid-template-rows: 50px minmax(0, 1fr);
     gap: 8px;

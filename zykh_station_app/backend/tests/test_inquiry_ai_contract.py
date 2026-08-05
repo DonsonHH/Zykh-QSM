@@ -634,6 +634,28 @@ class InquiryAiContractTest(unittest.TestCase):
         )
 
     @patch("app.services.ai_service.settings")
+    def test_local_candidate_ranking_keeps_four_items_in_a_care_sequence(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        client = FakeLocalClient({"ok": True, "reply": "A=17,22,20,19|按顺序处理"})
+        candidates = [
+            {"id": f"medicine-{slot}", "slot": str(slot), "name": f"用品{slot}", "category": "外伤护理"}
+            for slot in (17, 22, 20, 19)
+        ]
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {"case_summary": "擦伤伴轻度扭伤", "risk_level": "low"},
+            candidates,
+        )
+
+        self.assertEqual(
+            result["options"][0]["medicine_ids"],
+            ["medicine-17", "medicine-22", "medicine-20", "medicine-19"],
+        )
+
+    @patch("app.services.ai_service.settings")
     def test_large_local_inventory_is_narrowed_by_the_model_before_ranking(
         self,
         mocked_settings,
@@ -706,9 +728,9 @@ class InquiryAiContractTest(unittest.TestCase):
             },
             [
                 {
-                    "id": "slot-03-ganmao-qingre",
-                    "slot": "3",
-                    "name": "感冒清热颗粒",
+                    "id": "slot-01-fufang-ganmaoling",
+                    "slot": "1",
+                    "name": "复方感冒灵颗粒",
                     "category": "感冒发热",
                     "indications": "用于风寒感冒、头痛发热、鼻流清涕。",
                 },
@@ -725,7 +747,7 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["options"][0]["medicine_ids"], ["slot-08-huoxiang-zhengqi"])
         self.assertEqual(client.calls, 1)
-        self.assertNotIn("感冒清热颗粒", client.last_messages[1]["content"])
+        self.assertNotIn("复方感冒灵颗粒", client.last_messages[1]["content"])
 
 
 if __name__ == "__main__":

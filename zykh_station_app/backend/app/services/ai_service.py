@@ -388,7 +388,7 @@ class AiService:
             "最多输出一个主方案和一个备选方案，两个方案均必须完整、可单独选择，备选不是联合服用。"
             "如果候选中存在用途侧重不同、同样符合当前情况的第二种安全选择，应输出备选方案；"
             "只有确实没有合理第二选择时才只给主方案，不要把同一护理流程强行拆成两个方案。"
-            "每个方案最多三个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
+            "每个方案最多四个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
             "reason 用一至两句自然中文说明推荐原因，不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
             "不得声称已经诊断，不得使用‘一定有效、保证有效、可以治好’等疗效承诺。"
             "usage_by_medicine 必须逐项使用 medicine_id 作为键，结合本次症状轻重写出简短、可播报的使用顺序和用法。"
@@ -544,7 +544,7 @@ class AiService:
         system_prompt = (
             "你是家庭康护问询的候选理解助手。安全程序已过滤库存、有效期、OTC和绝对禁忌。"
             "只从候选中选择与case直接相关的用品；不相关就返回空，不要因一个相似字硬选。"
-            "最多两个方案，每个最多三个药品；备选不是同时使用。浅表伤口可按清洁、消毒、覆盖顺序组合。"
+            "最多两个方案，每个最多四个药品；备选不是同时使用。浅表伤口可按清洁、消毒、覆盖顺序组合。"
             "只输出一行：主方案写A=后接catalog中的药品名称，再写逗号和简短原因；"
             "有备选时继续写分号和B=。名称必须原样复制。没有合适候选只输出NONE。不要输出剂量。"
         )
@@ -642,7 +642,7 @@ class AiService:
             medicine_ids = list(
                 dict.fromkeys(
                     key_to_id.get(str(value or "").strip(), "")
-                    for value in raw_ids[:3]
+                    for value in raw_ids[:4]
                     if key_to_id.get(str(value or "").strip(), "") in allowed_ids
                 )
             )
@@ -812,11 +812,11 @@ class AiService:
         )
         for match in matches:
             segment = match.group(2).strip()
-            names = [name for name in name_to_id if name in segment][:3]
+            names = [name for name in name_to_id if name in segment][:4]
             medicine_ids = [name_to_id[name] for name in names]
             if not medicine_ids:
                 numeric_prefix = re.match(
-                    r"([0-9]+(?:\s*[,，]\s*[0-9]+){0,2})",
+                    r"([0-9]+(?:\s*[,，]\s*[0-9]+){0,3})",
                     segment,
                 )
                 keys = (

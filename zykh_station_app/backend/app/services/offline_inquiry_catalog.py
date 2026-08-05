@@ -33,6 +33,16 @@ def _rule(
 # the current cabinet has no suitable candidate to present.
 RULE_SPECS = (
     _rule(
+        "altitude",
+        "高海拔不适",
+        (
+            "到高海拔地区后头痛恶心", "高海拔地区后不适", "高原反应",
+            "高海拔不适", "高反", "上高原后头痛", "到高原后恶心",
+        ),
+        duration_subject="高海拔不适",
+        needs_vitals=True,
+    ),
+    _rule(
         "heat",
         "暑热不适",
         (
@@ -42,6 +52,17 @@ RULE_SPECS = (
         ("slot-08-huoxiang-zhengqi",),
         duration_subject="暑热不适",
         needs_vitals=True,
+    ),
+    _rule(
+        "wound_sprain",
+        "擦伤伴轻度扭伤",
+        (
+            "手部擦伤同时伴有轻度脚踝扭伤", "擦伤同时有脚踝扭伤",
+            "擦伤同时伴有扭伤", "擦伤伴轻度扭伤", "擦伤伴扭伤", "山路跌倒",
+        ),
+        ("slot-17-iodophor", "slot-22-cotton-swab", "slot-20-bandage", "slot-19-ketoprofen-gel"),
+        ("slot-17-iodophor", "slot-22-cotton-swab", "slot-10-gauze", "slot-19-ketoprofen-gel"),
+        duration_subject="受伤",
     ),
     _rule(
         "wound",
@@ -65,13 +86,35 @@ RULE_SPECS = (
         needs_vitals=True,
     ),
     _rule(
+        "influenza",
+        "流感样不适需医生核验",
+        (
+            "高热头痛肌肉酸痛明显乏力", "远程医生判断为流感", "医生判断为流感",
+            "流感样症状", "疑似流感", "确诊流感",
+        ),
+        ("slot-13-ibuprofen", "slot-14-oseltamivir"),
+        duration_subject="高热和全身不适",
+        needs_vitals=True,
+    ),
+    _rule(
+        "bacterial_respiratory",
+        "疑似细菌感染需医生核验",
+        (
+            "持续发热咳嗽加重对症处理后没改善", "持续发热咳嗽加重",
+            "呼吸道细菌感染", "医生怀疑细菌感染", "医生判断可能存在细菌感染",
+        ),
+        ("slot-04-amoxicillin",),
+        ("slot-13-ibuprofen",),
+        duration_subject="发热和咳嗽",
+        needs_vitals=True,
+    ),
+    _rule(
         "cold",
         "感冒样不适",
         (
             "感冒", "伤风", "着凉", "受凉", "流鼻涕", "流清鼻涕", "流涕",
             "鼻塞怕冷", "怕冷鼻塞", "发热头痛", "鼻塞流涕", "浑身发冷",
         ),
-        ("slot-03-ganmao-qingre",),
         ("slot-01-fufang-ganmaoling",),
         duration_subject="感冒样不适",
         needs_vitals=True,
@@ -84,7 +127,6 @@ RULE_SPECS = (
             "寒战", "发冷后发热", "一阵冷一阵热", "发热全身酸痛",
         ),
         ("slot-01-fufang-ganmaoling",),
-        ("slot-03-ganmao-qingre",),
         duration_subject="发热",
         needs_vitals=True,
     ),
@@ -105,7 +147,7 @@ RULE_SPECS = (
         "cough",
         "咳嗽咳痰不适",
         (
-            "一直干咳", "夜里咳嗽", "晚上咳嗽", "咳嗽", "干咳", "咳痰",
+            "咳嗽比较明显", "一直干咳", "夜里咳嗽", "晚上咳嗽", "咳嗽", "干咳", "咳痰",
             "痰多", "有痰", "夜咳", "咳个不停", "咳得睡不着",
         ),
         ("slot-05-nin-jiom-pei-pa-koa",),
@@ -120,8 +162,21 @@ RULE_SPECS = (
             "腹泻", "拉肚子", "跑肚", "稀便", "水样便", "大便很稀",
             "一天拉好几次", "总想拉肚子", "肚子咕噜还拉稀", "吃完就拉",
         ),
-        ("slot-09-bifid-triple",),
+        ("slot-03-diosmectite", "slot-09-bifid-triple"),
         duration_subject="腹泻",
+        needs_vitals=True,
+    ),
+    _rule(
+        "food_related_stomach",
+        "饮食相关胃肠不适",
+        (
+            "进食生冷或油腻食物后恶心腹胀胃部不适并且反酸",
+            "进食生冷或油腻食物后恶心腹胀", "吃生冷油腻后恶心腹胀",
+            "进食生冷或油腻食物后", "生冷油腻后胃部不适", "吃油腻食物后反酸",
+        ),
+        ("slot-08-huoxiang-zhengqi",),
+        ("slot-12-hydrotalcite",),
+        duration_subject="胃肠不适",
         needs_vitals=True,
     ),
     _rule(
@@ -192,9 +247,19 @@ RULE_SPECS = (
             "鼻炎", "鼻痒", "鼻子痒", "清水鼻涕", "接触灰尘就打喷嚏",
             "早上一直打喷嚏",
         ),
-        ("slot-18-budesonide-nasal",),
-        ("slot-23-desloratadine",),
+        ("slot-23-desloratadine", "slot-18-budesonide-nasal"),
         duration_subject="鼻部不适",
+    ),
+    _rule(
+        "bacterial_skin",
+        "皮肤细菌感染需医生核验",
+        (
+            "皮肤有脓疱远程医生看照片后判断为细菌感染", "皮肤细菌感染",
+            "远程医生看照片后判断为细菌感染", "脓疱伴细菌感染",
+            "医生判断为细菌性皮肤感染", "毛囊炎化脓",
+        ),
+        ("slot-15-mupirocin",),
+        duration_subject="皮肤问题",
     ),
     _rule(
         "skin_allergy",
@@ -234,7 +299,6 @@ RULE_SPECS = (
             "眼睛干涩像有沙子", "眼睛有异物感", "眼干", "眼涩", "眼睛干",
             "眼睛涩", "干眼", "眼睛疲劳", "看屏幕后眼干",
         ),
-        ("slot-13-sodium-hyaluronate-eye",),
         duration_subject="眼部不适",
     ),
     _rule(
@@ -254,7 +318,18 @@ RULE_SPECS = (
             "太阳穴一跳一跳地疼", "太阳穴跳痛", "偏头痛", "头痛", "头疼",
             "脑袋疼", "后脑勺疼", "额头疼", "头一阵一阵痛",
         ),
+        ("slot-13-ibuprofen",),
         duration_subject="头痛",
+        needs_vitals=True,
+    ),
+    _rule(
+        "menstrual_pain",
+        "经期疼痛不适",
+        (
+            "月经疼", "来月经肚子疼", "经期腹痛", "痛经", "生理期疼痛",
+        ),
+        ("slot-13-ibuprofen",),
+        duration_subject="经期疼痛",
         needs_vitals=True,
     ),
     _rule(

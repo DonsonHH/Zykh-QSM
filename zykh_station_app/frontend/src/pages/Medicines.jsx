@@ -6,9 +6,11 @@ import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
+import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
 
 function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
   const gridRef = useRef(null);
+  const pendingFocusIndexRef = useRef(null);
   const [viewport, setViewport] = useState({ height: 320, scrollTop: 0, rowHeight: 80, gap: 12 });
   const [renderedRowCount, setRenderedRowCount] = useState(1);
 
@@ -63,6 +65,15 @@ function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
     setViewport((current) => ({ ...current, scrollTop: nextScrollTop }));
   }, [medicines, selectedMedicine?.id, stride, viewport.height, viewport.rowHeight]);
 
+  useLayoutEffect(() => {
+    const pendingIndex = pendingFocusIndexRef.current;
+    if (pendingIndex === null) return;
+    const option = gridRef.current?.querySelector(`[data-medicine-index="${pendingIndex}"]`);
+    if (!option) return;
+    option.focus();
+    pendingFocusIndexRef.current = null;
+  }, [firstRow, renderedLastRow, selectedMedicine?.id]);
+
   function visibleRange(scrollTop, currentViewport = viewport) {
     const currentStride = currentViewport.rowHeight + currentViewport.gap;
     return {
@@ -98,10 +109,8 @@ function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
     event.preventDefault();
     nextIndex = Math.max(0, Math.min(nextIndex, medicines.length - 1));
     if (nextIndex === index) return;
+    pendingFocusIndexRef.current = nextIndex;
     onSelect(medicines[nextIndex]);
-    window.requestAnimationFrame(() => {
-      gridRef.current?.querySelector(`[data-medicine-index="${nextIndex}"]`)?.focus();
-    });
   }
 
   return (
@@ -204,10 +213,16 @@ export function Medicines({ notify, focus, onNavigate }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("dispenseModal") === "1" && selectedMedicine) {
+      const blockReason = manualDispenseBlockReason(selectedMedicine);
+      if (blockReason) {
+        setModalOpen(false);
+        notify(blockReason);
+        return;
+      }
       setConfirmMedicine(selectedMedicine);
       setModalOpen(true);
     }
-  }, [selectedMedicine]);
+  }, [notify, selectedMedicine]);
 
   useEffect(() => {
     let secondFrame = 0;
@@ -225,6 +240,11 @@ export function Medicines({ notify, focus, onNavigate }) {
   function openConfirm() {
     if (!detailMedicine) {
       notify("请先选择药品");
+      return;
+    }
+    const blockReason = manualDispenseBlockReason(detailMedicine);
+    if (blockReason) {
+      notify(blockReason);
       return;
     }
     setModalResult("");

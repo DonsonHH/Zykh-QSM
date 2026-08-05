@@ -103,7 +103,7 @@ LAUNCH_PID=""
 
 assert_not_contains '--mode' "$FAKE_XRANDR_EVENTS" "kiosk changed the current display resolution"
 assert_contains '--window-size=1920,1080' "$FAKE_BROWSER_EVENTS" "kiosk did not use the current display dimensions"
-assert_contains '--force-device-scale-factor=2' "$FAKE_BROWSER_EVENTS" "kiosk did not apply 200 percent browser scaling"
+assert_contains '--force-device-scale-factor=1' "$FAKE_BROWSER_EVENTS" "kiosk did not preserve the native device scale"
 assert_contains '^stopped ' "$FAKE_BROWSER_EVENTS" "browser scale did not end with the kiosk process"
 assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "audio relay was not stopped after SIGHUP"
 assert_contains '\[kiosk\] 本机音频转发已停止。' "$LOG_FILE" "audio cleanup was not reported"

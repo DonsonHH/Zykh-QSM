@@ -1,6 +1,7 @@
 import React from "react";
 import { CalendarDays, ClipboardList, PackageOpen, ShieldAlert, Stethoscope } from "lucide-react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
+import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
 
 export function MedicineDetailPanel({ medicine, onConfirm }) {
   if (!medicine) {
@@ -13,6 +14,7 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
   }
 
   const isCareSupply = ["外伤护理", "消毒护理"].includes(medicine.category);
+  const dispenseBlockReason = manualDispenseBlockReason(medicine);
 
   return (
     <aside className="medicine-detail-panel">
@@ -85,8 +87,14 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
         </p>
       </div>
 
-      <button className="primary-action detail-action" type="button" onClick={onConfirm}>
-        取药
+      <button
+        className="primary-action detail-action"
+        type="button"
+        onClick={onConfirm}
+        disabled={Boolean(dispenseBlockReason)}
+        title={dispenseBlockReason}
+      >
+        {dispenseBlockReason || "取药"}
       </button>
     </aside>
   );

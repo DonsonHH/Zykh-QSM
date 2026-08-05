@@ -8,6 +8,7 @@
     "test:motion": "node scripts/test-motion-contract.mjs",
     "test:voice": "node scripts/test-voice-session.mjs",
     "test:dispense-speech": "node scripts/test-dispense-speech.mjs",
+    "test:medicine-guard": "node scripts/test-medicine-dispense-guard.mjs",
     "test:home-medication": "node scripts/test-home-medication-plans.mjs",
     "test:inquiry-treatment": "node scripts/test-inquiry-treatment.mjs",
     "test:inquiry-guest": "node scripts/test-inquiry-guest-session.mjs",

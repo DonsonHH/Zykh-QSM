@@ -214,8 +214,9 @@ class OfflineInquiryRules:
             return {"ok": True, "source": "offline_rules", "summary": "未匹配到合适的家庭药品。", "options": []}
         available = {str(item.get("id") or ""): item for item in candidates}
         options: list[dict[str, Any]] = []
-        primary = [medicine_id for medicine_id in rule.medicine_ids if medicine_id in available][:3]
-        alternative = [medicine_id for medicine_id in rule.alternative_ids if medicine_id in available][:3]
+        primary_ids, alternative_ids = self._conditional_medicine_ids(rule, text)
+        primary = [medicine_id for medicine_id in primary_ids if medicine_id in available][:4]
+        alternative = [medicine_id for medicine_id in alternative_ids if medicine_id in available][:4]
         if primary:
             options.append(self._option("primary", "主方案", rule, primary, available))
         if alternative and tuple(alternative) != tuple(primary):
@@ -226,6 +227,67 @@ class OfflineInquiryRules:
             "summary": f"本地问询已按“{rule.concept}”整理可核对的家庭药品。",
             "options": options,
         }
+
+    @classmethod
+    def _conditional_medicine_ids(
+        cls,
+        rule: OfflineSymptomRule,
+        text: str,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        compact = cls._clean(text)
+        if rule.key in {"influenza", "bacterial_respiratory", "bacterial_skin", "fungus"}:
+            diagnosis_terms = {
+                "influenza": ("流感",),
+                "bacterial_respiratory": ("细菌感染", "细菌性"),
+                "bacterial_skin": ("细菌感染", "细菌性"),
+                "fungus": ("真菌感染", "真菌性"),
+            }[rule.key]
+            if any(cls._clinician_rejected_diagnosis(compact, term) for term in diagnosis_terms):
+                return (), ()
+            clinician_terms = (
+                "远程医生", "医生判断", "医生确认", "医生怀疑", "医生看照片",
+                "医师判断", "医师确认", "已有处方", "已有医嘱",
+            )
+            if not any(cls._term_is_present(compact, term) for term in clinician_terms):
+                return (), ()
+        if rule.key == "diarrhea":
+            red_flags = (
+                "便血", "血便", "黑便", "持续高热", "高热不退",
+                "剧烈腹痛", "腹痛剧烈", "肚子剧烈疼",
+            )
+            if any(cls._term_is_present(compact, term) for term in red_flags):
+                return (), ()
+        if rule.key == "wound_sprain":
+            intact_skin_terms = (
+                "脚踝皮肤完整", "扭伤处皮肤完整", "脚踝没有破皮", "扭伤处没有破皮",
+            )
+            if not any(term in compact for term in intact_skin_terms):
+                return (
+                    tuple(item for item in rule.medicine_ids if item != "slot-19-ketoprofen-gel"),
+                    tuple(item for item in rule.alternative_ids if item != "slot-19-ketoprofen-gel"),
+                )
+        if rule.key == "bacterial_respiratory":
+            marked_fever_or_pain = (
+                "持续发热", "高热", "发热明显", "明显发热", "疼痛明显",
+                "明显疼痛", "头痛", "肌肉酸痛", "全身酸痛",
+            )
+            if not any(cls._term_is_present(compact, term) for term in marked_fever_or_pain):
+                return rule.medicine_ids, ()
+        return rule.medicine_ids, rule.alternative_ids
+
+    @staticmethod
+    def _clinician_rejected_diagnosis(text: str, diagnosis: str) -> bool:
+        clinician = r"(?:远程)?(?:医生|医师)"
+        rejected = r"(?:判断|确认|认为|考虑|怀疑|看照片后判断)?(?:为|是)?(?:不是|并非|排除|未考虑|不考虑)"
+        return bool(re.search(rf"{clinician}.{{0,8}}{rejected}.{{0,4}}{re.escape(diagnosis)}", text))
+
+    @classmethod
+    def _term_is_present(cls, text: str, term: str) -> bool:
+        for match in re.finditer(re.escape(term), text):
+            if cls._match_is_negated(text, match.start()):
+                continue
+            return True
+        return False
 
     @staticmethod
     def recommendation(context: dict[str, Any]) -> dict[str, Any]:
@@ -252,7 +314,9 @@ class OfflineInquiryRules:
         medicine_ids: list[str],
         available: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
-        if rule.key == "wound":
+        if rule.key == "wound_sprain":
+            reason = "先处理浅表擦伤；脚踝皮肤完整时，才可另行核对外用止痛凝胶。"
+        elif rule.key == "wound":
             reason = "适合用于浅表小伤口的清洁、消毒和覆盖保护。"
         elif rule.key == "heat":
             reason = "当前描述以暑热、头晕或胃肠不适为主，可对照说明书核验。"
@@ -273,7 +337,10 @@ class OfflineInquiryRules:
     def _match_rule(cls, text: str) -> OfflineSymptomRule | None:
         compact = cls._clean(text)
         for legacy, current in LEGACY_CONCEPT_ALIASES:
-            compact = compact.replace(legacy, current)
+            compact = "；".join(
+                current if segment == legacy else segment
+                for segment in compact.split("；")
+            )
         # Ranking receives the normalized case summary. Prefer that exact
         # concept over overlapping symptom words such as "咽喉" or "发热".
         for rule in RULES:
@@ -295,16 +362,24 @@ class OfflineInquiryRules:
                 ))
         return max(matches, key=lambda item: item[:3])[3] if matches else None
 
+    @classmethod
+    def _term_is_negated(cls, text: str, term: str) -> bool:
+        matches = list(re.finditer(re.escape(term), text))
+        return bool(matches) and all(cls._match_is_negated(text, match.start()) for match in matches)
+
     @staticmethod
-    def _term_is_negated(text: str, term: str) -> bool:
-        for match in re.finditer(re.escape(term), text):
-            prefix = text[max(0, match.start() - 8):match.start()]
-            if re.search(
-                r"(?:没有|并没有|没|无|否认|不是|并不|不)(?:明显|什么|任何|一点|怎么)?$",
-                prefix,
-            ):
-                return True
-        return False
+    def _match_is_negated(text: str, start: int) -> bool:
+        clause_start = max(text.rfind(separator, 0, start) for separator in ("。", "；", ";", "！", "？"))
+        prefix = text[clause_start + 1:start]
+        direct = re.search(
+            r"(?:(?:没有|并没有|没|无|否认|不是|并不)(?:明显|什么|任何|一点|怎么)?"
+            r"[^。；;，,但是不过却]{0,14}|不(?:明显|怎么)?(?:是)?)$",
+            prefix,
+        )
+        if not direct:
+            return False
+        negation_start = direct.start()
+        return not re.search(r"(?:但是|但|不过|却|现在|目前)", prefix[negation_start:])
 
     @classmethod
     def _risk(cls, text: str, existing_text: str) -> tuple[str, list[str]]:

@@ -272,8 +272,15 @@ class InquiryOrchestrator:
 
             if not self._medicine_information_confirmed(session.extracted_information):
                 raise DispenseError("用药和过敏信息尚未确认，不能执行开柜。", status_code=409)
+            direction_plans = self._existing_direction_plans(session.user_id)
+            completed_direction_ids = {
+                str(item.get("medicine_id") or "")
+                for item in session.action_items
+                if isinstance(item, dict) and item.get("ok")
+            }
             safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                self._candidate_context(session)
+                self._candidate_context(session),
+                existing_direction_ids=set(direction_plans) | completed_direction_ids,
             )
             allowed_ids = {candidate.id for candidate in safe_pool}
             fresh_option = displayed_option
@@ -336,6 +343,11 @@ class InquiryOrchestrator:
                             target_user_id=session.user_id,
                             target_user_name=session.user_name,
                             verification_method="inquiry_confirmed",
+                            today_plan_id=(
+                                direction_plans.get(medicine.id, "")
+                                if treatment_medicine.requires_existing_direction
+                                else ""
+                            ),
                         )
                     )
                     item = InquiryTreatmentDispenseItem(
@@ -552,7 +564,8 @@ class InquiryOrchestrator:
             and self._medicine_information_confirmed(extracted)
         ):
             safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                self._candidate_context(session)
+                self._candidate_context(session),
+                existing_direction_ids=set(self._existing_direction_plans(session.user_id)),
             )
             ranker = getattr(self.interpreter, "rank_candidates", None)
             if callable(ranker):
@@ -762,6 +775,18 @@ class InquiryOrchestrator:
             )
             if value and value.strip()
         )
+
+    @staticmethod
+    def _existing_direction_plans(user_id: str) -> dict[str, str]:
+        if not str(user_id or "").strip():
+            return {}
+        from .records_service import RecordsService
+
+        return {
+            plan.medicine_id: plan.id
+            for plan in RecordsService().list_today_plans(due_only=True)
+            if plan.service_user_id == user_id and plan.status == "待执行"
+        }
 
     @staticmethod
     def _medicine_information_confirmed(extracted: InquiryExtractedInformation) -> bool:

@@ -17,6 +17,7 @@ from ..schemas.dispense import (
 )
 from .qsm_client import QsmClient
 from .dispense_archive_service import DispenseArchiveService
+from .medicine_knowledge_repository import MedicineKnowledgeRepository
 
 
 class DispenseError(Exception):
@@ -55,7 +56,23 @@ class DispenseService:
             raise DispenseError("药品仓位与当前库存记录不一致。")
         if request.confirmed_safety_notice is not True:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
+        if medicine.guidance_source == "pending":
+            raise DispenseError("该药品资料尚未补全，完成实物包装和说明书核验前不可取药。")
+        if not medicine.package_verified:
+            raise DispenseError("该药品包装规格尚未人工核验，核验完成前不可取药。")
+        if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
+            raise DispenseError("该药品已过有效期，不可取药；请联系管理员更换库存。")
+        if not medicine.is_otc and not request.today_plan_id:
+            raise DispenseError("该药品需凭处方或既往用药计划取用，请先完成医生审核。")
         canonical_name, target_user_type = self._resolve_identity(request.target_user_id, request.target_user_name)
+        registered_allergies = self._registered_allergies(request.target_user_id)
+        if registered_allergies and MedicineKnowledgeRepository.has_allergy_conflict(
+            medicine,
+            registered_allergies,
+        ):
+            raise DispenseError(
+                f"已登记的用药禁忌（{registered_allergies}）与{medicine.name}冲突，不可取药。"
+            )
         request = request.model_copy(update={"target_user_name": canonical_name})
         if request.today_plan_id:
             from .records_service import RecordsService
@@ -272,3 +289,16 @@ class DispenseService:
             visitor = supplied_name.startswith(("访客", "游客"))
             return supplied_name, "guest" if visitor or not user_id else "registered"
         return "游客", "guest"
+
+    @staticmethod
+    def _registered_allergies(target_user_id: str) -> str:
+        user_id = str(target_user_id or "").strip()
+        if not user_id:
+            return ""
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT allergies FROM service_users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+        return str(row["allergies"] or "").strip() if row else ""

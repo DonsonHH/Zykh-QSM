@@ -24,6 +24,7 @@ class Medicine(BaseModel):
     safety_note: str
     guidance_source: str = "pending"
     guidance_review_required: bool = True
+    package_verified: bool = True
     guidance_updated_at: str = ""
 
 

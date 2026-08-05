@@ -54,6 +54,7 @@ class MedicineService:
                 guidance_review_required=True,
                 guidance_updated_at="",
             )
+            updates.setdefault("package_verified", False)
         elif guidance_changed:
             updates.update(
                 guidance_source="manual",

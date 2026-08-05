@@ -21,8 +21,11 @@ from app.schemas.inquiry import (  # noqa: E402
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
+from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.dispense_service import DispenseError  # noqa: E402
 from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
+from app.services.medicine_service import MedicineService  # noqa: E402
+from app.services.records_service import RecordsService  # noqa: E402
 from app.services.symptom_interpreter import SymptomInterpretation  # noqa: E402
 
 
@@ -1147,6 +1150,64 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.status, "complete")
         self.assertEqual(dispense.requests[0].medicine_id, "slot-08-huoxiang-zhengqi")
+
+    def test_existing_plan_exposes_and_authorizes_a_prescription_candidate(self) -> None:
+        MedicineService().list_medicines()
+        plan = RecordsService().create_today_plan(TodayPlanCreateRequest(
+            time="12:30",
+            timing_label="既往医嘱",
+            medicine_id="slot-23-desloratadine",
+            service_user_id="zhangsan",
+            dose="按既往医嘱",
+        ))
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "options": [{
+                "medicine_ids": ["slot-23-desloratadine", "slot-18-budesonide-nasal"],
+                "label": "主方案",
+                "reason": "按既往医嘱核对口服药，并配合鼻喷剂。",
+            }],
+        }
+        dispense = FakeDispenseService()
+        service, _ = self.service(
+            [case(
+                action="analyze",
+                concept="鼻部过敏不适",
+                evidence="接触花粉后连续打喷嚏和鼻塞",
+                duration="半天",
+                used="未使用",
+                allergy="无",
+            )],
+            ranking=ranking,
+            dispense=dispense,
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="接触花粉后连续打喷嚏和鼻塞，半天了，没用药，没有过敏"),
+        )
+
+        medicines = result.treatment_options[0].medicines
+        self.assertEqual(
+            [medicine.id for medicine in medicines],
+            ["slot-23-desloratadine", "slot-18-budesonide-nasal"],
+        )
+        self.assertTrue(medicines[0].requires_existing_direction)
+
+        response = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id="A",
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+
+        self.assertTrue(response.ok)
+        self.assertEqual(dispense.requests[0].medicine_id, "slot-23-desloratadine")
+        self.assertEqual(dispense.requests[0].today_plan_id, plan.id)
 
     def test_alternative_option_can_be_selected_and_opened(self) -> None:
         ranking = {

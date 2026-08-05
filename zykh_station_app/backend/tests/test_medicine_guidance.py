@@ -62,7 +62,8 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertTrue(all(item.indications for item in medicines))
         self.assertTrue(all(item.dosage for item in medicines))
         self.assertTrue(all(item.contraindications for item in medicines))
-        self.assertTrue(all(item.guidance_source == "label_reference" for item in medicines))
+        sources = {item.id: item.guidance_source for item in medicines}
+        self.assertEqual({source for source in sources.values()}, {"label_reference"})
         self.assertFalse(any("按当前包装说明书" in item.dosage for item in medicines))
 
     def test_contraindications_are_not_mixed_into_dosage_instructions(self) -> None:
@@ -145,6 +146,7 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertEqual(self.guidance.calls, [medicine.id])
         self.assertEqual(result.medicine.guidance_source, "cloud_ai")
         self.assertEqual(result.medicine.indications, "结构化适用症状")
+        self.assertFalse(result.medicine.package_verified)
 
     def test_stock_change_does_not_refresh_guidance(self) -> None:
         medicine = self.service.get_medicine("slot-08-huoxiang-zhengqi")

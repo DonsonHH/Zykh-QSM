@@ -8,8 +8,9 @@ from .. import db
 from ..schemas.medicine import Medicine
 
 
-MEDICINE_SEED_VERSION = "home-real-cabinet-v4-no-decrement"
-MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v3-unified-sections"
+MEDICINE_SEED_VERSION = "home-real-cabinet-v7-slot-03-13-online-identity"
+MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v6-slot-03-13-online"
+PACKAGE_VERIFICATION_VERSION = "fixed-inventory-identity-v1"
 
 DEFAULT_MEDICINES = [
     {
@@ -49,22 +50,22 @@ DEFAULT_MEDICINES = [
         "safety_note": "按说明书剂量使用，避免与高剂量维矿补充剂重复。",
     },
     {
-        "id": "slot-03-ganmao-qingre",
+        "id": "slot-03-diosmectite",
         "slot": "S03",
         "hardware_slot": 3,
-        "barcode": "6928849913616",
-        "manufacturer": "999",
-        "name": "感冒清热颗粒",
-        "category": "感冒发热",
-        "tags": ["风寒感冒", "头痛发热"],
-        "contraindications": ["对本品成分过敏禁用", "风热感冒表现者不适用"],
+        "barcode": "6932833600109",
+        "manufacturer": "博福-益普生（天津）制药有限公司",
+        "name": "蒙脱石散",
+        "category": "肠胃",
+        "tags": ["思密达", "急性腹泻", "3g×10袋", "国药准字H20000690"],
+        "contraindications": ["对本品过敏者禁用", "便血、持续高热或剧烈腹痛时不可自行用药"],
         "stock": 1,
         "unit": "盒",
-        "expire_date": "2027-11",
-        "image_hint": "999 感冒清热颗粒",
+        "expire_date": "2030-02",
+        "image_hint": "思密达 蒙脱石散 3g×10袋（草莓味）",
         "is_otc": True,
         "is_emergency": False,
-        "safety_note": "用于风寒感冒相关症状，症状不匹配或持续加重需联系医生。",
+        "safety_note": "联网条码身份：思密达，3g×10袋（草莓味），国药准字H20000690；急性腹泻需同时注意补液。",
     },
     {
         "id": "slot-04-amoxicillin",
@@ -229,22 +230,22 @@ DEFAULT_MEDICINES = [
         "safety_note": "需嚼服，长期或反复胃痛应联系医生。",
     },
     {
-        "id": "slot-13-sodium-hyaluronate-eye",
+        "id": "slot-13-ibuprofen",
         "slot": "S13",
         "hardware_slot": 13,
-        "barcode": "6955236613620",
-        "manufacturer": "普润盈",
-        "name": "玻璃酸钠滴眼液",
-        "category": "眼部护理",
-        "tags": ["干眼", "眼部润滑"],
-        "contraindications": ["对成分过敏禁用", "瓶口勿接触眼部或皮肤"],
+        "barcode": "6913991301572",
+        "manufacturer": "中美天津史克制药有限公司",
+        "name": "布洛芬缓释胶囊",
+        "category": "解热镇痛",
+        "tags": ["芬必得", "退热", "头痛", "痛经", "0.3g×24粒", "国药准字H10900089"],
+        "contraindications": ["非甾体抗炎药过敏者禁用", "孕妇及哺乳期妇女禁用", "阿司匹林过敏的哮喘患者禁用"],
         "stock": 1,
         "unit": "盒",
-        "expire_date": "2026-08-10",
-        "image_hint": "普润盈玻璃酸钠滴眼液",
+        "expire_date": "2029-01",
+        "image_hint": "芬必得 布洛芬缓释胶囊",
         "is_otc": True,
         "is_emergency": False,
-        "safety_note": "眼部疼痛、红肿或视力变化时不要自行处理。",
+        "safety_note": "联网条码身份：芬必得，0.3g×24粒，国药准字H10900089；整粒吞服，避免与其他解热镇痛药重复使用。",
     },
     {
         "id": "slot-14-oseltamivir",
@@ -437,9 +438,9 @@ DEFAULT_MEDICINE_GUIDANCE = {
         "indications": "用于预防和治疗因维生素与矿物质缺乏所引起的各种疾病。",
         "dosage": "口服，成人一日1片。",
     },
-    "slot-03-ganmao-qingre": {
-        "indications": "疏风散寒，解表清热。用于风寒感冒，头痛发热，恶寒身痛，鼻流清涕，咳嗽咽干。",
-        "dosage": "开水冲服，一次1袋（12克），一日2次。",
+    "slot-03-diosmectite": {
+        "indications": "用于成人及儿童急、慢性腹泻。治疗急性腹泻时应注意纠正脱水。",
+        "dosage": "口服，成人一次1袋（3克），一日3次；1岁以下每日1袋，1至2岁每日1至2袋，2岁以上每日2至3袋，儿童均分3次服用。治疗急性腹泻时首次剂量加倍；倒入约50毫升温开水中混匀后服用。",
     },
     "slot-04-amoxicillin": {
         "indications": "用于敏感菌所致的上、下呼吸道感染，泌尿生殖道感染，皮肤软组织感染等。仅在医生判断为细菌感染并已有处方或医嘱时使用。",
@@ -477,9 +478,9 @@ DEFAULT_MEDICINE_GUIDANCE = {
         "indications": "用于慢性胃炎，以及与胃酸有关的胃部不适症状，如胃痛、胃灼热感（烧心）、酸性嗳气、饱胀等。",
         "dosage": "口服，咀嚼后吞服。一次1至2片，一日3次，通常在餐后1至2小时、睡前或胃部不适时服用。",
     },
-    "slot-13-sodium-hyaluronate-eye": {
-        "indications": "用于伴随干燥综合征、斯约二氏综合征等内因性疾患，或手术、药物、外伤、佩戴隐形眼镜等外因性疾患所致的角结膜上皮损伤。",
-        "dosage": "滴眼，一次1滴，一日3次；可根据症状适当增减。",
+    "slot-13-ibuprofen": {
+        "indications": "用于缓解轻至中度疼痛，如头痛、关节痛、偏头痛、牙痛、肌肉痛、神经痛、痛经；也用于普通感冒或流行性感冒引起的发热。",
+        "dosage": "口服，成人一次1粒（0.3克），一日2次，早晚各一次；整粒吞服，不得打开或溶解。儿童用量请咨询医师或药师。",
     },
     "slot-14-oseltamivir": {
         "indications": "用于成人和1岁及1岁以上儿童的甲型和乙型流感治疗，也可在医生指导下用于流感预防。",
@@ -528,8 +529,9 @@ for _medicine in DEFAULT_MEDICINES:
     _medicine.update(
         indications=_guidance["indications"],
         dosage=_guidance["dosage"],
-        guidance_source="label_reference",
+        guidance_source=_guidance.get("guidance_source", "label_reference"),
         guidance_review_required=True,
+        package_verified=True,
     )
 
 
@@ -542,7 +544,7 @@ class MedicineRepository:
                 SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
                 FROM medicines
                 ORDER BY hardware_slot, slot
                 """
@@ -557,7 +559,7 @@ class MedicineRepository:
                 SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
                 FROM medicines
                 WHERE id=?
                 """,
@@ -573,7 +575,7 @@ class MedicineRepository:
                 SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
                 FROM medicines
                 WHERE barcode=?
                 """,
@@ -605,6 +607,7 @@ class MedicineRepository:
             "image_hint": medicine.image_hint,
             "guidance_source": medicine.guidance_source,
             "guidance_review_required": medicine.guidance_review_required,
+            "package_verified": medicine.package_verified,
             "guidance_updated_at": medicine.guidance_updated_at,
         }
         for key, value in updates.items():
@@ -633,7 +636,7 @@ class MedicineRepository:
             if key == "stock":
                 next_values[key] = max(int(value), 0)
                 continue
-            if key in {"is_otc", "is_emergency", "guidance_review_required"}:
+            if key in {"is_otc", "is_emergency", "guidance_review_required", "package_verified"}:
                 next_values[key] = bool(value)
 
         next_values["image_hint"] = f"{next_values['manufacturer']} {next_values['name']}".strip() or medicine.image_hint
@@ -644,7 +647,7 @@ class MedicineRepository:
                 SET barcode=?, manufacturer=?, name=?, category=?, tags_json=?,
                     indications=?, dosage=?, contraindications_json=?, stock=?, unit=?, expire_date=?,
                     image_hint=?, is_otc=?, is_emergency=?, safety_note=?, guidance_source=?,
-                    guidance_review_required=?, guidance_updated_at=?, updated_at=?
+                    guidance_review_required=?, package_verified=?, guidance_updated_at=?, updated_at=?
                 WHERE id=?
                 """,
                 (
@@ -665,6 +668,7 @@ class MedicineRepository:
                     next_values["safety_note"],
                     next_values["guidance_source"],
                     1 if next_values["guidance_review_required"] else 0,
+                    1 if next_values["package_verified"] else 0,
                     next_values["guidance_updated_at"],
                     db.now_text(),
                     medicine_id,
@@ -706,9 +710,9 @@ class MedicineRepository:
                   id, slot, hardware_slot, barcode, manufacturer, name, category, tags_json,
                   indications, dosage, contraindications_json, stock, unit, expire_date, image_hint,
                   is_otc, is_emergency, safety_note, guidance_source,
-                  guidance_review_required, guidance_updated_at, updated_at
+                  guidance_review_required, package_verified, guidance_updated_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   barcode=excluded.barcode,
                   manufacturer=excluded.manufacturer,
@@ -723,6 +727,7 @@ class MedicineRepository:
                   safety_note=excluded.safety_note,
                   guidance_source=excluded.guidance_source,
                   guidance_review_required=excluded.guidance_review_required,
+                  package_verified=excluded.package_verified,
                   guidance_updated_at=excluded.guidance_updated_at,
                   updated_at=excluded.updated_at
                 """,
@@ -747,6 +752,7 @@ class MedicineRepository:
                     safety,
                     "pending",
                     1,
+                    0,
                     db.now_text(),
                     db.now_text(),
                 ),
@@ -784,6 +790,7 @@ class MedicineRepository:
             if count:
                 self._sync_default_inventory(conn)
                 self._sync_default_guidance(conn)
+                self._sync_default_package_verification(conn)
                 return
             self._insert_default_inventory(conn)
 
@@ -792,8 +799,145 @@ class MedicineRepository:
         row = conn.execute("SELECT value FROM app_settings WHERE key='medicine_seed_version'").fetchone()
         if row and row["value"] == MEDICINE_SEED_VERSION:
             return
-        conn.execute("DELETE FROM medicines")
-        MedicineRepository._insert_default_inventory(conn)
+        replacements = (
+            (
+                {
+                    "id": "slot-03-ganmao-qingre", "slot": "S03", "hardware_slot": 3,
+                    "name": "感冒清热颗粒", "barcode": "6928849913616", "manufacturer": "999",
+                    "category": "感冒发热", "tags_json": ["风寒感冒", "头痛发热"],
+                    "indications": "疏风散寒，解表清热。用于风寒感冒，头痛发热，恶寒身痛，鼻流清涕，咳嗽咽干。",
+                    "dosage": "开水冲服，一次1袋（12克），一日2次。",
+                    "contraindications_json": ["对本品成分过敏禁用", "风热感冒表现者不适用"],
+                    "stock": 1, "unit": "盒", "expire_date": "2027-11",
+                    "image_hint": "999 感冒清热颗粒", "is_otc": 1, "is_emergency": 0,
+                    "safety_note": "用于风寒感冒相关症状，症状不匹配或持续加重需联系医生。",
+                },
+                (
+                    {"id": "slot-03-diosmectite", "name": "蒙脱石散", "barcode": "", "manufacturer": "待补录", "expire_date": "待补录"},
+                    {"id": "slot-03-diosmectite", "name": "蒙脱石散", "barcode": "6932833600109", "manufacturer": "迈优力制药", "expire_date": "2030-02"},
+                ),
+            ),
+            (
+                {
+                    "id": "slot-13-sodium-hyaluronate-eye", "slot": "S13", "hardware_slot": 13,
+                    "name": "玻璃酸钠滴眼液", "barcode": "6955236613620", "manufacturer": "普润盈",
+                    "category": "眼部护理", "tags_json": ["干眼", "眼部润滑"],
+                    "indications": "用于伴随干燥综合征、斯约二氏综合征等内因性疾患，或手术、药物、外伤、佩戴隐形眼镜等外因性疾患所致的角结膜上皮损伤。",
+                    "dosage": "滴眼，一次1滴，一日3次；可根据症状适当增减。",
+                    "contraindications_json": ["对成分过敏禁用", "瓶口勿接触眼部或皮肤"],
+                    "stock": 1, "unit": "盒", "expire_date": "2026-08-10",
+                    "image_hint": "普润盈玻璃酸钠滴眼液", "is_otc": 1, "is_emergency": 0,
+                    "safety_note": "眼部疼痛、红肿或视力变化时不要自行处理。",
+                },
+                (
+                    {"id": "slot-13-ibuprofen", "name": "布洛芬", "barcode": "", "manufacturer": "待补录", "expire_date": "待补录"},
+                    {"id": "slot-13-ibuprofen", "name": "布洛芬缓释胶囊", "barcode": "6913991301572", "manufacturer": "芬必得", "expire_date": "2029-01"},
+                ),
+            ),
+        )
+        defaults = {item["id"]: item for item in DEFAULT_MEDICINES}
+        for old_default, replacement_defaults in replacements:
+            replacement_id = replacement_defaults[0]["id"]
+            old_row = conn.execute("SELECT * FROM medicines WHERE id=?", (old_default["id"],)).fetchone()
+            new_row = conn.execute("SELECT * FROM medicines WHERE id=?", (replacement_id,)).fetchone()
+            item = defaults[replacement_id]
+            if old_row and MedicineRepository._row_matches(old_row, old_default):
+                # A plan for the old product must never silently become a plan for a
+                # different medicine. Stop those plans and require a fresh review.
+                conn.execute("DELETE FROM today_plans WHERE medicine_id=?", (old_default["id"],))
+                conn.execute("DELETE FROM medicines WHERE id=?", (old_default["id"],))
+                if not new_row:
+                    MedicineRepository._upsert_replacement(conn, item, preserve_stock=False)
+            elif new_row and any(
+                MedicineRepository._row_matches(new_row, expected)
+                for expected in replacement_defaults
+            ):
+                MedicineRepository._upsert_replacement(conn, item, preserve_stock=True)
+        MedicineRepository._write_seed_version(conn, "medicine_seed_version", MEDICINE_SEED_VERSION)
+
+    @staticmethod
+    def _row_matches(row: object, expected: dict[str, object]) -> bool:
+        for key, value in expected.items():
+            actual = row[key]
+            if key in {"tags_json", "contraindications_json"}:
+                actual = json.loads(actual or "[]")
+            if actual != value:
+                return False
+        return True
+
+    @staticmethod
+    def _upsert_replacement(conn, item: dict[str, object], *, preserve_stock: bool) -> None:
+        conn.execute(
+            """
+            INSERT INTO medicines(
+              id, slot, hardware_slot, barcode, manufacturer, name, category, tags_json,
+              indications, dosage, contraindications_json, stock, unit, expire_date, image_hint,
+              is_otc, is_emergency, safety_note, guidance_source,
+              guidance_review_required, package_verified, guidance_updated_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              slot=excluded.slot,
+              hardware_slot=excluded.hardware_slot,
+              barcode=excluded.barcode,
+              manufacturer=excluded.manufacturer,
+              name=excluded.name,
+              category=excluded.category,
+              tags_json=excluded.tags_json,
+              indications=excluded.indications,
+              dosage=excluded.dosage,
+              contraindications_json=excluded.contraindications_json,
+              stock=CASE WHEN ? THEN medicines.stock ELSE excluded.stock END,
+              unit=excluded.unit,
+              expire_date=excluded.expire_date,
+              image_hint=excluded.image_hint,
+              is_otc=excluded.is_otc,
+              is_emergency=excluded.is_emergency,
+              safety_note=excluded.safety_note,
+              guidance_source=excluded.guidance_source,
+              guidance_review_required=excluded.guidance_review_required,
+              package_verified=excluded.package_verified,
+              guidance_updated_at=excluded.guidance_updated_at,
+              updated_at=excluded.updated_at
+            """,
+            (
+                item["id"],
+                item["slot"],
+                int(item["hardware_slot"]),
+                item["barcode"],
+                item.get("manufacturer", ""),
+                item["name"],
+                item["category"],
+                json.dumps(item["tags"], ensure_ascii=False),
+                item["indications"],
+                item["dosage"],
+                json.dumps(item["contraindications"], ensure_ascii=False),
+                int(item["stock"]),
+                item["unit"],
+                item["expire_date"],
+                item["image_hint"],
+                1 if item["is_otc"] else 0,
+                1 if item["is_emergency"] else 0,
+                item["safety_note"],
+                item["guidance_source"],
+                1 if item["guidance_review_required"] else 0,
+                1 if item["package_verified"] else 0,
+                db.now_text(),
+                db.now_text(),
+                1 if preserve_stock else 0,
+            ),
+        )
+
+    @staticmethod
+    def _write_seed_version(conn, key: str, value: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO app_settings(key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (key, value, db.now_text()),
+        )
 
     @staticmethod
     def _insert_default_inventory(conn) -> None:
@@ -803,9 +947,9 @@ class MedicineRepository:
               id, slot, hardware_slot, barcode, manufacturer, name, category, tags_json,
               indications, dosage, contraindications_json, stock, unit, expire_date, image_hint,
               is_otc, is_emergency, safety_note, guidance_source,
-              guidance_review_required, guidance_updated_at, updated_at
+              guidance_review_required, package_verified, guidance_updated_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -829,27 +973,36 @@ class MedicineRepository:
                     item["safety_note"],
                     item["guidance_source"],
                     1 if item["guidance_review_required"] else 0,
+                    1 if item["package_verified"] else 0,
                     db.now_text(),
                     db.now_text(),
                 )
                 for item in DEFAULT_MEDICINES
             ],
         )
-        conn.execute(
-            """
-            INSERT INTO app_settings(key, value, updated_at)
-            VALUES ('medicine_seed_version', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-            """,
-            (MEDICINE_SEED_VERSION, db.now_text()),
-        )
-        conn.execute(
-            """
-            INSERT INTO app_settings(key, value, updated_at)
-            VALUES ('medicine_guidance_version', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-            """,
-            (MEDICINE_GUIDANCE_VERSION, db.now_text()),
+        MedicineRepository._write_seed_version(conn, "medicine_seed_version", MEDICINE_SEED_VERSION)
+        MedicineRepository._write_seed_version(conn, "medicine_guidance_version", MEDICINE_GUIDANCE_VERSION)
+        MedicineRepository._write_seed_version(conn, "package_verification_version", PACKAGE_VERIFICATION_VERSION)
+
+    @staticmethod
+    def _sync_default_package_verification(conn) -> None:
+        version = conn.execute(
+            "SELECT value FROM app_settings WHERE key='package_verification_version'"
+        ).fetchone()
+        if version and version["value"] == PACKAGE_VERIFICATION_VERSION:
+            return
+        for item in DEFAULT_MEDICINES:
+            conn.execute(
+                """
+                UPDATE medicines SET package_verified=1
+                WHERE id=? AND name=? AND barcode=? AND manufacturer=?
+                """,
+                (item["id"], item["name"], item["barcode"], item.get("manufacturer", "")),
+            )
+        MedicineRepository._write_seed_version(
+            conn,
+            "package_verification_version",
+            PACKAGE_VERIFICATION_VERSION,
         )
 
     @staticmethod
@@ -875,6 +1028,7 @@ class MedicineRepository:
             safety_note=row["safety_note"],
             guidance_source=row["guidance_source"] or "pending",
             guidance_review_required=bool(row["guidance_review_required"]),
+            package_verified=bool(row["package_verified"]),
             guidance_updated_at=row["guidance_updated_at"] or "",
         )
 

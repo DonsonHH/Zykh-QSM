@@ -100,12 +100,12 @@ class OfflineInquiryRulesTest(unittest.TestCase):
             {"case_summary": "暑热不适", "observations": []},
             [
                 {"id": "slot-08-huoxiang-zhengqi", "dosage": "口服，一次1丸，一日2次。"},
-                {"id": "slot-03-ganmao-qingre", "dosage": "开水冲服。"},
+                {"id": "slot-13-ibuprofen", "dosage": "资料待补录。"},
             ],
         )
 
         self.assertEqual(result["options"][0]["medicine_ids"], ["slot-08-huoxiang-zhengqi"])
-        self.assertNotIn("slot-03-ganmao-qingre", result["options"][0]["medicine_ids"])
+        self.assertNotIn("slot-13-ibuprofen", result["options"][0]["medicine_ids"])
 
     def test_minor_wound_builds_primary_and_alternative_care_sequences(self) -> None:
         candidates = [
@@ -151,7 +151,7 @@ class OfflineInquiryRulesTest(unittest.TestCase):
             {"id": medicine_id, "dosage": "按说明核验。"}
             for medicine_id in (
                 "slot-01-fufang-ganmaoling",
-                "slot-03-ganmao-qingre",
+                "slot-13-ibuprofen",
                 "slot-11-guilin-xiguashuang",
                 "slot-07-yinhuang",
                 "slot-23-desloratadine",
