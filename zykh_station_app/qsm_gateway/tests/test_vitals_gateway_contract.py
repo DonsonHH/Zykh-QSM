@@ -14,7 +14,25 @@ class VitalsGatewayContractTest(unittest.TestCase):
         source = GATEWAY.read_text(encoding="utf-8")
         match = re.search(r"QSM_VITALS_MEASURE_TIMEOUT\}\s*\|\|\s*(\d+)", source)
         self.assertIsNotNone(match)
-        self.assertGreaterEqual(int(match.group(1)), 18)
+        self.assertEqual(int(match.group(1)), 18)
+
+    def test_phase3_keeps_timing_windows_and_uart_protocol_unchanged(self) -> None:
+        gateway = GATEWAY.read_text(encoding="utf-8")
+        reader = READER.read_text(encoding="utf-8")
+
+        self.assertRegex(
+            reader,
+            r"VITALS_UART_STABILIZATION_GRACE_SECONDS\},\s*12\)",
+        )
+        self.assertRegex(gateway, r"QSM_VITALS_SPO2_GRACE_SECONDS\}\s*\|\|\s*8")
+        self.assertRegex(reader, r"VITALS_UART_SPO2_GRACE_SECONDS\},\s*8\)")
+        self.assertIn("pack('C', 0x24)", reader)
+        self.assertIn("pack('C', 0x2A)", reader)
+        self.assertIn("while (length($$buffer_ref) >= 24)", reader)
+        self.assertIn("substr($$buffer_ref, 0, 24)", reader)
+        self.assertIn("$bytes[0] == 0xFF", reader)
+        self.assertIn("$bytes[1] == 0x01", reader)
+        self.assertIn("$bytes[23] == 0xF1", reader)
 
     def test_measurements_require_fresh_stable_frames_after_preheat(self) -> None:
         gateway = GATEWAY.read_text(encoding="utf-8")

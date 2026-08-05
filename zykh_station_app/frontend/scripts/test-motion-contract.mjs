@@ -114,7 +114,11 @@ assert.match(
   "the first measurement click does not start a hardware-confirmed QSM session"
 );
 assert.match(vitalsPage, /loadVitalsSession\(sessionId\)/, "vitals page does not poll the active QSM session");
-assert.match(vitalsPage, /cancelVitalsSession\(currentSession\)/, "vitals page cannot cancel the active QSM session");
+assert.match(
+  vitalsPage,
+  /requestBoardCancellation\(currentSession\)/,
+  "vitals page cannot cancel the active QSM session through the one-shot cleanup boundary"
+);
 
 const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");
 assert.match(app, /document\.startViewTransition/, "same-document page transitions are not enabled");

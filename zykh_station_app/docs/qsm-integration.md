@@ -163,8 +163,7 @@ first-valid-frame positions, prewarm timing, SpO2 extension state and
 transport failures use `failure_reason=transport_error`, and a replaced session retains
 `cancel_reason=replaced`. Normal cancellation uses `cancel_reason` only and leaves
 `failure_reason` unset; a UART stop failure remains attached to the cancelled session
-instead of being cleared. These fields are observational in phase one: they do not
-yet change retry, timeout, fallback or completion policy.
+instead of being cleared.
 
 Phase two adds a data-truth boundary without changing retry or timeout policy.
 `spo2_source=demo_fallback` may still support an explicitly labelled live demo,
@@ -176,6 +175,18 @@ as a failed, quarantined demo without their numeric readings.
 An unstable current session remains `failed`; the previous complete measurement
 is exposed only through `historical_*` reference fields and is rendered separately
 from the current result.
+
+Phase three uses `failure_reason` as the terminal-facing presentation contract.
+One or two consecutive `transport_error` results keep the same session active and
+poll it again after 700 ms; any healthy status response resets that failure count.
+Only an explicit user cancellation or a third consecutive communication failure
+causes the UI to request board-side cancellation. A transient browser-to-host
+request failure follows the same policy and no longer cancels the board session
+immediately. The cancellation request is latched per session so overlapping
+cleanup cannot send it twice, and a late response whose `session_id` no longer
+matches the active measurement is ignored. This phase does not change the
+18-second measurement timeout, the 12-second contact stabilization window, the
+one-time 8-second SpO2 grace window, or the UART8 start/stop/frame protocol.
 
 ## Supported adapter methods
 

@@ -267,6 +267,10 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertIn("暂不可用", interrupted["error_message"])
         self.assertEqual(recovered["status"], "complete")
         self.assertEqual(recovered["heart_rate"], 74)
+        self.assertFalse(
+            self.handler.cancelled,
+            "a transient status disconnect must not cancel the board session",
+        )
 
     def test_status_timeout_is_classified_and_keeps_session_identity(self) -> None:
         self.handler.status_delay_seconds = 3.2
