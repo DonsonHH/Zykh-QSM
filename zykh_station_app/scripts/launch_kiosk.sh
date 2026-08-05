@@ -21,8 +21,8 @@ BROWSER_PID=""
 AUDIO_RELAY_PID=""
 AUDIO_RELAY_PROCESS_GROUP="0"
 AUDIO_RELAY_STARTED="0"
-TOUCH_KEYBOARD_PID=""
-TOUCH_KEYBOARD_STARTED="0"
+TOUCH_KEYBOARD_PREVIOUS=""
+TOUCH_KEYBOARD_SETTING_CHANGED="0"
 CLEANUP_STARTED="0"
 KIOSK_GUARD_STARTED="0"
 KIOSK_GUARD_DONE="$RUN_DIR/kiosk-cleanup.$$.done"
@@ -112,37 +112,28 @@ start_touch_keyboard_if_needed() {
   if [ "$KIOSK_TOUCH_KEYBOARD" != "1" ]; then
     return 0
   fi
-  if ! command -v onboard >/dev/null 2>&1; then
-    warn "未找到 Onboard 屏幕键盘；文本区域仍会请求系统虚拟键盘。"
+  if ! command -v gsettings >/dev/null 2>&1; then
+    warn "未找到系统屏幕键盘设置；文本区域仍会请求 Chromium 虚拟键盘。"
     return 0
   fi
-  if command -v gsettings >/dev/null 2>&1; then
-    gsettings set org.onboard.auto-show enabled true >/dev/null 2>&1 || true
-    gsettings set org.onboard start-minimized true >/dev/null 2>&1 || true
-    gsettings set org.onboard.window docking-enabled false >/dev/null 2>&1 || true
-    gsettings set org.onboard.window force-to-top true >/dev/null 2>&1 || true
+  TOUCH_KEYBOARD_PREVIOUS="$(gsettings get org.gnome.desktop.a11y.applications screen-keyboard-enabled 2>/dev/null || true)"
+  if [ "$TOUCH_KEYBOARD_PREVIOUS" != "true" ]; then
+    if gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true >/dev/null 2>&1; then
+      TOUCH_KEYBOARD_SETTING_CHANGED="1"
+    else
+      warn "未能启用 GNOME 屏幕键盘；文本区域仍会请求 Chromium 虚拟键盘。"
+      return 0
+    fi
   fi
-  if pgrep -x onboard >/dev/null 2>&1; then
-    log "屏幕键盘已运行，将在文本区域获得焦点时自动显示。"
-    return 0
-  fi
-  keyboard_width=$((KIOSK_WIDTH * 4 / 5))
-  keyboard_height=$((KIOSK_HEIGHT / 3))
-  keyboard_x=$(((KIOSK_WIDTH - keyboard_width) / 2))
-  keyboard_y=$((KIOSK_HEIGHT - keyboard_height))
-  onboard --size "${keyboard_width}x${keyboard_height}" -x "$keyboard_x" -y "$keyboard_y" \
-    >"$RUN_DIR/onboard.log" 2>&1 &
-  TOUCH_KEYBOARD_PID="$!"
-  TOUCH_KEYBOARD_STARTED="1"
-  log "屏幕键盘已就绪，点按可编辑区域会自动弹出。"
+  log "新版系统屏幕键盘已就绪，点按可编辑区域会自动弹出。"
 }
 
 stop_touch_keyboard() {
-  if [ "$TOUCH_KEYBOARD_STARTED" = "1" ]; then
-    terminate_managed_process "$TOUCH_KEYBOARD_PID" "0"
+  if [ "$TOUCH_KEYBOARD_SETTING_CHANGED" = "1" ] && command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled "$TOUCH_KEYBOARD_PREVIOUS" >/dev/null 2>&1 || true
   fi
-  TOUCH_KEYBOARD_PID=""
-  TOUCH_KEYBOARD_STARTED="0"
+  TOUCH_KEYBOARD_PREVIOUS=""
+  TOUCH_KEYBOARD_SETTING_CHANGED="0"
 }
 
 prepare_chinese_input_method() {

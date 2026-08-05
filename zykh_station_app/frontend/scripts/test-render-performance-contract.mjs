@@ -15,6 +15,7 @@ const styles = (await Promise.all(
   styleFiles.map((path) => readFile(`${root}src/${path}`, "utf8"))
 )).join("\n");
 const idleScreen = await readFile(`${root}src/pages/IdleScreen.jsx`, "utf8");
+const launcher = await readFile(`${root}../scripts/launch_kiosk.sh`, "utf8");
 
 assert.doesNotMatch(
   styles,
@@ -43,5 +44,40 @@ for (const selector of [".idle-wake-area h1", ".idle-reminder-icon"]) {
     `${selector} must not keep the idle compositor active indefinitely`
   );
 }
+
+assert.doesNotMatch(
+  launcher,
+  /command -v onboard|onboard --size/,
+  "the kiosk launcher must not start the legacy Onboard keyboard"
+);
+assert.match(
+  launcher,
+  /org\.gnome\.desktop\.a11y\.applications screen-keyboard-enabled true/,
+  "the kiosk launcher does not enable the current GNOME screen keyboard"
+);
+assert.match(
+  launcher,
+  /--enable-features=TouchVirtualKeyboard/,
+  "Chromium touch-keyboard integration is missing"
+);
+
+const finiteIdleMotion = [...styles.matchAll(/\.idle-wake-button\s*\{([^}]*)\}/g)]
+  .map((match) => match[1])
+  .join("\n");
+assert.match(
+  finiteIdleMotion,
+  /animation\s*:\s*idle-wake-enter[^;]*both/,
+  "the idle wake control has no finite entry feedback"
+);
+assert.doesNotMatch(
+  finiteIdleMotion,
+  /infinite/,
+  "the idle wake control must settle after its entry feedback"
+);
+assert.match(
+  styles,
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.idle-wake-button[\s\S]*animation:\s*none\s*!important/,
+  "idle entry feedback ignores reduced-motion preference"
+);
 
 console.log("render performance contract: ok");

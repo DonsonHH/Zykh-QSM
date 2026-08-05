@@ -85,7 +85,7 @@ KIOSK_SCALE=1.5 sh scripts/launch_kiosk.sh
 KIOSK_CHANGE_RESOLUTION=1 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
-脚本默认启动 Fcitx5 拼音与 Onboard 屏幕键盘；点按问询信息核对页、AI 问询等可编辑区域时会自动弹出中文输入。接入实体键盘或不需要屏幕键盘时可关闭：
+脚本默认启动 Fcitx5 拼音，并在 kiosk 运行期间启用 GNOME 新版系统屏幕键盘；点按问询信息核对页、AI 问询等可编辑区域时会自动弹出中文输入。浏览器退出后会恢复启动前的系统键盘设置。接入实体键盘或不需要屏幕键盘时可关闭：
 
 ```bash
 KIOSK_TOUCH_KEYBOARD=0 sh scripts/launch_kiosk.sh

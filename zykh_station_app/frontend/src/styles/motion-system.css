@@ -84,6 +84,52 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
   }
 }
 
+/* Short, localized entrances restore visual continuity without animating a full screen. */
+.idle-wake-button {
+  animation: idle-wake-enter 320ms var(--ease-fluid) both;
+}
+
+.idle-wake-area h1 {
+  animation: idle-prompt-enter 260ms 70ms var(--ease-fluid) both;
+}
+
+html[data-page-transition] .top-bar {
+  animation: kiosk-top-bar-enter var(--motion-page-enter) var(--ease-fluid) both;
+}
+
+@keyframes idle-wake-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes idle-prompt-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 0.76;
+    transform: translateY(0);
+  }
+}
+
+@keyframes kiosk-top-bar-enter {
+  from {
+    opacity: 0.7;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .modal-layer {
   animation-duration: var(--motion-control);
   animation-timing-function: var(--ease-fluid);
@@ -166,6 +212,12 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .idle-wake-button,
+  .idle-wake-area h1,
+  html[data-page-transition] .top-bar {
+    animation: none !important;
+  }
+
   html[data-page-transition] .bottom-nav button.active .bottom-nav-icon {
     animation: none !important;
   }
