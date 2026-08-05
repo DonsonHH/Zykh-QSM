@@ -240,6 +240,7 @@ sub read_uart_frames {
     my $buffer = '';
     my @frames;
     my $started_at = time();
+    my $last_frame_at = $started_at;
     my $deadline = $started_at + $options->{timeout};
     my $start_retried = 0;
     my $contact_window_set = 0;
@@ -261,7 +262,9 @@ sub read_uart_frames {
         }
         if ($count > 0) {
             $buffer .= $chunk;
+            my $frame_count_before = scalar(@frames);
             extract_frames(\$buffer, \@frames);
+            $last_frame_at = time() if scalar(@frames) > $frame_count_before;
             my @contact = grep { frame_has_contact($_) } @frames;
             my $contact_detected = contact_detected(\@frames);
             my @heart_rate = grep { $_->[2] > 0 } @frames;
@@ -308,31 +311,34 @@ sub read_uart_frames {
                 && $measurement_old_enough
                 && $contact_old_enough;
         }
-        if (!$start_retried && time() - $started_at >= $options->{start_recovery_seconds}) {
-            # Any valid 24-byte frame proves the module is already running. A
-            # prewarm only confirms that the start byte was written; on the real
-            # board the module can occasionally remain silent. Recover exactly
-            # once, and never reset an active signal or SpO2 stabilization window.
-            if (!@frames) {
-                $stop_hardware->();
-                select(undef, undef, undef, 0.08);
-                syswrite($uart, pack('C', 0x24));
-                $stopped = 0;
-                $start_retried = 1;
-                $options->{start_retried} = 1;
-                $options->{start_recovery_mode} = $options->{prewarmed}
-                    ? 'prewarmed_no_frames'
-                    : 'cold_no_frames';
-                write_state($options, {
-                    ok               => JSON::PP::true,
-                    status           => 'waiting_finger',
-                    hardware_started => JSON::PP::true,
-                    finger_detected  => JSON::PP::false,
-                    sample_count     => scalar(@frames),
-                    start_retried    => JSON::PP::true,
-                    start_recovery_mode => $options->{start_recovery_mode},
-                });
-            }
+        if (
+            !$start_retried
+            && time() - $started_at >= $options->{start_recovery_seconds}
+            && time() - $last_frame_at >= $options->{start_recovery_seconds}
+        ) {
+            # A prewarm only confirms that the start byte was written. On the
+            # real board the stream can remain silent, or emit two zero frames
+            # and then stall. Recover exactly once after a sustained frame gap;
+            # a live frame stream keeps refreshing last_frame_at and is untouched.
+            my $stalled_after_frames = @frames ? 1 : 0;
+            $stop_hardware->();
+            select(undef, undef, undef, 0.08);
+            syswrite($uart, pack('C', 0x24));
+            $stopped = 0;
+            $start_retried = 1;
+            $options->{start_retried} = 1;
+            $options->{start_recovery_mode} = $options->{prewarmed}
+                ? $stalled_after_frames ? 'prewarmed_stalled_frames' : 'prewarmed_no_frames'
+                : $stalled_after_frames ? 'cold_stalled_frames' : 'cold_no_frames';
+            write_state($options, {
+                ok               => JSON::PP::true,
+                status           => 'waiting_finger',
+                hardware_started => JSON::PP::true,
+                finger_detected  => JSON::PP::false,
+                sample_count     => scalar(@frames),
+                start_retried    => JSON::PP::true,
+                start_recovery_mode => $options->{start_recovery_mode},
+            });
         }
     }
 

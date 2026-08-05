@@ -63,7 +63,20 @@ def frame(
 
 
 class VitalsUart8ParserTest(unittest.TestCase):
-    def test_silent_prewarm_retries_start_once_and_recovers_frames(self) -> None:
+    def test_prewarm_with_two_zero_frames_then_silence_recovers_once(self) -> None:
+        zero = frame(
+            heart_rate=0,
+            spo2=0,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=0,
+            microcirculation=0,
+            fatigue=0,
+            rr_interval=0,
+            hrv_sdnn=0,
+            hrv_rmssd=0,
+            ambient_temperature=(0, 0),
+        )
         measured = frame(
             heart_rate=76,
             spo2=97,
@@ -85,6 +98,8 @@ class VitalsUart8ParserTest(unittest.TestCase):
             stopped = threading.Event()
 
             def emulate_silent_prewarm() -> None:
+                emulation_started_at = time.monotonic()
+                zero_frames_sent = 0
                 last_frame_at = 0.0
                 deadline = time.monotonic() + 4
                 while not stopped.is_set() and time.monotonic() < deadline:
@@ -98,6 +113,17 @@ class VitalsUart8ParserTest(unittest.TestCase):
                         if 0x24 in command_bytes:
                             recovered.set()
                     now = time.monotonic()
+                    if (
+                        not recovered.is_set()
+                        and zero_frames_sent < 2
+                        and now - emulation_started_at >= 0.25 + (zero_frames_sent * 0.12)
+                    ):
+                        try:
+                            os.write(master_fd, zero)
+                        except OSError:
+                            break
+                        zero_frames_sent += 1
+                        continue
                     if not recovered.is_set() or now - last_frame_at < 0.12:
                         continue
                     try:
@@ -126,7 +152,7 @@ class VitalsUart8ParserTest(unittest.TestCase):
                         "--minimum-contact-seconds",
                         "0",
                         "--start-recovery-seconds",
-                        "0.35",
+                        "0.75",
                         "--prewarmed",
                         "--state-file",
                         str(state_file),
@@ -150,9 +176,9 @@ class VitalsUart8ParserTest(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(commands.count(0x24), 1, "a silent prewarm should receive one recovery start")
+        self.assertEqual(commands.count(0x24), 1, "a stalled zero-frame stream should recover once")
         self.assertTrue(payload["start_retried"])
-        self.assertEqual(payload["start_recovery_mode"], "prewarmed_no_frames")
+        self.assertEqual(payload["start_recovery_mode"], "prewarmed_stalled_frames")
         self.assertEqual(payload["heart_rate_bpm"], 76)
         self.assertEqual(payload["spo2_percent"], 97)
 

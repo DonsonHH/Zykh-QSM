@@ -49,6 +49,7 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertIn("communication_status", reader)
         self.assertIn("start_recovery_seconds", reader)
         self.assertIn("prewarmed_no_frames", reader)
+        self.assertIn("prewarmed_stalled_frames", reader)
         self.assertIn("start_recovery_mode", gateway)
 
     def test_missing_spo2_demo_fallback_is_explicitly_marked(self) -> None:
