@@ -107,6 +107,8 @@ try {
       keyCount: keyboard?.querySelectorAll('button').length || 0,
       enteredValue: input.value
     };
+    const dictionaryLoadedBeforeText = performance.getEntriesByType('resource')
+      .some(({ name }) => name.includes('google_pinyin_dict'));
     const textInput = document.createElement('input');
     textInput.type = 'text';
     textInput.setAttribute('aria-label', '文本测试');
@@ -115,6 +117,26 @@ try {
     textInput.focus();
     await new Promise((resolve) => setTimeout(resolve, 120));
     const textKeyboard = document.querySelector('[data-touch-keyboard]');
+    const candidateStartedAt = performance.now();
+    for (const key of ['n', 'i', 'h', 'a', 'o']) {
+      textKeyboard?.querySelector('[data-key="' + key + '"]')?.click();
+      await new Promise(requestAnimationFrame);
+    }
+    const candidateDeadline = performance.now() + 8000;
+    let chineseCandidate;
+    while (performance.now() < candidateDeadline) {
+      chineseCandidate = [...(textKeyboard?.querySelectorAll('[data-pinyin-candidate]') || [])]
+        .find((button) => button.textContent.includes('你好'));
+      if (chineseCandidate) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const composition = textKeyboard?.querySelector('[data-pinyin-composition]')?.textContent || '';
+    const candidateReadyMs = Math.round(performance.now() - candidateStartedAt);
+    chineseCandidate?.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const chineseEnteredValue = textInput.value;
+    textKeyboard?.querySelector('[data-key="language"]')?.click();
+    await new Promise(requestAnimationFrame);
     for (const key of ['h', 'i', 'space', 'a']) {
       textKeyboard?.querySelector('[data-key="' + key + '"]')?.click();
       await new Promise(requestAnimationFrame);
@@ -125,9 +147,14 @@ try {
     return {
       inputReady: true,
       ...numericResult,
+      dictionaryLoadedBeforeText,
       textKeyboardVisible: Boolean(textKeyboard?.getBoundingClientRect().height),
       textKeyboardMode: textKeyboard?.dataset.mode || '',
       textKeyCount: textKeyboard?.querySelectorAll('button').length || 0,
+      chineseComposition: composition,
+      chineseCandidateFound: Boolean(chineseCandidate),
+      candidateReadyMs,
+      chineseEnteredValue,
       textEnteredValue: textInput.value,
       textWithinViewport: Boolean(textBounds && textBounds.left >= 0 && textBounds.top >= 0 &&
         textBounds.right <= innerWidth && textBounds.bottom <= innerHeight),
@@ -142,10 +169,15 @@ try {
   assert.equal(result.keyboardMode, "numeric", "admin PIN did not request the numeric keyboard layout");
   assert.ok(result.keyCount >= 12, "numeric keyboard is missing required controls");
   assert.equal(result.enteredValue, "1145", "screen-key presses did not update the controlled PIN input");
+  assert.equal(result.dictionaryLoadedBeforeText, false, "pinyin dictionary loaded before a Chinese text field was opened");
   assert.equal(result.textKeyboardVisible, true, "text input did not show the screen keyboard");
   assert.equal(result.textKeyboardMode, "text", "text input did not request the full keyboard layout");
   assert.ok(result.textKeyCount >= 35, "text keyboard is missing required controls");
-  assert.equal(result.textEnteredValue, "hi a", "text keyboard did not enter letters and spaces");
+  assert.equal(result.chineseComposition, "nihao", "Chinese mode did not display the active pinyin composition");
+  assert.equal(result.chineseCandidateFound, true, "pinyin candidate list did not include 你好");
+  assert.ok(result.candidateReadyMs < 8000, `offline pinyin candidates took ${result.candidateReadyMs}ms to become ready`);
+  assert.equal(result.chineseEnteredValue, "你好", "selecting a pinyin candidate did not commit Chinese text");
+  assert.equal(result.textEnteredValue, "你好hi a", "English mode did not enter letters and spaces after Chinese text");
   assert.equal(result.textWithinViewport, true, "text keyboard extends outside the kiosk viewport");
   assert.ok(result.smallestKeyWidth >= 44, `keyboard key width is only ${result.smallestKeyWidth}px`);
   assert.ok(result.smallestKeyHeight >= 44, `keyboard key height is only ${result.smallestKeyHeight}px`);

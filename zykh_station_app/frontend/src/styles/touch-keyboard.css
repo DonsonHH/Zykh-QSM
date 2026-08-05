@@ -41,6 +41,7 @@
 }
 
 .touch-keyboard-header button,
+.touch-keyboard-ime button,
 .touch-key {
   min-width: 48px;
   min-height: 48px;
@@ -51,6 +52,81 @@
   font: inherit;
   font-weight: 850;
   cursor: pointer;
+}
+
+.touch-keyboard-ime {
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: minmax(112px, 0.9fr) minmax(0, 4fr) 48px 48px;
+  align-items: stretch;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.touch-keyboard-composition {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  overflow: hidden;
+  border: 1px solid #8eb7ea;
+  border-radius: 12px;
+  background: #e7f1ff;
+  color: #174f98;
+  font-size: 18px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.touch-keyboard-candidates {
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+}
+
+.touch-keyboard-candidates button {
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  gap: 5px;
+  overflow: hidden;
+  border-radius: 12px;
+  font-size: 20px;
+  white-space: nowrap;
+}
+
+.touch-keyboard-candidates button small {
+  color: #63758b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.touch-keyboard-candidate-status {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: #607189;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.touch-keyboard-page-button {
+  width: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+}
+
+.touch-keyboard-page-button:disabled {
+  opacity: 0.38;
+  cursor: default;
 }
 
 .touch-keyboard-header button {
@@ -103,6 +179,14 @@
   flex: 5 1 0;
 }
 
+.touch-key-language {
+  flex: 1.7 1 0;
+  border-color: #78a9e8;
+  background: #dceafe;
+  color: #174f98;
+  font-size: 16px;
+}
+
 .touch-key-done {
   flex: 2 1 0;
   border-color: #2563eb;
@@ -136,6 +220,21 @@
   .touch-keyboard-header {
     min-height: 34px;
     margin-bottom: 5px;
+  }
+
+  .touch-keyboard-ime {
+    min-height: 44px;
+    grid-template-columns: minmax(104px, 0.9fr) minmax(0, 4fr) 44px 44px;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+
+  .touch-keyboard-candidates { gap: 5px; }
+
+  .touch-keyboard-page-button,
+  .touch-keyboard-candidates button {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .touch-keyboard-rows,

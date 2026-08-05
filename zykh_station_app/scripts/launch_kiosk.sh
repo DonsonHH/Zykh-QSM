@@ -122,7 +122,7 @@ prepare_chinese_input_method() {
   export QT_IM_MODULE=fcitx
   export XMODIFIERS=@im=fcitx
   if ! command -v fcitx5 >/dev/null 2>&1; then
-    warn "未找到 Fcitx5，屏幕键盘只能输入基础字符。"
+    warn "未找到 Fcitx5，实体键盘无法使用系统拼音；应用内屏幕键盘仍可离线输入中文。"
     return 0
   fi
   if ! pgrep -x fcitx5 >/dev/null 2>&1; then

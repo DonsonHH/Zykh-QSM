@@ -85,7 +85,7 @@ KIOSK_SCALE=1.5 sh scripts/launch_kiosk.sh
 KIOSK_CHANGE_RESOLUTION=1 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
-脚本默认启动 Fcitx5 拼音，并使用不依赖 X11/Wayland 桌面协议的新版应用内屏幕键盘；点按管理员口令、问询信息核对页和 AI 问询等可编辑区域时会自动弹出数字或完整文本布局。接入实体键盘或不需要屏幕键盘时可关闭：
+脚本默认启动 Fcitx5 供实体键盘使用，并使用不依赖 X11/Wayland 桌面协议的应用内屏幕键盘。文本布局默认进入离线中文拼音模式，带候选词、翻页和中英切换；数字字段仍使用独立数字布局。拼音词库仅在首次打开中文文本键盘时按需加载，不增加首页的初始渲染负担。接入实体键盘或不需要屏幕键盘时可关闭：
 
 ```bash
 KIOSK_TOUCH_KEYBOARD=0 sh scripts/launch_kiosk.sh

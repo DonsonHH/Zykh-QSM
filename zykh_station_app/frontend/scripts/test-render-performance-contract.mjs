@@ -17,6 +17,7 @@ const styles = (await Promise.all(
 )).join("\n");
 const idleScreen = await readFile(`${root}src/pages/IdleScreen.jsx`, "utf8");
 const launcher = await readFile(`${root}../scripts/launch_kiosk.sh`, "utf8");
+const pinyinLoader = await readFile(`${root}src/utils/pinyinIme.js`, "utf8");
 
 assert.doesNotMatch(
   styles,
@@ -65,6 +66,16 @@ assert.match(
   await readFile(`${root}src/App.jsx`, "utf8"),
   /<TouchKeyboard enabled=\{touchKeyboardEnabled\}/,
   "the kiosk shell does not render its reliable app keyboard fallback"
+);
+assert.match(
+  pinyinLoader,
+  /import\("pinyin-ime\/dictionary\/google_pinyin_dict"\)/,
+  "the large offline pinyin dictionary must remain lazy-loaded"
+);
+assert.doesNotMatch(
+  pinyinLoader,
+  /^import\s+.*pinyin-ime/m,
+  "the pinyin engine must not increase initial kiosk bundle work"
 );
 
 const finiteIdleMotion = [...styles.matchAll(/\.idle-wake-button\s*\{([^}]*)\}/g)]
