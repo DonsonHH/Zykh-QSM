@@ -55,7 +55,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
       </div>
 
       <div
-        className={`home-medication-list${visiblePlans.length === 3 ? " is-full" : ""}`}
+        className={`home-medication-list plan-count-${visiblePlans.length}${visiblePlans.length === 3 ? " is-full" : ""}`}
         aria-label="最近的待执行用药任务"
       >
         {visiblePlans.length ? visiblePlans.map((plan) => (

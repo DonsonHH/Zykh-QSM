@@ -1131,6 +1131,25 @@
     gap: 10px;
   }
 
+  .home-side-stack:has(.home-medication-list.plan-count-0),
+  .home-side-stack:has(.home-medication-list.plan-count-1) {
+    grid-template-rows: 220px minmax(0, 1fr);
+  }
+
+  .home-side-stack:has(.home-medication-list.plan-count-2) {
+    grid-template-rows: 270px minmax(0, 1fr);
+  }
+
+  .home-side-stack:has(.home-medication-list.plan-count-3) {
+    grid-template-rows: 310px minmax(0, 1fr);
+  }
+
+  .home-side-stack:has(.home-medication-list[class*="plan-count-"]) .quick-grid,
+  .home-side-stack:has(.home-medication-list[class*="plan-count-"]) .quick-action {
+    height: 100%;
+    min-height: 0;
+  }
+
   .home-side-stack .medication-summary-card {
     gap: 8px;
     padding: 12px;
@@ -1164,6 +1183,11 @@
   .home-medication-list {
     grid-auto-rows: 72px;
     gap: 7px;
+  }
+
+  .home-medication-list.is-full {
+    flex: 0 0 auto;
+    align-content: start;
   }
 
   .home-medication-row {

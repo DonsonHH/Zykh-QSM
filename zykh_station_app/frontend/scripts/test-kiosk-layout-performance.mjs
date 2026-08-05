@@ -451,6 +451,9 @@ async function measureHomeVisualContract() {
       added.push(clone);
     }
     const hadFullClass = list.classList.contains('is-full');
+    const previousCountClass = [...list.classList].find((name) => name.startsWith('plan-count-'));
+    if (previousCountClass) list.classList.remove(previousCountClass);
+    list.classList.add('plan-count-3');
     list.classList.add('is-full');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 3);
@@ -460,6 +463,7 @@ async function measureHomeVisualContract() {
     const firstRowBounds = rows[0].getBoundingClientRect();
     const lastRowBounds = rows.at(-1).getBoundingClientRect();
     const inquiryStyle = getComputedStyle(inquiry);
+    const vitalsCard = document.querySelector('.home-side-stack .quick-action')?.getBoundingClientRect();
     const result = {
       ready: true,
       medicationTopGap: Math.round((
@@ -473,10 +477,13 @@ async function measureHomeVisualContract() {
       medicationBorderColor: cardStyle.borderTopColor,
       inquiryBorderWidth: parseFloat(inquiryStyle.borderTopWidth),
       inquiryBorderStyle: inquiryStyle.borderTopStyle,
-      inquiryBorderColor: inquiryStyle.borderTopColor
+      inquiryBorderColor: inquiryStyle.borderTopColor,
+      vitalsCardHeight: Math.round((vitalsCard?.height || 0) * 10) / 10
     };
     added.forEach((row) => row.remove());
     if (!hadFullClass) list.classList.remove('is-full');
+    list.classList.remove('plan-count-3');
+    if (previousCountClass) list.classList.add(previousCountClass);
     return result;
   })()`);
 }
@@ -881,8 +888,12 @@ try {
     `three home medication rows no longer preserve their compact 72px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
   );
   assert.ok(
-    Math.abs(homeVisualContract.medicationTopGap - homeVisualContract.medicationBottomGap) <= 2,
-    `three home medication rows have unbalanced whitespace: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+    homeVisualContract.medicationTopGap <= 2 && homeVisualContract.medicationBottomGap <= 2,
+    `three home medication rows still waste space: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+  );
+  assert.ok(
+    homeVisualContract.vitalsCardHeight >= 120,
+    `the home vitals card is still only ${homeVisualContract.vitalsCardHeight}px tall`
   );
   assert.ok(
     homeVisualContract.inquiryBorderWidth === homeVisualContract.medicationBorderWidth &&
