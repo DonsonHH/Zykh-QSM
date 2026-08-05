@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowBigUp, ChevronLeft, ChevronRight, Delete, Keyboard, Languages, Space, X } from "lucide-react";
+import { ArrowBigUp, ChevronLeft, ChevronRight, Delete, GripHorizontal, Keyboard, Languages, Space, X } from "lucide-react";
 import { loadPinyinEngine } from "../utils/pinyinIme.js";
 import {
   deleteTouchSelection,
@@ -35,8 +35,11 @@ function targetLabel(element) {
 
 export function TouchKeyboard({ enabled = true }) {
   const targetRef = useRef(null);
+  const keyboardRef = useRef(null);
   const compositionRef = useRef("");
   const languageRef = useRef("zh");
+  const dragRef = useRef(null);
+  const userDraggedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState("text");
   const [shifted, setShifted] = useState(false);
@@ -46,6 +49,8 @@ export function TouchKeyboard({ enabled = true }) {
   const [engine, setEngine] = useState(null);
   const [dictionaryState, setDictionaryState] = useState("idle");
   const [candidatePage, setCandidatePage] = useState(0);
+  const [position, setPosition] = useState(null);
+  const [placementRequest, setPlacementRequest] = useState(0);
 
   function updateComposition(value) {
     compositionRef.current = value;
@@ -72,11 +77,18 @@ export function TouchKeyboard({ enabled = true }) {
         setLanguage("zh");
       }
       updateComposition("");
+      userDraggedRef.current = false;
+      setPosition(null);
+      setPlacementRequest((request) => request + 1);
       setLabel(targetLabel(editable));
       setOpen(true);
       window.requestAnimationFrame(() => {
-        editable.focus({ preventScroll: false });
-        editable.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "instant" });
+        editable.focus({ preventScroll: true });
+        const bounds = editable.getBoundingClientRect();
+        if (bounds.top < 8 || bounds.bottom > window.innerHeight - 8) {
+          editable.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
+        }
+        window.requestAnimationFrame(() => setPlacementRequest((request) => request + 1));
       });
     };
     const showForEvent = (event) => {
@@ -114,6 +126,71 @@ export function TouchKeyboard({ enabled = true }) {
     return () => { active = false; };
   }, [enabled, engine, language, mode, open]);
 
+  useLayoutEffect(() => {
+    if (!enabled || !open) return undefined;
+    const placeBesideTarget = () => {
+      if (userDraggedRef.current) return;
+      const keyboard = keyboardRef.current;
+      const target = targetRef.current;
+      if (!keyboard || !isTextEditable(target)) return;
+      const keyboardBounds = keyboard.getBoundingClientRect();
+      const targetBounds = target.getBoundingClientRect();
+      const margin = 8;
+      const gap = 12;
+      const topY = margin;
+      const bottomY = Math.max(margin, window.innerHeight - keyboardBounds.height - margin);
+      const overlaps = (y) => targetBounds.bottom + gap > y && targetBounds.top - gap < y + keyboardBounds.height;
+      const topSafe = !overlaps(topY);
+      const bottomSafe = !overlaps(bottomY);
+      let y;
+      if (topSafe !== bottomSafe) y = topSafe ? topY : bottomY;
+      else if (targetBounds.top >= window.innerHeight / 2) y = topY;
+      else y = bottomY;
+      const centeredX = (window.innerWidth - keyboardBounds.width) / 2;
+      const x = Math.min(
+        Math.max(margin, centeredX),
+        Math.max(margin, window.innerWidth - keyboardBounds.width - margin)
+      );
+      setPosition({ x, y });
+    };
+    placeBesideTarget();
+    window.addEventListener("resize", placeBesideTarget);
+    return () => window.removeEventListener("resize", placeBesideTarget);
+  }, [enabled, language, mode, open, placementRequest]);
+
+  useEffect(() => {
+    if (!enabled || !open) return undefined;
+    const move = (event) => {
+      const drag = dragRef.current;
+      const keyboard = keyboardRef.current;
+      if (!drag || !keyboard || event.pointerId !== drag.pointerId) return;
+      const bounds = keyboard.getBoundingClientRect();
+      const margin = 6;
+      setPosition({
+        x: Math.min(
+          Math.max(margin, event.clientX - drag.offsetX),
+          Math.max(margin, window.innerWidth - bounds.width - margin)
+        ),
+        y: Math.min(
+          Math.max(margin, event.clientY - drag.offsetY),
+          Math.max(margin, window.innerHeight - bounds.height - margin)
+        )
+      });
+    };
+    const stop = (event) => {
+      if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+    };
+    window.addEventListener("pointermove", move, { passive: true });
+    window.addEventListener("pointerup", stop, { passive: true });
+    window.addEventListener("pointercancel", stop, { passive: true });
+    return () => {
+      dragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, [enabled, open]);
+
   useEffect(() => {
     document.documentElement.classList.toggle("touch-keyboard-open", enabled && open);
     return () => document.documentElement.classList.remove("touch-keyboard-open");
@@ -147,6 +224,24 @@ export function TouchKeyboard({ enabled = true }) {
     if (firstCandidate) selectCandidate(firstCandidate);
     else commitRawComposition();
     return true;
+  }
+
+  function startDragging(event) {
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    const bounds = keyboardRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    userDraggedRef.current = true;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - bounds.left,
+      offsetY: event.clientY - bounds.top
+    };
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Synthetic events and some X11 touch stacks do not expose pointer capture.
+      // Window-level listeners still keep dragging functional.
+    }
   }
 
   function press(key) {
@@ -205,15 +300,18 @@ export function TouchKeyboard({ enabled = true }) {
 
   return createPortal(
     <section
-      className={`touch-keyboard touch-keyboard-${mode}`}
+      ref={keyboardRef}
+      className={`touch-keyboard touch-keyboard-${mode}${position ? " touch-keyboard-positioned" : ""}`}
       data-touch-keyboard
       data-mode={mode}
       role="group"
       aria-label="屏幕键盘"
+      style={position ? { left: position.x, top: position.y, bottom: "auto", transform: "none" } : undefined}
       onPointerDown={(event) => event.preventDefault()}
     >
-      <header className="touch-keyboard-header">
-        <span><Keyboard size={20} aria-hidden="true" />正在输入：{label}</span>
+      <header className="touch-keyboard-header" onPointerDown={startDragging}>
+        <span><GripHorizontal size={22} aria-hidden="true" />拖动键盘</span>
+        <span className="touch-keyboard-target"><Keyboard size={20} aria-hidden="true" />正在输入：{label}</span>
         <button type="button" onClick={close} aria-label="关闭屏幕键盘"><X size={23} /></button>
       </header>
       {mode === "text" && language === "zh" && (

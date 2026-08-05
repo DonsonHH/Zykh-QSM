@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,6 +81,12 @@ async function stopBrowser() {
 try {
   await connect(await waitForTarget());
   await cdp("Runtime.enable");
+  await cdp("Emulation.setDeviceMetricsOverride", {
+    width: 960,
+    height: 600,
+    deviceScaleFactor: 2,
+    mobile: false
+  });
   const result = await evaluate(`(async () => {
     const deadline = performance.now() + 5000;
     let input;
@@ -144,6 +150,35 @@ try {
     const textBounds = textKeyboard?.getBoundingClientRect();
     const keyBounds = [...(textKeyboard?.querySelectorAll('button') || [])]
       .map((button) => button.getBoundingClientRect());
+    const bottomInput = document.createElement('input');
+    bottomInput.type = 'text';
+    bottomInput.setAttribute('aria-label', '底部文本测试');
+    Object.assign(bottomInput.style, {
+      position: 'fixed', left: '120px', bottom: '20px', width: '320px', height: '48px', zIndex: '10'
+    });
+    document.body.append(bottomInput);
+    bottomInput.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true }));
+    bottomInput.focus();
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    const movableKeyboard = document.querySelector('[data-touch-keyboard]');
+    const bottomInputBounds = bottomInput.getBoundingClientRect();
+    const keyboardBeforeDrag = movableKeyboard?.getBoundingClientRect();
+    const header = movableKeyboard?.querySelector('.touch-keyboard-header');
+    const headerBounds = header?.getBoundingClientRect();
+    const dragDelta = (keyboardBeforeDrag?.top || 0) < 100 ? 80 : -80;
+    header?.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true,
+      clientX: headerBounds?.left + 80, clientY: headerBounds?.top + 20
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true,
+      clientX: headerBounds?.left + 80, clientY: headerBounds?.top + 20 + dragDelta
+    }));
+    window.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const keyboardAfterDrag = movableKeyboard?.getBoundingClientRect();
     return {
       inputReady: true,
       ...numericResult,
@@ -158,6 +193,14 @@ try {
       textEnteredValue: textInput.value,
       textWithinViewport: Boolean(textBounds && textBounds.left >= 0 && textBounds.top >= 0 &&
         textBounds.right <= innerWidth && textBounds.bottom <= innerHeight),
+      bottomInputVisible: Boolean(bottomInputBounds && keyboardBeforeDrag &&
+        (bottomInputBounds.bottom <= keyboardBeforeDrag.top - 8 ||
+          bottomInputBounds.top >= keyboardBeforeDrag.bottom + 8)),
+      bottomInputTop: Math.round(bottomInputBounds?.top || 0),
+      keyboardTopBeforeDrag: Math.round(keyboardBeforeDrag?.top || 0),
+      keyboardTopAfterDrag: Math.round(keyboardAfterDrag?.top || 0),
+      keyboardInlinePosition: movableKeyboard?.getAttribute('style') || '',
+      keyboardDragDistance: Math.abs(Math.round((keyboardBeforeDrag?.top || 0) - (keyboardAfterDrag?.top || 0))),
       smallestKeyWidth: Math.min(...keyBounds.map(({ width }) => width)),
       smallestKeyHeight: Math.min(...keyBounds.map(({ height }) => height))
     };
@@ -179,8 +222,14 @@ try {
   assert.equal(result.chineseEnteredValue, "你好", "selecting a pinyin candidate did not commit Chinese text");
   assert.equal(result.textEnteredValue, "你好hi a", "English mode did not enter letters and spaces after Chinese text");
   assert.equal(result.textWithinViewport, true, "text keyboard extends outside the kiosk viewport");
+  assert.equal(result.bottomInputVisible, true, "screen keyboard covers a bottom-positioned input field");
+  assert.ok(result.keyboardDragDistance >= 60, `screen keyboard only moved ${result.keyboardDragDistance}px when dragged`);
   assert.ok(result.smallestKeyWidth >= 44, `keyboard key width is only ${result.smallestKeyWidth}px`);
   assert.ok(result.smallestKeyHeight >= 44, `keyboard key height is only ${result.smallestKeyHeight}px`);
+  if (process.env.QA_SCREENSHOT_PATH) {
+    const screenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    await writeFile(process.env.QA_SCREENSHOT_PATH, Buffer.from(screenshot.data, "base64"));
+  }
   await cdp("Page.navigate", { url: `${baseUrl}/?page=admin&awake=1&touchKeyboard=0` });
   const disabledKeyboardVisible = await evaluate(`(async () => {
     const deadline = performance.now() + 5000;
