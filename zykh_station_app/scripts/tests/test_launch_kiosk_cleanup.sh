@@ -52,6 +52,36 @@ assert_contains() {
   exit 1
 }
 
+assert_not_contains() {
+  pattern="$1"
+  file="$2"
+  label="$3"
+  if ! grep -q -- "$pattern" "$file" 2>/dev/null; then
+    return 0
+  fi
+  printf 'FAIL: %s\n' "$label" >&2
+  printf '%s\n' "--- $file ---" >&2
+  sed -n '1,160p' "$file" >&2 2>/dev/null || true
+  exit 1
+}
+
+assert_recorded_process_dead() {
+  file="$1"
+  label="$2"
+  pid="$(awk '$1 == "started" { print $2; exit }' "$file" 2>/dev/null || true)"
+  case "$pid" in
+    ''|*[!0-9]*)
+      printf 'FAIL: %s (missing pid)\n' "$label" >&2
+      exit 1
+      ;;
+  esac
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'FAIL: %s (pid %s is still running)\n' "$label" "$pid" >&2
+  exit 1
+}
+
 PATH="$FAKE_BIN:$PATH" \
   KIOSK_BROWSER_LOG=terminal \
   KIOSK_RESTART_BACKEND=0 \
@@ -71,11 +101,12 @@ kill -HUP "$LAUNCH_PID"
 wait "$LAUNCH_PID" 2>/dev/null || true
 LAUNCH_PID=""
 
-assert_contains '--output DP-1 --mode 1280x720' "$FAKE_XRANDR_EVENTS" "kiosk resolution was not applied"
-assert_contains '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" "original resolution was not restored after SIGHUP"
+assert_not_contains '--mode' "$FAKE_XRANDR_EVENTS" "kiosk changed the current display resolution"
+assert_contains '--window-size=1920,1080' "$FAKE_BROWSER_EVENTS" "kiosk did not use the current display dimensions"
+assert_contains '--force-device-scale-factor=2' "$FAKE_BROWSER_EVENTS" "kiosk did not apply 200 percent browser scaling"
+assert_contains '^stopped ' "$FAKE_BROWSER_EVENTS" "browser scale did not end with the kiosk process"
 assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "audio relay was not stopped after SIGHUP"
 assert_contains '\[kiosk\] 本机音频转发已停止。' "$LOG_FILE" "audio cleanup was not reported"
-assert_contains '\[kiosk\] 显示输出 DP-1 已恢复到 1920x1080。' "$LOG_FILE" "display cleanup was not reported"
 
 printf 'launch_kiosk cleanup: OK\n'
 
@@ -102,18 +133,19 @@ LAUNCH_PID=""
 
 attempt=0
 while [ "$attempt" -lt 60 ]; do
-  if grep -q -- '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" 2>/dev/null && \
-     grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null; then
+  if grep -q -- '^stopped ' "$FAKE_BROWSER_EVENTS" 2>/dev/null && \
+     grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null && \
+     grep -q -- '\[kiosk-guard\] 本机音频转发已停止。' "$TEST_ROOT/data/run/kiosk-cleanup.log" 2>/dev/null; then
     break
   fi
   attempt=$((attempt + 1))
   sleep 0.1
 done
 
-assert_contains '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" "guard did not restore resolution after SIGKILL"
+assert_not_contains '--mode' "$FAKE_XRANDR_EVENTS" "guard changed the display resolution after SIGKILL"
+assert_contains '^stopped ' "$FAKE_BROWSER_EVENTS" "guard did not stop the scaled browser after SIGKILL"
 assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "guard did not stop audio relay after SIGKILL"
 assert_contains '\[kiosk-guard\] 本机音频转发已停止。' "$TEST_ROOT/data/run/kiosk-cleanup.log" "guard cleanup was not logged"
-assert_contains '\[kiosk-guard\] 显示输出 DP-1 已恢复到 1920x1080。' "$TEST_ROOT/data/run/kiosk-cleanup.log" "guard display restore was not logged"
 
 printf 'launch_kiosk forced-exit cleanup: OK\n'
 
@@ -141,15 +173,16 @@ if command -v setsid >/dev/null 2>&1; then
 
   attempt=0
   while [ "$attempt" -lt 60 ]; do
-    if grep -q -- '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" 2>/dev/null && \
-       grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null; then
+    if grep -q -- '^stopped ' "$FAKE_RELAY_EVENTS" 2>/dev/null && \
+       grep -q -- '\[kiosk-guard\] 本机音频转发已停止。' "$TEST_ROOT/data/run/kiosk-cleanup.log" 2>/dev/null; then
       break
     fi
     attempt=$((attempt + 1))
     sleep 0.1
   done
 
-  assert_contains '--output DP-1 --mode 1920x1080' "$FAKE_XRANDR_EVENTS" "guard did not restore resolution after process-group SIGKILL"
+  assert_not_contains '--mode' "$FAKE_XRANDR_EVENTS" "guard changed the display resolution after process-group SIGKILL"
+  assert_recorded_process_dead "$FAKE_BROWSER_EVENTS" "scaled browser survived process-group SIGKILL"
   assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "guard did not stop audio relay after process-group SIGKILL"
 
   printf 'launch_kiosk task-stop cleanup: OK\n'

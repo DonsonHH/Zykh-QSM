@@ -11,8 +11,9 @@ const vite = await createServer({
 });
 
 try {
-  const { describeVitals, normalizeVitalsStartFailure } = await vite.ssrLoadModule(
-    "/src/pages/Vitals.jsx"
+  const { describeVitals } = await vite.ssrLoadModule("/src/pages/Vitals.jsx");
+  const { normalizeVitalsStartFailure } = await vite.ssrLoadModule(
+    "/src/adapters/vitalsSessionAdapter.js"
   );
   const cases = [
     ["no_protocol_frames", "设备通信无数据", "请检查串口连接和模块供电"],

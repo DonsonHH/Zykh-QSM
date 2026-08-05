@@ -1,9 +1,43 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const vitals = await readFile(`${root}src/pages/Vitals.jsx`, "utf8");
+const vite = await createServer({
+  root,
+  logLevel: "silent",
+  server: { middlewareMode: true },
+  appType: "custom"
+});
+
+try {
+  const sessionModule = await vite.ssrLoadModule("/src/modules/vitalsSession.js");
+  assert.equal(
+    sessionModule.shouldAutomaticallyRetrySpo2({
+      status: "failed",
+      heart_rate: 74,
+      temperature: 36.6,
+      spo2: null
+    }),
+    true,
+    "a real heart-rate and temperature result may retry missing SpO2 once"
+  );
+  assert.equal(
+    sessionModule.shouldAutomaticallyRetrySpo2({
+      status: "failed",
+      heart_rate: null,
+      temperature: 36.6,
+      spo2: null,
+      failure_reason: "no_finger"
+    }),
+    false,
+    "a no-finger result must remain visible instead of restarting the sensor"
+  );
+} finally {
+  await vite.close();
+}
 
 assert.doesNotMatch(
   vitals,
@@ -14,11 +48,6 @@ assert.doesNotMatch(
   vitals,
   /lastNoFingerRetrySessionRef/,
   "the removed continuous no-finger retry state must not return"
-);
-assert.match(
-  vitals,
-  /shouldAutomaticallyRetrySpo2\(data\) && !automaticRetryRef\.current/,
-  "the existing one-shot retry for a real heart-rate reading with missing SpO2 must remain"
 );
 assert.doesNotMatch(vitals, /上次测量结果/, "the kiosk must present demo fallback through the normal result UI");
 assert.doesNotMatch(

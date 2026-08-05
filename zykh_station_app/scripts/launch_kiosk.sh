@@ -4,10 +4,11 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP_URL="${APP_URL:-http://127.0.0.1:5173}"
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8000}"
-KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
-KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
+KIOSK_WIDTH="${KIOSK_WIDTH:-}"
+KIOSK_HEIGHT="${KIOSK_HEIGHT:-}"
 KIOSK_OUTPUT="${KIOSK_OUTPUT:-}"
-KIOSK_SCALE="${KIOSK_SCALE:-1}"
+KIOSK_SCALE="${KIOSK_SCALE:-2}"
+KIOSK_CHANGE_RESOLUTION="${KIOSK_CHANGE_RESOLUTION:-0}"
 KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
@@ -498,14 +499,11 @@ start_frontend_if_needed() {
   fi
 }
 
-set_kiosk_resolution() {
-  if [ "${KIOSK_SKIP_RESOLUTION:-0}" = "1" ]; then
-    log "跳过分辨率切换。"
-    return 0
-  fi
-
+prepare_kiosk_display() {
   if ! command -v xrandr >/dev/null 2>&1; then
-    warn "未找到 xrandr，无法自动切换分辨率。"
+    KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
+    KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
+    warn "未找到 xrandr，无法读取当前显示尺寸；kiosk 将使用 ${KIOSK_WIDTH}x${KIOSK_HEIGHT} 窗口参数。"
     return 0
   fi
 
@@ -515,14 +513,50 @@ set_kiosk_resolution() {
   fi
 
   if [ -z "$output" ]; then
-    warn "未检测到可用显示输出，跳过分辨率切换。"
+    KIOSK_WIDTH="${KIOSK_WIDTH:-1280}"
+    KIOSK_HEIGHT="${KIOSK_HEIGHT:-720}"
+    warn "未检测到可用显示输出；kiosk 将使用 ${KIOSK_WIDTH}x${KIOSK_HEIGHT} 窗口参数。"
+    return 0
+  fi
+
+  current_mode="$(current_mode_for_output "$output" || true)"
+  case "$current_mode" in
+    *x*)
+      current_width="${current_mode%%x*}"
+      current_height="${current_mode#*x}"
+      case "$current_width:$current_height" in
+        *[!0-9:]*|:|*:)
+          current_width=""
+          current_height=""
+          ;;
+      esac
+      ;;
+    *)
+      current_width=""
+      current_height=""
+      ;;
+  esac
+
+  KIOSK_WIDTH="${KIOSK_WIDTH:-${current_width:-1280}}"
+  KIOSK_HEIGHT="${KIOSK_HEIGHT:-${current_height:-720}}"
+
+  if [ "$KIOSK_CHANGE_RESOLUTION" != "1" ] || [ "${KIOSK_SKIP_RESOLUTION:-0}" = "1" ]; then
+    if [ -n "$current_mode" ]; then
+      log "保持显示输出 $output 的当前分辨率 $current_mode；kiosk 使用 ${KIOSK_SCALE}x 缩放。"
+    else
+      log "保持当前显示分辨率；kiosk 使用 ${KIOSK_SCALE}x 缩放。"
+    fi
+    return 0
+  fi
+
+  mode="${KIOSK_WIDTH}x${KIOSK_HEIGHT}"
+  if [ "$mode" = "$current_mode" ]; then
+    log "显示输出 $output 已是 $mode；无需切换分辨率。"
     return 0
   fi
 
   RESTORE_OUTPUT="$output"
-  RESTORE_MODE="$(current_mode_for_output "$output" || true)"
-
-  mode="${KIOSK_WIDTH}x${KIOSK_HEIGHT}"
+  RESTORE_MODE="$current_mode"
   if xrandr --output "$output" --mode "$mode" >/dev/null 2>&1; then
     log "显示输出 $output 已切换到 $mode。"
     return 0
@@ -617,7 +651,7 @@ if [ "$KIOSK_OFFLINE_AI" = "1" ]; then
   fi
 fi
 start_frontend_if_needed
-set_kiosk_resolution
+prepare_kiosk_display
 start_audio_relay_if_needed
 prepare_chinese_input_method
 start_touch_keyboard_if_needed

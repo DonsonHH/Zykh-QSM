@@ -100,24 +100,26 @@ assert.match(appStyles, /\.medicine-card-context \.medicine-efficacy\s*\{[\s\S]*
 assert.match(appStyles, /\.detail-section\.dosage-section h3 svg\s*\{[\s\S]*color:\s*var\(--primary\)/, "medicine detail dosage icon is not blue");
 
 const vitalsPage = await readFile(`${sourceRoot}/pages/Vitals.jsx`, "utf8");
+const vitalsSession = await readFile(`${sourceRoot}/modules/vitalsSession.js`, "utf8");
 assert.match(vitalsPage, /vitals-back-button/, "vitals page is missing its top-left back button");
+assert.match(vitalsPage, /useVitalsSession/, "vitals page is not wired to the vitals session boundary");
 assert.match(appStyles, /\.vitals-back-button[\s\S]*width:\s*56px[\s\S]*height:\s*56px/, "vitals back button is too small for touch use");
-const vitalsEffects = [...vitalsPage.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/g)];
+const vitalsEffects = [...vitalsSession.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/g)];
 assert.equal(
   vitalsEffects.some((match) => match[1].includes("startVitalsSession()")),
   false,
   "vitals hardware starts before the user presses the measurement button"
 );
 assert.match(
-  vitalsPage,
-  /function handleMeasure\([\s\S]{0,100}\)[\s\S]*startVitalsSession\([\s\S]{0,100}\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
+  vitalsSession,
+  /async function measure\([\s\S]{0,100}\)[\s\S]*startVitalsSession\(\{ replaceActive: true \}\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
   "the first measurement click does not start a hardware-confirmed QSM session"
 );
-assert.match(vitalsPage, /loadVitalsSession\(sessionId\)/, "vitals page does not poll the active QSM session");
+assert.match(vitalsSession, /loadVitalsSession\(sessionId\)/, "vitals session module does not poll the active QSM session");
 assert.match(
-  vitalsPage,
+  vitalsSession,
   /requestBoardCancellation\(currentSession\)/,
-  "vitals page cannot cancel the active QSM session through the one-shot cleanup boundary"
+  "vitals session module cannot cancel the active QSM session through the one-shot cleanup boundary"
 );
 
 const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");

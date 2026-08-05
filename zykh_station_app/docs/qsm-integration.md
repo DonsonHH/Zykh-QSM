@@ -156,6 +156,12 @@ The deployed reader buffers arbitrary UART chunks, resynchronizes on `0xFF`, val
 
 The 8085 gateway owns one measurement session at a time. It runs UART8 and GY-614 reads concurrently and retries the UART start sequence once only when no valid protocol frame appears after two seconds. The module vendor specifies 5–10 seconds for the initial algorithm result and about 1.28 seconds for later updates. The gateway therefore targets 8 seconds of cumulative cold-start stabilization: time already spent in `/api/vitals/prepare` is deducted, while a user-started measurement always keeps at least 3 seconds for two update periods. A real contact/heart-rate signal opens a 12-second adaptive stabilization window. Two heart-rate and two SpO2 values must occur in the recent signal window; old isolated values cannot complete a session. If heart rate is already stable while SpO2 is still zero, one targeted 8-second SpO2 grace window is allowed. Sessions with no heart-rate signal are not extended. `communication_status=receiving_protocol_frames` distinguishes a healthy UART transport with zero algorithm values from `no_protocol_frames`. Heart rate, SpO2 and forehead temperature are all required for `complete`; blood pressure and HRV are never synthesized and do not delay completion. Each cold session sends `0x2A`, clears stale UART input, then sends `0x24`; a prepared session keeps the running algorithm and flushes only stale input. Cancellation, completion and read failure all stop the module with `0x2A`.
 
+UART8 and GY-614 child output is retained per measurement under
+`/userdata/qsm-vitals/logs/<session_id>-uart8.log` and
+`/userdata/qsm-vitals/logs/<session_id>-gy614.log`. A missing GY-614 reader is
+written to the latter with its expected path instead of being silently discarded.
+The gateway process log remains `/userdata/qsm-vitals/logs/vitals-gateway.log`.
+
 The session interface carries diagnostics end to end. `stable_core`, frame counts,
 first-valid-frame positions, prewarm timing, SpO2 extension state and
 `communication_status` remain visible through FastAPI. Metric provenance uses
@@ -187,6 +193,18 @@ cleanup cannot send it twice, and a late response whose `session_id` no longer
 matches the active measurement is ignored. This phase does not change the
 18-second measurement timeout, the 12-second contact stabilization window, the
 one-time 8-second SpO2 grace window, or the UART8 start/stop/frame protocol.
+
+The first deep-module extraction keeps the HTTP interface compatible while moving
+host-side response modeling, data-truth checks, historical references and
+persistence/sync effects into `backend/app/modules/vitals_session.py`. Its narrow
+interface is `prepare / start / get / cancel`; `QsmClient` and the in-memory test
+gateway are adapters at that seam. The browser module
+`frontend/src/modules/vitalsSession.js` owns prewarm, start/poll/cancel lifecycle,
+phase transitions, active-session identity, SpO₂ retry and embedded completion.
+Its `vitalsSessionAdapter.js` dependency owns transient transport decisions and
+one-shot cancellation, leaving the React page as a presentation caller. UART8 and GY-614 sampling remain inside the owned QSM
+gateway adapter, so this extraction does not change the validated timing or frame
+protocol.
 
 ## Supported adapter methods
 

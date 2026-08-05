@@ -10,12 +10,13 @@ SQLite is initialized with the local operational tables needed by the terminal: 
 
 - `main.py`: app factory, middleware, router registration and startup initialization.
 - `routers/`: HTTP endpoints and request/response schemas.
+- `modules/`: deep application modules. `VitalsSessionModule` owns host-side session response modeling, provenance/data-truth gates, historical references and persistence/sync policy behind `prepare / start / get / cancel`.
 - `services/`: station, dashboard, QSM gateway, inquiry, records and sync use cases.
 - `repositories/`: SQLite persistence adapters.
 - `schemas/`: Pydantic input/output contracts.
 - `core/`: constants and safety language.
 
-No route should call the peripheral gateway directly. General gateway behavior goes through `services/qsm_client.py`; camera streaming and face identity go through `services/qsm_camera_service.py` and `services/qsm_face_client.py`.
+No route should call the peripheral gateway directly. Vitals session routes call `modules/vitals_session.py`, which uses `services/qsm_client.py` as its production gateway adapter; an in-memory adapter drives the same module interface in tests. General non-session gateway behavior goes through `services/qsm_client.py`; camera streaming and face identity go through `services/qsm_camera_service.py` and `services/qsm_face_client.py`.
 
 ## QSM gateway adapter
 
@@ -93,10 +94,14 @@ Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.
 - `App.jsx`: top-level shell, current page state, idle timeout, active-user lifecycle and toast feedback.
 - `pages/`: Home, Medicines, Inquiry, Records and Scan pages.
 - `components/`: terminal layout primitives, touch controls and the lightweight system-check modal.
+- `modules/`: browser-side deep modules. `vitalsSession.js` owns prewarm, start/poll/cancel lifecycle, phase transitions, active-session identity, SpO₂ retry and embedded inquiry completion.
+- `adapters/`: browser-side transport adapters. `vitalsSessionAdapter.js` supplies transient-failure decisions and one-shot board cancellation to the session module.
 - `api/`: fetch client, dashboard API and mock fallback data.
 - `styles/`: token-driven terminal styling.
 
-The terminal is designed around a 1280x720 landscape canvas for an 11-inch touch display.
+`Vitals.jsx` consumes the session module state and intent methods as a presentation caller; it does not call the vitals gateway or own polling/session refs.
+
+The terminal is designed around a landscape 11-inch touch display. The kiosk launcher keeps the active display mode and applies a process-scoped `2x` Chromium device scale by default; exiting Chromium removes that scale without changing the desktop display configuration.
 
 The root terminal opens on a wake screen. After a configurable idle period (`VITE_IDLE_TIMEOUT_SECONDS`, default 90), the app clears the active identity and returns to that screen. Face recognition is not run globally: inquiry and dispense start their own identification flow, show the matched person, and require an explicit user confirmation before continuing.
 

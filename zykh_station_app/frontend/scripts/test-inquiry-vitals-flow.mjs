@@ -6,6 +6,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const inquiry = await readFile(`${root}src/pages/Inquiry.jsx`, "utf8");
 const chat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
 const vitals = await readFile(`${root}src/pages/Vitals.jsx`, "utf8");
+const vitalsSession = await readFile(`${root}src/modules/vitalsSession.js`, "utf8");
+const vitalsAdapter = await readFile(`${root}src/adapters/vitalsSessionAdapter.js`, "utf8");
 const sessionUtils = await readFile(`${root}src/utils/inquirySession.js`, "utf8");
 
 assert.match(inquiry, /<Vitals\s+embedded/, "AI inquiry must render vitals as an embedded tool step");
@@ -29,13 +31,19 @@ assert.match(chat, /utterance\.onend\s*=\s*\(\)\s*=>\s*resolve\(true\)/, "browse
 assert.match(chat, /onReplyPlaybackStart\?\.\(\)/, "chat does not report spoken guidance start");
 assert.match(chat, /preservePlaybackOnExitRef/, "entering vitals interrupts the active spoken guidance");
 
-assert.match(vitals, /completionReportedRef/, "embedded vitals can submit the same result repeatedly");
-assert.match(vitals, /onComplete\?\.\(result\)/, "completed vitals do not return to AI");
-assert.match(vitals, /onExit\?\.\(\{\s*status:\s*"cancelled"/, "cancelled vitals do not return to AI");
-assert.match(vitals, /prepareQsmVitals/, "shared Vitals component does not own device prewarm");
-assert.match(vitals, /startVitalsSession/, "shared Vitals component does not own measurement start");
-assert.match(vitals, /loadVitalsSession/, "shared Vitals component does not own session polling");
-assert.match(vitals, /cancelVitalsSession/, "shared Vitals component does not own cancellation");
+assert.match(vitalsSession, /completionReportedRef/, "embedded vitals can submit the same result repeatedly");
+assert.match(vitalsSession, /onComplete\?\.\(result\)/, "completed vitals do not return to AI");
+assert.match(vitalsSession, /onExit\?\.\(\{\s*status:\s*"cancelled"/, "cancelled vitals do not return to AI");
+assert.match(vitalsSession, /prepareQsmVitals/, "shared vitals session module does not own device prewarm");
+assert.match(vitalsSession, /startVitalsSession/, "shared vitals session module does not own measurement start");
+assert.match(vitalsSession, /loadVitalsSession/, "shared vitals session module does not own session polling");
+assert.match(vitalsAdapter, /cancelVitalsSession/, "vitals session adapter does not own cancellation transport");
+assert.match(vitals, /useVitalsSession/, "Vitals page does not consume the shared session module");
+assert.doesNotMatch(
+  vitals,
+  /prepareQsmVitals\(|startVitalsSession\(|loadVitalsSession\(|cancelVitalsSession\(/,
+  "Vitals presentation page still owns measurement transport"
+);
 assert.doesNotMatch(vitals, /zykh-latest-vitals/, "vitals page still writes a cross-page handoff");
 
 console.log("inquiry vitals tool flow: ok");

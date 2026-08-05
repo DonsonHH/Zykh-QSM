@@ -73,10 +73,16 @@ cd zykh_station_app
 sh scripts/launch_kiosk.sh
 ```
 
-`launch_kiosk.sh` 会检查并启动后端、前端，尝试把显示器切到 `1280x720`，然后用 Chromium kiosk 模式全屏打开页面。可选参数：
+`launch_kiosk.sh` 会检查并启动后端、前端，保留显示器当前分辨率，并用 Chromium kiosk 模式以 `200%` 进程级缩放全屏打开页面。缩放只属于本次 Chromium 进程，浏览器正常退出、启动器被终止或整个任务组被停止后都会自动消失，不会修改桌面系统的缩放设置。可选调整缩放：
 
 ```bash
-KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
+KIOSK_SCALE=1.5 sh scripts/launch_kiosk.sh
+```
+
+只有明确需要兼容旧设备时才切换显示模式；退出时会恢复启动前分辨率：
+
+```bash
+KIOSK_CHANGE_RESOLUTION=1 KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 ```
 
 脚本默认启动 Fcitx5 拼音与 Onboard 屏幕键盘；点按问询信息核对页、AI 问询等可编辑区域时会自动弹出中文输入。接入实体键盘或不需要屏幕键盘时可关闭：
@@ -85,7 +91,7 @@ KIOSK_OUTPUT=HDMI-1 KIOSK_WIDTH=1280 KIOSK_HEIGHT=720 sh scripts/launch_kiosk.sh
 KIOSK_TOUCH_KEYBOARD=0 sh scripts/launch_kiosk.sh
 ```
 
-脚本会记录启动前的分辨率。浏览器退出、按 `Ctrl+C`、关闭终端或任务管理器发送退出信号时，会停止本机音频转发并自动恢复分辨率。独立清理守护进程也覆盖主启动脚本被强制终止的情况，兜底结果写入 `data/run/kiosk-cleanup.log`。若需要保留 kiosk 分辨率：
+浏览器退出、按 `Ctrl+C`、关闭终端或任务管理器发送退出信号时，脚本会停止本机音频转发；独立清理守护进程也覆盖主启动脚本被强制终止的情况，兜底结果写入 `data/run/kiosk-cleanup.log`。仅当启用了 `KIOSK_CHANGE_RESOLUTION=1` 时，脚本才记录并恢复启动前分辨率。若显式切换后仍要保留 kiosk 分辨率：
 
 ```bash
 KIOSK_RESTORE_RESOLUTION=0 sh scripts/launch_kiosk.sh
