@@ -1,4 +1,4 @@
-import React, { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { memo, startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { loadDashboard } from "./api/dashboard.js";
@@ -21,6 +21,18 @@ import { clearInquirySession } from "./utils/inquirySession.js";
 import { enableTouchKeyboardForEvent } from "./utils/touchKeyboard.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
+const MemoHome = memo(Home);
+const MemoMedicines = memo(Medicines);
+const MemoInquiry = memo(Inquiry);
+const MemoRecords = memo(Records);
+const MemoScan = memo(Scan);
+const MemoVitals = memo(Vitals);
+const MemoSettings = memo(Settings);
+
+function sameSnapshot(current, next) {
+  if (Object.is(current, next)) return true;
+  return JSON.stringify(current) === JSON.stringify(next);
+}
 
 function transitionKind(currentPage, nextPage, requestedKind) {
   if (requestedKind) {
@@ -43,15 +55,22 @@ export function App() {
   const [dashboard, setDashboard] = useState(mockDashboard);
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
+  const [medicinesMounted, setMedicinesMounted] = useState(initialPage === "medicines");
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [networkStatus, setNetworkStatus] = useState(null);
   const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
   const [idleSeconds, setIdleSeconds] = useState(Number.isFinite(configuredIdleSeconds) ? Math.max(0, configuredIdleSeconds) : 90);
   const toastTimerRef = useRef(null);
   const idleTimerRef = useRef(null);
+  const pageRef = useRef(initialPage);
+  const visibleHomeDashboardRef = useRef(dashboard);
   const pageTransitionRef = useRef({ kind: "", token: 0 });
   const pageTransitionTimerRef = useRef(null);
   const { clear: clearIdentity } = useFaceIdentity({ auto: false });
+
+  const updateNetworkStatus = useCallback((nextStatus) => {
+    setNetworkStatus((currentStatus) => sameSnapshot(currentStatus, nextStatus) ? currentStatus : nextStatus);
+  }, []);
 
   const commitViewChange = useCallback((kind, update) => {
     window.clearTimeout(pageTransitionTimerRef.current);
@@ -105,17 +124,19 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    loadNetworkStatus().then(setNetworkStatus).catch(() => setNetworkStatus(null));
+    loadNetworkStatus().then(updateNetworkStatus).catch(() => updateNetworkStatus(null));
     const networkRefresh = window.setInterval(
-      () => loadNetworkStatus().then(setNetworkStatus).catch(() => setNetworkStatus(null)),
+      () => loadNetworkStatus().then(updateNetworkStatus).catch(() => updateNetworkStatus(null)),
       15000
     );
     return () => {
       window.clearInterval(networkRefresh);
     };
-  }, []);
+  }, [updateNetworkStatus]);
 
-  const refreshDashboard = useCallback(() => loadDashboard().then(setDashboard), []);
+  const refreshDashboard = useCallback(() => loadDashboard().then((nextDashboard) => {
+    setDashboard((currentDashboard) => sameSnapshot(currentDashboard, nextDashboard) ? currentDashboard : nextDashboard);
+  }), []);
 
   useEffect(() => {
     refreshDashboard();
@@ -127,6 +148,12 @@ export function App() {
     const action = idle ? setFingerprintStandby() : wakeFingerprint();
     action.catch(() => undefined);
   }, [idle]);
+
+  useEffect(() => {
+    if (idle || page === "admin") {
+      setMedicinesMounted(false);
+    }
+  }, [idle, page]);
 
   useEffect(() => {
     if (startsIdle) {
@@ -167,7 +194,8 @@ export function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(""), 2800);
   }, []);
 
-  function handleNav(nextPage, options = {}) {
+  const handleNav = useCallback((nextPage, options = {}) => {
+    const currentPage = pageRef.current;
     if (
       nextPage !== "home" &&
       nextPage !== "medicines" &&
@@ -182,40 +210,63 @@ export function App() {
     }
     const applyNavigation = () => {
       if (nextPage === "vitals") {
-        setVitalsReturnPage(options.returnTo || page || "home");
+        setVitalsReturnPage(options.returnTo || currentPage || "home");
       }
       if (nextPage === "medicines" && (options.medicineId || options.category)) {
         setMedicineFocus({ medicineId: options.medicineId || null, category: options.category || null });
       }
+      if (nextPage === "medicines") {
+        setMedicinesMounted(true);
+      }
+      pageRef.current = nextPage;
       setPage(nextPage);
     };
-    if (nextPage === page) {
+    if (nextPage === currentPage) {
       applyNavigation();
       return;
     }
-    commitViewChange(transitionKind(page, nextPage, options.transition), () => {
+    commitViewChange(transitionKind(currentPage, nextPage, options.transition), () => {
       startTransition(applyNavigation);
     });
-  }
+  }, [commitViewChange, notify]);
 
-  function handleViewCandidates(focus) {
+  const handleViewCandidates = useCallback((focus) => {
     commitViewChange("forward", () => {
       startTransition(() => {
         setMedicineFocus(focus);
+        setMedicinesMounted(true);
+        pageRef.current = "medicines";
         setPage("medicines");
       });
     });
     notify("已筛选候选药品，请继续完成用药安全核验");
-  }
+  }, [commitViewChange, notify]);
 
-  function handleWake() {
+  const handleWake = useCallback(() => {
     commitViewChange("wake", () => {
       startTransition(() => {
+        pageRef.current = "home";
         setPage("home");
         setIdle(false);
       });
     });
-  }
+  }, [commitViewChange]);
+
+  const openSettings = useCallback(() => handleNav("settings"), [handleNav]);
+  const exitAdmin = useCallback(
+    () => handleNav("settings", { transition: "backward" }),
+    [handleNav]
+  );
+
+  const visibleHomeDashboard = page === "home" && !idle
+    ? dashboard
+    : visibleHomeDashboardRef.current;
+
+  useLayoutEffect(() => {
+    if (page === "home" && !idle) {
+      visibleHomeDashboardRef.current = dashboard;
+    }
+  }, [dashboard, idle, page]);
 
   return (
     <div className="app-shell">
@@ -227,7 +278,7 @@ export function App() {
         aria-label="智药康护终端"
       >
         {page === "admin" ? (
-          <AdminConsole onExit={() => handleNav("settings", { transition: "backward" })} />
+          <AdminConsole onExit={exitAdmin} />
         ) : idle ? (
           <IdleScreen
             networkStatus={networkStatus}
@@ -238,36 +289,50 @@ export function App() {
           <>
             <TopBar
               networkStatus={networkStatus}
-              onOpenSystemCheck={() => handleNav("settings")}
+              onOpenSystemCheck={openSettings}
             />
-            {page === "home" ? (
-              <Home
-                dashboard={dashboard}
+            <div
+              className={`page-cache home-page-cache ${page === "home" ? "active" : "inactive"}`}
+              id={page === "home" ? "main-content" : undefined}
+              aria-hidden={page !== "home"}
+              inert={page !== "home" ? "" : undefined}
+            >
+              <MemoHome
+                dashboard={visibleHomeDashboard}
                 onNavigate={handleNav}
                 notify={notify}
                 onDashboardRefresh={refreshDashboard}
               />
-            ) : page === "medicines" ? (
-              <Medicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />
-            ) : page === "inquiry" ? (
-              <Inquiry
+            </div>
+            {medicinesMounted ? (
+              <div
+                className={`page-cache medicines-page-cache ${page === "medicines" ? "active" : "inactive"}`}
+                id={page === "medicines" ? "main-content" : undefined}
+                aria-hidden={page !== "medicines"}
+                inert={page !== "medicines" ? "" : undefined}
+              >
+                <MemoMedicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />
+              </div>
+            ) : null}
+            {page === "home" || page === "medicines" ? null : page === "inquiry" ? (
+              <MemoInquiry
                 notify={notify}
                 onViewCandidates={handleViewCandidates}
                 onNavigate={handleNav}
                 networkStatus={networkStatus}
               />
             ) : page === "records" ? (
-              <Records notify={notify} networkStatus={networkStatus} />
+              <MemoRecords notify={notify} networkStatus={networkStatus} />
             ) : page === "scan" ? (
-              <Scan notify={notify} onNavigate={handleNav} />
+              <MemoScan notify={notify} onNavigate={handleNav} />
             ) : page === "vitals" ? (
-              <Vitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
+              <MemoVitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
             ) : page === "settings" ? (
-              <Settings
+              <MemoSettings
                 notify={notify}
                 onNavigate={handleNav}
                 networkStatus={networkStatus}
-                onNetworkStatusChange={setNetworkStatus}
+                onNetworkStatusChange={updateNetworkStatus}
               />
             ) : (
               <ComingSoon page={page} />

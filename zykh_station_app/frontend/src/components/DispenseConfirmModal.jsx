@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, Fingerprint, Minus, Plus, RotateCcw, ScanFace, ShieldCheck, UserRound, X } from "lucide-react";
 import { identifyFingerprint } from "../api/fingerprint.js";
 import { verifyDispenseIdentity } from "../api/identity.js";
@@ -543,7 +544,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     : "";
   const dispenseUsage = resolveDispenseUsage(medicine, plan);
 
-  return (
+  return createPortal(
     <div className={`modal-layer${exiting ? " is-exiting" : ""}`} role="presentation">
       <section className="dispense-modal biometric-dispense-modal" role="dialog" aria-modal="true" aria-labelledby="dispense-title">
         <button className="modal-close" type="button" onClick={cancelSession} aria-label="关闭取药确认" disabled={phase === "opening" || submitting}>
@@ -732,6 +733,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
           </div>
         </div>}
       </section>
-    </div>
+    </div>,
+    document.querySelector(".kiosk-frame") || document.body
   );
 }

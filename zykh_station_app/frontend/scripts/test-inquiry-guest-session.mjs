@@ -22,14 +22,16 @@ assert.doesNotMatch(
 assert.match(chatStep, /const reply = session\.reply \|\| "";/);
 assert.match(chatStep, /setStreamedReply\(""\)/);
 
-for (const variable of [
-  "--surface-shadow",
-  "--surface-shadow-quiet",
-  "--surface-shadow-item",
-  "--surface-shadow-raised"
-]) {
-  const pattern = new RegExp(`${variable}:\\s*\\n\\s*inset 0 0 0 1px`);
-  assert.match(surfaces, pattern, `${variable} must use an inset hairline so overflow containers cannot clip it`);
-}
+assert.match(surfaces, /--border-strong:\s*#[0-9a-f]{6}/i, "surface system has no high-contrast edge token");
+assert.match(
+  surfaces,
+  /\.card,[\s\S]*?\.inquiry-user-card,[\s\S]*?border-color:\s*var\(--border-strong\)/,
+  "inquiry surfaces rely on a subtle shadow instead of an unclipped solid edge"
+);
+assert.doesNotMatch(
+  surfaces,
+  /\.card,[\s\S]*?\.inquiry-user-card,[\s\S]*?border(?:-color)?:\s*(?:1px solid )?transparent/,
+  "inquiry surfaces can lose their edge on the low-gamut display"
+);
 
-console.log("Inquiry guest session and surface hairline contracts passed.");
+console.log("Inquiry guest session and surface edge contracts passed.");

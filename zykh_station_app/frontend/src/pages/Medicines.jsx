@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
 import { loadMedicines } from "../api/medicines.js";
@@ -7,12 +7,145 @@ import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
 
+function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
+  const gridRef = useRef(null);
+  const [viewport, setViewport] = useState({ height: 320, scrollTop: 0, rowHeight: 80, gap: 12 });
+  const [renderedRowCount, setRenderedRowCount] = useState(1);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return undefined;
+    const measure = () => {
+      const styles = getComputedStyle(grid);
+      setViewport((current) => ({
+        ...current,
+        height: grid.clientHeight,
+        rowHeight: Number.parseFloat(styles.getPropertyValue("--medicine-grid-row-height")) || 80,
+        gap: Number.parseFloat(styles.getPropertyValue("--medicine-grid-gap")) || 12
+      }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+
+  const stride = viewport.rowHeight + viewport.gap;
+  const totalRows = Math.ceil(medicines.length / 2);
+  const firstRow = Math.max(0, Math.floor(viewport.scrollTop / stride) - 1);
+  const lastRow = Math.min(totalRows, Math.ceil((viewport.scrollTop + viewport.height) / stride) + 1);
+  const renderedLastRow = Math.min(lastRow, firstRow + renderedRowCount);
+  const visibleMedicines = medicines.slice(firstRow * 2, renderedLastRow * 2);
+
+  useEffect(() => {
+    if (renderedLastRow >= lastRow) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      setRenderedRowCount((current) => Math.min(lastRow - firstRow, current + 1));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [firstRow, lastRow, renderedLastRow]);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    const selectedIndex = medicines.findIndex((medicine) => medicine.id === selectedMedicine?.id);
+    if (!grid || selectedIndex < 0) return;
+    const row = Math.floor(selectedIndex / 2);
+    const rowTop = row * stride;
+    const rowBottom = rowTop + viewport.rowHeight;
+    const viewportTop = grid.scrollTop;
+    const viewportBottom = viewportTop + grid.clientHeight;
+    let nextScrollTop = viewportTop;
+    if (rowTop < viewportTop) nextScrollTop = rowTop;
+    else if (rowBottom > viewportBottom) nextScrollTop = rowBottom - grid.clientHeight;
+    nextScrollTop = Math.max(0, Math.min(nextScrollTop, grid.scrollHeight - grid.clientHeight));
+    if (Math.abs(nextScrollTop - viewportTop) < 1) return;
+    grid.scrollTop = nextScrollTop;
+    setViewport((current) => ({ ...current, scrollTop: nextScrollTop }));
+  }, [medicines, selectedMedicine?.id, stride, viewport.height, viewport.rowHeight]);
+
+  function visibleRange(scrollTop, currentViewport = viewport) {
+    const currentStride = currentViewport.rowHeight + currentViewport.gap;
+    return {
+      first: Math.max(0, Math.floor(scrollTop / currentStride) - 1),
+      last: Math.min(
+        totalRows,
+        Math.ceil((scrollTop + currentViewport.height) / currentStride) + 1
+      )
+    };
+  }
+
+  function handleScroll(event) {
+    const nextScrollTop = event.currentTarget.scrollTop;
+    setViewport((current) => {
+      const currentRange = visibleRange(current.scrollTop, current);
+      const nextRange = visibleRange(nextScrollTop, current);
+      if (currentRange.first === nextRange.first && currentRange.last === nextRange.last) {
+        return current;
+      }
+      return { ...current, scrollTop: nextScrollTop };
+    });
+  }
+
+  function handleOptionKeyDown(event, index) {
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex += 1;
+    else if (event.key === "ArrowLeft") nextIndex -= 1;
+    else if (event.key === "ArrowDown") nextIndex += 2;
+    else if (event.key === "ArrowUp") nextIndex -= 2;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = medicines.length - 1;
+    else return;
+    event.preventDefault();
+    nextIndex = Math.max(0, Math.min(nextIndex, medicines.length - 1));
+    if (nextIndex === index) return;
+    onSelect(medicines[nextIndex]);
+    window.requestAnimationFrame(() => {
+      gridRef.current?.querySelector(`[data-medicine-index="${nextIndex}"]`)?.focus();
+    });
+  }
+
+  return (
+    <div
+      className="medicine-grid"
+      ref={gridRef}
+      role="listbox"
+      aria-label="药品列表"
+      onScroll={handleScroll}
+    >
+      <div
+        className="medicine-grid-virtual-space"
+        style={{ height: Math.max(viewport.rowHeight, totalRows * stride - viewport.gap) }}
+      >
+        {visibleMedicines.map((medicine, visibleIndex) => {
+          const index = firstRow * 2 + visibleIndex;
+          const row = Math.floor(index / 2);
+          return (
+            <MedicineCard
+              key={medicine.id}
+              className={`virtual-card ${index % 2 ? "right" : "left"}`}
+              style={{ top: row * stride, height: viewport.rowHeight }}
+              medicine={medicine}
+              selected={selectedMedicine?.id === medicine.id}
+              onSelect={onSelect}
+              index={index}
+              onKeyDown={(event) => handleOptionKeyDown(event, index)}
+              position={index + 1}
+              total={medicines.length}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function Medicines({ notify, focus, onNavigate }) {
   const initialParams = new URLSearchParams(window.location.search);
   const initialMedicineView = initialParams.get("medicineView") === "cabinet" ? "cabinet" : "list";
   const initialMedicineId = initialParams.get("medicineId");
   const [medicines, setMedicines] = useState([]);
   const [selectedMedicine, setSelectedMedicine] = useState(null);
+  const [confirmMedicine, setConfirmMedicine] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [modalResult, setModalResult] = useState("");
@@ -20,6 +153,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [viewMode, setViewMode] = useState(initialMedicineView);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [detailMedicine, setDetailMedicine] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -31,13 +165,14 @@ export function Medicines({ notify, focus, onNavigate }) {
         setSelectedMedicine(
           loadedMedicines.find((medicine) => medicine.id === initialMedicineId) || loadedMedicines[0] || null
         );
+        setLoading(false);
       })
       .catch((error) => {
         const message = error.message || "药品列表加载失败";
         setLoadError(message);
         notify(message);
-      })
-      .finally(() => setLoading(false));
+        setLoading(false);
+      });
   }, [notify]);
 
   useEffect(() => {
@@ -69,19 +204,32 @@ export function Medicines({ notify, focus, onNavigate }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("dispenseModal") === "1" && selectedMedicine) {
+      setConfirmMedicine(selectedMedicine);
       setModalOpen(true);
     }
+  }, [selectedMedicine]);
+
+  useEffect(() => {
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => setDetailMedicine(selectedMedicine));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
   }, [selectedMedicine]);
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
 
   function openConfirm() {
-    if (!selectedMedicine) {
+    if (!detailMedicine) {
       notify("请先选择药品");
       return;
     }
     setModalResult("");
     setModalError("");
+    setConfirmMedicine(detailMedicine);
     setModalOpen(true);
   }
 
@@ -102,7 +250,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   }
 
   return (
-    <main className="medicines-page" id="main-content">
+    <main className="medicines-page">
       <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""}`}>
         <div className="medicines-heading">
           <h2>家用药品</h2>
@@ -147,16 +295,11 @@ export function Medicines({ notify, focus, onNavigate }) {
             <small>{loadError}</small>
           </div>
         ) : viewMode === "list" ? (
-          <div className="medicine-grid" aria-label="药品列表">
-            {medicines.map((medicine) => (
-              <MedicineCard
-                key={medicine.id}
-                medicine={medicine}
-                selected={selectedMedicine?.id === medicine.id}
-                onSelect={setSelectedMedicine}
-              />
-            ))}
-          </div>
+          <VirtualMedicineGrid
+            medicines={medicines}
+            selectedMedicine={selectedMedicine}
+            onSelect={setSelectedMedicine}
+          />
         ) : (
           <CabinetSlotMap
             medicines={medicines}
@@ -168,10 +311,10 @@ export function Medicines({ notify, focus, onNavigate }) {
 
       </section>
 
-      <MedicineDetailPanel medicine={selectedMedicine} onConfirm={openConfirm} />
+      <MedicineDetailPanel medicine={detailMedicine} onConfirm={openConfirm} />
 
       <DispenseConfirmModal
-        medicine={selectedMedicine}
+        medicine={confirmMedicine}
         open={modalOpen}
         submitting={submitting}
         result={modalResult}

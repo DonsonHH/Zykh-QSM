@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, Fingerprint, ListChecks, UserRound, X } from "lucide-react";
 import {
   isMedicationPlanCompleted,
@@ -31,7 +32,7 @@ export function MedicationTaskPicker({ open, plans, busy, onClose, onPickPlan })
 
   if (!present) return null;
 
-  return (
+  return createPortal(
     <div className={`modal-layer home-task-picker-layer${exiting ? " is-exiting" : ""}`} onClick={open ? onClose : undefined}>
       <section
         className="home-task-picker"
@@ -85,6 +86,7 @@ export function MedicationTaskPicker({ open, plans, busy, onClose, onPickPlan })
           })}
         </div>
       </section>
-    </div>
+    </div>,
+    document.querySelector(".kiosk-frame") || document.body
   );
 }

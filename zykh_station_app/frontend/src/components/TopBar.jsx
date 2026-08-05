@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import {
   SlidersHorizontal
 } from "lucide-react";
@@ -7,7 +7,7 @@ import { BrandLogoImage } from "./BrandLogoImage.jsx";
 import { NetworkStatusIcons } from "./NetworkStatusIcons.jsx";
 import { useMinuteClock } from "../hooks/useMinuteClock.js";
 
-export function TopBar({ networkStatus, onOpenSystemCheck }) {
+export const TopBar = memo(function TopBar({ networkStatus, onOpenSystemCheck }) {
   const now = useMinuteClock();
   const dayText = formatDay(now);
   const [dateText, weekText = ""] = dayText.split(/(?=星期)/);
@@ -36,4 +36,4 @@ export function TopBar({ networkStatus, onOpenSystemCheck }) {
       </div>
     </header>
   );
-}
+});

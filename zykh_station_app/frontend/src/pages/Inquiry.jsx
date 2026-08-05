@@ -76,6 +76,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const [savingReview, setSavingReview] = useState(false);
   const [vitalsFlow, setVitalsFlow] = useState("chat");
   const [attachingVitals, setAttachingVitals] = useState(false);
+  const [contextReady, setContextReady] = useState(false);
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
@@ -149,6 +150,17 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       window.clearTimeout(vitalsLaunchTimerRef.current);
       stopAudioPlayback().catch(() => null);
       if (resetOnResultLeaveRef.current) clearInquirySession();
+    };
+  }, []);
+
+  useEffect(() => {
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => setContextReady(true));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
     };
   }, []);
 
@@ -422,7 +434,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   return (
     <main className={`inquiry-page conversation-layout ${vitalsSubflow ? "vitals-subflow" : ""}`} id="main-content">
       {!vitalsSubflow ? <aside className="inquiry-context-panel" aria-label="使用人信息">
-        <section className="inquiry-user-card dynamic">
+        {contextReady ? <section className="inquiry-user-card dynamic">
           <div className="context-heading user-context-heading">
             <UserRound size={26} aria-hidden="true" />
             <div className="user-context-copy"><span>使用人</span><h2>{displayedUser?.name || "等待确认"}</h2></div>
@@ -456,7 +468,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
               </div>
             </section>
           </div>
-        </section>
+        </section> : <div className="inquiry-user-card dynamic inquiry-context-placeholder" aria-hidden="true" />}
       </aside> : null}
 
       <section className={`inquiry-flow-card chat-only ${vitalsSubflow ? "vitals-tool-host" : ""}`} aria-label="AI 应急问询流程">

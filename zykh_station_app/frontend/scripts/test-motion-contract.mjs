@@ -139,7 +139,7 @@ assert.match(settingsPage, /controlsLocked = loading \|\| saveState === "saving"
 assert.match(settingsPage, /settings-loading-shield[\s\S]*正在读取设备设置[\s\S]*读取完成后即可修改/, "settings loading lock is not explicit to the operator");
 assert.match(settingsStyles, /\.settings-switch\s*\{[\s\S]*width:\s*54px[\s\S]*height:\s*32px[\s\S]*box-sizing:\s*border-box/, "settings switches do not share stable aligned geometry");
 assert.match(settingsStyles, /\.settings-loading-shield\s*\{[\s\S]*position:\s*absolute[\s\S]*inset:\s*0/, "settings loading shield does not cover all controls");
-const wakeHandler = app.match(/function handleWake\(\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+const wakeHandler = app.match(/const handleWake = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[commitViewChange\]\);/)?.[1] || "";
 assert.ok(wakeHandler, "home wake handler is missing");
 assert.doesNotMatch(wakeHandler, /identify|capture|verify/, "waking the home screen still triggers identity recognition");
 assert.doesNotMatch(wakeHandler, /clearIdentity\(\)/, "waking the home screen still changes identity state");
@@ -150,16 +150,17 @@ const entry = await readFile(`${sourceRoot}/main.jsx`, "utf8");
 assert.match(entry, /design-polish\.css[\s\S]*motion-system\.css/, "design and motion polish layers are missing or loaded in the wrong order");
 
 const designPolish = await readFile(`${sourceRoot}/styles/design-polish.css`, "utf8");
-assert.match(designPolish, /--surface-shadow:[\s\S]*0 0 0 1px var\(--surface-edge\)/, "primary surfaces lost their shadow hairline");
+assert.match(designPolish, /--border-strong:\s*#[0-9a-f]{6}/i, "primary surfaces lost their explicit edge token");
 assert.match(designPolish, /--surface-shadow-item:/, "repeated rows do not have a quiet elevation level");
-assert.match(designPolish, /\.card,[\s\S]*border:\s*1px solid transparent;[\s\S]*box-shadow:\s*var\(--surface-shadow\)/, "primary surfaces still combine a gray border with elevation shadow");
+assert.match(designPolish, /\.card,[\s\S]*border-color:\s*var\(--border-strong\);[\s\S]*box-shadow:\s*var\(--surface-shadow\)/, "primary surfaces do not keep a visible edge on the low-gamut display");
 assert.match(designPolish, /focus-visible[\s\S]*outline:\s*3px solid var\(--focus-ring\)/, "polished controls have no visible focus treatment");
 
 const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "utf8");
 assert.match(motionSystem, /--motion-control:\s*180ms/, "control feedback no longer shares the standard motion token");
 assert.match(motionSystem, /\.inquiry-assistant-orbit[\s\S]*animation-iteration-count:\s*2/, "home decorative motion runs forever");
-assert.match(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-duration:\s*140ms/, "page feedback exceeds the lightweight animation budget");
-assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation:\s*none/, "page feedback ignores reduced motion");
+assert.doesNotMatch(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-name/, "page feedback animates the full high-resolution page surface");
+assert.match(motionSystem, /bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation-duration:\s*180ms/, "navigation lost its localized confirmation animation");
+assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
 assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-backdrop-exit/, "admin dialogs disappear without an exit animation");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");

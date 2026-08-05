@@ -68,7 +68,7 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
   }
 
   return (
-    <main className="home-page" id="main-content">
+    <main className="home-page">
       <HomeHero
         dashboard={dashboard}
         onNavigate={onNavigate}

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { ClipboardList, Home, MessageCircleHeart, Pill } from "lucide-react";
 
 const items = [
@@ -8,7 +8,7 @@ const items = [
   { id: "records", label: "记录", icon: ClipboardList }
 ];
 
-export function BottomNav({ page, onChange }) {
+export const BottomNav = memo(function BottomNav({ page, onChange }) {
   return (
     <nav className="bottom-nav" aria-label="主导航">
       {items.map((item) => {
@@ -30,4 +30,4 @@ export function BottomNav({ page, onChange }) {
       })}
     </nav>
   );
-}
+});

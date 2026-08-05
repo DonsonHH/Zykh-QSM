@@ -1,29 +1,26 @@
 /* surface system */
 :root {
-  --surface-edge: rgba(42, 67, 98, 0.07);
-  --surface-edge-strong: rgba(42, 67, 98, 0.105);
-  --surface-contact: rgba(15, 35, 70, 0.04);
-  --surface-ambient: rgba(15, 35, 70, 0.06);
-  --surface-shadow:
-    inset 0 0 0 1px var(--surface-edge),
-    0 1px 2px var(--surface-contact),
-    0 9px 26px var(--surface-ambient),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  --surface-shadow-quiet:
-    inset 0 0 0 1px rgba(42, 67, 98, 0.06),
-    0 1px 2px rgba(15, 35, 70, 0.03),
-    0 5px 15px rgba(15, 35, 70, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.76);
-  --surface-shadow-item:
-    inset 0 0 0 1px rgba(42, 67, 98, 0.065),
-    0 1px 2px rgba(15, 35, 70, 0.025),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --bg: #edf2f7;
+  --surface: #ffffff;
+  --surface-soft: #f2f5f9;
+  --border: #a6b5c7;
+  --border-strong: #8395ab;
+  --text: #101828;
+  --muted: #475467;
+  --surface-edge: #a6b5c7;
+  --surface-edge-strong: #8395ab;
+  --dark-surface: #111827;
+  --dark-surface-edge: #94a3b8;
+  --surface-contact: rgba(15, 35, 70, 0.08);
+  --surface-ambient: rgba(15, 35, 70, 0.09);
+  --surface-shadow: 0 2px 6px rgba(15, 35, 70, 0.1);
+  --surface-shadow-quiet: 0 1px 3px rgba(15, 35, 70, 0.09);
+  --surface-shadow-item: none;
   --surface-shadow-raised:
-    inset 0 0 0 1px rgba(42, 67, 98, 0.085),
     0 2px 5px rgba(15, 35, 70, 0.055),
     0 22px 58px rgba(15, 35, 70, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.88);
-  --focus-ring: rgba(37, 99, 235, 0.24);
+  --focus-ring: #1d4ed8;
   --surface-radius: 22px;
   --control-radius: 16px;
 }
@@ -46,7 +43,7 @@ select:focus-visible {
   outline-offset: 3px;
 }
 
-/* Primary surfaces use a shadow hairline instead of a solid gray frame. */
+/* Low-gamut kiosk panels need an explicit edge; shadow alone disappears on the target display. */
 .card,
 .medicines-main-panel,
 .medicine-detail-panel,
@@ -62,7 +59,7 @@ select:focus-visible {
 .vitals-result-panel,
 .basic-settings-panel,
 .coming-panel {
-  border: 1px solid transparent;
+  border-color: var(--border-strong);
   box-shadow: var(--surface-shadow);
 }
 
@@ -72,8 +69,23 @@ select:focus-visible {
 .bottom-nav,
 .stat-strip,
 .toast {
-  border: 1px solid transparent;
+  border-color: var(--border-strong);
   box-shadow: var(--surface-shadow-quiet);
+}
+
+/* Keep the live camera surface legible when near-black shades collapse together. */
+.camera-stage.live {
+  border: 3px solid var(--dark-surface-edge);
+  background: var(--dark-surface);
+  box-shadow: inset 0 0 0 1px #ffffff;
+}
+
+.camera-preview {
+  background: var(--dark-surface);
+}
+
+.scan-frame {
+  border-color: #ffffff;
 }
 
 /* Repeated rows stay crisp without looking like a stack of floating cards. */
@@ -86,7 +98,7 @@ select:focus-visible {
 .scan-meta-grid article,
 .vitals-metric,
 .vitals-reference-metric {
-  border-color: transparent;
+  border-color: var(--border);
   box-shadow: var(--surface-shadow-item);
 }
 
@@ -106,7 +118,7 @@ select:focus-visible {
 .home-task-picker,
 .admin-confirm-dialog,
 .admin-biometric-dialog {
-  border: 1px solid transparent;
+  border-color: var(--border-strong);
   box-shadow: var(--surface-shadow-raised);
 }
 

@@ -272,8 +272,8 @@
   }
 
   .medicine-grid {
-    grid-auto-rows: 104px;
-    gap: 14px;
+    --medicine-grid-row-height: 104px;
+    --medicine-grid-gap: 14px;
   }
 
   .medicine-card {
@@ -990,5 +990,810 @@
   .bottom-nav button {
     min-height: 48px;
     font-size: 19px;
+  }
+}
+
+/* 1920x1200 at 200% exposes a 960x600 CSS viewport. Size each component for
+ * that 16:10 workspace; never scale or stretch the complete kiosk frame. */
+@media (max-width: 1100px) and (max-height: 650px) {
+  .kiosk-frame {
+    grid-template-rows: 58px minmax(0, 1fr) 56px;
+    gap: 7px;
+    padding: 12px 16px;
+  }
+
+  .brand-mark {
+    width: 52px;
+    height: 52px;
+  }
+
+  .brand-block {
+    gap: 8px;
+  }
+
+  .brand-block h1 {
+    font-size: 24px;
+  }
+
+  .status-controls {
+    grid-template-columns: 112px 120px 52px;
+    gap: 8px;
+  }
+
+  .clock-block {
+    min-width: 112px;
+  }
+
+  .clock-block strong {
+    font-size: 24px;
+  }
+
+  .clock-block span {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  .network-icons,
+  .system-check-button {
+    min-height: 52px;
+  }
+
+  .system-check-button {
+    width: 52px;
+    border-radius: 16px;
+  }
+
+  .bottom-nav {
+    min-height: 56px;
+    gap: 7px;
+    border-radius: 19px;
+    padding: 4px;
+  }
+
+  .bottom-nav button {
+    min-height: 46px;
+    gap: 7px;
+    border-radius: 15px;
+    font-size: 18px;
+  }
+
+  .bottom-nav-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  /* Home */
+  .hero-grid {
+    grid-template-columns: minmax(0, 1.16fr) minmax(390px, 0.84fr);
+    gap: 12px;
+  }
+
+  .hero-grid > .inquiry-entry-card {
+    gap: 10px;
+    padding: 18px 20px;
+  }
+
+  .inquiry-assistant-stage {
+    grid-template-columns: 144px minmax(0, 1fr);
+    gap: 18px;
+    padding: 8px 4px;
+  }
+
+  .inquiry-assistant-portrait {
+    width: 144px;
+    height: 144px;
+  }
+
+  .inquiry-assistant-mic {
+    width: 42px;
+    height: 42px;
+    right: 9px;
+    bottom: 9px;
+  }
+
+  .inquiry-assistant-content > p {
+    margin-bottom: 8px;
+    font-size: 20px;
+  }
+
+  .inquiry-assistant-content > strong {
+    font-size: 28px;
+    line-height: 1.16;
+  }
+
+  .inquiry-capability-strip {
+    gap: 5px;
+    margin-top: 14px;
+  }
+
+  .inquiry-capability-strip article {
+    min-height: 58px;
+    gap: 5px;
+  }
+
+  .inquiry-capability-strip article svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .inquiry-capability-strip span {
+    font-size: 14px;
+  }
+
+  .hero-grid > .inquiry-entry-card .primary-action {
+    height: 58px;
+    min-height: 58px;
+    font-size: 21px;
+  }
+
+  .home-side-stack {
+    grid-template-rows: minmax(0, 1fr) 96px;
+    gap: 10px;
+  }
+
+  .home-side-stack .medication-summary-card {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .card-heading.compact {
+    gap: 9px;
+  }
+
+  .card-heading.compact .card-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .card-heading.compact h2 {
+    font-size: 24px;
+  }
+
+  .home-plan-picker-trigger {
+    min-height: 48px;
+    padding-inline: 10px 7px;
+    font-size: 14px;
+  }
+
+  .home-plan-picker-trigger strong {
+    min-width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
+
+  .home-medication-list {
+    grid-auto-rows: 72px;
+    gap: 7px;
+  }
+
+  .home-medication-row {
+    min-height: 72px;
+    grid-template-columns: 58px minmax(0, 1fr) 58px;
+    gap: 7px;
+    border-radius: 15px;
+    padding: 7px;
+  }
+
+  .home-medication-time {
+    font-size: 17px;
+  }
+
+  .home-medication-detail > span,
+  .home-medication-detail > small {
+    font-size: 12px;
+  }
+
+  .home-medication-detail > span strong,
+  .home-medication-detail > strong {
+    font-size: 15px;
+  }
+
+  .home-medication-action {
+    min-height: 48px;
+    border-radius: 13px;
+    font-size: 12px;
+  }
+
+  .home-side-stack .quick-action {
+    height: 96px;
+    min-height: 96px;
+    grid-template-columns: 54px minmax(0, 1fr) 142px;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .home-side-stack .quick-icon {
+    width: 54px;
+    height: 54px;
+    border-radius: 16px;
+  }
+
+  .home-side-stack .quick-icon svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .home-side-stack .quick-action strong {
+    font-size: 22px;
+  }
+
+  .quick-copy {
+    gap: 4px;
+  }
+
+  .quick-copy small {
+    font-size: 14px;
+    line-height: 1.15;
+  }
+
+  .home-side-stack .quick-action-cta {
+    min-height: 56px;
+    border-radius: 16px;
+    font-size: 18px;
+  }
+
+  /* Medicines */
+  .medicines-page {
+    grid-template-columns: minmax(0, 1.72fr) minmax(330px, 0.88fr);
+    gap: 12px;
+  }
+
+  .medicines-main-panel {
+    grid-template-rows: 56px minmax(0, 1fr);
+    gap: 9px;
+    padding: 14px;
+  }
+
+  .medicines-heading {
+    gap: 9px;
+  }
+
+  .medicines-heading h2 {
+    flex: 0 0 auto;
+    font-size: 26px;
+    white-space: nowrap;
+  }
+
+  .medicines-heading-actions {
+    gap: 7px;
+  }
+
+  .medicines-stock-summary,
+  .scan-button,
+  .medicine-view-toggle {
+    min-height: 50px;
+  }
+
+  .medicines-stock-summary {
+    padding-inline: 10px;
+    font-size: 15px;
+  }
+
+  .medicine-view-toggle {
+    height: 50px;
+  }
+
+  .medicine-view-toggle button {
+    min-width: 58px;
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .scan-button {
+    height: 50px;
+    gap: 7px;
+    padding-inline: 12px;
+    font-size: 16px;
+  }
+
+  .medicine-detail-panel {
+    padding: 14px;
+  }
+
+  /* Records */
+  .records-page {
+    grid-template-rows: 86px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .record-summary-grid,
+  .records-main-grid,
+  .records-side-stack {
+    gap: 10px;
+  }
+
+  .record-summary-card {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .record-summary-card > span {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+  }
+
+  .record-summary-card p {
+    font-size: 16px;
+  }
+
+  .record-summary-card strong {
+    font-size: 32px;
+  }
+
+  .record-summary-card small {
+    font-size: 15px;
+  }
+
+  .records-main-grid {
+    grid-template-columns: 240px minmax(0, 1fr) 300px;
+  }
+
+  .records-panel,
+  .sync-status-card {
+    padding: 12px;
+  }
+
+  .records-panel-heading h2,
+  .sync-status-card h2 {
+    font-size: 23px;
+  }
+
+  .records-side-stack {
+    grid-template-rows: minmax(150px, 1.3fr) minmax(92px, 0.7fr);
+  }
+
+  .today-plan-panel {
+    grid-template-rows: 34px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .sync-status-card {
+    grid-template-columns: minmax(0, 1fr) 118px;
+  }
+
+  .sync-status-card button {
+    min-height: 54px;
+    font-size: 15px;
+  }
+
+  /* Vitals */
+  .vitals-page {
+    grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+    gap: 12px;
+  }
+
+  .vitals-guide-panel,
+  .vitals-result-panel {
+    padding: 14px;
+  }
+
+  .vitals-guide-panel {
+    grid-template-rows: 42px minmax(0, 1fr) 58px;
+    gap: 10px;
+  }
+
+  .vitals-result-panel {
+    grid-template-rows: 42px minmax(0, 1fr) 64px;
+    gap: 8px;
+  }
+
+  .vitals-back-button {
+    width: 48px;
+    height: 48px;
+  }
+
+  .vitals-page-heading h2,
+  .vitals-result-heading h2 {
+    font-size: 27px;
+  }
+
+  .vitals-visual-guide {
+    gap: 10px;
+  }
+
+  .vitals-pose-card {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 10px;
+  }
+
+  .vitals-pose-graphic {
+    min-height: 0;
+    height: 100%;
+    border-radius: 18px;
+  }
+
+  .vitals-pose-label {
+    min-height: 44px;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 0;
+  }
+
+  .vitals-pose-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .vitals-pose-label strong {
+    font-size: 18px;
+  }
+
+  .vitals-action-row .primary-action {
+    min-height: 58px;
+    font-size: 21px;
+  }
+
+  .vitals-result-visual {
+    width: 220px;
+    height: 220px;
+  }
+
+  .vitals-result-heart {
+    width: 132px;
+    height: 132px;
+  }
+
+  /* Scan and inquiry identity */
+  .scan-page {
+    grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
+    gap: 12px;
+  }
+
+  .scan-capture-panel,
+  .scan-result-panel {
+    padding: 14px;
+  }
+
+  .scan-capture-panel {
+    grid-template-rows: 52px minmax(0, 1fr) 52px;
+    gap: 9px;
+  }
+
+  .scan-heading h2,
+  .scan-result-heading h2 {
+    font-size: 26px;
+  }
+
+  .scan-heading .icon-action,
+  .scan-result-heading > span {
+    width: 50px;
+    min-height: 50px;
+  }
+
+  .inquiry-page.conversation-layout {
+    grid-template-columns: 354px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .inquiry-user-card.dynamic {
+    grid-template-rows: 56px 64px minmax(0, 1fr);
+    gap: 8px;
+    padding: 14px;
+  }
+
+  .context-heading.user-context-heading {
+    grid-template-columns: 48px minmax(0, 1fr) 42px;
+    gap: 9px;
+  }
+
+  .context-heading.user-context-heading > svg {
+    width: 48px;
+    height: 48px;
+  }
+
+  .inquiry-live-summary {
+    grid-template-rows: 20px minmax(0, 1fr) 70px;
+    gap: 8px;
+  }
+
+  .inquiry-fact-list {
+    grid-template-rows: 50px 46px minmax(52px, 1fr);
+    gap: 6px;
+  }
+
+  .inquiry-chief-fact,
+  .inquiry-fact-pair article,
+  .inquiry-allergy-fact {
+    padding-block: 6px;
+  }
+
+  .inquiry-core-vitals {
+    grid-template-rows: 22px minmax(0, 1fr);
+    padding-block: 5px;
+  }
+
+  .inquiry-identity-gate {
+    grid-template-rows: minmax(150px, 1fr) auto auto;
+    gap: 11px;
+    padding: 18px 32px;
+  }
+
+  .inquiry-identity-visual {
+    width: 150px;
+    height: 150px;
+  }
+
+  .inquiry-identity-copy h2 {
+    margin-block: 5px 6px;
+    font-size: 31px;
+  }
+
+  .inquiry-identity-copy p {
+    font-size: 16px;
+  }
+
+  .inquiry-identity-actions button,
+  .inquiry-identity-retry {
+    min-height: 56px;
+    font-size: 17px;
+  }
+
+  /* Settings: preserve three independent control groups in the 960x600 workspace. */
+  .basic-settings-page {
+    grid-template-rows: 50px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .basic-settings-header {
+    gap: 9px;
+  }
+
+  .basic-settings-header .icon-action {
+    width: 48px;
+    height: 48px;
+    min-height: 48px;
+    border-radius: 14px;
+  }
+
+  .basic-settings-title h2 {
+    font-size: 23px;
+  }
+
+  .basic-settings-title span {
+    max-width: 430px;
+    font-size: 12px;
+  }
+
+  .settings-autosave-state {
+    min-width: 96px;
+    font-size: 12px;
+  }
+
+  .admin-entry-button {
+    height: 48px;
+    min-height: 48px;
+    padding-inline: 12px;
+    font-size: 14px;
+  }
+
+  .basic-settings-grid {
+    grid-template-columns: 1.08fr 1fr 0.94fr;
+    gap: 10px;
+  }
+
+  .basic-settings-panel {
+    gap: 9px;
+    border-radius: 16px;
+    padding: 12px;
+  }
+
+  .basic-settings-panel > header h3 {
+    font-size: 18px;
+  }
+
+  .basic-setting-toggle-row {
+    min-height: 56px;
+    padding: 7px 9px;
+  }
+
+  .basic-setting-toggle-row strong,
+  .basic-settings-range-label strong,
+  .idle-time-setting strong {
+    font-size: 15px;
+  }
+
+  .basic-setting-toggle-row span,
+  .basic-setting-toggle-row small {
+    font-size: 11px;
+  }
+
+  .network-mode-control {
+    min-height: 50px;
+    padding: 4px;
+  }
+
+  .network-mode-control button {
+    min-height: 42px;
+    font-size: 13px;
+  }
+
+  .basic-settings-range {
+    gap: 5px 8px;
+    padding-bottom: 9px;
+  }
+
+  .settings-test-sound {
+    min-height: 48px;
+    font-size: 14px;
+  }
+
+  .idle-time-setting {
+    min-height: 54px;
+    padding: 6px 7px 6px 9px;
+  }
+
+  .idle-time-setting select {
+    height: 40px;
+    padding-inline: 7px;
+    font-size: 13px;
+  }
+
+  /* Admin: keep its dense desktop information model, with target-sized chrome. */
+  .admin-console {
+    grid-template-columns: 172px minmax(0, 1fr);
+    font-size: 13px;
+  }
+
+  .admin-sidebar {
+    padding: 12px 10px 10px;
+  }
+
+  .admin-sidebar-brand {
+    min-height: 48px;
+    gap: 7px;
+    padding-bottom: 10px;
+  }
+
+  .admin-brand-image {
+    width: 40px;
+    height: 40px;
+  }
+
+  .admin-sidebar-brand strong {
+    font-size: 15px;
+  }
+
+  .admin-sidebar-brand span {
+    font-size: 10px;
+  }
+
+  .admin-sidebar nav {
+    gap: 3px;
+    margin-top: 10px;
+  }
+
+  .admin-sidebar nav button {
+    height: 38px;
+    gap: 7px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+
+  .admin-sidebar-meta {
+    padding: 7px;
+    font-size: 9px;
+  }
+
+  .admin-sidebar-actions {
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .admin-sidebar-actions button {
+    height: 34px;
+    font-size: 10px;
+  }
+
+  .admin-workspace {
+    padding: 14px;
+  }
+
+  .admin-view {
+    gap: 10px;
+  }
+
+  .admin-page-heading {
+    min-height: 46px;
+  }
+
+  .admin-page-heading h2 {
+    font-size: 22px;
+  }
+
+  .admin-login-panel {
+    width: 360px;
+    border-radius: 16px;
+    padding: 22px;
+  }
+
+  .admin-login-panel .brand-logo-image {
+    width: 64px;
+    height: 64px;
+  }
+
+  .admin-login-copy h1 {
+    font-size: 23px;
+  }
+
+  .admin-login-panel form {
+    margin-top: 18px;
+  }
+
+  /* Idle: size the clock, wake target and reminder independently for 16:10. */
+  .idle-screen {
+    padding: 24px 30px 22px;
+  }
+
+  .idle-brand > span {
+    width: 52px;
+    height: 52px;
+  }
+
+  .idle-brand strong {
+    font-size: 22px;
+  }
+
+  .idle-wake-area {
+    min-width: 420px;
+  }
+
+  .idle-time {
+    margin-bottom: 18px;
+  }
+
+  .idle-time strong {
+    font-size: 84px;
+  }
+
+  .idle-time span {
+    margin-top: 8px;
+    font-size: 19px;
+  }
+
+  .idle-wake-button {
+    width: 172px;
+    height: 172px;
+    min-height: 172px;
+  }
+
+  .idle-wake-area h1 {
+    margin-top: 20px;
+    font-size: 30px;
+  }
+
+  .idle-medication-reminder {
+    width: min(650px, calc(100vw - 80px));
+    min-height: 170px;
+    grid-template-columns: 112px minmax(0, 1fr);
+    column-gap: 18px;
+    border-radius: 24px;
+    padding: 18px 24px;
+  }
+
+  .idle-reminder-icon {
+    width: 100px;
+    height: 100px;
+    border-radius: 30px;
+  }
+
+  .idle-medication-reminder p {
+    font-size: 19px;
+  }
+
+  .idle-medication-reminder > strong {
+    font-size: 29px;
+  }
+
+  .idle-medication-reminder > span:not(.idle-reminder-icon) {
+    font-size: 17px;
+  }
+
+  .idle-medication-reminder small {
+    font-size: 14px;
   }
 }

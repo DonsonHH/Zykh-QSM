@@ -1,13 +1,30 @@
 import React from "react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
 
-export function MedicineCard({ medicine, selected, onSelect }) {
+export function MedicineCard({
+  medicine,
+  selected,
+  onSelect,
+  className = "",
+  style,
+  index,
+  onKeyDown,
+  position,
+  total
+}) {
   return (
     <button
       type="button"
-      className={`medicine-card ${selected ? "selected" : ""}`}
+      role="option"
+      className={`medicine-card ${className} ${selected ? "selected" : ""}`}
+      style={style}
       onClick={() => onSelect(medicine)}
-      aria-pressed={selected}
+      onKeyDown={onKeyDown}
+      tabIndex={selected ? 0 : -1}
+      data-medicine-index={index}
+      aria-selected={selected}
+      aria-posinset={position}
+      aria-setsize={total}
     >
       <MedicineIcon medicine={medicine} size={30} className="medicine-box" />
       <span className="medicine-card-copy">

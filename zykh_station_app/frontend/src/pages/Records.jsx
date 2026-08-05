@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   loadRecentRecords,
   loadRecordsSummary,
@@ -19,6 +19,7 @@ const defaultSummary = {
   local_record_count: 0,
   today_plan_count: 0
 };
+const RECORDS_REFRESH_INTERVAL_MS = 3000;
 
 export function Records({ notify, networkStatus }) {
   const [summary, setSummary] = useState(defaultSummary);
@@ -27,26 +28,37 @@ export function Records({ notify, networkStatus }) {
   const [serviceUsers, setServiceUsers] = useState([]);
   const [todayPlans, setTodayPlans] = useState([]);
   const [syncing, setSyncing] = useState(false);
+  const snapshotRef = useRef("");
 
-  function refreshRecords({ silent = false } = {}) {
+  const refreshRecords = useCallback(({ silent = false } = {}) => {
     return Promise.all([loadRecordsSummary(), loadRecentRecords(), loadSyncStatus(), loadServiceUsers(), loadTodayPlans()])
       .then(([summaryResponse, recentResponse, syncResponse, usersResponse, plansResponse]) => {
-        setSummary(summaryResponse.summary || defaultSummary);
-        setRecords(recentResponse.records || []);
-        setSyncStatus(syncResponse);
-        setServiceUsers(usersResponse.users || []);
-        setTodayPlans(plansResponse.plans || []);
+        const nextSnapshot = {
+          summary: summaryResponse.summary || defaultSummary,
+          records: recentResponse.records || [],
+          syncStatus: syncResponse,
+          serviceUsers: usersResponse.users || [],
+          todayPlans: plansResponse.plans || []
+        };
+        const signature = JSON.stringify(nextSnapshot);
+        if (signature === snapshotRef.current) return;
+        snapshotRef.current = signature;
+        setSummary(nextSnapshot.summary);
+        setRecords(nextSnapshot.records);
+        setSyncStatus(nextSnapshot.syncStatus);
+        setServiceUsers(nextSnapshot.serviceUsers);
+        setTodayPlans(nextSnapshot.todayPlans);
       })
       .catch((error) => {
         if (!silent) notify(error.message || "记录数据加载失败");
       });
-  }
+  }, [notify]);
 
   useEffect(() => {
     refreshRecords();
-    const timer = window.setInterval(() => refreshRecords({ silent: true }), 3000);
+    const timer = window.setInterval(() => refreshRecords({ silent: true }), RECORDS_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshRecords]);
 
   function handleSync() {
     setSyncing(true);
