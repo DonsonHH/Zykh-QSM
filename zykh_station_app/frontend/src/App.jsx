@@ -1,4 +1,4 @@
-import React, { memo, startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav.jsx";
 import { TopBar } from "./components/TopBar.jsx";
 import { loadDashboard } from "./api/dashboard.js";
@@ -98,7 +98,7 @@ export function App() {
           pageTransitionRef.current.kind = "";
           delete document.documentElement.dataset.pageTransition;
         }
-      }, 180);
+      }, 160);
     });
   }, [idle, page]);
 
@@ -221,29 +221,25 @@ export function App() {
       return;
     }
     commitViewChange(transitionKind(currentPage, nextPage, options.transition), () => {
-      startTransition(applyNavigation);
+      applyNavigation();
     });
   }, [commitViewChange, notify]);
 
   const handleViewCandidates = useCallback((focus) => {
     commitViewChange("forward", () => {
-      startTransition(() => {
-        setMedicineFocus(focus);
-        setMedicinesMounted(true);
-        pageRef.current = "medicines";
-        setPage("medicines");
-      });
+      setMedicineFocus(focus);
+      setMedicinesMounted(true);
+      pageRef.current = "medicines";
+      setPage("medicines");
     });
     notify("已筛选候选药品，请继续完成用药安全核验");
   }, [commitViewChange, notify]);
 
   const handleWake = useCallback(() => {
     commitViewChange("wake", () => {
-      startTransition(() => {
-        pageRef.current = "home";
-        setPage("home");
-        setIdle(false);
-      });
+      pageRef.current = "home";
+      setPage("home");
+      setIdle(false);
     });
   }, [commitViewChange]);
 

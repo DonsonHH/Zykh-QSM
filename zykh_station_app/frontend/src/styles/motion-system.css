@@ -4,8 +4,8 @@
   --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.2);
   --motion-feedback: 90ms;
   --motion-press: 110ms;
-  --motion-control: 180ms;
-  --motion-page-enter: 260ms;
+  --motion-control: 150ms;
+  --motion-page-enter: 180ms;
   --motion-page-exit: 180ms;
   --motion-modal-enter: 240ms;
   --motion-modal-exit: 150ms;
@@ -14,7 +14,7 @@
 button:not(:disabled) {
   scale: 1;
   filter: none;
-  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-property: background-color, border-color, color, opacity, transform;
   transition-duration: var(--motion-control);
   transition-timing-function: var(--ease-fluid);
   transform-origin: center;
@@ -49,7 +49,7 @@ button:not(:disabled):active {
 
 html[data-page-transition="forward"] .bottom-nav button.active .bottom-nav-icon,
 html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon {
-  animation-duration: 180ms;
+  animation-duration: 150ms;
   animation-timing-function: var(--ease-fluid);
   animation-fill-mode: both;
 }
@@ -93,10 +93,6 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
   animation: idle-prompt-enter 260ms 70ms var(--ease-fluid) both;
 }
 
-html[data-page-transition] .top-bar {
-  animation: kiosk-top-bar-enter var(--motion-page-enter) var(--ease-fluid) both;
-}
-
 @keyframes idle-wake-enter {
   from {
     opacity: 0;
@@ -115,17 +111,6 @@ html[data-page-transition] .top-bar {
   }
   to {
     opacity: 0.76;
-    transform: translateY(0);
-  }
-}
-
-@keyframes kiosk-top-bar-enter {
-  from {
-    opacity: 0.7;
-    transform: translateY(-5px);
-  }
-  to {
-    opacity: 1;
     transform: translateY(0);
   }
 }
@@ -176,15 +161,11 @@ html[data-page-transition] .top-bar {
   }
 }
 
-/* Keep one calm, finite ambient cue on the home inquiry card. */
-.inquiry-assistant-orbit {
-  animation-duration: var(--motion-ambient-phase-duration);
-  animation-timing-function: var(--ease-fluid);
-  animation-iteration-count: 2;
-}
-
-.inquiry-assistant-orbit.orbit-two,
-.inquiry-assistant-mic {
+/* The home surface stays still; only direct touch feedback moves. */
+.inquiry-assistant-orbit,
+.inquiry-assistant-mic,
+.inquiry-voice-wave i,
+.quick-action-cta.vitals-cta::after {
   animation: none;
 }
 
@@ -193,15 +174,7 @@ html[data-page-transition] .top-bar {
   transform: scale(1);
 }
 
-.inquiry-voice-wave i {
-  animation-duration: var(--motion-ambient-phase-duration);
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: 2;
-}
-
-.quick-action-cta.vitals-cta::after {
-  animation-iteration-count: 2;
-}
+.quick-action-cta.vitals-cta::after { opacity: 0; }
 
 @media (hover: hover) and (pointer: fine) {
   .bottom-nav button:not(.active):hover,
@@ -214,10 +187,6 @@ html[data-page-transition] .top-bar {
 @media (prefers-reduced-motion: reduce) {
   .idle-wake-button,
   .idle-wake-area h1,
-  html[data-page-transition] .top-bar {
-    animation: none !important;
-  }
-
   html[data-page-transition] .bottom-nav button.active .bottom-nav-icon {
     animation: none !important;
   }

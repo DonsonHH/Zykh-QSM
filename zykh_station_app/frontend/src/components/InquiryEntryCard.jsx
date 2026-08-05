@@ -1,6 +1,5 @@
 import React from "react";
 import { ArrowRight, Bot, HeartPulse, MessageCircle, Mic2, ShieldCheck } from "lucide-react";
-import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 export function InquiryEntryCard({ inquiry, onStart }) {
   return (
@@ -9,7 +8,7 @@ export function InquiryEntryCard({ inquiry, onStart }) {
         <div className="inquiry-assistant-portrait" aria-hidden="true">
           <span className="inquiry-assistant-orbit orbit-one" />
           <span className="inquiry-assistant-orbit orbit-two" />
-          <StrokeDrawIcon icon={Bot} size={82} strokeWidth={1.75} mode="once" />
+          <Bot size={82} strokeWidth={1.75} />
           <span className="inquiry-assistant-mic">
             <Mic2 size={24} />
             <span className="inquiry-voice-wave">

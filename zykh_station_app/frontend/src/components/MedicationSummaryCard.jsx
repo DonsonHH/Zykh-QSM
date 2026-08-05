@@ -54,7 +54,10 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
         ) : null}
       </div>
 
-      <div className="home-medication-list" aria-label="最近的待执行用药任务">
+      <div
+        className={`home-medication-list${visiblePlans.length === 3 ? " is-full" : ""}`}
+        aria-label="最近的待执行用药任务"
+      >
         {visiblePlans.length ? visiblePlans.map((plan) => (
           <button
             key={plan.id}

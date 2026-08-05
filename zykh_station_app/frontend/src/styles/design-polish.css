@@ -73,6 +73,11 @@ select:focus-visible {
   box-shadow: var(--surface-shadow-quiet);
 }
 
+.hero-grid > .inquiry-entry-card {
+  border: 2px solid var(--border-strong);
+  box-shadow: var(--surface-shadow);
+}
+
 /* Keep the live camera surface legible when near-black shades collapse together. */
 .camera-stage.live {
   border: 3px solid var(--dark-surface-edge);

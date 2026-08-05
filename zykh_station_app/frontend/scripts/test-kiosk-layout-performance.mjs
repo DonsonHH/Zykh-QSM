@@ -430,6 +430,51 @@ async function readLayout() {
   })()`);
 }
 
+async function measureHomeVisualContract() {
+  return evaluate(`(async () => {
+    const inquiry = document.querySelector('.inquiry-entry-card');
+    const list = document.querySelector('.home-medication-list');
+    if (!inquiry || !list) return { ready: false };
+    const added = [];
+    let sourceRow = list.querySelector('.home-medication-row');
+    if (!sourceRow) {
+      sourceRow = document.createElement('button');
+      sourceRow.className = 'home-medication-row';
+      sourceRow.innerHTML = '<strong class="home-medication-time">08:00</strong><span class="home-medication-detail"><strong>测试药品</strong></span><span class="home-medication-action">取药</span>';
+      list.append(sourceRow);
+      added.push(sourceRow);
+    }
+    while (list.querySelectorAll('.home-medication-row').length < 3) {
+      const clone = sourceRow.cloneNode(true);
+      clone.dataset.qaClone = 'true';
+      list.append(clone);
+      added.push(clone);
+    }
+    const hadFullClass = list.classList.contains('is-full');
+    list.classList.add('is-full');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 3);
+    const card = list.closest('.medication-summary-card');
+    const cardBounds = card.getBoundingClientRect();
+    const cardStyle = getComputedStyle(card);
+    const lastRowBounds = rows.at(-1).getBoundingClientRect();
+    const inquiryStyle = getComputedStyle(inquiry);
+    const result = {
+      ready: true,
+      medicationBottomGap: Math.round((
+        cardBounds.bottom - parseFloat(cardStyle.paddingBottom) - lastRowBounds.bottom
+      ) * 10) / 10,
+      medicationRowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height * 10) / 10),
+      inquiryBorderWidth: parseFloat(inquiryStyle.borderTopWidth),
+      inquiryBorderStyle: inquiryStyle.borderTopStyle,
+      inquiryBorderColor: inquiryStyle.borderTopColor
+    };
+    added.forEach((row) => row.remove());
+    if (!hadFullClass) list.classList.remove('is-full');
+    return result;
+  })()`);
+}
+
 async function measureNavigation() {
   return evaluate(`(async () => {
     const route = [
@@ -701,6 +746,7 @@ try {
   const idleObservation = await observeIdleWork();
   if (idleObservation) idleObservation.page = "records";
   await navigate("home");
+  const homeVisualContract = await measureHomeVisualContract();
   const metricsBefore = metricMap((await cdp("Performance.getMetrics")).metrics);
   const navigationResult = skipNavigation
     ? { samples: [], longTasks: [], longAnimationFrames: [] }
@@ -735,6 +781,7 @@ try {
     medicineModalCoverage,
     medicineCacheLifecycle,
     homeTaskPickerPerformance,
+    homeVisualContract,
     adminConsoleLayouts,
     navigation,
     longTasks: navigationResult.longTasks,
@@ -769,6 +816,7 @@ try {
         pendingTasks: report.homeTaskPickerPerformance,
         dispenseConfirm: report.medicineModalCoverage
       },
+      homeVisualContract: report.homeVisualContract,
       idleObservation: report.idleObservation,
       layoutDiagnostics: Object.fromEntries(
         Object.entries(report.layouts).map(([viewport, pageLayouts]) => [viewport, Object.fromEntries(
@@ -820,6 +868,16 @@ try {
       "the virtual medicine list cannot reach and expose its final off-screen option by keyboard"
     );
   }
+
+  assert.equal(homeVisualContract.ready, true, "home visual contract could not find its cards");
+  assert.ok(
+    homeVisualContract.medicationBottomGap <= 8,
+    `three home medication rows leave ${homeVisualContract.medicationBottomGap}px of unused space`
+  );
+  assert.ok(
+    homeVisualContract.inquiryBorderWidth >= 2 && homeVisualContract.inquiryBorderStyle === "solid",
+    `home inquiry card edge is only ${homeVisualContract.inquiryBorderWidth}px ${homeVisualContract.inquiryBorderStyle}`
+  );
   if (medicineCacheLifecycle) {
     assert.deepEqual(
       medicineCacheLifecycle,

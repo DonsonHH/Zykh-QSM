@@ -7,7 +7,6 @@ const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
-  "components/InquiryEntryCard.jsx",
   "pages/Scan.jsx",
   "pages/Vitals.jsx"
 ]);
@@ -155,10 +154,10 @@ assert.match(designPolish, /\.card,[\s\S]*border-color:\s*var\(--border-strong\)
 assert.match(designPolish, /focus-visible[\s\S]*outline:\s*3px solid var\(--focus-ring\)/, "polished controls have no visible focus treatment");
 
 const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "utf8");
-assert.match(motionSystem, /--motion-control:\s*180ms/, "control feedback no longer shares the standard motion token");
-assert.match(motionSystem, /\.inquiry-assistant-orbit[\s\S]*animation-iteration-count:\s*2/, "home decorative motion runs forever");
+assert.match(motionSystem, /--motion-control:\s*150ms/, "control feedback no longer shares the standard motion token");
+assert.match(motionSystem, /\.inquiry-assistant-orbit,[\s\S]*animation:\s*none/, "home decorative motion still consumes frames");
 assert.doesNotMatch(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-name/, "page feedback animates the full high-resolution page surface");
-assert.match(motionSystem, /bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation-duration:\s*180ms/, "navigation lost its localized confirmation animation");
+assert.match(motionSystem, /bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation-duration:\s*150ms/, "navigation lost its localized confirmation animation");
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
 assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-backdrop-exit/, "admin dialogs disappear without an exit animation");
 
@@ -183,8 +182,8 @@ assert.ok(
 );
 
 const inquiryEntry = await readFile(`${sourceRoot}/components/InquiryEntryCard.jsx`, "utf8");
-assert.match(inquiryEntry, /StrokeDrawIcon[^>]*icon=\{Bot\}[^>]*mode="once"/, "home inquiry assistant is missing its one-shot draw motion");
-assert.doesNotMatch(inquiryEntry, /mode="yoyo"/, "home inquiry assistant animation should settle into a complete static icon");
+assert.match(inquiryEntry, /<Bot size=\{82\}/, "home inquiry assistant lost its static bot icon");
+assert.doesNotMatch(inquiryEntry, /StrokeDrawIcon|mode="yoyo"/, "home inquiry assistant still runs a paint-heavy path animation");
 assert.doesNotMatch(inquiryEntry, /inquiry-assistant-scan/, "home inquiry icon did not return to the previous uncluttered version");
 assert.doesNotMatch(inquiryEntry, /inquiry-capability-icon/, "home inquiry capabilities still use the overlapping animated wrappers");
 

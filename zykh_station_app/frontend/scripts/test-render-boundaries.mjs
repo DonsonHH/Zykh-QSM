@@ -19,7 +19,12 @@ assert.equal(
   "clock refresh is not aligned just after the next minute boundary"
 );
 assert.doesNotMatch(app, /setNow|now=\{now\}/, "the app shell still rerenders every page for clock updates");
-assert.match(app, /startTransition\(applyNavigation\)/, "page navigation is not scheduled as interruptible rendering work");
+assert.doesNotMatch(app, /startTransition/, "page navigation is still deferred as low-priority rendering work");
+assert.match(
+  app,
+  /commitViewChange\(transitionKind\(currentPage, nextPage, options\.transition\), \(\) => \{\s*applyNavigation\(\);/,
+  "page navigation does not commit directly after transition feedback"
+);
 assert.match(app, /const handleNav = useCallback\(/, "polling can still replace the navigation callback and rerender the active page");
 assert.match(app, /const pageRef = useRef\(initialPage\)/, "navigation still recreates its callback for every current page");
 assert.match(app, /home-page-cache/, "the repeatedly visited home page is still remounted on every return");
