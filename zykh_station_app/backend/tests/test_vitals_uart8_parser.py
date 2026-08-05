@@ -63,6 +63,99 @@ def frame(
 
 
 class VitalsUart8ParserTest(unittest.TestCase):
+    def test_silent_prewarm_retries_start_once_and_recovers_frames(self) -> None:
+        measured = frame(
+            heart_rate=76,
+            spo2=97,
+            systolic=0,
+            diastolic=0,
+            respiratory_rate=15,
+            body_temperature=(36, 38),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            output = temp / "vitals.json"
+            state_file = temp / "state.json"
+            lock_path = temp / "vitals.lock"
+            master_fd, slave_fd = pty.openpty()
+            slave_name = os.ttyname(slave_fd)
+            commands: list[int] = []
+            recovered = threading.Event()
+            stopped = threading.Event()
+
+            def emulate_silent_prewarm() -> None:
+                last_frame_at = 0.0
+                deadline = time.monotonic() + 4
+                while not stopped.is_set() and time.monotonic() < deadline:
+                    readable, _, _ = select.select([master_fd], [], [], 0.02)
+                    if readable:
+                        try:
+                            command_bytes = os.read(master_fd, 128)
+                        except OSError:
+                            break
+                        commands.extend(command_bytes)
+                        if 0x24 in command_bytes:
+                            recovered.set()
+                    now = time.monotonic()
+                    if not recovered.is_set() or now - last_frame_at < 0.12:
+                        continue
+                    try:
+                        os.write(master_fd, measured)
+                    except OSError:
+                        break
+                    last_frame_at = now
+
+            worker = threading.Thread(target=emulate_silent_prewarm, daemon=True)
+            worker.start()
+            env = os.environ.copy()
+            env["VITALS_UART_LOCK_FILE"] = str(lock_path)
+            try:
+                completed = subprocess.run(
+                    [
+                        "perl",
+                        str(PARSER),
+                        "--device",
+                        slave_name,
+                        "--timeout",
+                        "2",
+                        "--stable-frames",
+                        "2",
+                        "--minimum-measurement-seconds",
+                        "0",
+                        "--minimum-contact-seconds",
+                        "0",
+                        "--start-recovery-seconds",
+                        "0.35",
+                        "--prewarmed",
+                        "--state-file",
+                        str(state_file),
+                        "--session-id",
+                        "silent-prewarm",
+                        "--output",
+                        str(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=5,
+                )
+            finally:
+                stopped.set()
+                worker.join(timeout=1)
+                os.close(slave_fd)
+                os.close(master_fd)
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(commands.count(0x24), 1, "a silent prewarm should receive one recovery start")
+        self.assertTrue(payload["start_retried"])
+        self.assertEqual(payload["start_recovery_mode"], "prewarmed_no_frames")
+        self.assertEqual(payload["heart_rate_bpm"], 76)
+        self.assertEqual(payload["spo2_percent"], 97)
+
     def test_cold_prewarm_is_not_reset_before_delayed_first_frames_arrive(self) -> None:
         measured = frame(
             heart_rate=74,

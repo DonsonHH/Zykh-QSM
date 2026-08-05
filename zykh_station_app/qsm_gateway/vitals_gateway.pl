@@ -285,6 +285,8 @@ sub run_measurement {
         sample_count => int($uart->{sample_count} || 0),
         valid_frame_count => int($uart->{valid_frame_count} || 0),
         communication_status => $uart->{communication_status} || undef,
+        start_retried => $uart->{start_retried} ? JSON::PP::true : JSON::PP::false,
+        start_recovery_mode => $uart->{start_recovery_mode} || undef,
         stable_core => $uart->{stable_core} ? JSON::PP::true : JSON::PP::false,
         spo2_stabilization_extended => $uart->{spo2_stabilization_extended}
             ? JSON::PP::true

@@ -18,6 +18,7 @@ my %options = (
     spo2_grace        => number_or($ENV{VITALS_UART_SPO2_GRACE_SECONDS}, 8),
     minimum_measurement_seconds => number_or($ENV{VITALS_UART_MINIMUM_MEASUREMENT_SECONDS}, 4),
     minimum_contact_seconds => number_or($ENV{VITALS_UART_MINIMUM_CONTACT_SECONDS}, 2.6),
+    start_recovery_seconds => number_or($ENV{VITALS_UART_START_RECOVERY_SECONDS}, 3),
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
     temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 100),
     input_file        => '',
@@ -35,6 +36,7 @@ $options{stabilization_grace} = 0 if $options{stabilization_grace} < 0;
 $options{spo2_grace} = 0 if $options{spo2_grace} < 0;
 $options{minimum_measurement_seconds} = 0 if $options{minimum_measurement_seconds} < 0;
 $options{minimum_contact_seconds} = 0 if $options{minimum_contact_seconds} < 0;
+$options{start_recovery_seconds} = 0 if $options{start_recovery_seconds} < 0;
 $options{chunk_size} = 1 if $options{chunk_size} < 1;
 $options{timeout} = 1 if $options{timeout} < 1;
 
@@ -125,6 +127,11 @@ sub parse_arguments {
             $options->{minimum_contact_seconds} = number_or(
                 require_value($name, \@args),
                 $options->{minimum_contact_seconds},
+            );
+        } elsif ($name eq '--start-recovery-seconds') {
+            $options->{start_recovery_seconds} = number_or(
+                require_value($name, \@args),
+                $options->{start_recovery_seconds},
             );
         } elsif ($name eq '--chunk-size') {
             $options->{chunk_size} = int(number_or(require_value($name, \@args), $options->{chunk_size}));
@@ -301,15 +308,21 @@ sub read_uart_frames {
                 && $measurement_old_enough
                 && $contact_old_enough;
         }
-        if (!$options->{prewarmed} && !$start_retried && time() - $started_at >= 2) {
-            # Any valid 24-byte frame proves the module is already running.
-            # Restarting while SpO2 is stabilizing resets its measurement window.
+        if (!$start_retried && time() - $started_at >= $options->{start_recovery_seconds}) {
+            # Any valid 24-byte frame proves the module is already running. A
+            # prewarm only confirms that the start byte was written; on the real
+            # board the module can occasionally remain silent. Recover exactly
+            # once, and never reset an active signal or SpO2 stabilization window.
             if (!@frames) {
                 $stop_hardware->();
                 select(undef, undef, undef, 0.08);
                 syswrite($uart, pack('C', 0x24));
                 $stopped = 0;
                 $start_retried = 1;
+                $options->{start_retried} = 1;
+                $options->{start_recovery_mode} = $options->{prewarmed}
+                    ? 'prewarmed_no_frames'
+                    : 'cold_no_frames';
                 write_state($options, {
                     ok               => JSON::PP::true,
                     status           => 'waiting_finger',
@@ -317,6 +330,7 @@ sub read_uart_frames {
                     finger_detected  => JSON::PP::false,
                     sample_count     => scalar(@frames),
                     start_retried    => JSON::PP::true,
+                    start_recovery_mode => $options->{start_recovery_mode},
                 });
             }
         }
@@ -410,6 +424,8 @@ sub build_payload {
             device      => $options->{device},
             error       => $read_error || 'No valid 24-byte frame received',
             communication_status => 'no_protocol_frames',
+            start_retried => $options->{start_retried} ? JSON::PP::true : JSON::PP::false,
+            start_recovery_mode => $options->{start_recovery_mode} || undef,
             measured_at => now_text(),
         };
     }
@@ -473,6 +489,8 @@ sub build_payload {
         reference_ready         => $reference_ready ? JSON::PP::true : JSON::PP::false,
         stable_core             => $stable_core ? JSON::PP::true : JSON::PP::false,
         communication_status    => 'receiving_protocol_frames',
+        start_retried           => $options->{start_retried} ? JSON::PP::true : JSON::PP::false,
+        start_recovery_mode     => $options->{start_recovery_mode} || undef,
         spo2_stabilization_extended => $options->{spo2_stabilization_extended}
             ? JSON::PP::true
             : JSON::PP::false,

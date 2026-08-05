@@ -89,6 +89,8 @@ class VitalsSessionResponse(BaseModel):
     first_spo2_frame: int | None = None
     stable_core: bool | None = None
     communication_status: str | None = None
+    start_retried: bool | None = None
+    start_recovery_mode: str | None = None
     stabilization_extended: bool | None = None
     spo2_stabilization_extended: bool | None = None
     prewarmed: bool | None = None
