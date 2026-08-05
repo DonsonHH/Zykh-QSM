@@ -1,6 +1,5 @@
 import React from "react";
 import { BadgeCheck, RotateCcw, ScanFace, UserCheck, UserRound } from "lucide-react";
-import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 
 export function InquiryIdentityGate({
   candidate,
@@ -19,7 +18,11 @@ export function InquiryIdentityGate({
             <BadgeCheck size={84} strokeWidth={1.8} />
           </span>
         ) : (
-          <StrokeDrawIcon icon={ScanFace} size={112} strokeWidth={1.8} mode="yoyo" active={identifying} />
+          <ScanFace
+            className={identifying ? "inquiry-identity-scanning-icon" : ""}
+            size={112}
+            strokeWidth={1.8}
+          />
         )}
       </div>
 

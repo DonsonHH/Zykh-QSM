@@ -5,8 +5,8 @@
 }
 
 .admin-frame > main {
-  height: 720px;
-  max-height: 720px;
+  height: 100%;
+  max-height: none;
   overflow: hidden;
 }
 

@@ -33,7 +33,7 @@ body,
   width: 100%;
   min-width: 100%;
   height: 100%;
-  min-height: 720px;
+  min-height: 100%;
   margin: 0;
 }
 
@@ -61,10 +61,11 @@ a:focus-visible {
 /* shell */
 .app-shell {
   width: 100vw;
-  height: max(100dvh, 720px);
-  min-height: 720px;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
-  place-items: center;
+  align-items: stretch;
+  overflow: hidden;
   padding: 0;
   background: var(--bg);
 }
@@ -89,14 +90,18 @@ a:focus-visible {
 .kiosk-frame {
   box-sizing: border-box;
   position: relative;
-  width: 1280px;
-  height: 720px;
-  max-height: 720px;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  max-height: none;
   display: grid;
-  grid-template-rows: 82px minmax(0, 1fr) 72px;
-  gap: 12px;
+  grid-template-rows:
+    clamp(70px, 6.4vw, 108px)
+    minmax(0, 1fr)
+    clamp(64px, 5.625vw, 96px);
+  gap: clamp(8px, 0.94vw, 16px);
   overflow: hidden;
-  padding: 24px;
+  padding: clamp(16px, 1.875vw, 32px);
   background: var(--bg);
 }
 
@@ -110,106 +115,6 @@ a:focus-visible {
   display: block;
   padding: 0;
   background: #f6f9fc;
-}
-
-html[data-page-transition] .kiosk-frame:not(.idle-frame) > main {
-  view-transition-name: kiosk-page;
-}
-
-html[data-page-transition] .idle-screen {
-  view-transition-name: kiosk-idle;
-}
-
-html[data-page-transition] .top-bar {
-  view-transition-name: kiosk-header;
-}
-
-html[data-page-transition] .bottom-nav {
-  view-transition-name: kiosk-nav;
-}
-
-::view-transition-old(root),
-::view-transition-new(root),
-::view-transition-old(kiosk-header),
-::view-transition-new(kiosk-header),
-::view-transition-old(kiosk-nav),
-::view-transition-new(kiosk-nav) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-
-::view-transition-group(kiosk-page),
-::view-transition-group(kiosk-idle) {
-  animation-duration: 280ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-html[data-page-transition="forward"]::view-transition-old(kiosk-page) {
-  animation: kiosk-page-out-left 160ms ease-in both;
-}
-
-html[data-page-transition="forward"]::view-transition-new(kiosk-page) {
-  animation: kiosk-page-in-right 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-html[data-page-transition="backward"]::view-transition-old(kiosk-page) {
-  animation: kiosk-page-out-right 160ms ease-in both;
-}
-
-html[data-page-transition="backward"]::view-transition-new(kiosk-page) {
-  animation: kiosk-page-in-left 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-html[data-page-transition="wake"]::view-transition-old(kiosk-idle),
-html[data-page-transition="sleep"]::view-transition-old(kiosk-page) {
-  animation: kiosk-page-fade-out 180ms ease-in both;
-}
-
-html[data-page-transition="wake"]::view-transition-new(kiosk-page),
-html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
-  animation: kiosk-page-fade-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@keyframes kiosk-page-out-left {
-  to {
-    opacity: 0;
-    transform: translateX(-16px) scale(0.992);
-  }
-}
-
-@keyframes kiosk-page-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(18px) scale(0.992);
-  }
-}
-
-@keyframes kiosk-page-out-right {
-  to {
-    opacity: 0;
-    transform: translateX(16px) scale(0.992);
-  }
-}
-
-@keyframes kiosk-page-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-18px) scale(0.992);
-  }
-}
-
-@keyframes kiosk-page-fade-out {
-  to {
-    opacity: 0;
-    transform: scale(0.99);
-  }
-}
-
-@keyframes kiosk-page-fade-in {
-  from {
-    opacity: 0;
-    transform: scale(1.008);
-  }
 }
 
 .idle-screen {
@@ -5079,6 +4984,21 @@ html[data-page-transition="sleep"]::view-transition-new(kiosk-idle) {
   color: var(--primary);
 }
 
+.inquiry-identity-scanning-icon {
+  animation: inquiry-identity-breathe 1800ms ease-in-out infinite alternate;
+}
+
+@keyframes inquiry-identity-breathe {
+  from {
+    opacity: 0.72;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+}
+
 .inquiry-identity-match-icon {
   width: 132px;
   height: 132px;
@@ -8690,11 +8610,6 @@ button:not(:disabled):active {
   .idle-wake-area h1 {
     animation: none !important;
     opacity: 0.76;
-  }
-
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation-duration: 0.01ms !important;
   }
 
   .handwritten-hello-stroke {

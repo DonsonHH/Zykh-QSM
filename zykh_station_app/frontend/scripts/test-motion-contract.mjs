@@ -5,11 +5,9 @@ import { fileURLToPath } from "node:url";
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = `${frontendRoot}src`;
 const allowedDrawFiles = new Set([
-  "components/BottomNav.jsx",
   "components/DispenseConfirmModal.jsx",
   "components/InquiryChatStep.jsx",
   "components/InquiryEntryCard.jsx",
-  "components/InquiryIdentityGate.jsx",
   "pages/IdleScreen.jsx",
   "pages/Scan.jsx",
   "pages/Vitals.jsx"
@@ -71,9 +69,12 @@ assert.match(idleScreen, /pace="idle"/, "idle screen icon does not use the slowe
 assert.doesNotMatch(idleScreen, /HandwrittenHello|<HandwrittenHello/, "idle screen still renders the Hello animation");
 
 const bottomNav = await readFile(`${sourceRoot}/components/BottomNav.jsx`, "utf8");
-assert.match(bottomNav, /StrokeDrawIcon/, "bottom navigation motion was not restored");
-assert.match(bottomNav, /replayKey/, "each navigation press cannot replay its own icon motion");
-assert.match(bottomNav, /size=\{27\}\s+strokeWidth=\{2\.1\}/, "bottom navigation lost its consistent icon geometry");
+assert.doesNotMatch(bottomNav, /StrokeDrawIcon|replayKey/, "bottom navigation restarted expensive path animation");
+assert.match(bottomNav, /<Icon size=\{27\} strokeWidth=\{2\.1\}/, "bottom navigation lost its consistent icon geometry");
+
+const inquiryIdentityGate = await readFile(`${sourceRoot}/components/InquiryIdentityGate.jsx`, "utf8");
+assert.doesNotMatch(inquiryIdentityGate, /StrokeDrawIcon/, "identity entry restarted multi-path animation during navigation");
+assert.match(inquiryIdentityGate, /inquiry-identity-scanning-icon/, "identity entry lost its lightweight progress cue");
 
 for (const file of allowedDrawFiles) {
   const content = await readFile(`${sourceRoot}/${file}`, "utf8");
@@ -88,9 +89,9 @@ const appStyles = await readFile(`${sourceRoot}/styles/app.css`, "utf8");
 assert.match(appStyles, /--motion-phase-duration:\s*1600ms/, "normal CSS motion phase did not return to 1.6 seconds");
 assert.match(appStyles, /--motion-cycle-duration:\s*3200ms/, "normal CSS motion cycle did not return to 3.2 seconds");
 assert.match(appStyles, /idle-wake-prompt[\s\S]*4200ms/, "idle wake prompt does not gently fade");
-assert.match(appStyles, /::view-transition-new\(kiosk-page\)/, "page transition feedback is missing");
+assert.match(appStyles, /inquiry-identity-scanning-icon[\s\S]*1800ms[\s\S]*transform:\s*scale/, "identity progress cue is not compositor-friendly");
+assert.doesNotMatch(appStyles, /::view-transition-/, "native page snapshot transitions returned to the kiosk shell");
 assert.match(appStyles, /button:not\(:disabled\):active[\s\S]*scale:\s*0\.97/, "touch press feedback is missing");
-assert.match(appStyles, /prefers-reduced-motion:\s*reduce[\s\S]*::view-transition-old\(\*\)/, "view transitions ignore reduced motion");
 assert.match(appStyles, /\.vitals-measure-progress/, "vitals progress feedback is missing");
 assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does not advance from left to right");
 assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
@@ -123,8 +124,13 @@ assert.match(
 );
 
 const app = await readFile(`${sourceRoot}/App.jsx`, "utf8");
-assert.match(app, /document\.startViewTransition/, "same-document page transitions are not enabled");
-assert.match(app, /flushSync\(update\)/, "React page updates are not committed inside the view transition callback");
+assert.doesNotMatch(app, /document\.startViewTransition|flushSync/, "navigation returned to blocking full-page snapshot transitions");
+assert.match(app, /pageTransitionRef\.current = \{[\s\S]*kind,[\s\S]*update\(\)/, "navigation does not queue lightweight transition feedback");
+assert.match(
+  app,
+  /useLayoutEffect\(\(\) => \{[\s\S]*dataset\.pageTransition = kind[\s\S]*\}, \[idle, page\]\)/,
+  "page feedback starts before the destination React commit"
+);
 assert.doesNotMatch(app, /loadDashboard\(identity|__unconfirmed__/, "home dashboard still depends on a confirmed identity");
 
 const settingsPage = await readFile(`${sourceRoot}/pages/Settings.jsx`, "utf8");
@@ -152,7 +158,8 @@ assert.match(designPolish, /focus-visible[\s\S]*outline:\s*3px solid var\(--focu
 const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "utf8");
 assert.match(motionSystem, /--motion-control:\s*180ms/, "control feedback no longer shares the standard motion token");
 assert.match(motionSystem, /\.inquiry-assistant-orbit[\s\S]*animation-iteration-count:\s*2/, "home decorative motion runs forever");
-assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*::view-transition-old/, "polished view transitions ignore reduced motion");
+assert.match(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-duration:\s*140ms/, "page feedback exceeds the lightweight animation budget");
+assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation:\s*none/, "page feedback ignores reduced motion");
 assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-backdrop-exit/, "admin dialogs disappear without an exit animation");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");

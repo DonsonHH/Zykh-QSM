@@ -3,10 +3,12 @@ import { BellRing, HeartHandshake, Pill } from "lucide-react";
 import { BrandLogoImage } from "../components/BrandLogoImage.jsx";
 import { NetworkStatusIcons } from "../components/NetworkStatusIcons.jsx";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
+import { useMinuteClock } from "../hooks/useMinuteClock.js";
 import { formatClock, formatDay } from "../utils/time.js";
 import { getMedicationReminders } from "../utils/medicationReminder.js";
 
-export function IdleScreen({ now, networkStatus, medication, onWake }) {
+export function IdleScreen({ networkStatus, medication, onWake }) {
+  const now = useMinuteClock();
   const minuteKey = `${now.getHours()}:${now.getMinutes()}`;
   const reminders = useMemo(
     () => getMedicationReminders(medication, now),

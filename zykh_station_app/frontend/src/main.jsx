@@ -7,6 +7,7 @@ import "./styles/settings.css";
 import "./styles/admin.css";
 import "./styles/design-polish.css";
 import "./styles/motion-system.css";
+import "./styles/adaptive-layout.css";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
