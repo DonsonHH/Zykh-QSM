@@ -18,6 +18,7 @@ my %options = (
     spo2_grace        => number_or($ENV{VITALS_UART_SPO2_GRACE_SECONDS}, 8),
     minimum_measurement_seconds => number_or($ENV{VITALS_UART_MINIMUM_MEASUREMENT_SECONDS}, 4),
     minimum_contact_seconds => number_or($ENV{VITALS_UART_MINIMUM_CONTACT_SECONDS}, 2.6),
+    no_contact_grace_seconds => number_or($ENV{VITALS_UART_NO_CONTACT_GRACE_SECONDS}, 6),
     start_recovery_seconds => number_or($ENV{VITALS_UART_START_RECOVERY_SECONDS}, 3),
     chunk_size        => int(number_or($ENV{VITALS_UART_CHUNK_SIZE}, 128)),
     temperature_scale => number_or($ENV{VITALS_UART_TEMP_DECIMAL_SCALE}, 100),
@@ -36,6 +37,7 @@ $options{stabilization_grace} = 0 if $options{stabilization_grace} < 0;
 $options{spo2_grace} = 0 if $options{spo2_grace} < 0;
 $options{minimum_measurement_seconds} = 0 if $options{minimum_measurement_seconds} < 0;
 $options{minimum_contact_seconds} = 0 if $options{minimum_contact_seconds} < 0;
+$options{no_contact_grace_seconds} = 0 if $options{no_contact_grace_seconds} < 0;
 $options{start_recovery_seconds} = 0 if $options{start_recovery_seconds} < 0;
 $options{chunk_size} = 1 if $options{chunk_size} < 1;
 $options{timeout} = 1 if $options{timeout} < 1;
@@ -127,6 +129,11 @@ sub parse_arguments {
             $options->{minimum_contact_seconds} = number_or(
                 require_value($name, \@args),
                 $options->{minimum_contact_seconds},
+            );
+        } elsif ($name eq '--no-contact-grace-seconds') {
+            $options->{no_contact_grace_seconds} = number_or(
+                require_value($name, \@args),
+                $options->{no_contact_grace_seconds},
             );
         } elsif ($name eq '--start-recovery-seconds') {
             $options->{start_recovery_seconds} = number_or(
@@ -244,6 +251,7 @@ sub read_uart_frames {
     my $deadline = $started_at + $options->{timeout};
     my $start_retried = 0;
     my $contact_window_set = 0;
+    my $no_contact_grace_applied = 0;
     my $first_contact_at;
     my $stabilization_extended = 0;
     my $spo2_stabilization_extended = 0;
@@ -279,6 +287,17 @@ sub read_uart_frames {
                 $contact_window_set = 1;
             }
             if (
+                !$no_contact_grace_applied
+                && !$contact_detected
+                && @frames
+                && $options->{no_contact_grace_seconds} > 0
+                && time() >= $deadline - 0.25
+            ) {
+                $deadline = time() + $options->{no_contact_grace_seconds};
+                $no_contact_grace_applied = 1;
+                $options->{no_contact_grace_applied} = 1;
+            }
+            if (
                 !$spo2_stabilization_extended
                 && $options->{spo2_grace} > 0
                 && time() >= $deadline - 0.25
@@ -302,6 +321,7 @@ sub read_uart_frames {
                 communication_status   => 'receiving_protocol_frames',
                 stabilization_extended => $stabilization_extended ? JSON::PP::true : JSON::PP::false,
                 spo2_stabilization_extended => $spo2_stabilization_extended ? JSON::PP::true : JSON::PP::false,
+                no_contact_grace_applied => $no_contact_grace_applied ? JSON::PP::true : JSON::PP::false,
                 elapsed_seconds        => sprintf('%.2f', time() - $started_at) + 0,
             });
             my $measurement_old_enough = time() - $started_at >= $options->{minimum_measurement_seconds};
@@ -430,6 +450,7 @@ sub build_payload {
             device      => $options->{device},
             error       => $read_error || 'No valid 24-byte frame received',
             communication_status => 'no_protocol_frames',
+            no_contact_grace_applied => $options->{no_contact_grace_applied} ? JSON::PP::true : JSON::PP::false,
             start_retried => $options->{start_retried} ? JSON::PP::true : JSON::PP::false,
             start_recovery_mode => $options->{start_recovery_mode} || undef,
             measured_at => now_text(),
@@ -495,6 +516,7 @@ sub build_payload {
         reference_ready         => $reference_ready ? JSON::PP::true : JSON::PP::false,
         stable_core             => $stable_core ? JSON::PP::true : JSON::PP::false,
         communication_status    => 'receiving_protocol_frames',
+        no_contact_grace_applied => $options->{no_contact_grace_applied} ? JSON::PP::true : JSON::PP::false,
         start_retried           => $options->{start_retried} ? JSON::PP::true : JSON::PP::false,
         start_recovery_mode     => $options->{start_recovery_mode} || undef,
         spo2_stabilization_extended => $options->{spo2_stabilization_extended}

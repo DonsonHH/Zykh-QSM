@@ -46,6 +46,8 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertIn("--prewarmed", gateway)
         self.assertIn("minimum_measurement_seconds", reader)
         self.assertIn("minimum_contact_seconds", reader)
+        self.assertIn("no_contact_grace_seconds", reader)
+        self.assertIn("no_contact_grace_applied", gateway)
         self.assertIn("communication_status", reader)
         self.assertIn("start_recovery_seconds", reader)
         self.assertIn("prewarmed_no_frames", reader)

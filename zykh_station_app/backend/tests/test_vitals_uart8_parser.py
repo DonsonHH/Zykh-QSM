@@ -348,7 +348,7 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertGreaterEqual(payload["heart_rate_frame_count"], 2)
         self.assertGreaterEqual(payload["spo2_frame_count"], 2)
 
-    def test_valid_waiting_frames_do_not_restart_sensor_before_spo2_stabilizes(self) -> None:
+    def test_live_zero_frames_get_bounded_grace_for_late_contact(self) -> None:
         no_finger = frame(
             heart_rate=0,
             spo2=0,
@@ -410,9 +410,15 @@ class VitalsUart8ParserTest(unittest.TestCase):
                         "--device",
                         slave_name,
                         "--timeout",
-                        "4",
+                        "2",
+                        "--no-contact-grace-seconds",
+                        "1",
                         "--stable-frames",
                         "2",
+                        "--minimum-measurement-seconds",
+                        "0",
+                        "--minimum-contact-seconds",
+                        "0",
                         "--output",
                         str(output),
                     ],
@@ -435,6 +441,7 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertEqual(payload["heart_rate_bpm"], 74)
         self.assertEqual(payload["spo2_percent"], 98)
         self.assertTrue(payload["finger_detected"])
+        self.assertTrue(payload["no_contact_grace_applied"])
 
     def test_timeout_with_valid_zero_frames_reports_no_finger_instead_of_transport_failure(self) -> None:
         no_finger = frame(
@@ -492,6 +499,8 @@ class VitalsUart8ParserTest(unittest.TestCase):
                         "0",
                         "--spo2-grace",
                         "0",
+                        "--no-contact-grace-seconds",
+                        "0.4",
                         "--minimum-measurement-seconds",
                         "0",
                         "--minimum-contact-seconds",
@@ -515,7 +524,8 @@ class VitalsUart8ParserTest(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(completed.returncode, 2, completed.stderr)
-        self.assertGreaterEqual(elapsed, 0.9)
+        self.assertGreaterEqual(elapsed, 1.3)
+        self.assertLess(elapsed, 2.5)
         self.assertEqual(payload["status"], "awaiting_finger")
         self.assertFalse(payload["stable_core"])
         self.assertFalse(payload["finger_detected"])
@@ -523,6 +533,7 @@ class VitalsUart8ParserTest(unittest.TestCase):
         self.assertGreater(payload["valid_frame_count"], 0)
         self.assertEqual(payload["heart_rate_frame_count"], 0)
         self.assertEqual(payload["spo2_frame_count"], 0)
+        self.assertTrue(payload["no_contact_grace_applied"])
 
     def test_extends_only_after_contact_when_spo2_needs_more_time(self) -> None:
         no_finger = frame(
