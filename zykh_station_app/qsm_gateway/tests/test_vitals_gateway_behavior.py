@@ -43,6 +43,8 @@ my $session_id = $args{'--session-id'} || '';
 my $state_file = $args{'--state-file'};
 my $output = $args{'--output'};
 my $cancel_file = $args{'--cancel-file'};
+print STDERR "fake UART8 diagnostic for $session_id\n";
+print STDOUT "fake UART8 output for $session_id\n";
 
 write_json($state_file, {
     ok => JSON::PP::true,
@@ -87,6 +89,8 @@ use strict;
 use warnings;
 use JSON::PP qw(encode_json);
 my ($device, $output) = @ARGV;
+print STDERR "fake GY-614 diagnostic for $device\n";
+print STDOUT "fake GY-614 output for $device\n";
 open my $fh, '>:raw', $output or die "Cannot write $output: $!";
 print {$fh} encode_json({ ok => JSON::PP::true, body_temp_c => 36.6 });
 close $fh;
@@ -202,6 +206,37 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         self.assertEqual(result["communication_status"], "receiving_protocol_frames")
         self.assertEqual(result["valid_frame_count"], 4)
         self.assertIsNone(result["failure_reason"])
+
+    def test_reader_output_is_retained_in_per_session_logs(self) -> None:
+        self.start_gateway("success")
+
+        started = self.request("POST", "/api/vitals/session/start", {"replace_active": True})
+        session_id = str(started["session_id"])
+        self.wait_for_terminal_status(session_id)
+
+        log_dir = self.temp / "gateway" / "logs"
+        uart_log = log_dir / f"{session_id}-uart8.log"
+        gy_log = log_dir / f"{session_id}-gy614.log"
+        uart_log_text = uart_log.read_text(encoding="utf-8")
+        gy_log_text = gy_log.read_text(encoding="utf-8")
+        self.assertIn("fake UART8 diagnostic", uart_log_text)
+        self.assertIn("fake UART8 output", uart_log_text)
+        self.assertIn("fake GY-614 diagnostic", gy_log_text)
+        self.assertIn("fake GY-614 output", gy_log_text)
+
+    def test_missing_gy614_reader_is_recorded_in_the_session_log(self) -> None:
+        self.gy_reader.unlink()
+        self.start_gateway("success")
+
+        started = self.request("POST", "/api/vitals/session/start", {"replace_active": True})
+        session_id = str(started["session_id"])
+        result = self.wait_for_terminal_status(session_id)
+
+        gy_log = self.temp / "gateway" / "logs" / f"{session_id}-gy614.log"
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "temperature_unavailable")
+        self.assertIn("GY-614 reader not found", gy_log.read_text(encoding="utf-8"))
+        self.assertIn(str(self.gy_reader), gy_log.read_text(encoding="utf-8"))
 
     def test_no_finger_session_reports_transport_health_and_specific_failure(self) -> None:
         self.start_gateway("no_finger")

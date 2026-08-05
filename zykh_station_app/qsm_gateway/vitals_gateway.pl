@@ -13,6 +13,7 @@ $| = 1;
 my $PORT = int($ENV{QSM_VITALS_PORT} || 8085);
 my $HOME = $ENV{QSM_VITALS_HOME} || '/userdata/qsm-vitals';
 my $DATA = "$HOME/data";
+my $LOGS = "$HOME/logs";
 my $UART_READER = $ENV{QSM_VITALS_UART_READER} || '/userdata/zykh_app/scripts/read_vitals_uart8.pl';
 my $GY_READER = $ENV{QSM_GY614_READER} || '/userdata/medical_assistant/scripts/read_gy614_uart4.pl';
 my $GY_DEVICE = $ENV{GY614_UART} || '/dev/ttyS4';
@@ -33,7 +34,7 @@ my $DEMO_SPO2_FALLBACK = ($ENV{QSM_VITALS_DEMO_SPO2_FALLBACK} // '1')
 my $CURRENT = "$DATA/current.json";
 my $PREPARED = "$DATA/prepared.json";
 
-system('mkdir', '-p', $DATA) == 0 or die "Cannot create $DATA\n";
+system('mkdir', '-p', $DATA, $LOGS) == 0 or die "Cannot create $DATA and $LOGS\n";
 
 my $server = IO::Socket::INET->new(
     LocalHost => '0.0.0.0',
@@ -158,6 +159,8 @@ sub run_measurement {
     my $cancel_file = cancel_file($session_id);
     my $uart_output = "$DATA/$session_id-uart.json";
     my $gy_output = "$DATA/$session_id-gy614.json";
+    my $uart_log = "$LOGS/$session_id-uart8.log";
+    my $gy_log = "$LOGS/$session_id-gy614.log";
     unlink $cancel_file if -e $cancel_file;
     unlink $uart_output if -e $uart_output;
     unlink $gy_output if -e $gy_output;
@@ -184,9 +187,9 @@ sub run_measurement {
     );
     my $gy_cmd = -f $GY_READER
         ? join(' ', 'perl', shell_quote($GY_READER), shell_quote($GY_DEVICE), shell_quote($gy_output))
-        : 'true';
-    my $shell = "($uart_cmd >/dev/null 2>&1) & uart=\$!; " .
-                "($gy_cmd >/dev/null 2>&1) & gy=\$!; " .
+        : "printf '%s\\n' " . shell_quote("GY-614 reader not found: $GY_READER");
+    my $shell = "($uart_cmd >" . shell_quote($uart_log) . " 2>&1) & uart=\$!; " .
+                "($gy_cmd >" . shell_quote($gy_log) . " 2>&1) & gy=\$!; " .
                 'wait $uart; uart_rc=$?; wait $gy; gy_rc=$?; exit $uart_rc';
     system('sh', '-c', $shell);
 

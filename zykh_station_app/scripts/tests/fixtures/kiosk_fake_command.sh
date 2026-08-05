@@ -25,6 +25,7 @@ case "$name" in
     exit 0
     ;;
   chromium)
+    printf '%s\n' "args $*" >>"$FAKE_BROWSER_EVENTS"
     printf '%s\n' "started $$" >>"$FAKE_BROWSER_EVENTS"
     trap 'printf "%s\n" "stopped $$" >>"$FAKE_BROWSER_EVENTS"; exit 0' HUP INT QUIT TERM
     while :; do

@@ -12,14 +12,14 @@ const vite = await createServer({
 });
 
 try {
-  const module = await vite.ssrLoadModule("/src/pages/Vitals.jsx");
+  const sessionAdapter = await vite.ssrLoadModule("/src/adapters/vitalsSessionAdapter.js");
   assert.equal(
-    typeof module.createVitalsPollPolicy,
+    typeof sessionAdapter.createVitalsPollPolicy,
     "function",
     "Vitals must expose its session polling policy through a runtime interface"
   );
 
-  const policy = module.createVitalsPollPolicy("vitals-transport-recovery");
+  const policy = sessionAdapter.createVitalsPollPolicy("vitals-transport-recovery");
   const firstRetry = policy.observe({
     status: "failed",
     session_id: "vitals-transport-recovery",
@@ -83,7 +83,7 @@ try {
     "cleanup after the third communication failure must not cancel the same session again"
   );
 
-  const recoveryPolicy = module.createVitalsPollPolicy("vitals-transport-recovery");
+  const recoveryPolicy = sessionAdapter.createVitalsPollPolicy("vitals-transport-recovery");
   recoveryPolicy.observe({
     status: "failed",
     session_id: "vitals-transport-recovery",
@@ -114,7 +114,7 @@ try {
     "a recovered connection must reset the consecutive failure count"
   );
 
-  const measurementFailurePolicy = module.createVitalsPollPolicy("vitals-no-finger");
+  const measurementFailurePolicy = sessionAdapter.createVitalsPollPolicy("vitals-no-finger");
   assert.deepEqual(
     measurementFailurePolicy.observe({
       status: "failed",
@@ -125,7 +125,7 @@ try {
     "a real measurement failure must be shown immediately instead of entering communication retry"
   );
 
-  const replacementPolicy = module.createVitalsPollPolicy("vitals-new-session");
+  const replacementPolicy = sessionAdapter.createVitalsPollPolicy("vitals-new-session");
   assert.deepEqual(
     replacementPolicy.observe({
       status: "complete",
@@ -143,7 +143,7 @@ try {
   );
 
   for (const trigger of ["user cancellation", "page unmount"]) {
-    const cleanupPolicy = module.createVitalsPollPolicy(
+    const cleanupPolicy = sessionAdapter.createVitalsPollPolicy(
       `vitals-${trigger.replace(" ", "-")}`
     );
     assert.deepEqual(
@@ -157,12 +157,12 @@ try {
   }
 
   assert.equal(
-    typeof module.cancelVitalsSessionNow,
+    typeof sessionAdapter.cancelVitalsSessionNow,
     "function",
     "Vitals must expose its immediate session cleanup boundary"
   );
 
-  const oneShotPolicy = module.createVitalsPollPolicy("vitals-one-shot-stop");
+  const oneShotPolicy = sessionAdapter.createVitalsPollPolicy("vitals-one-shot-stop");
   const boardCancellations = [];
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     const action = oneShotPolicy.observe({
@@ -171,14 +171,14 @@ try {
       failure_reason: "transport_error"
     });
     if (action.kind === "stop") {
-      await module.cancelVitalsSessionNow(action.sessionId, async (sessionId) => {
+      await sessionAdapter.cancelVitalsSessionNow(action.sessionId, async (sessionId) => {
         boardCancellations.push(sessionId);
       });
     }
   }
   const cleanupAfterStop = oneShotPolicy.requestCancel("vitals-one-shot-stop");
   if (cleanupAfterStop.kind === "stop") {
-    await module.cancelVitalsSessionNow(cleanupAfterStop.sessionId, async (sessionId) => {
+    await sessionAdapter.cancelVitalsSessionNow(cleanupAfterStop.sessionId, async (sessionId) => {
       boardCancellations.push(sessionId);
     });
   }
@@ -194,7 +194,7 @@ try {
     const pendingCancellation = new Promise((resolve) => {
       releaseCancellation = resolve;
     });
-    const cancellation = module.cancelVitalsSessionNow(
+    const cancellation = sessionAdapter.cancelVitalsSessionNow(
       `vitals-${trigger.replace(" ", "-")}`,
       (sessionId) => {
         cancelledSessionId = sessionId;
@@ -211,29 +211,36 @@ try {
   }
 
   const vitalsSource = await readFile(`${root}src/pages/Vitals.jsx`, "utf8");
+  const sessionSource = await readFile(`${root}src/modules/vitalsSession.js`, "utf8");
   assert.ok(
-    vitalsSource.includes("requestBoardCancellation(activeSession);"),
-    "page unmount must use the tested immediate cleanup boundary"
+    sessionSource.includes("requestBoardCancellation(activeSession);"),
+    "session module unmount must use the tested immediate cleanup boundary"
   );
   assert.ok(
-    vitalsSource.includes("await requestBoardCancellation(currentSession);"),
+    sessionSource.includes("await requestBoardCancellation(currentSession);"),
     "explicit user cancellation must use the tested immediate cleanup boundary"
   );
   assert.ok(
-    vitalsSource.includes('if (pollAction.kind === "ignore") return;'),
+    sessionSource.includes('if (pollAction.kind === "ignore") return;'),
     "ignored stale responses must not reach the component state setters"
   );
   assert.ok(
-    vitalsSource.includes("createVitalsPollPolicy(data.session_id)"),
+    sessionSource.includes("createVitalsPollPolicy(data.session_id)"),
     "the polling policy must bind itself to the newly started session"
   );
   assert.ok(
-    vitalsSource.includes("sessionIdRef.current = data.session_id;"),
+    sessionSource.includes("sessionIdRef.current = data.session_id;"),
     "a newly started session must be available to unmount cleanup before the next effect"
   );
   assert.ok(
-    vitalsSource.includes('phaseRef.current = data.status || "failed";'),
+    sessionSource.includes('phaseRef.current = data.status || "failed";'),
     "unmount cleanup must synchronously know whether the current session is still active"
+  );
+  assert.ok(vitalsSource.includes("useVitalsSession("), "page must consume the deep session module");
+  assert.doesNotMatch(
+    vitalsSource,
+    /loadVitalsSession|prepareQsmVitals|startVitalsSession|sessionIdRef|pollPolicyRef/,
+    "presentation page must not own gateway calls or session lifecycle refs"
   );
 } finally {
   await vite.close();
