@@ -459,6 +459,7 @@ async function measureHomeVisualContract() {
     const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 4);
     const card = list.closest('.medication-summary-card');
     const cardStyle = getComputedStyle(card);
+    const listStyle = getComputedStyle(list);
     const listBounds = list.getBoundingClientRect();
     const firstRowBounds = rows[0].getBoundingClientRect();
     const lastRowBounds = rows.at(-1).getBoundingClientRect();
@@ -472,6 +473,10 @@ async function measureHomeVisualContract() {
       medicationBottomGap: Math.round((
         listBounds.bottom - lastRowBounds.bottom
       ) * 10) / 10,
+      medicationListOverflow: listStyle.overflow,
+      medicationListMaskImage: listStyle.maskImage,
+      medicationListBeforeContent: getComputedStyle(list, '::before').content,
+      medicationListAfterContent: getComputedStyle(list, '::after').content,
       medicationRowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height * 10) / 10),
       medicationContentOverflow: rows.map((row) => {
         const rowBounds = row.getBoundingClientRect();
@@ -988,6 +993,13 @@ try {
     homeVisualContract.medicationTopGap >= 2 && homeVisualContract.medicationTopGap <= 4 &&
       homeVisualContract.medicationBottomGap >= 2 && homeVisualContract.medicationBottomGap <= 4,
     `first or last home medication row touches the list clipping edge: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+  );
+  assert.equal(homeVisualContract.medicationListOverflow, "visible", "home medication list clips the first and last rounded row edges");
+  assert.equal(homeVisualContract.medicationListMaskImage, "none", "home medication list fades its first or last row with a mask");
+  assert.ok(
+    [homeVisualContract.medicationListBeforeContent, homeVisualContract.medicationListAfterContent]
+      .every((content) => content === "none" || content === "normal"),
+    "home medication list overlays its first or last row with a pseudo-element"
   );
   assert.ok(
     homeVisualContract.vitalsCardHeight >= 120,

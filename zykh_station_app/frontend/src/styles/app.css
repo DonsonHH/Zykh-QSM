@@ -7936,6 +7936,7 @@ a:focus-visible {
 .home-medication-list.is-full {
   flex: 1 1 auto;
   align-content: center;
+  overflow: visible;
 }
 
 .home-medication-row {
