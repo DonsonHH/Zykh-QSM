@@ -458,12 +458,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
           <div className="inquiry-live-summary">
             <header><span>问询信息</span></header>
             <div className="inquiry-fact-list">
-              <article className="inquiry-chief-fact"><UserRound size={21} /><span><small>主要不适</small><strong>{contextSummary.complaint}</strong></span></article>
-              <div className="inquiry-fact-pair">
-                <article><Clock3 size={20} /><span><small>持续时间</small><strong>{contextSummary.duration}</strong></span></article>
-                <article><Pill size={20} /><span><small>本次用药</small><strong>{contextSummary.medicine}</strong></span></article>
-              </div>
-              <article className="inquiry-allergy-fact"><ShieldAlert size={20} /><span><small>过敏或禁忌</small><strong>{contextSummary.allergy}</strong></span></article>
+              <article className="inquiry-fact-card inquiry-chief-fact"><UserRound size={21} /><span><small>主要不适</small><strong>{contextSummary.complaint}</strong></span></article>
+              <article className="inquiry-fact-card"><Clock3 size={20} /><span><small>持续时间</small><strong>{contextSummary.duration}</strong></span></article>
+              <article className="inquiry-fact-card"><Pill size={20} /><span><small>本次用药</small><strong>{contextSummary.medicine}</strong></span></article>
+              <article className="inquiry-fact-card inquiry-allergy-fact"><ShieldAlert size={20} /><span><small>过敏或禁忌</small><strong>{contextSummary.allergy}</strong></span></article>
             </div>
             <section className="inquiry-core-vitals" aria-label="核心体征">
               <header><Thermometer size={19} aria-hidden="true" /><strong>体征信息</strong></header>

@@ -7,6 +7,7 @@ const page = fs.readFileSync(path.join(root, "src/pages/Inquiry.jsx"), "utf8");
 const result = fs.readFileSync(path.join(root, "src/components/InquiryResultStep.jsx"), "utf8");
 const styles = fs.readFileSync(path.join(root, "src/styles/inquiry-actions.css"), "utf8");
 const appStyles = fs.readFileSync(path.join(root, "src/styles/app.css"), "utf8");
+const adaptiveStyles = fs.readFileSync(path.join(root, "src/styles/adaptive-layout.css"), "utf8");
 const audioApi = fs.readFileSync(path.join(root, "src/api/audio.js"), "utf8");
 const chat = fs.readFileSync(path.join(root, "src/components/InquiryChatStep.jsx"), "utf8");
 const review = fs.readFileSync(path.join(root, "src/components/InquiryInformationReview.jsx"), "utf8");
@@ -81,6 +82,10 @@ const checks = [
   [result.includes("compact-result-action") && result.includes("aria-label=\"重新问询\"") && result.includes("aria-label=\"返回首页\""), "result footer actions are not compact icon controls"],
   [styles.includes("overflow-y: auto") && styles.includes(".option-medicine-list"), "multi-medicine options must scroll without clipping"],
   [appStyles.includes(".inquiry-chief-fact strong") && appStyles.includes("white-space: normal"), "primary complaint must wrap instead of ellipsizing"],
+  [(page.match(/className="inquiry-fact-card/g) || []).length === 4, "live inquiry facts are not four equal card peers"],
+  [!page.includes("inquiry-fact-pair"), "duration and medicine remain nested in a differently-sized wrapper"],
+  [appStyles.match(/\.inquiry-fact-list\s*\{[\s\S]{0,220}grid-template-columns:\s*repeat\(2,[^;]+;[\s\S]{0,120}grid-template-rows:\s*repeat\(2,/), "live inquiry facts are not arranged as an equal 2 by 2 grid"],
+  [adaptiveStyles.match(/\.inquiry-fact-list\s*\{[\s\S]{0,180}grid-template-rows:\s*repeat\(2,/), "compact inquiry layout restores unequal fact rows"],
   [!result.includes("treatment-safety-check"), "result still requires a redundant safety checkbox"],
   [chat.includes("chat-message-line"), "assistant source icon is not aligned with its message"],
   [!result.includes("aiSourceLabel"), "result still exposes a technical AI source label"],

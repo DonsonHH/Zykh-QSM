@@ -4539,21 +4539,20 @@ a:focus-visible {
 .inquiry-fact-list {
   min-height: 0;
   display: grid;
-  grid-template-rows: 56px 52px minmax(62px, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.inquiry-chief-fact,
-.inquiry-fact-pair article,
-.inquiry-allergy-fact {
+.inquiry-fact-card {
   min-width: 0;
   display: grid;
-  grid-template-columns: 31px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border-radius: 13px;
   background: #f5f8fc;
-  padding: 8px 11px;
+  padding: 8px 9px;
   color: var(--primary);
   box-shadow: inset 0 0 0 1px rgba(112, 142, 176, 0.12);
 }
@@ -4562,9 +4561,7 @@ a:focus-visible {
   background: #eef5ff;
 }
 
-.inquiry-chief-fact span,
-.inquiry-fact-pair span,
-.inquiry-allergy-fact span {
+.inquiry-fact-card span {
   min-width: 0;
   display: grid;
   gap: 4px;
@@ -4596,18 +4593,6 @@ a:focus-visible {
   text-overflow: clip !important;
   white-space: normal !important;
   word-break: break-word;
-}
-
-.inquiry-fact-pair {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.inquiry-fact-pair article {
-  grid-template-columns: 24px minmax(0, 1fr);
-  padding-inline: 9px;
 }
 
 .inquiry-allergy-fact {

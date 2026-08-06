@@ -458,8 +458,8 @@ async function measureHomeVisualContract() {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 4);
     const card = list.closest('.medication-summary-card');
-    const cardBounds = card.getBoundingClientRect();
     const cardStyle = getComputedStyle(card);
+    const listBounds = list.getBoundingClientRect();
     const firstRowBounds = rows[0].getBoundingClientRect();
     const lastRowBounds = rows.at(-1).getBoundingClientRect();
     const inquiryStyle = getComputedStyle(inquiry);
@@ -467,10 +467,10 @@ async function measureHomeVisualContract() {
     const result = {
       ready: true,
       medicationTopGap: Math.round((
-        firstRowBounds.top - list.getBoundingClientRect().top
+        firstRowBounds.top - listBounds.top
       ) * 10) / 10,
       medicationBottomGap: Math.round((
-        cardBounds.bottom - parseFloat(cardStyle.paddingBottom) - lastRowBounds.bottom
+        listBounds.bottom - lastRowBounds.bottom
       ) * 10) / 10,
       medicationRowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height * 10) / 10),
       medicationContentOverflow: rows.map((row) => {
@@ -491,6 +491,48 @@ async function measureHomeVisualContract() {
     if (!hadFullClass) list.classList.remove('is-full');
     list.classList.remove('plan-count-4');
     if (previousCountClass) list.classList.add(previousCountClass);
+    return result;
+  })()`);
+}
+
+async function measureInquiryFactContract() {
+  return evaluate(`(async () => {
+    const fixture = document.createElement('div');
+    fixture.className = 'inquiry-fact-list';
+    fixture.style.cssText = 'position:fixed;left:-1000px;top:0;width:326px;height:180px;';
+    fixture.innerHTML = [
+      ['inquiry-fact-card inquiry-chief-fact', '主要不适', '头痛咳嗽'],
+      ['inquiry-fact-card', '持续时间', '两天'],
+      ['inquiry-fact-card', '本次用药', '尚未用药'],
+      ['inquiry-fact-card inquiry-allergy-fact', '过敏或禁忌', '尚未确认']
+    ].map(([className, label, value]) => (
+      '<article class="' + className + '"><i></i><span><small>' + label + '</small><strong>' + value + '</strong></span></article>'
+    )).join('');
+    document.body.append(fixture);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const cards = [...fixture.querySelectorAll('.inquiry-fact-card')];
+    const bounds = cards.map((card) => card.getBoundingClientRect());
+    const roundedUnique = (values) => [...new Set(values.map((value) => Math.round(value * 10) / 10))];
+    const result = {
+      ready: cards.length === 4,
+      widths: bounds.map(({ width }) => Math.round(width * 10) / 10),
+      heights: bounds.map(({ height }) => Math.round(height * 10) / 10),
+      columns: roundedUnique(bounds.map(({ left }) => left)).length,
+      rows: roundedUnique(bounds.map(({ top }) => top)).length,
+      contentOverflow: cards.map((card, index) => {
+        const cardBounds = bounds[index];
+        return Math.round(Math.max(0, ...[...card.children].map((child) => {
+          const childBounds = child.getBoundingClientRect();
+          return Math.max(
+            cardBounds.top - childBounds.top,
+            childBounds.bottom - cardBounds.bottom,
+            cardBounds.left - childBounds.left,
+            childBounds.right - cardBounds.right
+          );
+        })) * 10) / 10;
+      })
+    };
+    fixture.remove();
     return result;
   })()`);
 }
@@ -802,6 +844,7 @@ try {
   if (idleObservation) idleObservation.page = "records";
   await navigate("home");
   const homeVisualContract = await measureHomeVisualContract();
+  const inquiryFactContract = await measureInquiryFactContract();
   const idleMotionContract = process.env.QA_REDUCED_MOTION === "1"
     ? null
     : await measureIdleMotionContract();
@@ -841,6 +884,7 @@ try {
     medicineCacheLifecycle,
     homeTaskPickerPerformance,
     homeVisualContract,
+    inquiryFactContract,
     idleMotionContract,
     adminConsoleLayouts,
     navigation,
@@ -877,6 +921,7 @@ try {
         dispenseConfirm: report.medicineModalCoverage
       },
       homeVisualContract: report.homeVisualContract,
+      inquiryFactContract: report.inquiryFactContract,
       idleMotionContract: report.idleMotionContract,
       idleObservation: report.idleObservation,
       layoutDiagnostics: Object.fromEntries(
@@ -940,8 +985,9 @@ try {
     `four home medication rows clip their contents: ${homeVisualContract.medicationContentOverflow.join(", ")}`
   );
   assert.ok(
-    homeVisualContract.medicationTopGap <= 2 && homeVisualContract.medicationBottomGap <= 2,
-    `four home medication rows still waste space: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+    homeVisualContract.medicationTopGap >= 2 && homeVisualContract.medicationTopGap <= 4 &&
+      homeVisualContract.medicationBottomGap >= 2 && homeVisualContract.medicationBottomGap <= 4,
+    `first or last home medication row touches the list clipping edge: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
   );
   assert.ok(
     homeVisualContract.vitalsCardHeight >= 120,
@@ -970,6 +1016,15 @@ try {
       `idle breathing blocks a frame for ${idleMotionContract.maxFrameGapMs.toFixed(1)}ms`
     );
   }
+  assert.equal(inquiryFactContract.ready, true, "inquiry fact grid did not render four cards");
+  assert.equal(inquiryFactContract.columns, 2, "inquiry fact cards are not arranged in two columns");
+  assert.equal(inquiryFactContract.rows, 2, "inquiry fact cards are not arranged in two rows");
+  assert.equal(new Set(inquiryFactContract.widths).size, 1, `inquiry fact card widths differ: ${inquiryFactContract.widths.join(", ")}`);
+  assert.equal(new Set(inquiryFactContract.heights).size, 1, `inquiry fact card heights differ: ${inquiryFactContract.heights.join(", ")}`);
+  assert.ok(
+    inquiryFactContract.contentOverflow.every((overflow) => overflow === 0),
+    `inquiry fact cards clip their contents: ${inquiryFactContract.contentOverflow.join(", ")}`
+  );
   if (medicineCacheLifecycle) {
     assert.deepEqual(
       medicineCacheLifecycle,

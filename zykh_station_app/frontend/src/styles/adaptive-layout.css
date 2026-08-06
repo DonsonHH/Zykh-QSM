@@ -381,7 +381,7 @@
   }
 
   .inquiry-fact-list {
-    grid-template-rows: 72px 66px minmax(82px, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
     gap: 11px;
   }
 
@@ -1173,7 +1173,7 @@
   }
 
   .home-plan-picker-trigger {
-    min-height: 48px;
+    min-height: 44px;
     padding-inline: 10px 7px;
     font-size: 14px;
   }
@@ -1194,6 +1194,7 @@
     grid-auto-rows: 54px;
     align-content: start;
     gap: 4px;
+    padding-block: 2px;
   }
 
   .home-medication-list.is-full .home-medication-row {
@@ -1678,13 +1679,11 @@
   }
 
   .inquiry-fact-list {
-    grid-template-rows: 50px 46px minmax(52px, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
-  .inquiry-chief-fact,
-  .inquiry-fact-pair article,
-  .inquiry-allergy-fact {
+  .inquiry-fact-card {
     padding-block: 6px;
   }
 
