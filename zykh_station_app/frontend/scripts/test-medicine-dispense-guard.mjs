@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 
-import { manualDispenseBlockReason } from "../src/utils/medicineSafety.js";
+import {
+  manualDispenseBlockHint,
+  manualDispenseBlockReason,
+  manualDispenseButtonLabel
+} from "../src/utils/medicineSafety.js";
 
 
 const base = {
@@ -39,5 +43,14 @@ assert.equal(
   manualDispenseBlockReason({ ...base, is_otc: false }, new Date("2026-08-05")),
   "处方药请通过既往用药计划或医生审核取药"
 );
+assert.equal(
+  manualDispenseButtonLabel({ ...base, is_otc: false }, new Date("2026-08-05")),
+  "需审核后取药"
+);
+assert.equal(
+  manualDispenseBlockHint({ ...base, is_otc: false }, new Date("2026-08-05")),
+  "需既往用药计划或医生审核"
+);
+assert.equal(manualDispenseButtonLabel(base, new Date("2026-08-05")), "取药");
 
 console.log("medicine dispense guard contract: ok");

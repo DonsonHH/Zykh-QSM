@@ -1314,6 +1314,34 @@
     padding: 14px;
   }
 
+  .detail-heading h2 {
+    font-size: 28px;
+  }
+
+  .detail-heading-copy p,
+  .detail-stats span {
+    font-size: 15px;
+  }
+
+  .detail-section h3 {
+    font-size: 19px;
+  }
+
+  .detail-section .detail-copy,
+  .detail-section ul.detail-contraindications {
+    font-size: 16px;
+    line-height: 1.48;
+  }
+
+  .detail-stats strong {
+    font-size: 17px;
+  }
+
+  .detail-action-note {
+    min-height: 40px;
+    font-size: 15px;
+  }
+
   /* Records */
   .records-page {
     grid-template-rows: 86px minmax(0, 1fr);

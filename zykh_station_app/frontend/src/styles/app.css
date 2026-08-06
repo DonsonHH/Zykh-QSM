@@ -1851,7 +1851,31 @@ a:focus-visible {
 
 .detail-action {
   flex: 0 0 auto;
+  padding-inline: 12px;
+  white-space: nowrap;
   box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
+}
+
+.detail-action-note {
+  min-height: 38px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  border-radius: 13px;
+  background: #fff7ed;
+  color: #8a4708;
+  padding: 7px 10px;
+  font-size: 15px;
+  line-height: 1.15;
+  font-weight: 850;
+  text-align: center;
+}
+
+.detail-action-note svg {
+  flex: 0 0 auto;
 }
 
 .modal-layer {

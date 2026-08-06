@@ -1,7 +1,11 @@
 import React from "react";
 import { CalendarDays, ClipboardList, PackageOpen, ShieldAlert, Stethoscope } from "lucide-react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
-import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
+import {
+  manualDispenseBlockHint,
+  manualDispenseBlockReason,
+  manualDispenseButtonLabel
+} from "../utils/medicineSafety.js";
 
 export function MedicineDetailPanel({ medicine, onConfirm }) {
   if (!medicine) {
@@ -15,6 +19,8 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
 
   const isCareSupply = ["外伤护理", "消毒护理"].includes(medicine.category);
   const dispenseBlockReason = manualDispenseBlockReason(medicine);
+  const dispenseBlockHint = manualDispenseBlockHint(medicine);
+  const dispenseButtonLabel = manualDispenseButtonLabel(medicine);
 
   return (
     <aside className="medicine-detail-panel">
@@ -87,14 +93,22 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
         </p>
       </div>
 
+      {dispenseBlockHint ? (
+        <p className="detail-action-note" id="medicine-dispense-block-reason">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{dispenseBlockHint}</span>
+        </p>
+      ) : null}
+
       <button
         className="primary-action detail-action"
         type="button"
         onClick={onConfirm}
         disabled={Boolean(dispenseBlockReason)}
         title={dispenseBlockReason}
+        aria-describedby={dispenseBlockHint ? "medicine-dispense-block-reason" : undefined}
       >
-        {dispenseBlockReason || "取药"}
+        {dispenseButtonLabel}
       </button>
     </aside>
   );

@@ -48,3 +48,23 @@ export function manualDispenseBlockReason(medicine, referenceDate = new Date()) 
   }
   return "";
 }
+
+export function manualDispenseButtonLabel(medicine, referenceDate = new Date()) {
+  const reason = manualDispenseBlockReason(medicine, referenceDate);
+  if (!reason) return "取药";
+  if (medicine?.package_verified === false) return "待包装核验";
+  if (medicine?.guidance_source === "pending" || !parseExpiry(medicine?.expire_date)) return "待资料补录";
+  if (isMedicineExpired(medicine?.expire_date, referenceDate)) return "已过有效期";
+  if (medicine?.is_otc === false) return "需审核后取药";
+  return "暂不可取";
+}
+
+export function manualDispenseBlockHint(medicine, referenceDate = new Date()) {
+  const reason = manualDispenseBlockReason(medicine, referenceDate);
+  if (!reason) return "";
+  if (medicine?.package_verified === false) return "需管理员核验实物包装规格";
+  if (medicine?.guidance_source === "pending" || !parseExpiry(medicine?.expire_date)) return "需补全药品资料与有效期";
+  if (isMedicineExpired(medicine?.expire_date, referenceDate)) return "药品已过期，请联系管理员";
+  if (medicine?.is_otc === false) return "需既往用药计划或医生审核";
+  return reason;
+}
