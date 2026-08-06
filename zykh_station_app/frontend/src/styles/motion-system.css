@@ -93,6 +93,14 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
   animation: idle-prompt-enter 260ms 70ms var(--ease-fluid) both;
 }
 
+/* Keep the idle surface still; breathe only the small foreground glyph layer. */
+.idle-wake-glyph,
+.idle-reminder-icon svg:last-child {
+  animation: idle-content-breathe 3600ms cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
 @keyframes idle-wake-enter {
   from {
     opacity: 0;
@@ -112,6 +120,18 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
   to {
     opacity: 0.76;
     transform: translateY(0);
+  }
+}
+
+@keyframes idle-content-breathe {
+  0%,
+  100% {
+    opacity: 0.78;
+    transform: scale(0.965);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.035);
   }
 }
 
@@ -187,8 +207,11 @@ html[data-page-transition="backward"] .bottom-nav button.active .bottom-nav-icon
 @media (prefers-reduced-motion: reduce) {
   .idle-wake-button,
   .idle-wake-area h1,
+  .idle-wake-glyph,
+  .idle-reminder-icon svg:last-child,
   html[data-page-transition] .bottom-nav button.active .bottom-nav-icon {
     animation: none !important;
+    will-change: auto;
   }
 
   .bottom-nav-icon svg,

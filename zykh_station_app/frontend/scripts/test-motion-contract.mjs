@@ -155,10 +155,34 @@ assert.match(designPolish, /focus-visible[\s\S]*outline:\s*3px solid var\(--focu
 
 const motionSystem = await readFile(`${sourceRoot}/styles/motion-system.css`, "utf8");
 assert.match(motionSystem, /--motion-control:\s*150ms/, "control feedback no longer shares the standard motion token");
+assert.match(
+  motionSystem,
+  /\.idle-wake-glyph,[\s\S]*\.idle-reminder-icon svg:last-child\s*\{[^}]*animation:\s*idle-content-breathe[^;]*infinite/,
+  "idle screen has no localized breathing cue"
+);
+assert.match(
+  motionSystem,
+  /@keyframes idle-content-breathe\s*\{[\s\S]*transform:\s*scale\([^)]*\)[\s\S]*opacity:/,
+  "idle breathing cue is not limited to compositor-friendly properties"
+);
+const idleBreathingKeyframes = motionSystem.slice(
+  motionSystem.indexOf("@keyframes idle-content-breathe"),
+  motionSystem.indexOf("@keyframes", motionSystem.indexOf("@keyframes idle-content-breathe") + 1)
+);
+assert.doesNotMatch(
+  idleBreathingKeyframes,
+  /(?:filter|box-shadow|width|height|top|left):/,
+  "idle breathing cue animates a paint or layout property"
+);
 assert.match(motionSystem, /\.inquiry-assistant-orbit,[\s\S]*animation:\s*none/, "home decorative motion still consumes frames");
 assert.doesNotMatch(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-name/, "page feedback animates the full high-resolution page surface");
 assert.match(motionSystem, /bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation-duration:\s*150ms/, "navigation lost its localized confirmation animation");
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
+assert.match(
+  motionSystem,
+  /prefers-reduced-motion:\s*reduce[\s\S]*\.idle-wake-glyph,[\s\S]*\.idle-reminder-icon svg:last-child[\s\S]*animation:\s*none\s*!important/,
+  "idle breathing cue ignores reduced-motion preference"
+);
 assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-backdrop-exit/, "admin dialogs disappear without an exit animation");
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");

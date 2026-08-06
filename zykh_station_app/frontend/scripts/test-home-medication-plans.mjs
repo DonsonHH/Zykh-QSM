@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import {
   isMedicationPlanCompleted,
   medicationPlanDayLabel,
@@ -50,5 +52,30 @@ assert.equal(medicationPlanDayLabel(taskRows[0], new Date("2026-07-17T18:00:00")
 assert.equal(medicationPlanTimeLabel(taskRows[0], new Date("2026-07-17T18:00:00")), "次日 08:30");
 assert.equal(isMedicationPlanCompleted(taskRows[1]), true);
 assert.equal(isMedicationPlanCompleted(taskRows[2]), false);
+
+const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
+const adaptiveStyles = await readFile(`${frontendRoot}src/styles/adaptive-layout.css`, "utf8");
+
+function declarationBlock(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return adaptiveStyles.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] || "";
+}
+
+function pixelValue(block, property) {
+  return Number(block.match(new RegExp(`${property}:\\s*(\\d+)px`))?.[1] || Number.NaN);
+}
+
+const compactList = declarationBlock(".home-medication-list.is-full");
+const compactRow = declarationBlock(".home-medication-list.is-full .home-medication-row");
+const compactAction = declarationBlock(".home-medication-list.is-full .home-medication-action");
+const compactTrackHeight = pixelValue(compactList, "grid-auto-rows");
+const compactActionHeight = pixelValue(compactAction, "min-height");
+const compactVerticalPadding = Number(compactRow.match(/padding:\s*(\d+)px\s+\d+px/)?.[1] || Number.NaN);
+const compactBorderHeight = 2;
+
+assert.ok(
+  compactTrackHeight >= compactActionHeight + (compactVerticalPadding * 2) + compactBorderHeight,
+  `four-task row clips its 44px action: ${compactTrackHeight}px track is smaller than ${compactActionHeight + (compactVerticalPadding * 2) + compactBorderHeight}px content box`
+);
 
 console.log("home medication plan ordering: ok");

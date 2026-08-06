@@ -473,6 +473,13 @@ async function measureHomeVisualContract() {
         cardBounds.bottom - parseFloat(cardStyle.paddingBottom) - lastRowBounds.bottom
       ) * 10) / 10,
       medicationRowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height * 10) / 10),
+      medicationContentOverflow: rows.map((row) => {
+        const rowBounds = row.getBoundingClientRect();
+        const descendants = [...row.children].map((child) => child.getBoundingClientRect());
+        return Math.round(Math.max(0, ...descendants.map((bounds) => (
+          Math.max(rowBounds.top - bounds.top, bounds.bottom - rowBounds.bottom)
+        ))) * 10) / 10;
+      }),
       medicationBorderWidth: parseFloat(cardStyle.borderTopWidth),
       medicationBorderColor: cardStyle.borderTopColor,
       inquiryBorderWidth: parseFloat(inquiryStyle.borderTopWidth),
@@ -485,6 +492,41 @@ async function measureHomeVisualContract() {
     list.classList.remove('plan-count-4');
     if (previousCountClass) list.classList.add(previousCountClass);
     return result;
+  })()`);
+}
+
+async function measureIdleMotionContract() {
+  await navigate("home", false);
+  return evaluate(`(async () => {
+    const glyph = document.querySelector('.idle-wake-glyph');
+    const idleSurface = document.querySelector('.idle-screen');
+    const animation = glyph?.getAnimations().find(({ animationName }) => animationName === 'idle-content-breathe');
+    if (!glyph || !idleSurface || !animation) return { ready: false };
+    const startedAt = performance.now();
+    let previousFrame = startedAt;
+    let maxFrameGapMs = 0;
+    let frameCount = 0;
+    while (performance.now() - startedAt < 1200) {
+      const frameAt = await new Promise(requestAnimationFrame);
+      maxFrameGapMs = Math.max(maxFrameGapMs, frameAt - previousFrame);
+      previousFrame = frameAt;
+      frameCount += 1;
+    }
+    const glyphBounds = glyph.getBoundingClientRect();
+    const animatedProperties = [...new Set(animation.effect.getKeyframes().flatMap((keyframe) => (
+      Object.keys(keyframe).filter((property) => !['offset', 'easing', 'composite', 'computedOffset'].includes(property))
+    )))].sort();
+    return {
+      ready: true,
+      animationName: animation.animationName,
+      playState: animation.playState,
+      repeatsIndefinitely: animation.effect.getTiming().iterations === Infinity,
+      animatedProperties,
+      animatedAreaRatio: (glyphBounds.width * glyphBounds.height) / (innerWidth * innerHeight),
+      fullSurfaceAnimations: idleSurface.getAnimations({ subtree: false }).map(({ animationName }) => animationName),
+      maxFrameGapMs,
+      frameCount
+    };
   })()`);
 }
 
@@ -760,6 +802,10 @@ try {
   if (idleObservation) idleObservation.page = "records";
   await navigate("home");
   const homeVisualContract = await measureHomeVisualContract();
+  const idleMotionContract = process.env.QA_REDUCED_MOTION === "1"
+    ? null
+    : await measureIdleMotionContract();
+  await navigate("home");
   const metricsBefore = metricMap((await cdp("Performance.getMetrics")).metrics);
   const navigationResult = skipNavigation
     ? { samples: [], longTasks: [], longAnimationFrames: [] }
@@ -795,6 +841,7 @@ try {
     medicineCacheLifecycle,
     homeTaskPickerPerformance,
     homeVisualContract,
+    idleMotionContract,
     adminConsoleLayouts,
     navigation,
     longTasks: navigationResult.longTasks,
@@ -830,6 +877,7 @@ try {
         dispenseConfirm: report.medicineModalCoverage
       },
       homeVisualContract: report.homeVisualContract,
+      idleMotionContract: report.idleMotionContract,
       idleObservation: report.idleObservation,
       layoutDiagnostics: Object.fromEntries(
         Object.entries(report.layouts).map(([viewport, pageLayouts]) => [viewport, Object.fromEntries(
@@ -884,8 +932,12 @@ try {
 
   assert.equal(homeVisualContract.ready, true, "home visual contract could not find its cards");
   assert.ok(
-    homeVisualContract.medicationRowHeights.every((height) => height === 53),
-    `four home medication rows no longer preserve their compact 53px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
+    homeVisualContract.medicationRowHeights.every((height) => height === 54),
+    `four home medication rows no longer preserve their unclipped 54px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
+  );
+  assert.ok(
+    homeVisualContract.medicationContentOverflow.every((overflow) => overflow === 0),
+    `four home medication rows clip their contents: ${homeVisualContract.medicationContentOverflow.join(", ")}`
   );
   assert.ok(
     homeVisualContract.medicationTopGap <= 2 && homeVisualContract.medicationBottomGap <= 2,
@@ -901,6 +953,23 @@ try {
       homeVisualContract.inquiryBorderStyle === "solid",
     `home card borders are inconsistent: inquiry ${homeVisualContract.inquiryBorderWidth}px ${homeVisualContract.inquiryBorderColor}, medication ${homeVisualContract.medicationBorderWidth}px ${homeVisualContract.medicationBorderColor}`
   );
+  if (idleMotionContract) {
+    assert.equal(idleMotionContract.ready, true, "idle breathing cue was not rendered");
+    assert.equal(idleMotionContract.animationName, "idle-content-breathe", "idle breathing cue uses an unexpected animation");
+    assert.equal(idleMotionContract.playState, "running", "idle breathing cue is not running");
+    assert.equal(idleMotionContract.repeatsIndefinitely, true, "idle breathing cue does not repeat continuously");
+    assert.deepEqual(
+      idleMotionContract.animatedProperties,
+      ["opacity", "transform"],
+      "idle breathing cue animates more than transform and opacity"
+    );
+    assert.deepEqual(idleMotionContract.fullSurfaceAnimations, [], "idle breathing animates the full screen surface");
+    assert.ok(idleMotionContract.animatedAreaRatio <= 0.05, "idle breathing layer is larger than 5% of the viewport");
+    assert.ok(
+      idleMotionContract.maxFrameGapMs <= Number(process.env.QA_MAX_IDLE_BREATHE_FRAME_GAP_MS || 50),
+      `idle breathing blocks a frame for ${idleMotionContract.maxFrameGapMs.toFixed(1)}ms`
+    );
+  }
   if (medicineCacheLifecycle) {
     assert.deepEqual(
       medicineCacheLifecycle,

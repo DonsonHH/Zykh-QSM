@@ -1191,16 +1191,16 @@
 
   .home-medication-list.is-full {
     flex: 0 0 auto;
-    grid-auto-rows: 53px;
+    grid-auto-rows: 54px;
     align-content: start;
-    gap: 5px;
+    gap: 4px;
   }
 
   .home-medication-list.is-full .home-medication-row {
-    min-height: 53px;
+    min-height: 54px;
     grid-template-columns: 55px minmax(0, 1fr) 54px;
     gap: 6px;
-    padding: 4px 6px;
+    padding: 3px 6px;
   }
 
   .home-medication-list.is-full .home-medication-time {
