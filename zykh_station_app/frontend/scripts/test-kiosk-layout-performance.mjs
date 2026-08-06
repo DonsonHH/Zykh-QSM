@@ -444,7 +444,7 @@ async function measureHomeVisualContract() {
       list.append(sourceRow);
       added.push(sourceRow);
     }
-    while (list.querySelectorAll('.home-medication-row').length < 3) {
+    while (list.querySelectorAll('.home-medication-row').length < 4) {
       const clone = sourceRow.cloneNode(true);
       clone.dataset.qaClone = 'true';
       list.append(clone);
@@ -453,10 +453,10 @@ async function measureHomeVisualContract() {
     const hadFullClass = list.classList.contains('is-full');
     const previousCountClass = [...list.classList].find((name) => name.startsWith('plan-count-'));
     if (previousCountClass) list.classList.remove(previousCountClass);
-    list.classList.add('plan-count-3');
+    list.classList.add('plan-count-4');
     list.classList.add('is-full');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 3);
+    const rows = [...list.querySelectorAll('.home-medication-row')].slice(0, 4);
     const card = list.closest('.medication-summary-card');
     const cardBounds = card.getBoundingClientRect();
     const cardStyle = getComputedStyle(card);
@@ -482,7 +482,7 @@ async function measureHomeVisualContract() {
     };
     added.forEach((row) => row.remove());
     if (!hadFullClass) list.classList.remove('is-full');
-    list.classList.remove('plan-count-3');
+    list.classList.remove('plan-count-4');
     if (previousCountClass) list.classList.add(previousCountClass);
     return result;
   })()`);
@@ -884,12 +884,12 @@ try {
 
   assert.equal(homeVisualContract.ready, true, "home visual contract could not find its cards");
   assert.ok(
-    homeVisualContract.medicationRowHeights.every((height) => height === 72),
-    `three home medication rows no longer preserve their compact 72px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
+    homeVisualContract.medicationRowHeights.every((height) => height === 53),
+    `four home medication rows no longer preserve their compact 53px rhythm: ${homeVisualContract.medicationRowHeights.join(", ")}`
   );
   assert.ok(
     homeVisualContract.medicationTopGap <= 2 && homeVisualContract.medicationBottomGap <= 2,
-    `three home medication rows still waste space: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
+    `four home medication rows still waste space: ${homeVisualContract.medicationTopGap}px top, ${homeVisualContract.medicationBottomGap}px bottom`
   );
   assert.ok(
     homeVisualContract.vitalsCardHeight >= 120,

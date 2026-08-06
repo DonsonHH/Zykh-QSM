@@ -163,7 +163,7 @@ assert.match(motionSystem, /\.admin-dialog-backdrop\.is-exiting[\s\S]*modal-back
 
 const home = await readFile(`${sourceRoot}/components/MedicationSummaryCard.jsx`, "utf8");
 assert.match(home, /plan\.status === "待执行"/, "home medication list includes completed plans");
-assert.match(home, /selectNearestMedicationPlans\(pendingPlans, now, 3\)/, "home does not select and chronologically display the nearest three pending tasks");
+assert.match(home, /selectNearestMedicationPlans\(pendingPlans, now, 4\)/, "home does not select and chronologically display the nearest four pending tasks");
 assert.match(home, /home-medication-list/, "home medication tasks are not rendered as a list");
 assert.doesNotMatch(home, /metric-grid/, "home medication card still renders the removed summary metrics");
 assert.match(home, /home-plan-picker-trigger/, "home medication list has no scalable overflow picker");
@@ -174,6 +174,9 @@ assert.match(home, /<MedicationTaskPicker/, "additional medication tasks cannot 
 assert.match(home, /onPickPlan=\{pickPlanAndDispense\}/, "task picker does not open the selected task's dispense flow");
 assert.match(home, /onClick=\{\(\) => onQuickDispense\?\.\(plan\)\}/, "visible medication tasks do not open their own dispense flow");
 assert.doesNotMatch(home, /home-current-user|ScanFace/, "home medication summary still exposes identity confirmation");
+
+const homePage = await readFile(`${sourceRoot}/pages/Home.jsx`, "utf8");
+assert.match(homePage, /zykh:dispense-recorded[\s\S]*medicine_id:\s*payload\.medicine_id/, "home dispense does not publish the successful medicine history refresh");
 
 const homeHero = await readFile(`${sourceRoot}/components/HomeHero.jsx`, "utf8");
 assert.ok(
@@ -206,6 +209,7 @@ assert.match(appStyles, /\.home-task-picker-list[\s\S]*overflow-y:\s*auto/, "lar
 
 const medicines = await readFile(`${sourceRoot}/pages/Medicines.jsx`, "utf8");
 assert.doesNotMatch(medicines, /useFaceIdentity/, "opening the medicines page still starts identity recognition");
+assert.match(medicines, /loadMedicine\(medicineId\)[\s\S]*addEventListener\("zykh:dispense-recorded"/, "cached medicine history is not refreshed after another dispense entry point succeeds");
 
 const dispenseModal = await readFile(`${sourceRoot}/components/DispenseConfirmModal.jsx`, "utf8");
 assert.match(dispenseModal, /identifyFingerprint/, "dispense confirmation is missing fingerprint verification");
@@ -275,6 +279,9 @@ assert.match(dispenseModal, /failedGuestConfirmation[\s\S]*重新识别[\s\S]*�
 assert.match(dispenseModal, /verificationAttemptRef/, "stale face results can overwrite the visitor confirmation state");
 assert.match(dispenseModal, /today_plan_id:\s*guest \? ""/, "guest dispense can incorrectly complete another person's plan");
 assert.match(dispenseModal, /sessionRef\.current/, "closing the modal cannot cancel a delayed cabinet action");
+assert.match(dispenseModal, /dispense-history-summary[\s\S]*medicine\.dispense_count/, "dispense confirmation does not show the medicine history count");
+assert.match(dispenseModal, /quantity:\s*1/, "dispense confirmation no longer sends the fixed single-item quantity");
+assert.doesNotMatch(dispenseModal, /quantity-control|dispense-quantity|setQuantity/, "dispense confirmation still exposes the removed quantity control");
 assert.doesNotMatch(dispenseModal, /safety-confirmed|confirm-check/, "legacy duplicate safety checkbox is still rendered");
 assert.doesNotMatch(
   dispenseModal,
@@ -283,6 +290,7 @@ assert.doesNotMatch(
 );
 
 const inquiry = await readFile(`${sourceRoot}/pages/Inquiry.jsx`, "utf8");
+assert.match(inquiry, /completedItem\?\.ok[\s\S]*zykh:dispense-recorded[\s\S]*completedItem\.medicine_id/, "inquiry dispense does not publish the successful medicine history refresh");
 assert.match(inquiry, /<InquiryIdentityGate/, "inquiry does not stop for visible identity confirmation");
 assert.match(inquiry, /setIdentityConfirmed\(true\)/, "inquiry identity cannot be explicitly confirmed");
 assert.match(inquiry, /activateOnMatch: false/, "inquiry face match is activated before the user confirms it");

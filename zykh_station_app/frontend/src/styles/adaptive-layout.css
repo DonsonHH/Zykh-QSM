@@ -1144,6 +1144,10 @@
     grid-template-rows: 310px minmax(0, 1fr);
   }
 
+  .home-side-stack:has(.home-medication-list.plan-count-4) {
+    grid-template-rows: 310px minmax(0, 1fr);
+  }
+
   .home-side-stack:has(.home-medication-list[class*="plan-count-"]) .quick-grid,
   .home-side-stack:has(.home-medication-list[class*="plan-count-"]) .quick-action {
     height: 100%;
@@ -1187,7 +1191,43 @@
 
   .home-medication-list.is-full {
     flex: 0 0 auto;
+    grid-auto-rows: 53px;
     align-content: start;
+    gap: 5px;
+  }
+
+  .home-medication-list.is-full .home-medication-row {
+    min-height: 53px;
+    grid-template-columns: 55px minmax(0, 1fr) 54px;
+    gap: 6px;
+    padding: 4px 6px;
+  }
+
+  .home-medication-list.is-full .home-medication-time {
+    font-size: 17px;
+  }
+
+  .home-medication-list.is-full .home-medication-detail {
+    gap: 2px 5px;
+  }
+
+  .home-medication-list.is-full .home-medication-detail > span,
+  .home-medication-list.is-full .home-medication-detail > small {
+    font-size: 12px;
+  }
+
+  .home-medication-list.is-full .home-medication-detail > span strong,
+  .home-medication-list.is-full .home-medication-detail > strong {
+    font-size: 15px;
+  }
+
+  .home-medication-list.is-full .home-medication-detail > small {
+    display: none;
+  }
+
+  .home-medication-list.is-full .home-medication-action {
+    min-height: 44px;
+    font-size: 12px;
   }
 
   .home-medication-row {
@@ -1315,26 +1355,26 @@
   }
 
   .detail-heading h2 {
-    font-size: 28px;
+    font-size: 29px;
   }
 
   .detail-heading-copy p,
   .detail-stats span {
-    font-size: 15px;
+    font-size: 16px;
   }
 
   .detail-section h3 {
-    font-size: 19px;
+    font-size: 20px;
   }
 
   .detail-section .detail-copy,
   .detail-section ul.detail-contraindications {
-    font-size: 16px;
-    line-height: 1.48;
+    font-size: 17px;
+    line-height: 1.44;
   }
 
   .detail-stats strong {
-    font-size: 17px;
+    font-size: 18px;
   }
 
   .detail-action-note {
@@ -1379,7 +1419,7 @@
   }
 
   .records-main-grid {
-    grid-template-columns: 240px minmax(0, 1fr) 300px;
+    grid-template-columns: 258px minmax(0, 1fr) 286px;
   }
 
   .records-panel,
@@ -1396,18 +1436,112 @@
     grid-template-rows: minmax(150px, 1.3fr) minmax(92px, 0.7fr);
   }
 
+  .service-user-card {
+    min-height: 132px;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 4px;
+    padding: 8px 10px;
+  }
+
+  .service-user-card-header {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .service-user-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 13px;
+  }
+
+  .service-user-heading strong {
+    font-size: 17px;
+  }
+
+  .service-user-heading em {
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+
+  .service-user-card p {
+    margin-top: 3px;
+    font-size: 13px;
+    line-height: 1.22;
+  }
+
+  .service-user-card small {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.22;
+  }
+
+  .recent-record-row {
+    min-height: 60px;
+    grid-template-columns: 36px 76px minmax(0, 1fr) 44px;
+    gap: 7px;
+    padding: 6px 8px;
+  }
+
+  .recent-record-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+  }
+
+  .recent-record-person strong,
+  .recent-record-medicine strong {
+    font-size: 15px;
+  }
+
+  .recent-record-person time,
+  .recent-record-row p {
+    font-size: 12px;
+  }
+
+  .recent-record-row em {
+    padding: 6px;
+    font-size: 11px;
+  }
+
   .today-plan-panel {
     grid-template-rows: 34px minmax(0, 1fr);
     gap: 6px;
   }
 
   .sync-status-card {
-    grid-template-columns: minmax(0, 1fr) 118px;
+    grid-template-columns: minmax(0, 1fr) 98px;
+    grid-template-rows: 48px 26px;
+    gap: 5px 8px;
+  }
+
+  .sync-cloud-heading {
+    gap: 8px;
+  }
+
+  .sync-cloud-heading > span {
+    width: 38px;
+    height: 38px;
+    border-radius: 13px;
+  }
+
+  .sync-cloud-heading p {
+    font-size: 11px;
+  }
+
+  .sync-cloud-heading h2 {
+    font-size: 19px;
+  }
+
+  .sync-status-meta span {
+    font-size: 11px;
   }
 
   .sync-status-card button {
-    min-height: 54px;
-    font-size: 15px;
+    min-height: 46px;
+    gap: 6px;
+    border-radius: 15px;
+    font-size: 13px;
   }
 
   /* Vitals */

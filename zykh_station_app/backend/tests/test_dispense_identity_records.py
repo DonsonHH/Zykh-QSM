@@ -16,6 +16,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app import db  # noqa: E402
 from app.routers.dispense import open_cabinet  # noqa: E402
 from app.schemas.dispense import DispenseConfirmRequest, DispenseOpenRequest  # noqa: E402
+from app.schemas.medicine import MedicineScanRegisterRequest  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.dispense_service import DispenseError, DispenseService  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
@@ -25,6 +26,11 @@ from app.services.records_service import RecordsService  # noqa: E402
 class SuccessfulQsmClient:
     def dispense(self, slot: str, quantity: int, dry_run: bool = False) -> dict[str, object]:
         return {"ok": True, "detail": f"slot={slot} quantity={quantity} dry_run={dry_run}"}
+
+
+class FailedQsmClient:
+    def dispense(self, slot: str, quantity: int, dry_run: bool = False) -> dict[str, object]:
+        return {"ok": False, "detail": "mock cabinet failure"}
 
 
 class RecordingArchiveService:
@@ -314,6 +320,79 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(len(self.service.list_records()), 1)
         self.assertEqual(self.records.get_recent_records(), [])
         self.assertEqual(self.records.get_summary().local_record_count, 0)
+
+    def test_medicine_history_count_includes_successful_confirmation_variants_only(self) -> None:
+        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
+        self.assertIsNotNone(medicine)
+        plan = self.records.create_today_plan(
+            TodayPlanCreateRequest(
+                time="11:45",
+                timing_label="医生确认",
+                medicine_id=medicine.id,
+                service_user_id="zhangsan",
+                dose="1丸",
+            )
+        )
+        entry_modes = (
+            ("药品页手动取药", "face", ""),
+            ("今日计划一键取药", "fingerprint", plan.id),
+            ("AI应急问询方案取药", "inquiry_confirmed", ""),
+        )
+
+        for reason, verification_method, today_plan_id in entry_modes:
+            result = self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason=reason,
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    target_user_id="zhangsan",
+                    target_user_name="张三",
+                    verification_method=verification_method,
+                    today_plan_id=today_plan_id,
+                ),
+                force_dry_run=False,
+            )
+            self.assertTrue(result.ok)
+
+        self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="接口演练",
+                confirmed_safety_notice=True,
+                target_user_id="zhangsan",
+                target_user_name="张三",
+                verification_method="fingerprint",
+            ),
+            force_dry_run=True,
+        )
+        failed = DispenseService(qsm_client=FailedQsmClient(), archive_service=self.archive).confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="开柜失败记录",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="zhangsan",
+                target_user_name="张三",
+                verification_method="face",
+            ),
+            force_dry_run=False,
+        )
+        self.assertFalse(failed.ok)
+
+        refreshed = MedicineService().get_medicine(medicine.id)
+        listed = next(item for item in MedicineService().list_medicines().medicines if item.id == medicine.id)
+        scanned = MedicineService().register_scan_result(MedicineScanRegisterRequest(barcode=medicine.barcode))
+        self.assertEqual(refreshed.dispense_count, 3)
+        self.assertEqual(listed.dispense_count, 3)
+        self.assertFalse(scanned.created)
+        self.assertEqual(scanned.medicine.dispense_count, 3)
 
 
 if __name__ == "__main__":

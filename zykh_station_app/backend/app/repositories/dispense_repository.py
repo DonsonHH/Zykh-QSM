@@ -5,6 +5,19 @@ from ..schemas.dispense import DispenseRecord
 
 
 class DispenseRepository:
+    def successful_counts_by_medicine(self) -> dict[str, int]:
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT medicine_id, COUNT(*) AS dispense_count
+                FROM dispense_records
+                WHERE dry_run=0 AND qsm_ok=1
+                GROUP BY medicine_id
+                """
+            ).fetchall()
+        return {str(row["medicine_id"]): int(row["dispense_count"]) for row in rows}
+
     def list_records(self) -> list[DispenseRecord]:
         db.init_db()
         with db.connect() as conn:

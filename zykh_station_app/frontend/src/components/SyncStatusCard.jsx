@@ -23,7 +23,7 @@ export function SyncStatusCard({ syncStatus, syncing, networkStatus, onSync }) {
   const detail = localMode
     ? "联网后自动同步至微信小程序"
     : synced
-      ? `微信小程序云端 · ${formatSyncTime(syncStatus?.last_sync_at)}`
+      ? `最近同步 ${formatSyncTime(syncStatus?.last_sync_at)}`
       : "正在等待同步至微信小程序云端";
 
   return (

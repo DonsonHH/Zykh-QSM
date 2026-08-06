@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScanLine } from "lucide-react";
 import { confirmDispense } from "../api/dispense.js";
-import { loadMedicines } from "../api/medicines.js";
+import { loadMedicine, loadMedicines } from "../api/medicines.js";
 import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
@@ -189,6 +189,25 @@ export function Medicines({ notify, focus, onNavigate }) {
   }, [notify]);
 
   useEffect(() => {
+    const refreshDispenseHistory = (event) => {
+      const medicineId = event.detail?.medicine_id;
+      if (!medicineId) return;
+      loadMedicine(medicineId)
+        .then((response) => {
+          const updated = response.medicine;
+          if (!updated?.id) return;
+          setMedicines((items) => items.map((item) => item.id === updated.id ? updated : item));
+          setSelectedMedicine((current) => current?.id === updated.id ? updated : current);
+          setDetailMedicine((current) => current?.id === updated.id ? updated : current);
+          setConfirmMedicine((current) => current?.id === updated.id ? updated : current);
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("zykh:dispense-recorded", refreshDispenseHistory);
+    return () => window.removeEventListener("zykh:dispense-recorded", refreshDispenseHistory);
+  }, []);
+
+  useEffect(() => {
     if (!focus || medicines.length === 0) {
       return;
     }
@@ -252,6 +271,11 @@ export function Medicines({ notify, focus, onNavigate }) {
       .then((data) => {
         setModalResult(data.message);
         notify(data.message);
+        if (data.ok && !data.dry_run) {
+          window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
+            detail: { medicine_id: payload.medicine_id }
+          }));
+        }
         return data;
       })
       .catch((error) => {

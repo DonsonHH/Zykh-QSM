@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.medicine import (
     Medicine,
@@ -20,12 +21,15 @@ class MedicineService:
         self,
         repository: MedicineRepository | None = None,
         guidance_service: MedicineGuidanceService | None = None,
+        dispense_repository: DispenseRepository | None = None,
     ) -> None:
         self.repository = repository or MedicineRepository()
         self.guidance_service = guidance_service or MedicineGuidanceService(repository=self.repository)
+        self.dispense_repository = dispense_repository or DispenseRepository()
 
     def list_medicines(self) -> MedicineListResponse:
-        medicines = self.repository.list_all()
+        counts = self.dispense_repository.successful_counts_by_medicine()
+        medicines = [self._with_dispense_count(item, counts) for item in self.repository.list_all()]
         categories = ["全部"]
         for medicine in medicines:
             if medicine.category not in categories:
@@ -33,7 +37,8 @@ class MedicineService:
         return MedicineListResponse(total=len(medicines), categories=categories, medicines=medicines)
 
     def get_medicine(self, medicine_id: str) -> Medicine | None:
-        return self.repository.get_by_id(medicine_id)
+        medicine = self.repository.get_by_id(medicine_id)
+        return self._with_dispense_count(medicine) if medicine is not None else None
 
     def update_medicine(self, medicine_id: str, request: MedicineUpdateRequest) -> MedicineUpdateResponse | None:
         current = self.repository.get_by_id(medicine_id)
@@ -65,6 +70,7 @@ class MedicineService:
             return None
         if base_changed:
             medicine = self.guidance_service.enrich_medicine(medicine.id) or medicine
+        medicine = self._with_dispense_count(medicine)
         guidance_message = "药品说明资料需核对实物包装。" if medicine.guidance_review_required else ""
         return MedicineUpdateResponse(
             ok=True,
@@ -77,6 +83,7 @@ class MedicineService:
         if barcode:
             existing = self.repository.get_by_barcode(barcode)
             if existing:
+                existing = self._with_dispense_count(existing)
                 return MedicineScanRegisterResponse(
                     ok=True,
                     created=False,
@@ -113,9 +120,18 @@ class MedicineService:
             safety_note=request.safety_note or "",
         )
         medicine = self.guidance_service.enrich_medicine(medicine.id) or medicine
+        medicine = self._with_dispense_count(medicine)
         return MedicineScanRegisterResponse(
             ok=True,
             created=True,
             message=f"已录入 {medicine.hardware_slot} 号仓，请核对药品说明、用法用量与安全提示。",
             medicine=medicine,
         )
+
+    def _with_dispense_count(
+        self,
+        medicine: Medicine,
+        counts: dict[str, int] | None = None,
+    ) -> Medicine:
+        history = counts if counts is not None else self.dispense_repository.successful_counts_by_medicine()
+        return medicine.model_copy(update={"dispense_count": history.get(medicine.id, 0)})

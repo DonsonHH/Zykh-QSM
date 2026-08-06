@@ -26,6 +26,7 @@ class Medicine(BaseModel):
     guidance_review_required: bool = True
     package_verified: bool = True
     guidance_updated_at: str = ""
+    dispense_count: int = 0
 
 
 class MedicineListResponse(BaseModel):

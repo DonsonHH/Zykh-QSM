@@ -34,7 +34,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
     onQuickDispense?.(plan);
   }
 
-  const visiblePlans = useMemo(() => selectNearestMedicationPlans(pendingPlans, now, 3), [now, pendingPlans]);
+  const visiblePlans = useMemo(() => selectNearestMedicationPlans(pendingPlans, now, 4), [now, pendingPlans]);
 
   return (
     <section className="card task-card medication-summary-card">
@@ -55,7 +55,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
       </div>
 
       <div
-        className={`home-medication-list plan-count-${visiblePlans.length}${visiblePlans.length === 3 ? " is-full" : ""}`}
+        className={`home-medication-list plan-count-${visiblePlans.length}${visiblePlans.length === 4 ? " is-full" : ""}`}
         aria-label="最近的待执行用药任务"
       >
         {visiblePlans.length ? visiblePlans.map((plan) => (

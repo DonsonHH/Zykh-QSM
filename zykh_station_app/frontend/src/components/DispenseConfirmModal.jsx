@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, Fingerprint, Minus, Plus, RotateCcw, ScanFace, ShieldCheck, UserRound, X } from "lucide-react";
+import { CheckCircle2, Fingerprint, History, RotateCcw, ScanFace, ShieldCheck, UserRound, X } from "lucide-react";
 import { identifyFingerprint } from "../api/fingerprint.js";
 import { verifyDispenseIdentity } from "../api/identity.js";
 import { updateMedicine } from "../api/medicines.js";
@@ -62,7 +62,6 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   if (currentMedicine) medicineRef.current = currentMedicine;
   const medicine = currentMedicine || medicineRef.current;
   const { present, exiting } = useExitPresence(Boolean(open && currentMedicine));
-  const [quantity, setQuantity] = useState(1);
   const [method, setMethod] = useState(plan ? "fingerprint" : "face");
   const [phase, setPhase] = useState("idle");
   const [verificationError, setVerificationError] = useState("");
@@ -94,7 +93,6 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
       const initialMethod = plan ? "fingerprint" : "face";
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
-      setQuantity(1);
       setMethod(initialMethod);
       setPhase("idle");
       setVerificationError("");
@@ -172,10 +170,6 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
 
   if (!present || !medicine) {
     return null;
-  }
-
-  function changeQuantity(nextQuantity) {
-    setQuantity(Math.max(1, Math.min(30, nextQuantity)));
   }
 
   function playSpeech(key, text) {
@@ -331,7 +325,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     const dispense = await onSubmit({
       medicine_id: medicine.id,
       slot: medicine.slot,
-      quantity,
+      quantity: 1,
       reason: guest ? "访客二次确认取药" : "家庭药柜取药确认",
       confirmed_safety_notice: true,
       confirm_real_dispense: true,
@@ -592,25 +586,16 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
               {planScheduleNote ? <small>{planScheduleNote}</small> : null}
             </div>
 
-            <label className="quantity-control" htmlFor="dispense-quantity">
-              <span>取药数量</span>
+            <div className="dispense-history-summary" aria-label={`该药历史成功取药 ${medicine.dispense_count || 0} 次`}>
+              <span className="dispense-history-icon" aria-hidden="true">
+                <History size={25} />
+              </span>
               <div>
-                <button type="button" onClick={() => changeQuantity(quantity - 1)} aria-label="减少数量">
-                  <Minus size={22} aria-hidden="true" />
-                </button>
-                <input
-                  id="dispense-quantity"
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={quantity}
-                  onChange={(event) => changeQuantity(Number(event.target.value) || 1)}
-                />
-                <button type="button" onClick={() => changeQuantity(quantity + 1)} aria-label="增加数量">
-                  <Plus size={22} aria-hidden="true" />
-                </button>
+                <span>历史取药次数</span>
+                <strong>{medicine.dispense_count || 0}<small>次</small></strong>
               </div>
-            </label>
+              <p>仅统计已成功开柜的取药记录</p>
+            </div>
 
             <div className="modal-warning compact-warning">
               <strong>用药提醒</strong>

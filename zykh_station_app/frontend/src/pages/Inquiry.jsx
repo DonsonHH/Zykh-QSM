@@ -346,6 +346,12 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         setTreatmentAction(data);
         setSession(data.session);
         notify(data.message || "方案对应药柜已处理");
+        const completedItem = data.items?.[expectedItemIndex];
+        if (completedItem?.ok && !completedItem.dry_run && completedItem.medicine_id) {
+          window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
+            detail: { medicine_id: completedItem.medicine_id }
+          }));
+        }
         if (data.status !== "opening") break;
         expectedItemIndex = Number(data.completed_count || 0);
         await new Promise((resolve) => window.setTimeout(resolve, 1800));

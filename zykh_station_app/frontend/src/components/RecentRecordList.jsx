@@ -11,6 +11,7 @@ export function RecentRecordList({ records }) {
     <section className="records-panel recent-records-panel">
       <div className="records-panel-heading">
         <h2>家庭取药记录</h2>
+        <span>{records?.length || 0} 条</span>
       </div>
       <div className="recent-record-list">
         {(records || []).map((record) => {
@@ -28,7 +29,9 @@ export function RecentRecordList({ records }) {
                 <strong>{record.title}</strong>
                 <p>{record.description ? `取走 ${record.description}` : "已完成取药"}</p>
               </div>
-              {record.target_user_type === "guest" ? <em className="record-guest-label">游客</em> : null}
+              <em className={record.target_user_type === "guest" ? "record-guest-label" : "record-family-label"}>
+                {record.target_user_type === "guest" ? "访客" : "家庭"}
+              </em>
             </article>
           );
         })}

@@ -56,6 +56,11 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
         setModalResult(response.message);
         notify(response.message);
         if (response.ok) {
+          if (!response.dry_run) {
+            window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
+              detail: { medicine_id: payload.medicine_id }
+            }));
+          }
           onDashboardRefresh?.();
         }
         return response;
