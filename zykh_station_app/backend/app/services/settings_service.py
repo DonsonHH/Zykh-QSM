@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import subprocess
@@ -12,10 +11,7 @@ from .. import db
 from ..config import settings
 from ..schemas.settings import BasicSettings, BasicSettingsResponse, BasicSettingsUpdateRequest
 from .network_service import NetworkService
-
-SPEAKER_GAIN_MAX = 255
-SPEAKER_GAIN_AUDIBLE_FLOOR = 128
-SPEAKER_PERCENT_AUDIBLE_FLOOR = 1
+from .speaker_volume import get_persisted_speaker_gain, save_persisted_speaker_gain, speaker_gain_to_percent
 
 
 class SettingsService:
@@ -27,7 +23,7 @@ class SettingsService:
             wifi_enabled=wifi_enabled,
             sim_enabled=sim_enabled,
             network_mode=db.get_setting("network_mode", settings.network_preferred_mode) or "sim",
-            speaker_volume=self._int_setting("speaker_volume", 230, 0, 255),
+            speaker_volume=get_persisted_speaker_gain(),
             microphone_volume=self._int_setting("microphone_volume", 70, 0, 100),
             display_brightness=self._int_setting("display_brightness", 100, 20, 100),
             idle_timeout_seconds=self._int_setting("idle_timeout_seconds", 90, 0, 3600),
@@ -60,8 +56,10 @@ class SettingsService:
                 NetworkService().set_mode(mode)
 
         if request.speaker_volume is not None:
-            db.set_setting("speaker_volume", str(request.speaker_volume))
-            self._set_host_speaker_volume(request.speaker_volume)
+            speaker_gain = save_persisted_speaker_gain(request.speaker_volume)
+            warning = self._set_host_speaker_volume(speaker_gain)
+            if warning:
+                warnings.append(warning)
 
         if request.microphone_volume is not None:
             db.set_setting("microphone_volume", str(request.microphone_volume))
@@ -152,24 +150,12 @@ class SettingsService:
             return ""
         return str(tether.get("message") or "SIM 开关状态已保存，但外设网络接口未能关闭。")
 
-    def _set_host_speaker_volume(self, volume: int) -> None:
-        percent = self._speaker_gain_to_percent(volume)
-        self._run(["pactl", "set-sink-volume", "qsm_relay", f"{percent}%"], timeout=3)
-
-    @staticmethod
-    def _speaker_gain_to_percent(volume: int) -> int:
-        gain = max(0, min(int(volume), SPEAKER_GAIN_MAX))
-        if gain == 0:
-            return 0
-        audible_gain = max(SPEAKER_GAIN_AUDIBLE_FLOOR, gain)
-        floor_db = 20 * math.log10(SPEAKER_GAIN_AUDIBLE_FLOOR / SPEAKER_GAIN_MAX)
-        decibels = 20 * math.log10(audible_gain / SPEAKER_GAIN_MAX)
-        position = (decibels - floor_db) / -floor_db
-        percent = round(
-            SPEAKER_PERCENT_AUDIBLE_FLOOR
-            + position * (100 - SPEAKER_PERCENT_AUDIBLE_FLOOR)
-        )
-        return max(SPEAKER_PERCENT_AUDIBLE_FLOOR, min(percent, 100))
+    def _set_host_speaker_volume(self, volume: int) -> str:
+        percent = speaker_gain_to_percent(volume)
+        result = self._run(["pactl", "set-sink-volume", "qsm_relay", f"{percent}%"], timeout=3)
+        if result and result.returncode == 0:
+            return ""
+        return "外放音量已保存，但本机音频转发暂未就绪。"
 
     @staticmethod
     def _qsm_mic_volume(volume: int) -> dict[str, object]:

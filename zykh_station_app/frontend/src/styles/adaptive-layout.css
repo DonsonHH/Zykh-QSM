@@ -1781,6 +1781,13 @@
     font-size: 15px;
   }
 
+  .basic-settings-range-label > svg {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    padding: 6px;
+  }
+
   .network-mode-control {
     grid-template-rows: repeat(2, minmax(84px, 1fr));
     gap: 10px;
@@ -1791,14 +1798,14 @@
   }
 
   .sound-panel .basic-settings-range {
-    min-height: 68px;
-    grid-template-rows: auto 30px;
-    gap: 3px 8px;
-    padding: 5px 11px 3px;
+    min-height: 78px;
+    grid-template-rows: auto 44px;
+    gap: 0 8px;
+    padding: 3px 11px 1px;
   }
 
   .sound-panel .basic-settings-range input {
-    height: 30px;
+    height: 44px;
   }
 
   .sound-section-body {
@@ -1812,14 +1819,14 @@
   }
 
   .display-panel .basic-settings-range {
-    min-height: 64px;
-    grid-template-rows: auto 28px;
-    gap: 2px 8px;
-    padding: 4px 10px 2px;
+    min-height: 78px;
+    grid-template-rows: auto 44px;
+    gap: 0 8px;
+    padding: 3px 10px 1px;
   }
 
   .display-panel .basic-settings-range input {
-    height: 28px;
+    height: 44px;
   }
 
   .settings-test-sound {
@@ -1833,7 +1840,7 @@
   }
 
   .idle-time-setting select {
-    height: 40px;
+    height: 44px;
     padding-inline: 7px;
     font-size: 13px;
   }

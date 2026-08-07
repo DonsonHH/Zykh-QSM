@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
 const settingsStyles = await readFile(`${root}src/styles/settings.css`, "utf8");
+const adaptiveStyles = await readFile(`${root}src/styles/adaptive-layout.css`, "utf8");
 const designPolish = await readFile(`${root}src/styles/design-polish.css`, "utf8");
 
 assert.match(settingsPage, /className=\{`settings-card-grid/, "settings do not expose a clear card workspace");
@@ -43,6 +44,36 @@ assert.match(
   designPolish,
   /\.settings-mode-card,[\s\S]*\.settings-preference-card,[\s\S]*border-color:\s*var\(--border-strong\)/,
   "settings cards are not part of the shared kiosk surface system"
+);
+assert.match(
+  settingsStyles,
+  /\.network-mode-copy small\s*\{[^}]*color:\s*var\(--muted\)[^}]*font-size:\s*13px/,
+  "network mode helper text is too small or low contrast"
+);
+assert.match(
+  settingsStyles,
+  /--settings-control-border:\s*#75879d[\s\S]*--settings-track-muted:\s*#75879d/,
+  "settings control edges do not meet the intended non-text contrast"
+);
+assert.match(
+  settingsStyles,
+  /\.basic-settings-range input\s*\{[^}]*height:\s*44px/,
+  "range controls do not expose a 44px touch target"
+);
+assert.doesNotMatch(
+  adaptiveStyles,
+  /\.\w*-?panel \.basic-settings-range input\s*\{[^}]*height:\s*(?:2\d|3\d)px/,
+  "compact kiosk rules shrink a range control below its touch target"
+);
+assert.match(
+  adaptiveStyles,
+  /\.basic-settings-range-label > svg\s*\{[^}]*width:\s*30px[^}]*height:\s*30px/,
+  "compact range labels can force the 44px input outside its card"
+);
+assert.match(
+  adaptiveStyles,
+  /\.idle-time-setting select\s*\{[^}]*height:\s*44px/,
+  "compact idle-time selector is below the kiosk touch target"
 );
 
 console.log("settings layout contract: ok");

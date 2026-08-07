@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BadgeCheck, Camera, PackagePlus, Pill, ScanLine } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Camera, LoaderCircle, PackagePlus, Pill, ScanLine } from "lucide-react";
 import { loadQsmCapabilities, registerScannedMedicine, scanMedicine } from "../api/qsm.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
@@ -249,9 +249,12 @@ export function Scan({ notify, onNavigate }) {
             className="primary-action"
             type="button"
             disabled={!result || registering}
+            aria-busy={registering}
             onClick={handleRegisterMedicine}
           >
-            <PackagePlus size={24} aria-hidden="true" />
+            {registering
+              ? <LoaderCircle className="localized-loader" size={24} aria-hidden="true" />
+              : <PackagePlus size={24} aria-hidden="true" />}
             <span>{registering ? "录入中..." : "完成核验并录入"}</span>
           </button>
         </div>

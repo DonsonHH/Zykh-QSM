@@ -49,9 +49,14 @@ function delay(milliseconds) {
 async function fulfillApiRequest({ requestId, request }) {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
-  apiRequests.push({ method, path: url.pathname });
+  let body = null;
+  if (request.postData) {
+    try { body = JSON.parse(request.postData); } catch { body = request.postData; }
+  }
+  apiRequests.push({ method, path: url.pathname, body });
   let payload = { ok: true };
   if (url.pathname === "/api/settings/basic") {
+    if (method === "PATCH" && body && typeof body === "object") Object.assign(mockSettings, body);
     payload = { settings: mockSettings, warnings: [] };
   } else if (url.pathname === "/api/network/status") {
     payload = {
@@ -224,6 +229,18 @@ try {
     const main = settings.getBoundingClientRect();
     const cards = [...document.querySelectorAll('.settings-card')];
     const cardBounds = cards.map((card) => card.getBoundingClientRect());
+    const rangeControls = [...document.querySelectorAll('.basic-settings-range')].map((host) => {
+      const hostBounds = host.getBoundingClientRect();
+      const inputBounds = host.querySelector('input').getBoundingClientRect();
+      return {
+        hostTop: hostBounds.top,
+        hostBottom: hostBounds.bottom,
+        inputTop: inputBounds.top,
+        inputBottom: inputBounds.bottom,
+        inputHeight: inputBounds.height,
+        contained: inputBounds.top >= hostBounds.top - 0.5 && inputBounds.bottom <= hostBounds.bottom + 0.5
+      };
+    });
     const initialSpeakerPercent = document.querySelector('.sound-panel .basic-settings-range output')?.textContent.trim();
     const modeButtons = [...document.querySelectorAll('.network-mode-button')];
 
@@ -248,6 +265,20 @@ try {
     await waitFor('.settings-autosave-state.saved');
     await new Promise((resolve) => setTimeout(resolve, 1050));
 
+    valueSetter.call(range, '50');
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor('.settings-autosave-state.pending');
+    await waitFor('.settings-autosave-state.saved');
+    const calibratedSavedPercent = document.querySelector('.sound-panel .basic-settings-range output')?.textContent.trim();
+    const testButton = document.querySelector('.settings-test-sound');
+    testButton.click();
+    await waitFor('.settings-test-sound', (element) => !element.disabled && element.textContent.includes('测试外放'));
+
+    valueSetter.call(range, String(initialSpeakerValue));
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor('.settings-autosave-state.pending');
+    await waitFor('.settings-autosave-state.saved');
+
     const cueBounds = cueAnimations[0]?.effect?.target?.getBoundingClientRect();
     return {
       viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
@@ -265,8 +296,11 @@ try {
         bounds.right <= main.right + 1 && bounds.bottom <= main.bottom + 1
       ),
       cardRadius: getComputedStyle(cards[0]).borderRadius,
+      rangeControls,
+      idleSelectHeight: document.querySelector('.idle-time-setting select')?.getBoundingClientRect().height || 0,
       minimumModeButtonHeight: Math.min(...modeButtons.map((button) => button.getBoundingClientRect().height)),
       initialSpeakerPercent,
+      calibratedSavedPercent,
       pendingSave,
       finalSaveLabel: document.querySelector('.settings-autosave-state')?.textContent.trim(),
       finalSpeakerPercent: document.querySelector('.sound-panel .basic-settings-range output')?.textContent.trim()
@@ -277,6 +311,9 @@ try {
   result.interceptedApiRequests = apiRequests;
   result.settingsWriteRequests = apiRequests.filter(
     ({ method, path }) => path === "/api/settings/basic" && !["GET", "HEAD"].includes(method)
+  );
+  result.beepRequests = apiRequests.filter(
+    ({ method, path }) => method === "POST" && path === "/api/audio/beep"
   );
 
   if (screenshotPath) {
@@ -297,6 +334,9 @@ try {
   assert.equal(result.mainOverflow, 0, "settings main area overflows at 960x600");
   assert.ok(Number.parseFloat(result.cardRadius) >= 20, "settings cards lost the shared kiosk radius");
   assert.ok(result.minimumModeButtonHeight >= 84, "network mode touch target is too small");
+  assert.ok(result.rangeControls.every(({ contained }) => contained), "a range input overflows its visible control");
+  assert.ok(result.rangeControls.every(({ inputHeight }) => inputHeight >= 44), "a range input is below the 44px touch target");
+  assert.ok(result.idleSelectHeight >= 44, "idle-time selector is below the 44px touch target");
   assert.equal(result.initialSpeakerPercent, "85%", "saved raw gain 230 is not shown using the calibrated scale");
   assert.ok(result.cueCount >= 1, "settings navigation produced no localized page cue");
   assert.deepEqual(result.cueProperties.sort(), ["opacity", "transform"], "page cue animates unsupported properties");
@@ -310,7 +350,17 @@ try {
     result.interceptedApiRequests.some(({ method, path }) => method === "POST" && path === "/api/fingerprint/wake"),
     "browser API interception did not catch the app startup hardware request"
   );
-  assert.deepEqual(result.settingsWriteRequests, [], "settings live test attempted to save its temporary slider value");
+  assert.equal(result.calibratedSavedPercent, "50%", "calibrated slider did not remain stable after autosave");
+  assert.deepEqual(
+    result.settingsWriteRequests.map(({ body }) => body?.speaker_volume),
+    [180, 230],
+    "isolated autosave did not persist 50% as raw 180 and restore the original raw 230"
+  );
+  assert.deepEqual(
+    result.beepRequests.map(({ body }) => body?.volume),
+    [180],
+    "isolated speaker test did not send the same calibrated raw 180"
+  );
   assert.equal(result.finalSaveLabel, "设置已保存");
   assert.equal(result.finalSpeakerPercent, result.initialSpeakerPercent);
 

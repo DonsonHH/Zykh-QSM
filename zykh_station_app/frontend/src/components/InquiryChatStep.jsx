@@ -82,7 +82,8 @@ export function InquiryChatStep({
   );
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    bottomRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "end" });
   }, [localPending, sending, session.messages, streamedReply]);
 
   useEffect(() => {

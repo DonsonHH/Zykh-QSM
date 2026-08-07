@@ -35,6 +35,27 @@ fail_hard() {
   exit 1
 }
 
+apply_saved_sink_volume() {
+  if ! command -v pactl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    fail_soft "无法恢复已保存的外放音量：缺少 pactl 或 python3。"
+    return 0
+  fi
+
+  volume_status="$(curl -fsS --max-time 3 "$BACKEND_URL/api/audio/host/speaker-volume" 2>/dev/null || true)"
+  saved_percent="$(printf '%s' "$volume_status" | python3 -c 'import json, sys; value=json.load(sys.stdin).get("percent"); print(value if isinstance(value, int) and 0 <= value <= 100 else "")' 2>/dev/null || true)"
+  case "$saved_percent" in
+    ''|*[!0-9]*)
+      fail_soft "未能读取已保存的外放音量，本次保留系统当前音量。"
+      return 0
+      ;;
+  esac
+  if pactl set-sink-volume "$SINK_NAME" "${saved_percent}%" >/dev/null 2>&1; then
+    log "已恢复外放音量：${saved_percent}%"
+  else
+    fail_soft "已读取外放音量 ${saved_percent}%，但未能应用到 $SINK_NAME。"
+  fi
+}
+
 cleanup() {
   if [ "$CLEANED_UP" = "1" ]; then
     return 0
@@ -86,6 +107,7 @@ if [ -z "$SOURCE" ] && command -v pactl >/dev/null 2>&1; then
 
   if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx "$SINK_NAME"; then
     SOURCE="${SINK_NAME}.monitor"
+    apply_saved_sink_volume
     if [ "$SET_DEFAULT" = "1" ]; then
       pactl set-default-sink "$SINK_NAME" >/dev/null 2>&1 || true
       log "已将本机默认音频输出切换到：$SINK_NAME"

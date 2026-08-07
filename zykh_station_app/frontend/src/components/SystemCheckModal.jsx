@@ -64,6 +64,9 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
           onNetworkStatusChange?.(nextNetwork);
         }
         setAudio(nextAudio);
+        if (Number.isFinite(Number(nextAudio?.speaker_volume))) {
+          setVolumePercent(speakerGainToPercent(nextAudio.speaker_volume));
+        }
       })
       .catch((error) => {
         setCheck(fallbackCheck);

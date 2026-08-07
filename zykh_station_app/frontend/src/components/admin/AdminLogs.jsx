@@ -47,7 +47,7 @@ export function AdminLogs({ notify, onSessionExpired }) {
   return (
     <div className="admin-view admin-logs-view">
       <div className="admin-page-heading">
-        <div><h2>运行日志</h2><p>仅展示允许读取的本机日志，密钥和令牌会自动遮盖</p></div>
+        <div className="admin-section-entry-cue"><h2>运行日志</h2><p>仅展示允许读取的本机日志，密钥和令牌会自动遮盖</p></div>
         <div className="admin-live-log-state"><span />实时更新中</div>
       </div>
       <section className="admin-log-shell">

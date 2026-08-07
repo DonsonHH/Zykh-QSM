@@ -733,6 +733,13 @@ class QsmClient:
         }
 
     def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
+        if volume is not None and int(volume) <= 0:
+            return {
+                "ok": True,
+                "muted": True,
+                "qsm_mode": self.mode,
+                "detail": "当前为静音，未向外设发送提示音。",
+            }
         payload: dict[str, Any] = {}
         if volume is not None:
             payload["volume"] = max(0, min(int(volume), 255))

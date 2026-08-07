@@ -28,6 +28,7 @@ export function Records({ notify, networkStatus }) {
   const [serviceUsers, setServiceUsers] = useState([]);
   const [todayPlans, setTodayPlans] = useState([]);
   const [syncing, setSyncing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const snapshotRef = useRef("");
 
   const refreshRecords = useCallback(({ silent = false } = {}) => {
@@ -55,9 +56,15 @@ export function Records({ notify, networkStatus }) {
   }, [notify]);
 
   useEffect(() => {
-    refreshRecords();
+    let active = true;
+    refreshRecords().finally(() => {
+      if (active) setInitialLoading(false);
+    });
     const timer = window.setInterval(() => refreshRecords({ silent: true }), RECORDS_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [refreshRecords]);
 
   function handleSync() {
@@ -73,7 +80,7 @@ export function Records({ notify, networkStatus }) {
 
   return (
     <main className="records-page" id="main-content">
-      <RecordSummaryCards summary={summary} />
+      <RecordSummaryCards summary={summary} loading={initialLoading} />
       <div className="records-main-grid">
         <ServiceUserList users={serviceUsers} />
         <RecentRecordList records={records} />

@@ -83,7 +83,7 @@ export function AdminCabinet({ notify, onSessionExpired }) {
   return (
     <div className="admin-view admin-cabinet-view">
       <div className="admin-page-heading">
-        <div><h2>药柜维护</h2><p>编辑 1 至 23 号仓位信息并进行现场开柜测试</p></div>
+        <div className="admin-section-entry-cue"><h2>药柜维护</h2><p>编辑 1 至 23 号仓位信息并进行现场开柜测试</p></div>
         <button type="button" className="admin-button secondary compact" onClick={refresh}><RefreshCw size={17} />刷新</button>
       </div>
       <div className="admin-split-view cabinet-split-view">

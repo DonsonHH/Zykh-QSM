@@ -27,18 +27,10 @@ from ..services.local_asr_client import LocalAsrClient
 from ..services.host_offline_tts import get_host_offline_tts
 from ..services.qsm_client import QsmClient
 from ..services.qwen_realtime_tts import QwenRealtimeTts
+from ..services.speaker_volume import get_persisted_speaker_gain, speaker_gain_to_percent
 
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 _active_tts_tasks: set[asyncio.Task] = set()
-
-
-def _saved_volume(key: str, default: int, minimum: int, maximum: int) -> int:
-    try:
-        value = int(db.get_setting(key, str(default)))
-    except ValueError:
-        value = default
-    return max(minimum, min(value, maximum))
-
 
 class SpeakRequest(BaseModel):
     text: str
@@ -88,6 +80,7 @@ def host_audio_status() -> dict[str, object]:
         else []
     )
     speaker_available = _tcp_available(settings.qsm_api_base, timeout=0.45)
+    speaker_gain = get_persisted_speaker_gain()
     return {
         "ok": microphone_available,
         "microphone_available": microphone_available,
@@ -97,10 +90,18 @@ def host_audio_status() -> dict[str, object]:
         "microphone_status": microphone,
         "speaker_route": "qsm-pcm-playback",
         "speaker_available": speaker_available,
+        "speaker_volume": speaker_gain,
+        "speaker_volume_percent": speaker_gain_to_percent(speaker_gain),
         "relay_supported": True,
         "offline_tts": offline_tts,
         "relay_note": "离线语音在主机生成，再通过低延迟 PCM 实时流发送到外设喇叭。",
     }
+
+
+@router.get("/host/speaker-volume")
+def host_speaker_volume() -> dict[str, object]:
+    gain = get_persisted_speaker_gain()
+    return {"ok": True, "gain": gain, "percent": speaker_gain_to_percent(gain)}
 
 
 @router.post("/host/mic-volume")
@@ -173,7 +174,7 @@ async def audio_speak(request: SpeakRequest) -> dict[str, object]:
 
 async def _audio_speak_impl(request: SpeakRequest) -> dict[str, object]:
     client = QsmClient()
-    volume = request.volume if request.volume is not None else _saved_volume("speaker_volume", 230, 0, 255)
+    volume = request.volume if request.volume is not None else get_persisted_speaker_gain()
     network_mode = _tts_mode_for_network()
     requested_mode = "offline" if network_mode == "offline" else _normalize_tts_mode(request.mode) or network_mode
     result: dict[str, object]
@@ -224,9 +225,14 @@ async def _audio_speak_impl(request: SpeakRequest) -> dict[str, object]:
 
 @router.post("/beep")
 def audio_beep(request: BeepRequest | None = None) -> dict[str, object]:
+    volume = request.volume if request and request.volume is not None else get_persisted_speaker_gain()
+    volume = max(0, min(int(volume), 255))
+    if volume == 0:
+        message = "当前为静音，未播放提示音。"
+        _record("提示音", "提示音测试", message, True)
+        return {"ok": True, "muted": True, "message": message, "raw": {"ok": True, "muted": True}}
     client = QsmClient()
     client.audio_stream_stop()
-    volume = request.volume if request and request.volume is not None else _saved_volume("speaker_volume", 230, 0, 255)
     result = client.audio_beep(volume)
     _record("提示音", "提示音测试", "已请求外设播放提示音。" if result.get("ok") else str(result.get("error_message") or "提示音失败。"), bool(result.get("ok")))
     return {"ok": bool(result.get("ok")), "message": result.get("detail") or result.get("error_message") or "", "raw": result}

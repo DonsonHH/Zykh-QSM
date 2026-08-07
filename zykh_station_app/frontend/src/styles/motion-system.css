@@ -135,6 +135,21 @@ html[data-page-transition="backward"] .page-entry-cue {
   }
 }
 
+.admin-section-entry-cue {
+  animation: kiosk-admin-section-cue var(--motion-control) var(--ease-fluid) both;
+}
+
+@keyframes kiosk-admin-section-cue {
+  from {
+    opacity: 0.58;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* Short, localized entrances restore visual continuity without animating a full screen. */
 .idle-wake-button {
   animation: idle-wake-enter 320ms var(--ease-fluid) both;
@@ -237,7 +252,7 @@ html[data-page-transition="backward"] .page-entry-cue {
 .inquiry-assistant-mic,
 .inquiry-voice-wave i,
 .quick-action-cta.vitals-cta::after {
-  animation: none;
+  animation: none !important;
 }
 
 .inquiry-assistant-orbit.orbit-two {
@@ -245,7 +260,7 @@ html[data-page-transition="backward"] .page-entry-cue {
   transform: scale(1);
 }
 
-.quick-action-cta.vitals-cta::after { opacity: 0; }
+.quick-action-cta.vitals-cta::after { opacity: 0 !important; }
 
 @media (hover: hover) and (pointer: fine) {
   .bottom-nav button:not(.active):hover,
@@ -260,6 +275,7 @@ html[data-page-transition="backward"] .page-entry-cue {
   .idle-wake-area h1,
   .idle-wake-glyph,
   .idle-reminder-icon svg:last-child,
+  .admin-section-entry-cue,
   html[data-page-transition] .page-entry-cue,
   html[data-page-transition] .bottom-nav button.active .bottom-nav-icon {
     animation: none !important;

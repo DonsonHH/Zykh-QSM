@@ -1,6 +1,7 @@
 const SPEAKER_GAIN_MAX = 255;
 const SPEAKER_GAIN_AUDIBLE_FLOOR = 128;
 const SPEAKER_PERCENT_AUDIBLE_FLOOR = 1;
+const LEGACY_SPEAKER_FLOOR_DB = -60;
 const SPEAKER_AUDIBLE_FLOOR_DB = 20 * Math.log10(SPEAKER_GAIN_AUDIBLE_FLOOR / SPEAKER_GAIN_MAX);
 
 function clamp(value, minimum, maximum) {
@@ -9,7 +10,15 @@ function clamp(value, minimum, maximum) {
 
 export function normalizeSpeakerGain(gain) {
   const normalized = clamp(Math.round(Number(gain) || 0), 0, SPEAKER_GAIN_MAX);
-  return normalized === 0 ? 0 : Math.max(SPEAKER_GAIN_AUDIBLE_FLOOR, normalized);
+  if (normalized === 0 || normalized >= SPEAKER_GAIN_AUDIBLE_FLOOR) return normalized;
+
+  const decibels = 20 * Math.log10(normalized / SPEAKER_GAIN_MAX);
+  const legacyPercent = clamp(
+    Math.round(((decibels - LEGACY_SPEAKER_FLOOR_DB) / -LEGACY_SPEAKER_FLOOR_DB) * 100),
+    0,
+    100
+  );
+  return speakerPercentToGain(legacyPercent);
 }
 
 export function speakerGainToPercent(gain) {

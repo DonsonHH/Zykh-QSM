@@ -83,7 +83,7 @@ export function AdminConsole({ onExit }) {
       <main className="admin-login-page" id="main-content">
         <section className="admin-login-panel">
           <BrandLogoImage size={70} />
-          <div className="admin-login-copy"><h1>设备调试台</h1><p>验证管理员口令后进入</p></div>
+          <div className="admin-login-copy page-entry-cue"><h1>设备调试台</h1><p>验证管理员口令后进入</p></div>
           <form onSubmit={login}>
             <label><span>管理员口令</span><div><KeyRound size={19} /><input type="password" inputMode="numeric" autoFocus value={pin} onChange={(event) => setPin(event.target.value)} placeholder="输入口令" /></div></label>
             {loginError && <p className="admin-login-error" role="alert">{loginError}</p>}

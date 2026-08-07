@@ -111,6 +111,18 @@ assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating 
 assert.doesNotMatch(appStyles, /wxVoiceBubbleGrow/, "voice capture still animates layout width");
 const vitalsHeartbeatKeyframes = cssBlock(appStyles, "@keyframes vitals-heart-beat");
 assert.doesNotMatch(vitalsHeartbeatKeyframes, /box-shadow:/, "vitals heartbeat still repaints a large shadow");
+const dispenseBiometricKeyframes = cssBlock(appStyles, "@keyframes biometric-soft-pulse");
+assert.doesNotMatch(
+  dispenseBiometricKeyframes,
+  /(?:filter|box-shadow|width|height|top|left|background):/,
+  "dispense biometric progress still animates a paint or layout property"
+);
+const modalBackdropKeyframes = cssBlock(appStyles, "@keyframes modal-backdrop-enter");
+assert.doesNotMatch(
+  modalBackdropKeyframes,
+  /(?:filter|box-shadow|width|height|top|left|background(?:-color)?):/,
+  "modal backdrop entry still animates a paint or layout property"
+);
 const adminBiometricKeyframes = cssBlock(adminStyles, "@keyframes admin-biometric-pulse");
 assert.doesNotMatch(adminBiometricKeyframes, /box-shadow:/, "admin biometric progress still animates a painted shadow");
 assert.match(appStyles, /\.toast\s*\{[\s\S]*top:\s*16px[\s\S]*transform:\s*translate\(-50%, -16px\)/, "toast does not enter downward from the top bar");
@@ -233,6 +245,33 @@ for (const file of [
   const content = await readFile(`${sourceRoot}/${file}`, "utf8");
   assert.match(content, /page-entry-cue/, `${file} has no localized page entry target`);
 }
+assert.match(app, /PAGE_ENTRY_CUE_WINDOW_MS\s*=\s*360/, "late-mounted page cues are cut off before completing");
+assert.match(
+  motionSystem,
+  /\.quick-action-cta\.vitals-cta::after\s*\{[^}]*animation:\s*none\s*!important/,
+  "the home vitals decoration can override the performance motion policy"
+);
+const recordsPage = await readFile(`${sourceRoot}/pages/Records.jsx`, "utf8");
+const recordSummary = await readFile(`${sourceRoot}/components/RecordSummaryCards.jsx`, "utf8");
+assert.match(recordsPage, /initialLoading[\s\S]*<RecordSummaryCards[^>]*loading=\{initialLoading\}/, "records initial load has no visible state");
+assert.match(recordSummary, /LoaderCircle className="localized-loader"/, "records initial load does not use a localized spinner");
+const adminConsole = await readFile(`${sourceRoot}/pages/AdminConsole.jsx`, "utf8");
+assert.match(adminConsole, /admin-login-copy page-entry-cue/, "device console entry has no localized page cue");
+for (const file of ["AdminOverview", "AdminUsers", "AdminPlans", "AdminCabinet", "AdminDevices", "AdminInquiries", "AdminLogs"]) {
+  const content = await readFile(`${sourceRoot}/components/admin/${file}.jsx`, "utf8");
+  assert.match(content, /admin-section-entry-cue/, `${file} has no localized section-switch cue`);
+}
+assert.doesNotMatch(
+  cssBlock(motionSystem, "@keyframes kiosk-admin-section-cue"),
+  /(?:filter|box-shadow|width|height|top|left|background):/,
+  "admin section cue animates paint or layout"
+);
+const inquiryChatMotion = await readFile(`${sourceRoot}/components/InquiryChatStep.jsx`, "utf8");
+assert.match(
+  inquiryChatMotion,
+  /prefers-reduced-motion:\s*reduce[\s\S]*behavior:\s*reducedMotion \? "auto" : "smooth"/,
+  "inquiry chat keeps smooth scrolling when reduced motion is requested"
+);
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
 assert.match(
   motionSystem,
@@ -243,6 +282,11 @@ assert.match(
   motionSystem,
   /prefers-reduced-motion:\s*reduce[\s\S]*localized-loader[\s\S]*animation:\s*none\s*!important/,
   "localized loading feedback ignores reduced motion"
+);
+assert.match(
+  motionSystem,
+  /prefers-reduced-motion:\s*reduce[\s\S]*admin-section-entry-cue[\s\S]*animation:\s*none\s*!important/,
+  "admin section feedback ignores reduced motion"
 );
 assert.match(
   motionSystem,

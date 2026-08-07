@@ -33,7 +33,7 @@ export function AdminOverview({ data, loading, onRefresh }) {
   return (
     <div className="admin-view admin-overview-view">
       <div className="admin-page-heading">
-        <div><h2>运行概览</h2><p>主机、外设和业务数据的当前状态</p></div>
+        <div className="admin-section-entry-cue"><h2>运行概览</h2><p>主机、外设和业务数据的当前状态</p></div>
         <button type="button" className="admin-button secondary compact" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={17} aria-hidden="true" />
           刷新

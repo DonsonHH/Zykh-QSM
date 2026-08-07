@@ -11,7 +11,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.routers import audio  # noqa: E402
-from app.routers.audio import SpeakRequest  # noqa: E402
+from app.routers.audio import BeepRequest, SpeakRequest  # noqa: E402
 from app.services.qsm_client import QsmClient  # noqa: E402
 
 
@@ -84,7 +84,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
-            result = asyncio.run(audio.audio_speak(SpeakRequest(text="请安全用药。", speed=1.2)))
+            result = asyncio.run(audio.audio_speak(SpeakRequest(text="请安全用药。", volume=230, speed=1.2)))
 
         self.assertEqual(realtime.calls[0][0], "请安全用药。")
         self.assertEqual(result["engine"], "qwen-realtime-pcm")
@@ -100,7 +100,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.db, "get_setting", return_value="sim"),
             patch.object(audio, "_record"),
         ):
-            result = asyncio.run(audio.audio_speak(SpeakRequest(text="联网播报。")))
+            result = asyncio.run(audio.audio_speak(SpeakRequest(text="联网播报。", volume=230)))
 
         self.assertEqual(client.speak_calls, [])
         self.assertEqual(realtime.calls[0][0], "联网播报。")
@@ -117,7 +117,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.db, "get_setting", return_value="local"),
             patch.object(audio, "_record"),
         ):
-            asyncio.run(audio.audio_speak(SpeakRequest(text="指定云端。", mode="cloud")))
+            asyncio.run(audio.audio_speak(SpeakRequest(text="指定云端。", volume=230, mode="cloud")))
 
         self.assertEqual(realtime.calls[0][0], "指定云端。")
 
@@ -130,7 +130,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
             patch.object(audio.db, "get_setting", return_value="sim"),
             patch.object(audio, "_record"),
         ):
-            asyncio.run(audio.audio_speak(SpeakRequest(text="指定离线。", mode="offline")))
+            asyncio.run(audio.audio_speak(SpeakRequest(text="指定离线。", volume=230, mode="offline")))
 
         self.assertEqual(host_tts.calls[0][0], "指定离线。")
 
@@ -150,6 +150,25 @@ class AudioTtsRoutingTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["mode"], "host-offline-tts-required")
 
+    def test_zero_volume_beep_never_reaches_board_gateway(self) -> None:
+        client = QsmClient(mode="real")
+        with patch.object(client, "_qsm_action") as action:
+            result = client.audio_beep(0)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["muted"])
+        action.assert_not_called()
+
+    def test_zero_volume_beep_route_does_not_create_qsm_client(self) -> None:
+        with (
+            patch.object(audio, "QsmClient") as client,
+            patch.object(audio, "_record"),
+        ):
+            result = audio.audio_beep(BeepRequest(volume=0))
+
+        self.assertTrue(result["muted"])
+        client.assert_not_called()
+
     def test_stream_stop_cancels_an_active_tts_request(self) -> None:
         client = FakeQsmClient()
 
@@ -161,7 +180,7 @@ class AudioTtsRoutingTest(unittest.TestCase):
                 await asyncio.Event().wait()
 
         async def scenario() -> tuple[dict[str, object], dict[str, object]]:
-            task = asyncio.create_task(audio.audio_speak(SpeakRequest(text="正在播报")))
+            task = asyncio.create_task(audio.audio_speak(SpeakRequest(text="正在播报", volume=230)))
             await asyncio.sleep(0)
             stopped = await audio.audio_stream_stop()
             return await task, stopped

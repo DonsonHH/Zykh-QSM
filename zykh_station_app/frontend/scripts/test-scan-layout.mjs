@@ -41,5 +41,7 @@ assert.match(
   /\.scan-result-heading h2\s*\{[\s\S]*white-space:\s*normal/,
   "recognized medicine name is still forced onto one clipped line"
 );
+assert.match(scanPage, /aria-busy=\{registering\}/, "medicine registration does not expose its busy state");
+assert.match(scanPage, /LoaderCircle className="localized-loader"/, "medicine registration has no localized progress cue");
 
 console.log("scan layout contract passed");

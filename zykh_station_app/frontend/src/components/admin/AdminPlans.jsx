@@ -120,7 +120,7 @@ export function AdminPlans({ notify, onSessionExpired }) {
   return (
     <div className="admin-view admin-plans-view">
       <div className="admin-page-heading">
-        <div><h2>用药计划</h2><p>设置每天、间隔天数或每周固定日期</p></div>
+        <div className="admin-section-entry-cue"><h2>用药计划</h2><p>设置每天、间隔天数或每周固定日期</p></div>
         <button type="button" className="admin-button primary compact" onClick={startCreate}><Plus size={17} />新增计划</button>
       </div>
       <div className="admin-split-view plans-split-view">

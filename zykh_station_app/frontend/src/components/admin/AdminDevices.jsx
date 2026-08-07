@@ -91,7 +91,7 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
   return (
     <div className="admin-view admin-devices-view">
       <div className="admin-page-heading">
-        <div><h2>设备控制</h2><p>查看外设状态并执行受保护的主机操作</p></div>
+        <div className="admin-section-entry-cue"><h2>设备控制</h2><p>查看外设状态并执行受保护的主机操作</p></div>
         <button type="button" className="admin-button secondary compact" onClick={onRefresh} disabled={loading}><RefreshCw size={17} />重新检查</button>
       </div>
       <div className="admin-devices-layout">

@@ -36,7 +36,7 @@ export function AdminInquiries({ notify, onSessionExpired }) {
   return (
     <div className="admin-view admin-inquiries-view">
       <div className="admin-page-heading">
-        <div><h2>问询调试</h2><p>查看原始转写、结构化信息、体征快照与系统动作</p></div>
+        <div className="admin-section-entry-cue"><h2>问询调试</h2><p>查看原始转写、结构化信息、体征快照与系统动作</p></div>
         <div className="admin-heading-actions">
           {data.repeated_question_sessions ? <span className="admin-inquiry-warning"><AlertTriangle size={15} />{data.repeated_question_sessions} 个会话出现重复追问</span> : null}
           <button type="button" className="admin-button secondary compact" onClick={() => refresh()} disabled={loading}><RefreshCw size={17} />刷新</button>

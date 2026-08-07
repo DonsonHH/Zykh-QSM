@@ -6,6 +6,9 @@ import { normalizeSpeakerGain, speakerGainToPercent, speakerPercentToGain } from
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
+const systemCheck = await readFile(`${root}src/components/SystemCheckModal.jsx`, "utf8");
+const relayScript = await readFile(`${root}../scripts/relay_host_audio_to_qsm.sh`, "utf8");
+const qsmClient = await readFile(`${root}../backend/app/services/qsm_client.py`, "utf8");
 
 assert.equal(speakerGainToPercent(0), 0);
 assert.equal(speakerGainToPercent(255), 100);
@@ -14,8 +17,10 @@ assert.equal(speakerPercentToGain(100), 255);
 assert.equal(speakerPercentToGain(1), 128, "the first audible step must start at the board's effective gain floor");
 assert.equal(speakerGainToPercent(128), 1, "the board's effective gain floor must be shown as the first audible step");
 assert.equal(normalizeSpeakerGain(0), 0);
-assert.equal(normalizeSpeakerGain(1), 128, "legacy inaudible gains must migrate to the calibrated floor");
-assert.equal(normalizeSpeakerGain(127), 128, "legacy inaudible gains must not survive settings hydration");
+assert.equal(normalizeSpeakerGain(1), 146, "legacy 20% intent must migrate onto the audible scale");
+assert.equal(normalizeSpeakerGain(8), 180, "legacy 50% intent must migrate onto the audible scale");
+assert.equal(normalizeSpeakerGain(45), 214, "legacy 75% intent must migrate onto the audible scale");
+assert.equal(normalizeSpeakerGain(127), 238, "legacy 90% intent must migrate onto the audible scale");
 assert.equal(normalizeSpeakerGain(230), 230);
 assert.ok(
   speakerPercentToGain(50) >= 178 && speakerPercentToGain(50) <= 183,
@@ -45,5 +50,20 @@ assert.match(
 );
 assert.match(settingsPage, /speakerPercent === 0[\s\S]*当前为静音/, "speaker test can still trigger the board while muted");
 assert.doesNotMatch(settingsPage, /value=\{values\.speaker_volume\}/, "raw speaker gain is still shown to users");
+assert.match(
+  systemCheck,
+  /nextAudio\?\.speaker_volume[\s\S]*setVolumePercent\(speakerGainToPercent\(nextAudio\.speaker_volume\)\)/,
+  "device check does not hydrate its volume control from the saved setting"
+);
+assert.match(
+  relayScript,
+  /\/api\/audio\/host\/speaker-volume[\s\S]*pactl set-sink-volume "\$SINK_NAME" "\$\{saved_percent\}%"/,
+  "audio relay startup does not restore the saved calibrated volume"
+);
+assert.match(
+  qsmClient,
+  /def audio_beep[\s\S]*volume is not None and int\(volume\) <= 0[\s\S]*"muted": True/,
+  "a zero-volume beep can still fall through to the legacy board default"
+);
 
 console.log("speaker volume contract: ok");

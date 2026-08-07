@@ -75,7 +75,7 @@ class SettingsServiceTest(unittest.TestCase):
             patch.object(service, "_set_wifi", return_value="") as wifi,
             patch.object(service, "_set_sim", return_value="") as sim,
             patch.object(service, "_set_brightness", return_value="") as brightness,
-            patch.object(service, "_set_host_speaker_volume") as speaker,
+            patch.object(service, "_set_host_speaker_volume", return_value="") as speaker,
             patch.object(service, "_qsm_mic_volume", return_value={"ok": True}),
             patch.object(service, "_wifi_radio_enabled", return_value=False),
             patch.object(service, "_microphone_available", return_value=True),
@@ -91,6 +91,50 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(db.get_setting("speaker_volume"), "150")
         self.assertEqual(db.get_setting("idle_timeout_seconds"), "300")
         self.assertEqual(result.settings.network_mode, "local")
+
+    def test_get_migrates_legacy_inaudible_gain_once(self) -> None:
+        db.set_setting("speaker_volume", "8")
+        service = SettingsService()
+
+        with (
+            patch.object(service, "_wifi_radio_enabled", return_value=True),
+            patch.object(service, "_microphone_available", return_value=True),
+            patch("app.services.settings_service.NetworkService.status", return_value={}),
+        ):
+            result = service.get()
+
+        self.assertEqual(result.settings.speaker_volume, 180)
+        self.assertEqual(db.get_setting("speaker_volume"), "180")
+        self.assertEqual(db.get_setting("speaker_volume_scale_version"), "2")
+
+    def test_update_canonicalizes_legacy_gain_before_hardware_and_storage(self) -> None:
+        service = SettingsService()
+        request = BasicSettingsUpdateRequest(speaker_volume=45)
+        with (
+            patch.object(service, "_set_host_speaker_volume", return_value="") as speaker,
+            patch.object(service, "_wifi_radio_enabled", return_value=True),
+            patch.object(service, "_microphone_available", return_value=True),
+            patch("app.services.settings_service.NetworkService.status", return_value={}),
+        ):
+            result = service.update(request)
+
+        speaker.assert_called_once_with(214)
+        self.assertEqual(result.settings.speaker_volume, 214)
+        self.assertEqual(db.get_setting("speaker_volume"), "214")
+
+    def test_update_reports_host_sink_failure_without_losing_setting(self) -> None:
+        service = SettingsService()
+        request = BasicSettingsUpdateRequest(speaker_volume=180)
+        with (
+            patch.object(service, "_set_host_speaker_volume", return_value="外放音量已保存，但本机音频转发暂未就绪。"),
+            patch.object(service, "_wifi_radio_enabled", return_value=True),
+            patch.object(service, "_microphone_available", return_value=True),
+            patch("app.services.settings_service.NetworkService.status", return_value={}),
+        ):
+            result = service.update(request)
+
+        self.assertEqual(result.settings.speaker_volume, 180)
+        self.assertIn("本机音频转发暂未就绪", result.warnings[0])
 
     def test_host_speaker_uses_same_calibrated_percentage_as_terminal(self) -> None:
         service = SettingsService()

@@ -90,7 +90,7 @@ export function AdminUsers({ notify, onSessionExpired }) {
   return (
     <div className="admin-view admin-users-view">
       <div className="admin-page-heading">
-        <div><h2>服务对象</h2><p>维护基础信息和本机生物识别绑定</p></div>
+        <div className="admin-section-entry-cue"><h2>服务对象</h2><p>维护基础信息和本机生物识别绑定</p></div>
         <button type="button" className="admin-button primary compact" onClick={() => { setCreating(true); setSelectedId(""); setForm(EMPTY_USER); }}>
           <Plus size={17} aria-hidden="true" />新增对象
         </button>

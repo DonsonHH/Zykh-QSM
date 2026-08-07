@@ -21,6 +21,7 @@ import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 import { clearInquirySession } from "./utils/inquirySession.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
+const PAGE_ENTRY_CUE_WINDOW_MS = 360;
 const MemoHome = memo(Home);
 const MemoMedicines = memo(Medicines);
 const MemoInquiry = memo(Inquiry);
@@ -100,7 +101,7 @@ export function App() {
           pageTransitionRef.current.kind = "";
           delete document.documentElement.dataset.pageTransition;
         }
-      }, 160);
+      }, PAGE_ENTRY_CUE_WINDOW_MS);
     });
   }, [idle, page]);
 
