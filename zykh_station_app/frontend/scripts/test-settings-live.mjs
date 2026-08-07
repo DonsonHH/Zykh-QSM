@@ -465,17 +465,39 @@ try {
   await cdp("Page.navigate", { url: `${baseUrl}/?page=home` });
   await waitForApp();
   await delay(180);
-  result.idleMotion = await evaluate(`(() => {
+  result.idleMotion = await evaluate(`(async () => {
+    const longTasks = [];
+    const observer = new PerformanceObserver((list) => {
+      longTasks.push(...list.getEntries().map(({ duration, startTime }) => ({ duration, startTime })));
+    });
+    try { observer.observe({ entryTypes: ['longtask'] }); } catch {}
+    const frameGaps = [];
+    let previousFrame = 0;
+    let collecting = true;
+    const tick = (timestamp) => {
+      if (previousFrame) frameGaps.push(timestamp - previousFrame);
+      previousFrame = timestamp;
+      if (collecting) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
     const animations = document.getAnimations().filter((animation) =>
       animation.effect?.target?.matches?.('.idle-wake-button, .idle-wake-glyph, .idle-wake-area h1')
     );
     const properties = [...new Set(animations.flatMap((animation) => animation.effect.getKeyframes().flatMap((frame) =>
       Object.keys(frame).filter((key) => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))
     )))];
+    await new Promise((resolve) => setTimeout(resolve, 3800));
+    collecting = false;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    longTasks.push(...observer.takeRecords().map(({ duration, startTime }) => ({ duration, startTime })));
+    observer.disconnect();
     return {
       count: animations.length,
       properties,
-      fullSurfaceAnimation: document.getAnimations().some((animation) => animation.effect?.target?.matches?.('.idle-screen'))
+      fullSurfaceAnimation: document.getAnimations().some((animation) => animation.effect?.target?.matches?.('.idle-screen')),
+      maxFrameGapMs: Math.max(0, ...frameGaps),
+      longTasks
     };
   })()`);
 
@@ -539,6 +561,8 @@ try {
   assert.ok(result.idleMotion.count >= 1, "idle screen has no localized motion cue");
   assert.ok(result.idleMotion.properties.every((property) => ["opacity", "transform"].includes(property)), "idle screen animates unsupported properties");
   assert.equal(result.idleMotion.fullSurfaceAnimation, false, "idle screen animates its full surface");
+  assert.ok(result.idleMotion.maxFrameGapMs <= 50, `idle breathing frame gap is ${result.idleMotion.maxFrameGapMs.toFixed(1)}ms`);
+  assert.ok(result.idleMotion.longTasks.every(({ duration }) => duration < 50), `idle breathing produced long tasks: ${JSON.stringify(result.idleMotion.longTasks)}`);
   assert.equal(result.reducedIdleAnimationCount, 0, "idle motion ignores reduced-motion preference");
 
 } finally {
