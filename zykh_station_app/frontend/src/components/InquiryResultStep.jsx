@@ -12,6 +12,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   X
 } from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
@@ -59,6 +60,12 @@ export function InquiryResultStep({
   const nextMedicine = actionResult?.next_medicine || selectedOption?.medicines?.[completedCount] || null;
   const requiresExistingDirection = Boolean(
     selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
+  );
+  const assessment = result?.extracted_information?.final_assessment || {};
+  const showAssessment = !requiresEscalation && Boolean(
+    assessment?.possible_conditions?.length
+    || assessment?.next_steps?.length
+    || assessment?.seek_care_if?.length
   );
   const networkStatusRef = useRef(networkStatus);
   const spokenActionKeysRef = useRef(new Set());
@@ -138,8 +145,9 @@ export function InquiryResultStep({
         </div>
       </header>
 
-      {canProceed ? (
-        <div className={`treatment-option-grid count-${Math.min(options.length, 2)}`} role="radiogroup" aria-label="用药方案">
+      <div className={`treatment-result-body ${showAssessment ? "with-assessment" : ""}`}>
+        {canProceed ? (
+          <div className={`treatment-option-grid count-${Math.min(options.length, 2)}`} role="radiogroup" aria-label="用药方案">
           {options.slice(0, 2).map((option, optionIndex) => {
             const selected = option.option_id === selectedOptionId;
             return (
@@ -164,8 +172,11 @@ export function InquiryResultStep({
                       <Pill size={18} aria-hidden="true" />
                       <span>
                         <strong>{medicine.name}</strong>
+                        {medicine.match_reason ? (
+                          <small className="medicine-fit-reason">适合点：{medicine.match_reason}</small>
+                        ) : null}
                         <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
-                          {medicine.recommended_usage || medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
+                          用法：{medicine.recommended_usage || medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
                         </small>
                       </span>
                       <em>{medicine.slot}号柜</em>
@@ -175,30 +186,37 @@ export function InquiryResultStep({
               </label>
             );
           })}
-        </div>
-      ) : requiresEscalation ? (
-        <div className="treatment-escalation-panel">
-          <AlertTriangle size={50} aria-hidden="true" />
-          <strong>{result?.reply || "本次不展示候选方案"}</strong>
-          <span>请联系医生、家人或现场协助人员，不要自行新增用药。</span>
-        </div>
-      ) : (
-        <div className="treatment-guidance-panel">
-          <ShieldCheck size={56} aria-hidden="true" />
-          <strong>{result?.reply || "目前更适合先做基础护理和观察。"}</strong>
-          <span>情况发生变化时，可以重新开始问询。</span>
-        </div>
-      )}
+          </div>
+        ) : requiresEscalation ? (
+          <div className="treatment-escalation-panel">
+            <AlertTriangle size={50} aria-hidden="true" />
+            <strong>{result?.reply || "本次不展示候选方案"}</strong>
+            <span>请联系医生、家人或现场协助人员，不要自行新增用药。</span>
+          </div>
+        ) : (
+          <div className="treatment-guidance-panel">
+            <ShieldCheck size={56} aria-hidden="true" />
+            <strong>{result?.reply || "目前更适合先做基础护理和观察。"}</strong>
+            <span>情况发生变化时，可以重新开始问询。</span>
+          </div>
+        )}
+
+        {showAssessment ? (
+          <ClinicalAssessmentCard assessment={assessment} riskLevel={result?.risk_level} />
+        ) : null}
+      </div>
 
       <div className="treatment-result-footer-row">
         {canProceed && !actionFinished ? (
-          <div className={`treatment-confirm-bar ${requiresExistingDirection ? "with-notice" : "simple"}`}>
-            {requiresExistingDirection ? (
-              <div className="treatment-confirm-notice">
-                <ShieldCheck size={20} />
-                <span>仅限本人既往医嘱中已经使用的药品。</span>
-              </div>
-            ) : null}
+          <div className="treatment-confirm-bar with-notice">
+            <div className="treatment-confirm-notice">
+              <ShieldCheck size={20} />
+              <span>
+                {requiresExistingDirection
+                  ? "仅按本人既往医嘱使用；本结果不构成处方。请核对说明和禁忌，并请听医嘱。"
+                  : "本结果仅作辅助，不构成诊断或处方。请核对说明、有效期和禁忌，并请听医嘱。"}
+              </span>
+            </div>
             {countdown !== null ? (
               <div className="treatment-countdown" role="status">
                 <strong>{countdown}</strong>
@@ -242,6 +260,52 @@ export function InquiryResultStep({
       </div>
     </section>
   );
+}
+
+function ClinicalAssessmentCard({ assessment, riskLevel }) {
+  const conditions = (assessment?.possible_conditions || []).slice(0, 3);
+  const nextSteps = (assessment?.next_steps || []).slice(0, 1);
+  const seekCareIf = (assessment?.seek_care_if || []).slice(0, 1);
+  return (
+    <section className="clinical-assessment-card" aria-label="问询分析">
+      <div className="assessment-conditions">
+        <h3><Stethoscope size={19} />病因分析 <small>仅供参考 · 非诊断</small></h3>
+        <div className="condition-chip-list">
+          {conditions.length ? conditions.map((condition) => (
+            <article className="condition-chip" key={`${condition.name}-${condition.likelihood}`}>
+              <strong>{condition.name}<em>{likelihoodLabel(condition.likelihood)}</em></strong>
+              {condition.supporting_evidence?.[0] ? (
+                <span>依据：{condition.supporting_evidence[0]}</span>
+              ) : null}
+              {condition.non_supporting_evidence?.[0] ? (
+                <small>尚不典型：{condition.non_supporting_evidence[0]}</small>
+              ) : null}
+            </article>
+          )) : <span className="assessment-empty">现有信息只支持先观察，暂不能进一步区分。</span>}
+        </div>
+      </div>
+      <div className="assessment-next-steps">
+        <h3>综合判断与下一步</h3>
+        <p>{compactActionSummary(riskLevel)}</p>
+        {nextSteps.map((step) => <span key={step}>• {step}</span>)}
+        {seekCareIf.map((item) => <em key={item}>及时就医：{item}</em>)}
+      </div>
+    </section>
+  );
+}
+
+function compactActionSummary(riskLevel) {
+  return riskLevel === "medium"
+    ? "建议尽快咨询医生，并持续观察症状与体征。"
+    : "当前可先对症护理，并观察症状与体征变化。";
+}
+
+function likelihoodLabel(value) {
+  return {
+    more_likely: "较可能",
+    possible: "可能",
+    needs_exclusion: "需排除"
+  }[value] || "可能";
 }
 
 function ResultSource({ source }) {

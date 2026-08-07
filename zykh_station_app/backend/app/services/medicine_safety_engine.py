@@ -10,7 +10,22 @@ from .medicine_knowledge_repository import MedicineKnowledgeRepository
 
 
 EMERGENCY_TERMS = ("意识不清", "昏迷", "抽搐", "严重过敏", "大出血", "口角歪斜", "单侧肢体无力")
-HIGH_TERMS = ("高热不退", "持续胸闷", "胸闷气短", "剧烈疼痛", "呕血", "黑便", "严重外伤")
+HIGH_TERMS = (
+    "高热不退",
+    "持续胸闷",
+    "胸闷气短",
+    "剧烈疼痛",
+    "呕血",
+    "黑便",
+    "严重外伤",
+    "走路不稳",
+    "站立不稳",
+    "站不稳",
+    "无法站立",
+    "不能站立",
+    "无法负重",
+    "不能负重",
+)
 
 
 @dataclass(frozen=True)

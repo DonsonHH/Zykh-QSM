@@ -8,6 +8,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
 const adminDevices = await readFile(`${root}src/components/admin/AdminDevices.jsx`, "utf8");
 const inquiryChat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
+const inquiryReview = await readFile(`${root}src/components/InquiryInformationReview.jsx`, "utf8");
+const inquiryResult = await readFile(`${root}src/components/InquiryResultStep.jsx`, "utf8");
 
 const hiddenNetwork = {
   mode: "sim",
@@ -77,6 +79,16 @@ assert.doesNotMatch(
   inquiryChat,
   /isLocalNetworkMode/,
   "display mode still changes inquiry audio or presentation behavior"
+);
+assert.doesNotMatch(
+  inquiryReview,
+  /isLocalNetworkMode|\?\s*["']offline["']\s*:\s*["']auto["']/,
+  "display mode still changes review audio behavior"
+);
+assert.doesNotMatch(
+  inquiryResult,
+  /isLocalNetworkMode|\?\s*["']offline["']\s*:\s*["']auto["']/,
+  "display mode still changes result audio behavior"
 );
 
 console.log("network display mode contract: ok");

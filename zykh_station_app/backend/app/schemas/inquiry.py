@@ -27,6 +27,10 @@ class CandidateMedicine(BaseModel):
     safety_note: str
     indications: str = ""
     dosage: str = ""
+    tags: list[str] = Field(default_factory=list)
+    contraindications: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    active_ingredients: list[str] = Field(default_factory=list)
     match_reason: str = ""
     requires_existing_direction: bool = False
 
@@ -175,6 +179,20 @@ class InquiryHistoryRelationship(BaseModel):
     should_reuse_previous_conclusion: bool = False
 
 
+class InquiryPossibleCondition(BaseModel):
+    name: str = Field(min_length=1, max_length=36)
+    likelihood: Literal["more_likely", "possible", "needs_exclusion"] = "possible"
+    supporting_evidence: list[str] = Field(default_factory=list, max_length=2)
+    non_supporting_evidence: list[str] = Field(default_factory=list, max_length=2)
+
+
+class InquiryClinicalAssessment(BaseModel):
+    summary: str = Field(default="", max_length=180)
+    possible_conditions: list[InquiryPossibleCondition] = Field(default_factory=list, max_length=3)
+    next_steps: list[str] = Field(default_factory=list, max_length=3)
+    seek_care_if: list[str] = Field(default_factory=list, max_length=3)
+
+
 class InquiryExtractedInformation(BaseModel):
     case_summary: str = ""
     observations: list[InquiryObservation] = Field(default_factory=list)
@@ -190,11 +208,15 @@ class InquiryExtractedInformation(BaseModel):
     clarification_answers: dict[str, str] = Field(default_factory=dict)
     asked_clarifications: list[str] = Field(default_factory=list)
     pending_clarification: str = ""
+    symptom_scope_confirmed: bool = False
+    symptom_revision: int = Field(default=0, ge=0)
+    symptom_collection_complete: bool = False
     symptoms_text: str = ""
     duration: str = ""
     used_medicines: str = ""
     allergy_or_contraindication: str = ""
     confidence: float = 0.0
+    final_assessment: InquiryClinicalAssessment = Field(default_factory=InquiryClinicalAssessment)
 
 
 class InquirySessionResponse(BaseModel):

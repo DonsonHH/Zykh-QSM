@@ -147,8 +147,10 @@ ENABLE_REAL_DISPENSE=1
 AI_MODE=auto
 AI_CLOUD_IN_LOCAL_DISPLAY=true
 AI_API_BASE=https://api.deepseek.com/chat/completions
+AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
 AI_MODEL=deepseek-v4-flash
 AI_ENABLE_THINKING=true
+AI_INQUIRY_ENABLE_THINKING=false
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 INQUIRY_SPO2_EMERGENCY_BELOW=90
 INQUIRY_SPO2_HIGH_MAX=93
@@ -188,7 +190,7 @@ real 模式用于本机访问外设网关。如果 real 模式不可用，后端
 
 身体状态测量页进入时先调用 `/api/vitals/prepare` 启动传感器算法，点击“开始测量”后再通过 `/api/vitals/session/*` 采集本次新帧，并行读取 GY-614 额温和 QSM UART8 综合体征模块。状态依次为 `starting → waiting_finger → stabilizing → complete/failed/cancelled`；根据模块首次算法需要 5–10 秒、后续约每 1.28 秒更新一次的特性，冷启动累计稳定时间默认取 8 秒，页面预热时间会从中扣除，但正式采样仍至少保留 3 秒。采样会丢弃预热阶段缓存，并要求近期窗口内心率、血氧各有 2 帧有效值，避免相隔很久的旧值拼成一次结果。已有稳定心率但血氧仍为零时只延长一次血氧计算窗口并自动重测一次；重测前会同步取消旧会话、等待 UART 释放，再启动新会话，因此不会出现上一轮测量仍占用设备的错误。问询页在语音引导开始时即预热硬件，与首页入口使用同一套会话。前端按 `failure_reason` 区分无协议帧、无手指、信号未稳定、额温缺失和通信中断；单次或连续第二次 `transport_error` 会保留原 session 并在 700ms 后重试，任一正常状态会清零计数，只有用户明确取消或连续第三次通信失败才请求板端停止。完成、取消、异常及无人操作的预热超时均发送 `0x2A`。综合模块使用 `/dev/ttyS8`、9600 8N1；药柜继续使用 `/dev/ttyS5`，两者互不占用。心率、血氧、额温三项齐全才完成测量；血压、呼吸频率和 HRV 仅作辅助参考。随机演示血氧只用于现场演示，不会写入真实体征记录或云同步。手指信号失败时，本次会话保持 `failed`，历史完整体征仅作为独立参考展示，不会与本次额温拼成完成结果。Phase 3 不调整 18 秒测量、12 秒接触稳定、8 秒血氧延长或 UART 协议。
 
-AI 问询中的体征测量是当前问询会话的工具步骤。用户说明主要不适后，模型最多进行 3 轮症状补充；编排器随后依次补齐过敏/禁忌和本次已用药信息，再进入核心体征测量。模型可以在三轮内提前判断信息充足或需要测量，但不能无限重复症状问题。完成、失败或取消都会写回原会话并由同一个模型继续，不通过浏览器临时存储拼接两个页面。
+AI 问询中的体征测量是当前问询会话的工具步骤。用户说明主要不适后，系统先确认是否还有同时出现的其他不适，再最多进行 4 次真正影响判断的症状澄清；编排器随后依次核对本次已用药和过敏/禁忌信息，再进入核心体征测量。症状信息已经足够时可以提前结束澄清；明确纠正主诉，或新增会改变判断的主要症状时，会针对更新后的主诉重新计算问题预算，但普通细化不会反复重置预算。完成、失败或取消都会写回原会话并由同一个模型继续，不通过浏览器临时存储拼接两个页面。
 
 首次部署或更新板端体征读取器时执行：
 
@@ -201,7 +203,7 @@ sh scripts/deploy_qsm_vitals.sh
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
-AI 云通道兼容 DeepSeek OpenAI-style Chat Completions。密钥只从环境变量或本机私有文件读取，例如：
+AI 云通道使用 DeepSeek Chat Completions 完成低延迟逐轮语义抽取，最终病因分析与候选排序优先使用配置的 Responses 端点；端点不可用或返回无效结构时自动回退到官方 Chat Completions JSON 契约。快速抽取默认关闭 thinking；最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"

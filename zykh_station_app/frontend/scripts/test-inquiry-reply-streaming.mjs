@@ -12,8 +12,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const inquiry = await readFile(`${root}src/pages/Inquiry.jsx`, "utf8");
 const chat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
 
-assert.deepEqual(LOCAL_REPLY_STREAM_PROFILE, { chunkSize: 1, intervalMs: 72 });
-assert.deepEqual(CLOUD_REPLY_STREAM_PROFILE, { chunkSize: 4, intervalMs: 42 });
+assert.deepEqual(LOCAL_REPLY_STREAM_PROFILE, { chunkSize: 8, intervalMs: 20 });
+assert.deepEqual(CLOUD_REPLY_STREAM_PROFILE, { chunkSize: 12, intervalMs: 16 });
 assert.deepEqual(inquiryReplyStreamProfile("offline_rules"), LOCAL_REPLY_STREAM_PROFILE);
 assert.deepEqual(inquiryReplyStreamProfile("local_llm"), LOCAL_REPLY_STREAM_PROFILE);
 assert.deepEqual(inquiryReplyStreamProfile("cloud", true), CLOUD_REPLY_STREAM_PROFILE);

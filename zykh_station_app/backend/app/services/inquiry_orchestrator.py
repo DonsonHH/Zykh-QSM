@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ from .. import db
 from ..repositories.inquiry_repository import InquiryRepository
 from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.inquiry import (
+    InquiryClinicalAssessment,
     InquiryExtractedInformation,
     InquiryInformationRevisionRequest,
     InquirySessionCreateRequest,
@@ -20,6 +22,17 @@ from ..schemas.inquiry import (
 from .dispense_service import DispenseError, DispenseService
 from .inquiry_history_service import InquiryHistoryContext, InquiryHistoryService
 from .inquiry_guest_archive_service import InquiryGuestArchiveService
+from .inquiry_dialogue_policy import (
+    explicit_topic_evidence,
+    MAX_SYMPTOM_FOLLOWUPS,
+    SYMPTOM_QUESTION_TOPICS,
+    focused_followup_question,
+    medication_question_window,
+    minimum_clinical_information_ready,
+    normalize_answered_topics,
+    normalize_topic_evidence,
+    symptom_scope_confirmation_question,
+)
 from .medicine_safety_engine import MedicineSafetyEngine
 from .spoken_answer import is_contextual_negative_answer
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
@@ -27,7 +40,7 @@ from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
 
 class InquiryOrchestrator:
     _treatment_action_lock = threading.Lock()
-    _MAX_SYMPTOM_FOLLOWUPS = 3
+    _MAX_SYMPTOM_FOLLOWUPS = MAX_SYMPTOM_FOLLOWUPS
 
     def __init__(
         self,
@@ -114,11 +127,18 @@ class InquiryOrchestrator:
                 forced_guard=emergency,
             )
 
-        existing_context = self._model_context(session, include_current_transcript=transcript)
+        # The current utterance is passed separately to the model. The in-memory
+        # session predates append_message(), so keeping it out of conversation
+        # avoids presenting the same sentence twice.
+        existing_context = self._model_context(session)
         interpretation = self.interpreter.interpret(
             transcript,
             existing_context,
             self._model_profile(session),
+        )
+        self._promote_material_symptom_addition(
+            session.extracted_information,
+            interpretation,
         )
         extracted = self._merge_interpretation(session, transcript, interpretation)
         session.extracted_information = extracted
@@ -219,6 +239,7 @@ class InquiryOrchestrator:
             feature_evidence=interpretation.feature_evidence,
             symptoms_text=complaint,
             duration=duration,
+            symptom_scope_confirmed=True,
             used_medicines=used_medicines,
             allergy_or_contraindication=allergy,
             confidence=interpretation.confidence,
@@ -437,81 +458,14 @@ class InquiryOrchestrator:
             ai_risk_reasons=interpretation.risk_signals,
         )
         if guard.risk_level in {"high", "emergency"}:
+            extracted.pending_clarification = ""
             return self._finish(
                 session,
                 extracted,
                 source="safety_rules",
                 forced_guard=guard,
             )
-        if (
-            not interpretation.available
-            and self._symptom_followup_limit_reached(session)
-            and self._has_meaningful_complaint(extracted)
-        ):
-            return self._advance_after_symptom_collection(
-                session,
-                extracted,
-                source=interpretation.source,
-            )
-        if not interpretation.available:
-            session.stage = "clarification"
-            session.next_action = "ask"
-            session.reply = "刚才这句话没有整理完整，请换一种说法再说一次。"
-            session.model_action_intent = "ask"
-            self._clear_decision(session)
-            return self._commit(session)
-        if self._should_measure_vitals_for_case(session, extracted, interpretation):
-            session.stage = "vitals"
-            session.next_action = "measure_vitals"
-            session.action_reason = "当前症状可能受额温、心率和血氧影响，先读取核心体征。"
-            session.reply = self._vitals_guidance(
-                "为了更准确判断当前不适，需要先测量额温、心率和血氧。"
-            )
-            self._clear_decision(session)
-            return self._commit(session)
-        if (
-            interpretation.action_intent == "measure_vitals"
-            and not self._has_complete_vitals(session)
-            and self._has_meaningful_complaint(extracted)
-        ):
-            session.stage = "vitals"
-            session.next_action = "measure_vitals"
-            session.reply = self._vitals_guidance(
-                interpretation.assistant_reply
-                or "这项信息会影响本次判断，需要测量额温、心率和血氧。"
-            )
-            self._clear_decision(session)
-            return self._commit(session)
-        if interpretation.action_intent == "measure_vitals":
-            session.stage = "clarification"
-            session.next_action = "ask"
-            session.reply = (
-                "请先说说现在最明显的不舒服是什么。"
-                if not self._has_meaningful_complaint(extracted)
-                else "本次核心体征已经记录，请继续说说症状目前有什么变化。"
-            )
-            self._clear_decision(session)
-            return self._commit(session)
-        if interpretation.action_intent == "ask":
-            if (
-                interpretation.source != "offline_rules"
-                and self._symptom_followup_limit_reached(session)
-            ):
-                return self._advance_after_symptom_collection(
-                    session,
-                    extracted,
-                    source=interpretation.source,
-                )
-            session.stage = "clarification"
-            session.next_action = "ask"
-            session.reply = (
-                interpretation.assistant_reply
-                or interpretation.follow_up_question
-                or "请再说说目前最明显的变化。"
-            )
-            self._clear_decision(session)
-            return self._commit(session)
-        if interpretation.action_intent == "escalate":
+        if interpretation.available and interpretation.action_intent == "escalate":
             return self._finish(
                 session,
                 extracted,
@@ -522,7 +476,7 @@ class InquiryOrchestrator:
                     or "当前情况需要医生或现场人员进一步确认，本次不展示家庭药品候选。"
                 ),
             )
-        if interpretation.action_intent == "end":
+        if interpretation.available and interpretation.action_intent == "end":
             if self._is_explicit_end_request(current_transcript):
                 session.extracted_information = extracted
                 session.risk_level = guard.risk_level
@@ -536,7 +490,167 @@ class InquiryOrchestrator:
                 self._clear_decision(session)
                 return self._commit(session)
             return self._finish(session, extracted, source=interpretation.source)
-        return self._finish(session, extracted, source=interpretation.source)
+
+        if interpretation.material_symptom_change:
+            extracted.symptom_collection_complete = False
+
+        # A model recommendation must not skip the patient's own symptom scope.
+        # Finish establishing what is uncomfortable before asking for device data.
+        if self._needs_symptom_scope_confirmation(extracted):
+            session.extracted_information = extracted
+            session.stage = "clarification"
+            session.next_action = "ask"
+            if (
+                extracted.pending_clarification == "additional_symptoms"
+                and self._is_scope_explanation_request(current_transcript)
+            ):
+                session.reply = (
+                    "就是除了刚才已经说到的不适，身体现在还有没有别的明显难受；"
+                    "有的话直接说，没有就说没有。"
+                )
+            else:
+                session.reply = symptom_scope_confirmation_question(extracted)
+            extracted.pending_clarification = "additional_symptoms"
+            session.model_action_intent = "ask"
+            session.source = interpretation.source if interpretation.available else "dialogue_policy"
+            self._clear_decision(session)
+            return self._commit(session)
+
+        if self._should_measure_vitals_for_case(session, extracted, interpretation):
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.action_reason = "当前症状可能受额温、心率和血氧影响，先读取核心体征。"
+            session.reply = self._vitals_guidance(
+                "为了更准确判断当前不适，需要先测量额温、心率和血氧。"
+            )
+            extracted.pending_clarification = ""
+            session.extracted_information = extracted
+            self._clear_decision(session)
+            return self._commit(session)
+        if (
+            interpretation.action_intent == "measure_vitals"
+            and not self._has_complete_vitals(session)
+            and self._has_meaningful_complaint(extracted)
+        ):
+            session.stage = "vitals"
+            session.next_action = "measure_vitals"
+            session.reply = self._vitals_guidance(
+                interpretation.assistant_reply
+                or "这项信息会影响本次判断，需要测量额温、心率和血氧。"
+            )
+            extracted.pending_clarification = ""
+            session.extracted_information = extracted
+            self._clear_decision(session)
+            return self._commit(session)
+
+        if extracted.symptom_collection_complete:
+            return self._advance_after_symptom_collection(
+                session,
+                extracted,
+                source=interpretation.source,
+            )
+
+        locally_ready = minimum_clinical_information_ready(extracted)
+        model_ready = interpretation.clinical_ready or interpretation.action_intent in {
+            "analyze",
+            "measure_vitals",
+        }
+        minimum_followups_met = (
+            len(extracted.asked_clarifications)
+            >= self._minimum_focused_followups(extracted)
+        )
+        if (
+            locally_ready
+            and model_ready
+            and interpretation.action_intent == "analyze"
+            and self._medicine_information_confirmed(extracted)
+            and minimum_followups_met
+        ):
+            extracted.symptom_collection_complete = True
+            extracted.pending_clarification = ""
+            return self._finish(session, extracted, source=interpretation.source)
+        if locally_ready and model_ready and minimum_followups_met:
+            extracted.symptom_collection_complete = True
+            extracted.pending_clarification = ""
+            return self._advance_after_symptom_collection(
+                session,
+                extracted,
+                source=interpretation.source,
+            )
+
+        if self._symptom_followup_limit_reached(session, extracted):
+            # Four precise clinical questions are a hard user-experience cap.
+            # Remaining uncertainty is carried into the final assessment; the
+            # medicine/allergy/vitals safety chain still runs before any option.
+            extracted.symptom_collection_complete = True
+            extracted.pending_clarification = ""
+            return self._advance_after_symptom_collection(
+                session,
+                extracted,
+                source=interpretation.source,
+            )
+
+        proposed_question = (
+            interpretation.assistant_reply
+            or interpretation.follow_up_question
+            if interpretation.available
+            else ""
+        )
+        question, topic = focused_followup_question(
+            extracted,
+            proposed_question,
+            interpretation.question_topic,
+        )
+        if not question or not topic:
+            if locally_ready:
+                extracted.symptom_collection_complete = True
+                extracted.pending_clarification = ""
+                return self._advance_after_symptom_collection(
+                    session,
+                    extracted,
+                    source=interpretation.source,
+                )
+            return self._finish_insufficient(
+                session,
+                extracted,
+                source=interpretation.source,
+            )
+
+        self._register_symptom_question(extracted, topic)
+        session.extracted_information = extracted
+        session.stage = "clarification"
+        session.next_action = "ask"
+        session.reply = question
+        session.model_action_intent = "ask"
+        session.source = interpretation.source if interpretation.available else "dialogue_policy"
+        self._clear_decision(session)
+        return self._commit(session)
+
+    def _finish_insufficient(
+        self,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+        *,
+        source: str,
+        message: str = "",
+    ) -> InquirySessionResponse:
+        extracted.pending_clarification = ""
+        session.extracted_information = extracted
+        session.stage = "result"
+        session.next_action = "complete"
+        session.reply = message or (
+            "四次关键症状核验后，仍缺少足以安全匹配药品的信息。"
+            "本次先不自动给出用药方案，请补充测量后重新问询，或联系医生、药师确认。"
+        )
+        session.source = source or "dialogue_policy"
+        session.model_action_intent = "end"
+        session.action_reason = "症状追问已达上限，但关键证据仍不足。"
+        self._clear_decision(session)
+        session.risk_level = "medium"
+        session.risk_reasons = ["关键症状信息不足"]
+        session.reasoning_summary = extracted.case_summary or session.reasoning_summary
+        session.title = self._title(session)
+        return self._commit(session)
 
     def _finish(
         self,
@@ -557,33 +671,69 @@ class InquiryOrchestrator:
         options = []
         rank_source = source
         rank_message = ""
+        rank_summary = ""
+        rank_assessment = InquiryClinicalAssessment()
         rank_failed = False
         if (
             allow_candidates
             and guard.risk_level in {"low", "medium"}
             and self._medicine_information_confirmed(extracted)
         ):
+            existing_direction_ids = set(self._existing_direction_plans(session.user_id))
+            candidate_context = self._candidate_context(session)
             safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                self._candidate_context(session),
-                existing_direction_ids=set(self._existing_direction_plans(session.user_id)),
+                candidate_context,
+                existing_direction_ids=existing_direction_ids,
+            )
+            ranking_context = self._ranking_context(session, extracted, guard)
+            focused_pool = self.safety_engine.knowledge.focus_candidate_pool(
+                self._candidate_retrieval_text(extracted),
+                safe_pool,
             )
             ranker = getattr(self.interpreter, "rank_candidates", None)
             if callable(ranker):
                 ranking = ranker(
-                    self._ranking_context(session, extracted, guard),
-                    [candidate.model_dump() for candidate in safe_pool],
+                    ranking_context,
+                    [candidate.model_dump() for candidate in focused_pool],
                 )
                 rank_source = str(ranking.get("source") or source)
                 rank_message = str(ranking.get("message") or "")
                 if ranking.get("ok"):
+                    rank_assessment = self._assessment_from_ranking(
+                        ranking,
+                        ranking_context.get("evidence_catalog") or {},
+                    )
+                    rank_summary = (
+                        rank_assessment.summary
+                        or str(ranking.get("summary") or "").strip()[:180]
+                    )
+                    # Ranking may involve a network round trip. Re-read the live
+                    # cabinet before display and keep only candidates the model
+                    # actually saw that are still eligible now.
+                    fresh_pool = self.safety_engine.knowledge.safe_candidate_pool(
+                        candidate_context,
+                        existing_direction_ids=existing_direction_ids,
+                    )
+                    fresh_by_id = {candidate.id: candidate for candidate in fresh_pool}
+                    fresh_focused_pool = [
+                        fresh_by_id[candidate.id]
+                        for candidate in focused_pool
+                        if candidate.id in fresh_by_id
+                    ]
                     options = self.safety_engine.knowledge.options_from_ai_selection(
                         ranking,
-                        safe_pool,
+                        fresh_focused_pool,
                     )
                 else:
                     rank_failed = True
             else:
                 rank_failed = True
+        if rank_assessment.summary or rank_assessment.possible_conditions:
+            extracted.final_assessment = rank_assessment
+        elif not extracted.final_assessment.summary:
+            extracted.final_assessment = InquiryClinicalAssessment(
+                summary=(extracted.case_summary or session.reasoning_summary)[:180]
+            )
         session.extracted_information = extracted
         session.risk_level = guard.risk_level
         session.risk_reasons = guard.risk_reasons
@@ -608,7 +758,7 @@ class InquiryOrchestrator:
         session.action_progress_index = 0
         session.action_total_items = 0
         session.action_items = []
-        session.reasoning_summary = extracted.case_summary or session.reasoning_summary
+        session.reasoning_summary = rank_summary or extracted.case_summary or session.reasoning_summary
         session.title = self._title(session)
         if guard.risk_level in {"high", "emergency"}:
             session.stage = "escalated"
@@ -622,23 +772,34 @@ class InquiryOrchestrator:
             session.stage = "clarification"
             session.next_action = "ask"
             missing = self._missing_medicine_information(extracted)
-            session.reply = (
-                "为了避免和已经使用的药物重复，请问这次不舒服以后有没有用过药？"
-                "如果用过，请说出药名。"
-                if missing == "used_medicines"
-                else "还需要确认一项：你有没有药物过敏，或明确不能使用的药物？"
-            )
+            if missing == "used_medicines":
+                window = medication_question_window(extracted.duration)
+                session.reply = (
+                    f"{window}，你有没有吃过、含服或外用过药？"
+                    "如果用过请说药名；没有用过直接说“还没有”就可以。"
+                )
+                extracted.pending_clarification = "used_medicines"
+            else:
+                session.reply = "还需要确认一项：你有没有药物过敏，或明确不能使用的药物？"
+                extracted.pending_clarification = "allergy_or_contraindication"
+            session.extracted_information = extracted
             self._clear_decision(session)
         elif not options:
             if rank_failed or rank_message or not extracted.ai_available:
-                session.stage = "clarification"
-                session.next_action = "ask"
-                session.reply = "我还需要再确认一次：现在最希望先处理的是哪一种不舒服？"
+                extracted.pending_clarification = ""
+                session.stage = "result"
+                session.next_action = "complete"
+                session.reply = (
+                    "药品匹配服务这次没有稳定返回结果，已保留本次问询信息。"
+                    "请稍后重新匹配，症状明显加重时请及时联系医生或药师。"
+                )
             elif empty_message:
+                extracted.pending_clarification = ""
                 session.stage = "result"
                 session.next_action = "escalate"
                 session.reply = empty_message
             else:
+                extracted.pending_clarification = ""
                 session.stage = "result"
                 session.next_action = "complete"
                 session.reply = (
@@ -646,6 +807,7 @@ class InquiryOrchestrator:
                     "如果出现红肿、持续疼痛、发热或症状明显加重，请及时联系医生或家人。"
                 )
         else:
+            extracted.pending_clarification = ""
             session.stage = "result"
             session.next_action = "show_recommendation"
             option_count = len(options)
@@ -657,6 +819,164 @@ class InquiryOrchestrator:
             natural_summary = self._natural_summary(session.reasoning_summary)
             session.reply = f"{natural_summary}{option_text}"
         return self._commit(session)
+
+    @staticmethod
+    def _assessment_from_ranking(
+        ranking: dict,
+        evidence_catalog: dict[str, str],
+    ) -> InquiryClinicalAssessment:
+        raw = ranking.get("assessment") if isinstance(ranking, dict) else None
+        raw = raw if isinstance(raw, dict) else {}
+
+        def text(value: object, limit: int) -> str:
+            return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+        def text_list(value: object, limit: int, item_limit: int) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            return [
+                item_text
+                for item in value[:limit]
+                if (item_text := text(item, item_limit))
+            ]
+
+        def safe_action_list(value: object) -> list[str]:
+            blocked_phrases = (
+                "确诊",
+                "肯定是",
+                "已经诊断",
+                "开柜",
+                "药柜",
+                "柜门",
+                "直接取药",
+                "加倍",
+                "增加剂量",
+                "替代医嘱",
+                "停用慢病药",
+            )
+            safe: list[str] = []
+            for item in text_list(value, 3, 90):
+                if any(phrase in item for phrase in blocked_phrases):
+                    continue
+                if re.search(
+                    r"(?:自行|直接).{0,8}(?:服用|口服|吃|使用).{0,16}"
+                    r"(?:\d|[一二两三四五六七八九十半]+)(?:片|粒|袋|毫克|克|次)",
+                    item,
+                ):
+                    continue
+                safe.append(item)
+            return safe
+
+        def safe_condition_name(value: object) -> str:
+            name = text(value, 36)
+            name = re.sub(
+                r"^(?:(?:已经|已|可以|可)?(?:确诊(?:为)?|诊断(?:为)?|判定(?:为)?)|"
+                r"(?:肯定|一定)是)\s*",
+                "",
+                name,
+            ).strip()
+            if any(
+                phrase in name
+                for phrase in ("开柜", "药柜", "柜门", "取药", "服药", "增加剂量", "处方")
+            ):
+                return ""
+            return name
+
+        conditions = []
+        for item in raw.get("possible_conditions") or []:
+            if not isinstance(item, dict):
+                continue
+            name = safe_condition_name(item.get("name"))
+            if not name:
+                continue
+            likelihood = str(item.get("likelihood") or "possible").strip()
+            if likelihood not in {"more_likely", "possible", "needs_exclusion"}:
+                likelihood = "possible"
+
+            def mapped_evidence(field: str) -> list[str]:
+                ids = item.get(field)
+                if not isinstance(ids, list):
+                    return []
+                return [
+                    evidence_catalog[evidence_id]
+                    for raw_id in ids[:2]
+                    if (evidence_id := str(raw_id or "").strip()) in evidence_catalog
+                ]
+
+            conditions.append(
+                {
+                    "name": name,
+                    "likelihood": likelihood,
+                    "supporting_evidence": mapped_evidence("supporting_evidence_ids"),
+                    "non_supporting_evidence": mapped_evidence("non_supporting_evidence_ids"),
+                }
+            )
+            if len(conditions) >= 3:
+                break
+        # Do not display free-form model prose as the clinical summary.  Even
+        # when condition evidence IDs are valid, prose can still turn an
+        # unknown fact (for example "体温未测") into a false negative claim
+        # ("无发热").  Build the summary from the already grounded condition
+        # names and mapped evidence instead.
+        summary = InquiryOrchestrator._grounded_assessment_summary(
+            conditions,
+            evidence_catalog,
+        )
+        return InquiryClinicalAssessment(
+            summary=summary,
+            possible_conditions=conditions,
+            next_steps=safe_action_list(raw.get("next_steps")),
+            seek_care_if=safe_action_list(raw.get("seek_care_if")),
+        )
+
+    @staticmethod
+    def _grounded_assessment_summary(
+        conditions: list[dict[str, object]],
+        evidence_catalog: dict[str, str],
+    ) -> str:
+        if not conditions:
+            return "现有信息不足以形成明确的可能性排序，需结合体征和症状变化继续判断。"
+
+        names_by_level: dict[str, list[str]] = {
+            "more_likely": [],
+            "possible": [],
+            "needs_exclusion": [],
+        }
+        supporting_labels: list[str] = []
+        for condition in conditions:
+            likelihood = str(condition.get("likelihood") or "possible")
+            name = str(condition.get("name") or "").strip()
+            if name and name not in names_by_level.get(likelihood, []):
+                names_by_level.setdefault(likelihood, []).append(name)
+            for evidence in condition.get("supporting_evidence") or []:
+                label = str(evidence or "").split("：", 1)[0].strip()
+                if label and label not in supporting_labels:
+                    supporting_labels.append(label)
+
+        lead = f"结合{'、'.join(supporting_labels[:4])}，" if supporting_labels else ""
+        clauses: list[str] = []
+        if names_by_level["more_likely"]:
+            clauses.append(f"目前更需要考虑{'、'.join(names_by_level['more_likely'])}")
+        if names_by_level["possible"]:
+            prefix = "也可能与" if clauses else "目前可能与"
+            clauses.append(f"{prefix}{'、'.join(names_by_level['possible'])}有关")
+        if names_by_level["needs_exclusion"]:
+            clauses.append(f"{'、'.join(names_by_level['needs_exclusion'])}仍需观察或排除")
+
+        first_sentence = lead + "；".join(clauses) + "。"
+        uncertain_labels: list[str] = []
+        for evidence in evidence_catalog.values():
+            if not any(marker in evidence for marker in ("尚不确定", "未测", "测量未完成")):
+                continue
+            label = str(evidence).split("：", 1)[0].strip()
+            if label and label not in uncertain_labels:
+                uncertain_labels.append(label)
+        second_sentence = (
+            f"{'、'.join(uncertain_labels[:3])}仍未确认，需结合后续测量和症状变化继续判断。"
+            if uncertain_labels
+            else "仍需结合后续体征和症状变化继续判断。"
+        )
+        return (first_sentence + second_sentence)[:180]
 
     def _model_context(
         self,
@@ -670,7 +990,7 @@ class InquiryOrchestrator:
         ]
         if include_current_transcript:
             messages.append({"role": "user", "content": include_current_transcript})
-        messages = messages[-6:]
+        messages = messages[-12:]
         context = session.extracted_information.model_dump()
         context["symptoms_text"] = self._chief_complaint(
             session.extracted_information.observations,
@@ -684,8 +1004,9 @@ class InquiryOrchestrator:
                 "symptom_followups_remaining": max(
                     0,
                     self._MAX_SYMPTOM_FOLLOWUPS
-                    - max(self._current_user_turn_count(session) - 1, 0),
+                    - len(session.extracted_information.asked_clarifications),
                 ),
+                "maximum_symptom_followups": self._MAX_SYMPTOM_FOLLOWUPS,
                 "conversation": messages,
                 "vitals": session.vitals or {},
                 "recent_history": self._history_context(session).model_context(),
@@ -700,20 +1021,33 @@ class InquiryOrchestrator:
         *,
         source: str,
     ) -> InquirySessionResponse:
-        allergy = extracted.allergy_or_contraindication.strip()
-        if not allergy or allergy == "不确定":
+        extracted.symptom_collection_complete = True
+        used = extracted.used_medicines.strip()
+        if not self._safety_answer_confirmed(used):
             session.stage = "clarification"
             session.next_action = "ask"
-            session.reply = "接下来确认用药安全：你有没有药物过敏，或明确不能使用的药物？"
+            window = medication_question_window(extracted.duration)
+            session.reply = (
+                f"{window}，请确认具体用过药的药名；如果确实没有用过，直接说“还没有”。"
+                if used
+                else (
+                    f"{window}，你有没有吃过、含服或外用过药？"
+                    "如果用过请说药名；没有用过直接说“还没有”就可以。"
+                )
+            )
+            extracted.pending_clarification = "used_medicines"
+            session.extracted_information = extracted
             session.source = source
             self._clear_decision(session)
             return self._commit(session)
 
-        used = extracted.used_medicines.strip()
-        if not used or used == "不确定":
+        allergy = extracted.allergy_or_contraindication.strip()
+        if not self._safety_answer_confirmed(allergy):
             session.stage = "clarification"
             session.next_action = "ask"
-            session.reply = "这次不舒服以后有没有用过药？如果用过，请说出药名。"
+            session.reply = "接下来确认用药安全：你有没有药物过敏，或明确不能使用的药物？"
+            extracted.pending_clarification = "allergy_or_contraindication"
+            session.extracted_information = extracted
             session.source = source
             self._clear_decision(session)
             return self._commit(session)
@@ -724,6 +1058,8 @@ class InquiryOrchestrator:
             "cancelled",
             "unavailable",
         }:
+            extracted.pending_clarification = ""
+            session.extracted_information = extracted
             session.stage = "vitals"
             session.next_action = "measure_vitals"
             session.reply = self._vitals_guidance(
@@ -734,6 +1070,7 @@ class InquiryOrchestrator:
             self._clear_decision(session)
             return self._commit(session)
 
+        extracted.pending_clarification = ""
         return self._finish(session, extracted, source=source)
 
     @staticmethod
@@ -751,6 +1088,7 @@ class InquiryOrchestrator:
         extracted: InquiryExtractedInformation,
         guard,
     ) -> dict:
+        evidence_catalog = self._evidence_catalog(session, extracted)
         return {
             "person": self._model_profile(session),
             "case_summary": extracted.case_summary,
@@ -763,7 +1101,43 @@ class InquiryOrchestrator:
             "risk_level": guard.risk_level,
             "risk_reasons": guard.risk_reasons,
             "history_relationship": extracted.history_relationship.model_dump(),
+            "evidence_catalog": evidence_catalog,
         }
+
+    @staticmethod
+    def _evidence_catalog(
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation,
+    ) -> dict[str, str]:
+        catalog: dict[str, str] = {}
+        for index, observation in enumerate(extracted.observations[:12], start=1):
+            status_label = {
+                "present": "存在",
+                "absent": "未出现",
+                "uncertain": "尚不确定",
+            }.get(observation.status, observation.status)
+            evidence = observation.evidence.strip() or observation.concept
+            catalog[f"obs-{index}"] = f"{observation.concept}：{status_label}（{evidence}）"[:140]
+        if extracted.duration.strip():
+            catalog["episode-onset"] = f"本次不适起病：{extracted.duration.strip()}"[:140]
+        if extracted.used_medicines.strip():
+            catalog["episode-medication"] = f"本次已用药：{extracted.used_medicines.strip()}"[:140]
+        if extracted.allergy_or_contraindication.strip():
+            catalog["person-allergy"] = (
+                f"过敏或明确禁忌：{extracted.allergy_or_contraindication.strip()}"
+            )[:140]
+        if session.user_profile.strip():
+            catalog["person-history"] = f"既往资料：{session.user_profile.strip()}"[:140]
+        vitals = session.vitals or {}
+        if vitals.get("temperature") is not None:
+            catalog["vital-temperature"] = f"本次额温：{vitals.get('temperature')}℃"
+        if vitals.get("heart_rate") is not None:
+            catalog["vital-heart-rate"] = f"本次心率：{vitals.get('heart_rate')}次/分"
+        if vitals.get("spo2") is not None:
+            catalog["vital-spo2"] = f"本次血氧：{vitals.get('spo2')}%"
+        if vitals.get("status") in {"cancelled", "failed"}:
+            catalog["vital-status"] = "本次体征：测量未完成"
+        return catalog
 
     def _candidate_context(self, session: InquirySessionResponse) -> str:
         return "；".join(
@@ -772,6 +1146,12 @@ class InquiryOrchestrator:
                 session.user_profile,
                 session.user_allergies,
                 session.extracted_information.allergy_or_contraindication,
+                (
+                    f"已用药：{session.extracted_information.used_medicines}"
+                    if session.extracted_information.used_medicines
+                    and session.extracted_information.used_medicines != "未使用"
+                    else ""
+                ),
             )
             if value and value.strip()
         )
@@ -793,10 +1173,38 @@ class InquiryOrchestrator:
         used = extracted.used_medicines.strip()
         allergy = extracted.allergy_or_contraindication.strip()
         return bool(
-            used
-            and allergy
-            and used != "不确定"
-            and allergy != "不确定"
+            InquiryOrchestrator._safety_answer_confirmed(used)
+            and InquiryOrchestrator._safety_answer_confirmed(allergy)
+        )
+
+    @staticmethod
+    def _candidate_retrieval_text(extracted: InquiryExtractedInformation) -> str:
+        return "；".join(
+            value
+            for value in (
+                extracted.case_summary,
+                extracted.symptoms_text,
+                "；".join(
+                    f"{item.concept}：{item.evidence}"
+                    for item in extracted.observations
+                    if item.status == "present"
+                ),
+            )
+            if value
+        )
+
+    @staticmethod
+    def _safety_answer_confirmed(value: str) -> bool:
+        text = str(value or "").strip()
+        return bool(
+            text
+            and not any(
+                term in text
+                for term in (
+                    "不确定", "不知道", "不清楚", "不详", "记不清", "无法确认",
+                    "不能明确", "说不出药名", "不知道药名", "药名不详",
+                )
+            )
         )
 
     @staticmethod
@@ -831,6 +1239,40 @@ class InquiryOrchestrator:
             item.status == "present" and bool(item.evidence.strip())
             for item in extracted.observations
         )
+
+    @classmethod
+    def _needs_symptom_scope_confirmation(
+        cls,
+        extracted: InquiryExtractedInformation,
+    ) -> bool:
+        return bool(
+            cls._has_meaningful_complaint(extracted)
+            and not extracted.symptom_scope_confirmed
+        )
+
+    @staticmethod
+    def _is_scope_explanation_request(transcript: str) -> bool:
+        text = str(transcript or "").strip()
+        return any(
+            phrase in text
+            for phrase in ("什么意思", "什么算", "有哪些", "怎么回答", "没听懂", "为什么要问")
+        )
+
+    @staticmethod
+    def _minimum_focused_followups(extracted: InquiryExtractedInformation) -> int:
+        """Avoid a premature recommendation while respecting rich first turns."""
+        resolved_detail_topics = {
+            topic
+            for topic, evidence in extracted.clarification_answers.items()
+            if topic not in {"main_symptom", "additional_symptoms"}
+            and str(evidence or "").strip()
+        }
+        if len(resolved_detail_topics) >= 3:
+            return 0
+        present_count = sum(
+            1 for item in extracted.observations if item.status == "present"
+        )
+        return 3 if present_count >= 2 else 2
 
     @staticmethod
     def _require_current_real_vitals(request: InquiryVitalsRequest) -> None:
@@ -951,6 +1393,10 @@ class InquiryOrchestrator:
             safety_note=value.safety_note,
             indications=value.indications,
             dosage=value.dosage,
+            tags=value.tags,
+            contraindications=value.contraindications,
+            aliases=value.aliases,
+            active_ingredients=value.active_ingredients,
             match_reason=value.match_reason,
             requires_existing_direction=value.requires_existing_direction,
         )
@@ -987,6 +1433,29 @@ class InquiryOrchestrator:
     ) -> InquiryExtractedInformation:
         current = session.extracted_information
         observation_map = {item.concept: item for item in current.observations}
+        if (
+            interpretation.material_symptom_change
+            and interpretation.symptom_change_type == "replace"
+        ):
+            replaced = {
+                re.sub(r"\s+", "", concept)
+                for concept in interpretation.replaced_concepts
+                if str(concept or "").strip()
+            }
+            if not replaced:
+                prior_present = [
+                    item.concept for item in current.observations if item.status == "present"
+                ]
+                new_present = {
+                    item.concept for item in interpretation.observations if item.status == "present"
+                }
+                if len(prior_present) == 1 and new_present and prior_present[0] not in new_present:
+                    replaced.add(re.sub(r"\s+", "", prior_present[0]))
+            observation_map = {
+                concept: item
+                for concept, item in observation_map.items()
+                if re.sub(r"\s+", "", concept) not in replaced
+            }
         for item in interpretation.observations:
             observation_map[item.concept] = item
         observations = list(observation_map.values())
@@ -1008,6 +1477,21 @@ class InquiryOrchestrator:
             or current.allergy_or_contraindication
             or session.user_allergies
         )
+        pending_before = current.pending_clarification.strip()
+        if pending_before == "allergy_or_contraindication":
+            contextual_allergy = SymptomInterpreter.allergy_answer(
+                transcript,
+                allow_short_answer=True,
+            )
+            if contextual_allergy:
+                allergy_or_contraindication = contextual_allergy
+        elif pending_before == "used_medicines":
+            contextual_medicine_use = SymptomInterpreter.used_medicine_answer(
+                transcript,
+                allow_short_answer=True,
+            )
+            if contextual_medicine_use:
+                used_medicines = contextual_medicine_use
         if is_contextual_negative_answer(transcript):
             previous_question = next(
                 (
@@ -1025,13 +1509,71 @@ class InquiryOrchestrator:
                 term in previous_question
                 for term in ("用过药", "用药", "吃过药", "吃药", "服药")
             )
-            if asks_allergy:
+            if pending_before == "allergy_or_contraindication":
+                allergy_or_contraindication = "无"
+            elif pending_before == "used_medicines":
+                used_medicines = "未使用"
+            elif asks_allergy:
                 if not allergy_or_contraindication:
                     allergy_or_contraindication = "无"
             elif asks_used_medicines and not used_medicines:
                 used_medicines = "未使用"
+        clarification_answers = dict(current.clarification_answers)
+        if interpretation.material_symptom_change:
+            # Keep episode-wide facts that remain useful, but invalidate every
+            # symptom-specific slot and restart the four-question budget.
+            clarification_answers = {
+                topic: evidence_text
+                for topic, evidence_text in clarification_answers.items()
+                if topic in {"onset", "fever"}
+            }
+        semantic_evidence = normalize_topic_evidence(interpretation.topic_evidence)
+        for topic, evidence_text in explicit_topic_evidence(transcript).items():
+            semantic_evidence.setdefault(topic, evidence_text)
+        for topic in normalize_answered_topics(interpretation.answered_topics_this_turn):
+            if topic not in SYMPTOM_QUESTION_TOPICS:
+                continue
+            evidence_text = semantic_evidence.get(topic)
+            if evidence_text:
+                clarification_answers[topic] = evidence_text
+        for topic, evidence_text in semantic_evidence.items():
+            if topic in SYMPTOM_QUESTION_TOPICS:
+                clarification_answers[topic] = evidence_text
+
+        compact_transcript = transcript.strip()
+        asks_for_explanation = any(
+            phrase in compact_transcript
+            for phrase in ("什么意思", "有什么区别", "为什么", "没听懂", "怎么回答")
+        )
+        if (
+            pending_before in SYMPTOM_QUESTION_TOPICS
+            and pending_before not in clarification_answers
+            and compact_transcript
+            and not asks_for_explanation
+            and not interpretation.material_symptom_change
+        ):
+            clarification_answers[pending_before] = compact_transcript[:180]
+
+        duration = (
+            interpretation.duration
+            or SymptomInterpreter.duration_answer(transcript)
+            or current.duration
+        )
+        if duration:
+            clarification_answers.setdefault("onset", duration)
+
+        symptoms_text = InquiryOrchestrator._chief_complaint(
+            observations,
+            "" if interpretation.material_symptom_change else current.symptoms_text,
+            transcript,
+        )
+        if symptoms_text:
+            clarification_answers.setdefault("main_symptom", symptoms_text)
+
         return InquiryExtractedInformation(
-            case_summary=interpretation.case_summary or current.case_summary,
+            case_summary=interpretation.case_summary or (
+                "" if interpretation.material_symptom_change else current.case_summary
+            ),
             observations=observations,
             uncertainties=interpretation.uncertainties,
             history_relationship=interpretation.history_relationship,
@@ -1042,22 +1584,84 @@ class InquiryOrchestrator:
             dimension_evidence=evidence,
             symptom_features=[],
             feature_evidence={},
-            clarification_answers={},
-            asked_clarifications=[],
-            pending_clarification="",
-            symptoms_text=InquiryOrchestrator._chief_complaint(
-                observations,
-                current.symptoms_text,
-                transcript,
+            clarification_answers=clarification_answers,
+            asked_clarifications=(
+                []
+                if interpretation.material_symptom_change
+                else list(current.asked_clarifications)
             ),
-            duration=interpretation.duration or current.duration,
+            pending_clarification=(
+                "" if interpretation.material_symptom_change else current.pending_clarification
+            ),
+            symptom_scope_confirmed=(
+                False
+                if interpretation.material_symptom_change
+                else bool(
+                    current.symptom_scope_confirmed
+                    or interpretation.symptom_scope_complete
+                )
+            ),
+            symptom_revision=(
+                current.symptom_revision + 1
+                if interpretation.material_symptom_change
+                else current.symptom_revision
+            ),
+            symptom_collection_complete=(
+                False
+                if interpretation.material_symptom_change
+                else current.symptom_collection_complete
+            ),
+            symptoms_text=symptoms_text,
+            duration=duration,
             used_medicines=used_medicines,
             allergy_or_contraindication=allergy_or_contraindication,
             confidence=max(current.confidence, interpretation.confidence),
+            final_assessment=InquiryClinicalAssessment(),
         )
 
     @staticmethod
+    def _promote_material_symptom_addition(
+        current: InquiryExtractedInformation,
+        interpretation: SymptomInterpretation,
+    ) -> None:
+        """Start a new question cycle only when ``add`` introduces a real symptom.
+
+        A refinement of an existing complaint must keep the current four-question
+        budget.  Conversely, a newly present concept can change risk and the next
+        useful question even when the model omitted its material-change flag.
+        """
+        if (
+            interpretation.material_symptom_change
+            or interpretation.symptom_change_type != "add"
+        ):
+            return
+        existing_concepts = {
+            re.sub(r"\s+", "", item.concept)
+            for item in current.observations
+            if item.status == "present" and item.concept.strip()
+        }
+        existing_concepts.update(
+            re.sub(r"\s+", "", part)
+            for part in current.symptoms_text.split("、")
+            if part.strip()
+        )
+        if not existing_concepts:
+            return
+        added_concepts = {
+            re.sub(r"\s+", "", item.concept)
+            for item in interpretation.observations
+            if item.status == "present" and item.concept.strip()
+        } - existing_concepts
+        if added_concepts:
+            interpretation.material_symptom_change = True
+
+    @staticmethod
     def _chief_complaint(observations, current: str, transcript: str) -> str:
+        concepts: list[str] = []
+        for value in str(current or "").split("、"):
+            normalized = " ".join(value.split()).strip()
+            if normalized and normalized not in concepts:
+                concepts.append(normalized)
         for observation in observations:
             if observation.status != "present":
                 continue
@@ -1065,9 +1669,21 @@ class InquiryOrchestrator:
             if concept:
                 for separator in ("、", "；", "，", ","):
                     concept = concept.split(separator, 1)[0]
-                return concept[:24]
+                if concept and concept not in concepts:
+                    concepts.append(concept)
+
+        for concept in InquiryOrchestrator._explicit_symptom_labels(transcript):
+            if concept not in concepts:
+                concepts.append(concept)
+        if concepts:
+            return "、".join(concepts[:4])[:80]
 
         fallback = str(current or transcript or "").strip()
+        if any(
+            phrase in fallback
+            for phrase in ("不知道怎么说", "说不清楚", "没法描述", "不知道如何描述")
+        ):
+            return ""
         for separator in ("、", "；", "，", "。", ",", ".", "！", "？"):
             fallback = fallback.split(separator, 1)[0]
         for prefix in ("我感觉", "我觉得", "我有一点", "我有点", "有一点", "有点"):
@@ -1075,6 +1691,43 @@ class InquiryOrchestrator:
                 fallback = fallback[len(prefix) :].strip()
                 break
         return fallback[:24]
+
+    @staticmethod
+    def _explicit_symptom_labels(transcript: str) -> list[str]:
+        """Preserve symptoms literally stated by the user; never infer a diagnosis."""
+        text = str(transcript or "").strip()
+        patterns = (
+            (r"嗓子(?:疼|痛)|喉咙(?:疼|痛)|咽(?:喉)?(?:疼|痛)", "咽喉疼痛"),
+            (r"头(?:有点|有一点|很|特别|剧烈)?(?:疼|痛)|头疼|头痛", "头痛"),
+            (r"头晕|眩晕", "头晕"),
+            (r"中暑|暑热不适", "暑热不适"),
+            (r"咳嗽|咳痰", "咳嗽"),
+            (r"流(?:清|黄)?鼻涕", "流鼻涕"),
+            (r"鼻塞", "鼻塞"),
+            (r"发热|发烧", "发热"),
+            (r"发冷|怕冷", "发冷"),
+            (r"腹泻|拉肚子|稀便", "腹泻"),
+            (r"便秘|排不出", "便秘"),
+            (r"恶心", "恶心"),
+            (r"呕吐|想吐", "呕吐"),
+            (r"胃痛|腹痛|肚子痛", "腹痛"),
+            (r"反酸|烧心", "反酸烧心"),
+            (r"尿痛|排尿痛", "尿痛"),
+            (r"尿频", "尿频"),
+            (r"皮疹|红疹", "皮疹"),
+            (r"瘙痒|发痒", "瘙痒"),
+            (r"割伤|擦伤|伤口|出血", "外伤"),
+        )
+        labels: list[str] = []
+        for pattern, label in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            prefix = text[max(0, match.start() - 6):match.start()]
+            if re.search(r"(?:没有|并没有|没|不是|不|无|否认).{0,3}$", prefix):
+                continue
+            labels.append(label)
+        return list(dict.fromkeys(labels))
 
     @staticmethod
     def _clear_decision(session: InquirySessionResponse) -> None:
@@ -1097,10 +1750,36 @@ class InquiryOrchestrator:
         return sum(1 for message in session.messages if message.role == "user") + 1
 
     @classmethod
-    def _symptom_followup_limit_reached(cls, session: InquirySessionResponse) -> bool:
-        # The first user turn states the complaint. The next three turns are the
-        # maximum symptom-refinement budget; the fourth answer advances the flow.
-        return cls._current_user_turn_count(session) > cls._MAX_SYMPTOM_FOLLOWUPS
+    def _register_symptom_question(
+        cls,
+        extracted: InquiryExtractedInformation,
+        topic: str,
+    ) -> None:
+        if topic not in SYMPTOM_QUESTION_TOPICS:
+            return
+        if topic == extracted.pending_clarification or topic in extracted.asked_clarifications:
+            extracted.pending_clarification = topic
+            extracted.symptom_collection_complete = False
+            return
+        if len(extracted.asked_clarifications) >= cls._MAX_SYMPTOM_FOLLOWUPS:
+            return
+        extracted.asked_clarifications.append(topic)
+        extracted.pending_clarification = topic
+        extracted.symptom_collection_complete = False
+
+    @classmethod
+    def _symptom_followup_limit_reached(
+        cls,
+        session: InquirySessionResponse,
+        extracted: InquiryExtractedInformation | None = None,
+    ) -> bool:
+        # Count only symptom questions actually shown by the assistant. The
+        # opening complaint, medicine reconciliation, allergy check and vitals
+        # do not consume this four-question budget.
+        return (
+            len((extracted or session.extracted_information).asked_clarifications)
+            >= cls._MAX_SYMPTOM_FOLLOWUPS
+        )
 
     def _history_context(self, session: InquirySessionResponse) -> InquiryHistoryContext:
         return self.history_service.context_for(

@@ -1,11 +1,11 @@
 export const LOCAL_REPLY_STREAM_PROFILE = Object.freeze({
-  chunkSize: 1,
-  intervalMs: 72
+  chunkSize: 8,
+  intervalMs: 20
 });
 
 export const CLOUD_REPLY_STREAM_PROFILE = Object.freeze({
-  chunkSize: 4,
-  intervalMs: 42
+  chunkSize: 12,
+  intervalMs: 16
 });
 
 const localReplySources = new Set(["offline_rules", "local_llm"]);

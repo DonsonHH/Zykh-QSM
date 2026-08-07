@@ -256,6 +256,17 @@ class OfflineInquiryRulesTest(unittest.TestCase):
                 self.assertEqual(len(questions), 3)
                 self.assertTrue(all(len(variants) >= 2 for variants in questions))
 
+    def test_offline_questions_do_not_routinely_ask_about_standing_or_walking(self) -> None:
+        banned = ("正常站立", "正常行走", "站立不稳", "走路不稳", "站不稳", "走路、")
+        for rule in RULES:
+            with self.subTest(rule=rule.key):
+                questions = self.rules._detail_questions(rule)
+                for question in (item for variants in questions for item in variants):
+                    self.assertFalse(
+                        any(term in question for term in banned),
+                        f"{rule.key} still contains a routine mobility question: {question}",
+                    )
+
     def test_heat_inquiry_collects_three_symptom_details_then_summarizes(self) -> None:
         existing = {"conversation_turns": 1, "conversation": [], "vitals": {}}
         turns = (

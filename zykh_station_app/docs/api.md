@@ -107,21 +107,33 @@ Adds one speech transcript. The selected cloud or local model reads the full
 conversation, profile, vitals and recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
-fixed symptom taxonomy, fixed field order or fixed turn count. The model may
-choose `measure_vitals` only after it has formed a meaningful chief complaint
-and only when core vitals materially affect the next decision. The frontend
+fixed symptom taxonomy or fixed field order. The first decision slot confirms
+the complete concurrent symptom scope and does not consume the focused-question
+budget; one stable complaint then permits at most four clinically useful symptom
+questions and may finish earlier when evidence is sufficient. An explicit
+complaint replacement or a newly added major symptom that changes the decision
+starts a recalculated budget; a refinement of an existing symptom does not.
+Every assistant turn asks one
+decision question. The model may choose `measure_vitals` only after symptom scope
+has been confirmed and only when core vitals materially affect the next decision. The frontend
 finishes the spoken guidance, pauses for 2.2 seconds, then renders the vitals
 tool inside the inquiry flow. It does not navigate away or transfer results
 through browser storage.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable
-danger signals and builds a pool filtered by stock, expiry, OTC eligibility and
-absolute contraindications. The model may choose at most one primary and one
-alternative from that pool, or choose none. If both model routes are unavailable
+danger signals and builds a pool from the latest cabinet rows. It filters stock,
+expiry, verified package guidance, OTC or existing-plan eligibility, allergies,
+chronic contraindications, current-episode medicine aliases and duplicate active
+ingredients. The model receives a smaller symptom-focused subset and may choose
+at most one primary and one alternative from exactly that subset, or choose none.
+The cabinet is read again after ranking before anything is displayed. If both model routes are unavailable
 or return invalid structure, the session remains retryable, returns no candidate
 and does not expose connection or fallback terminology in its user-facing reply.
 Environment-sensitive cloud requests may include current Chengdu weather as
 supporting context; it cannot replace measured vitals or establish a diagnosis.
+Final assessment first calls the configured Responses endpoint. If that provider
+contract is unavailable or invalid, the backend retries the same constrained
+JSON task through Chat Completions before considering the offline fallback.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
@@ -134,7 +146,14 @@ the model when complete core vitals are available.
 
 ### POST /api/inquiry/sessions/{session_id}/treatment/confirm
 
-Confirms exactly one mutually exclusive treatment option. The request contains only `option_id` and `confirmed_safety_notice`; medicine IDs and cabinet slots are never accepted from the frontend. Immediately before any cabinet action, the backend recalculates risk, contraindications, expiry, stock and current OTC eligibility. If the displayed option changed, the request is rejected with `409` and no cabinet is opened. A successful confirmation executes the selected option through the existing `DispenseService`, records each action and rejects duplicate submissions.
+Confirms exactly one mutually exclusive treatment option. The request contains
+only `option_id`, `confirmed_safety_notice` and the persisted
+`expected_item_index`; medicine IDs and cabinet slots are never accepted from
+the frontend. Immediately before each cabinet action, the backend recalculates
+risk, contraindications, expiry, stock and current eligibility. If the displayed
+option changed, the request is rejected with `409` and no cabinet is opened. A
+successful confirmation executes the selected option through the existing
+`DispenseService`, records each action and rejects stale or duplicate submissions.
 
 ### GET /api/inquiry/{inquiry_id}
 

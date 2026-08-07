@@ -14,6 +14,7 @@
     "test:inquiry-guest": "node scripts/test-inquiry-guest-session.mjs",
     "test:inquiry-vitals": "node scripts/test-inquiry-vitals-flow.mjs",
     "test:inquiry-result-reset": "node scripts/test-inquiry-result-navigation-reset.mjs",
+    "test:inquiry-result-live": "node scripts/test-inquiry-result-live.mjs",
     "test:inquiry-offline": "node scripts/test-inquiry-reply-streaming.mjs",
     "test:vitals-prewarm": "node scripts/test-vitals-prewarm.mjs",
     "test:vitals-retry-policy": "node scripts/test-vitals-retry-policy.mjs",

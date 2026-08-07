@@ -270,24 +270,42 @@ class AiService:
     ) -> dict[str, Any]:
         """Build an open, evidence-grounded case state without choosing medicine."""
         system_prompt = (
-            "你是家庭康护终端的中文问询医师助理。你负责自然问询、病例理解和语义风险判断，"
-            "但不能替代医生诊断或处方，不能选择药品、仓位或控制任何硬件。只输出一个 JSON 对象。"
-            "不要套用症状分类白名单；observations.concept 应按用户真实表达自由概括。"
-            "每条 observation 必须含 status=present|absent|uncertain、用户原话 evidence、"
-            "原话所在 source_turn 和 confidence。不得把否定表达写成 present。"
-            "完整阅读 conversation、profile、vitals 和 recent_history；历史只用于比较，"
-            "不得直接复用上次结论。每轮只问一个真正影响理解或安全的缺失信息，禁止固定字段顺序和重复追问。"
-            "case_state.symptom_followups_remaining 是症状追问剩余轮数，最多三轮；为 0 时不得继续追问症状，"
-            "应先确认过敏或禁忌，再确认本次是否用过药，随后选择 measure_vitals；核心体征已有结果时选择 analyze。"
-            "next_action 只能是 ask、measure_vitals、analyze、escalate、end。"
-            "先从用户原话中形成明确主诉；主诉尚未明确时不得选择 measure_vitals。"
-            "主诉明确后，如果额温、心率和血氧会实质影响下一步判断，选择 measure_vitals；"
-            "不要按固定轮数触发，也不要为了收集数据而测量。信息足够时选择 analyze；"
+            "你是智药康护的中文多轮AI健康问询语义理解器，不是关键词回复程序。你必须完整理解口语、"
+            "同义表达、否定、补充、纠正和同一句中的多个症状，不能只抓住其中一个词继续固定流程。"
+            "你负责自然问询、病例理解和语义风险判断，但不能替代医生诊断或处方，不能选择药品、仓位或控制硬件。"
+            "只输出一个 JSON 对象。不要套用症状分类白名单；observations.concept 按用户真实表达自由概括。"
+            "每条 observation 的 concept 必须使用简短中文，并含 status=present|absent|uncertain、用户原话 evidence、原话所在 source_turn"
+            " 和 confidence；没有说过的信息保持未知，否定表达不得写成 present。"
+            "完整阅读 conversation、profile、vitals、recent_history 和问询主题记忆；历史只用于比较，不得复用旧结论。"
+            "case_state.asked_clarifications 是助手已经实际问过的症状主题，case_state.clarification_answers 是已得到的回答证据，"
+            "case_state.pending_clarification 是上一问的主题。正常回答过或已经问过的主题不得重复追问。"
+            "answered_topics_this_turn 只记录最新用户原话真正回答的主题；即使用户回答‘无、还没有、不知道’也要正确记录，"
+            "topic_evidence 用简短原话保存证据。用户明确纠正主诉时 material_symptom_change=true，并以纠正后的症状重新评估。"
+            "symptom_change_type 只能是 none、add、refine、replace：新增同时存在的症状是 add，进一步描述同一症状是 refine，"
+            "明确说明原症状说错、不是原症状而是另一症状才是 replace；replace 时必须列出 replaced_concepts。"
+            "symptom_scope_complete 表示用户已经明确回答过‘是否还有其他同时出现的不适’，或用户原话已经说明‘就这些、别的没有’。"
+            "本字段由服务端用于先完整收集症状范围，不要把它误当成病名判断。"
+            "每轮最多提出一个可独立回答的信息槽，只能有一个问号；不能把起病时间、发热、严重程度、已用药、过敏和病史塞进一句。"
+            "面向普通家庭和老人提问，必须使用能直接感受到的生活化说法；不要说‘异常神经表现、神经系统异常、"
+            "局灶性神经功能缺损、视物异常、意识障碍’等分类术语。一次只问一种具体表现，例如说‘一边手脚突然使不上力’。"
+            "普通轻症不得追问能否站立、能否正常行走或走路是否受影响；用户主动提到站不稳时只把它作为已有风险信息。"
+            "如果用户同时说嗓子疼和头痛，必须同时保留两项；下一问选择最能改变风险或后续处理的一项，不能忽略另一项。"
+            "question_topic 必须从 main_symptom、onset、fever、breathing、headache_onset、headache_red_flags、severity、"
+            "respiratory_features、throat_features、digestive_features、stool_features、dehydration、urinary_features、"
+            "skin_features、injury_features、exposure_trigger、symptom_detail、none 中选择。"
+            "case_state.symptom_followups_remaining 表示当前有效主诉周期还可提出几个真正的症状澄清问题，当前周期上限四个；"
+            "用户明确 replace 后服务端会开启新周期。为 0 时不得再问症状。"
+            "选择下一问前，先比较两到四个与全部现有症状相符的常见原因方向和必须排除的风险方向，"
+            "只问最能区分这些方向、改变风险等级或改变后续处理的一个问题；不要按固定字段顺序机械追问。"
+            "症状信息足够时 clinical_ready=true 并选择 analyze，不要为了凑满四次继续追问；仍不足时只问一个最高价值缺口。"
+            "已用药、过敏禁忌、体征测量和药品筛选由后续本地业务链单独完成，本轮不要提前询问或给药。"
+            "next_action 只能是 ask、measure_vitals、analyze、escalate、end。先形成明确主诉；"
             "出现明显危险信号时选择 escalate。risk_level 只能是 low、medium、high、emergency。"
             "只有用户明确表示不再继续、要求结束本次问询时才选择 end。"
-            "如果症状适合观察或基础护理，也要选择 analyze，让后续步骤核对家庭药品和护理用品。"
-            "assistant_reply 是直接给用户的一句自然回应；ask 时包含一个问题；"
-            "measure_vitals 时用一句自然中文解释为什么本次需要测量，不要继续追问。"
+            "assistant_reply 是直接给用户的一句自然回应；ask 时只包含一个聚焦问题；"
+            "analyze、escalate 或 end 时 next_question 和 question_topic 必须为空或 none。"
+            "最终必须返回 output_contract 所示的完整根对象，不能只返回一条 observation；"
+            "observations 必须逐项覆盖 current_utterance 中每个明确出现或明确否定的症状，不得只保留第一个症状。"
             "history_relationship.should_reuse_previous_conclusion 必须为 false。"
         )
         user_payload = {
@@ -315,6 +333,14 @@ class AiService:
                 "duration": "",
                 "used_medicines": "",
                 "allergy_or_contraindication": "",
+                "answered_topics_this_turn": [],
+                "topic_evidence": {},
+                "question_topic": "none",
+                "clinical_ready": False,
+                "material_symptom_change": False,
+                "symptom_change_type": "none",
+                "replaced_concepts": [],
+                "symptom_scope_complete": False,
                 "next_action": "ask",
                 "next_question": "",
                 "assistant_reply": "",
@@ -347,16 +373,50 @@ class AiService:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.15,
-            "max_tokens": 900,
+            "max_tokens": 1600,
             "stream": False,
             "response_format": {"type": "json_object"},
         }
-        self._apply_provider_options(payload, enable_thinking=False)
+        self._apply_provider_options(
+            payload,
+            enable_thinking=settings.ai_inquiry_enable_thinking,
+            reasoning_effort="low",
+        )
         parsed, cloud_error = self._request_json_completion(
             payload,
             key,
             purpose="inquiry_extract",
         )
+        if isinstance(parsed, dict) and not self._valid_inquiry_extract_payload(parsed):
+            repair_payload = dict(payload)
+            repair_payload["messages"] = [
+                *payload["messages"],
+                {
+                    "role": "assistant",
+                    "content": json.dumps(parsed, ensure_ascii=False),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "上一个响应不是完整且类型严格的问诊状态根对象。请重新读取最初的 current_utterance，"
+                        "严格按 output_contract 返回完整 JSON。必须包含 case_summary、observations 数组、"
+                        "next_action、assistant_reply、risk_level；clinical_ready、material_symptom_change 和"
+                        "symptom_scope_complete 必须是真正的 JSON 布尔值，不能使用字符串。"
+                        "同一句中的每个明确症状都要分别保留。不要解释，不要只返回单条 observation。"
+                    ),
+                },
+            ]
+            repaired, repair_error = self._request_json_completion(
+                repair_payload,
+                key,
+                purpose="inquiry_extract_contract_repair",
+            )
+            if self._valid_inquiry_extract_payload(repaired):
+                parsed = repaired
+                cloud_error = ""
+            else:
+                parsed = None
+                cloud_error = repair_error or "云端返回的问诊结构不完整"
         if not isinstance(parsed, dict):
             fallback = self._offline_inquiry_extract(
                 transcript,
@@ -374,12 +434,13 @@ class AiService:
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Let AI rank only IDs already admitted by the deterministic safety pool."""
-        if not candidates:
-            return {"ok": True, "source": "safety_pool", "options": []}
         system_prompt = (
-            "你是家庭康护问询的候选药品排序助手。程序已完成库存、有效期、OTC资格和绝对禁忌过滤。"
+            "你是家庭康护问询的临床信息分析与候选药品排序助手。程序已完成库存、有效期、OTC资格和初步过敏过滤。"
             "你只能从 candidates 中选择，不能新增药品、改变字段或控制药柜。"
+            "你仍必须逐项核对 candidates 的 contraindications、tags、dosage 和 safety_note，"
+            "结合已用药、慢病史、过敏史和体征排除禁忌、同类重复及不合理组合；无法确认安全时不要选择。"
             "结合病例、个人信息、体征和药品说明决定是否存在合适候选；不合适可返回空 options。"
+            "即使 candidates 为空，也必须完成 assessment，并把 options 返回为空数组。"
             "低风险或中风险情况下，只要候选中存在与当前情况直接相关且安全的外用药、保健品或护理用品，"
             "就应输出至少一个主方案，不应仅因不需要口服药或处方药而返回空 options。"
             "浅表擦伤、已经止血的轻微刀伤等场景，可把碘伏、棉签、纱布、创口贴等外伤护理用品"
@@ -389,13 +450,24 @@ class AiService:
             "如果候选中存在用途侧重不同、同样符合当前情况的第二种安全选择，应输出备选方案；"
             "只有确实没有合理第二选择时才只给主方案，不要把同一护理流程强行拆成两个方案。"
             "每个方案最多四个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
-            "reason 用一至两句自然中文说明推荐原因，不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
+            "assessment 必须结合全部主诉、伴随症状、起病经过、体征、病史和已用药生成，不得只围绕第一个症状。"
+            "possible_conditions 最多三项，name 写常见的可能病因或可能疾病名称，likelihood 只能是 more_likely、possible、"
+            "needs_exclusion；只能表达可能性，不得下确定诊断。supporting_evidence_ids 和 non_supporting_evidence_ids"
+            "只能引用 case.evidence_catalog 中真实存在的 ID，不得自造事实。每项各最多两个 ID。"
+            "assessment.summary 用不超过三句话解释为什么形成这些可能性；next_steps 和 seek_care_if 各最多三条，简短可执行。"
+            "不要在模型输出中写免责声明，终端会固定显示安全声明。"
+            "reason 用一至两句结合本人的实际症状、体征或病史说明为什么此方案更合适，"
+            "不使用‘覆盖症状、库存核验、独立备选、互斥’等程序语言。"
             "不得声称已经诊断，不得使用‘一定有效、保证有效、可以治好’等疗效承诺。"
-            "usage_by_medicine 必须逐项使用 medicine_id 作为键，结合本次症状轻重写出简短、可播报的使用顺序和用法。"
+            "reason_by_medicine 和 usage_by_medicine 必须逐项使用 medicine_id 作为键。reason_by_medicine 要说明该药"
+            "针对本人的哪项实际症状或为何作为配合项，不能只抄主治说明；usage_by_medicine 写简短、可播报的使用顺序和用法。"
             "外用护理用品可以写‘先、再、最后’的操作顺序；口服或局部药品只能在候选 dosage 的剂量、"
             "频次、疗程和适用年龄范围内取值，不得增加剂量、频次或疗程，不确定时原样使用 dosage。"
-            "只输出 JSON：{\"summary\":\"\",\"options\":[{\"option_id\":\"primary\","
-            "\"label\":\"主方案\",\"reason\":\"\",\"medicine_ids\":[\"\"],"
+            "只输出 JSON：{\"assessment\":{\"summary\":\"\",\"possible_conditions\":[{\"name\":\"\","
+            "\"likelihood\":\"possible\",\"supporting_evidence_ids\":[\"obs-1\"],"
+            "\"non_supporting_evidence_ids\":[\"vital-temperature\"]}],\"next_steps\":[\"\"],"
+            "\"seek_care_if\":[\"\"]},\"options\":[{\"option_id\":\"primary\",\"label\":\"主方案\","
+            "\"reason\":\"\",\"medicine_ids\":[\"\"],\"reason_by_medicine\":{\"medicine-id\":\"个性化理由\"},"
             "\"usage_by_medicine\":{\"medicine-id\":\"本次建议用法\"}}]}。"
         )
         user_prompt = json.dumps(
@@ -411,31 +483,56 @@ class AiService:
             )
         payload: dict[str, Any] = {
             "model": settings.ai_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 900,
-            "stream": False,
-            "response_format": {"type": "json_object"},
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "reasoning": {"effort": "low"},
+            "text": {"format": {"type": "json_object"}},
+            "max_output_tokens": 8192,
         }
-        self._apply_provider_options(payload, enable_thinking=False)
-        parsed, cloud_error = self._request_json_completion(
+        parsed, cloud_error = self._request_json_response(
             payload,
             key,
             purpose="inquiry_rank",
         )
-        return (
-            {"ok": True, "source": "cloud", **parsed}
-            if isinstance(parsed, dict)
-            else self._offline_inquiry_rank(
-                system_prompt,
-                user_prompt,
-                context,
-                candidates,
-                f"云端排序失败：{cloud_error or '未返回有效结构'}。",
-            )
+        if isinstance(parsed, dict):
+            return {"ok": True, "source": "cloud_responses", **parsed}
+
+        # The handoff target is Responses, but some DeepSeek deployments only
+        # publish the OpenAI-compatible Chat Completions contract. Keep the
+        # final assessment online when that documented endpoint is available.
+        chat_payload: dict[str, Any] = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4096,
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        self._apply_provider_options(
+            chat_payload,
+            enable_thinking=settings.ai_enable_thinking,
+            reasoning_effort="high",
+        )
+        chat_parsed, chat_error = self._request_json_completion(
+            chat_payload,
+            key,
+            purpose="inquiry_rank_chat_fallback",
+        )
+        if isinstance(chat_parsed, dict):
+            return {"ok": True, "source": "cloud_chat_fallback", **chat_parsed}
+        return self._offline_inquiry_rank(
+            system_prompt,
+            user_prompt,
+            context,
+            candidates,
+            (
+                "云端排序失败："
+                f"{cloud_error or 'Responses 未返回有效结构'}；"
+                f"{chat_error or 'Chat Completions 未返回有效结构'}。"
+            ),
         )
 
     @staticmethod
@@ -1193,16 +1290,16 @@ class AiService:
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
         return (
-            "你是家庭康护问询信息整理器。只依据本轮said和known继续自然问询；语音可能有同音错字。"
-            "不要诊断、选药或控硬件。只输出一行JSON对象，键为summary、facts、action、question、"
-            "duration、used_medicines、allergy。facts元素的键为concept、status、evidence；"
-            "status只能是present、absent或uncertain，action只能是ask、measure_vitals、analyze、escalate或end。"
-            "facts最多2项；summary和concept必须写said中的具体不适，禁止输出字段说明或占位词。"
-            "不要把用户没有说出的发热、皮肤潮红、疼痛等表现自行补出来；用户说‘好像’或‘可能’时保留为其原话，"
-            "不要把它扩写成已确认的病因。"
-            "said有两个明确不适就分别整理；否定词后的内容只能absent；字段没有新信息就留空。"
-            "question必须紧扣本轮具体不适且只问一件事，不得复制无关问题。"
-            "没有不适时facts=[]并询问哪里不舒服；主诉明确且体征有帮助时才measure_vitals。"
+            "你是问询信息整理器，只凭said和known理解口语。不得诊断、选药或控硬件。"
+            "仅输出一行JSON：summary、facts、action、question、duration、"
+            "used_medicines、allergy；可含change_type、replaced_concepts、scope_complete。"
+            "facts最多2项，含concept、status、evidence；status仅present、absent、uncertain；"
+            "action仅ask、measure_vitals、analyze、escalate、end。summary和concept必须来自said；"
+            "同句多症状分别保留，否定项只能absent，未知留空，不得补造事实或病因。"
+            "纠正旧主诉用change_type=replace并列旧症状；新增或细化用add、refine，否则none。"
+            "scope_complete仅在用户已回答有无其他不适时为true。"
+            "question只问一件事、不重复known；说人话，不问能否站立或行走。"
+            "无不适则facts=[]并问哪里不舒服；主诉明确且体征有帮助才measure_vitals。"
         )
 
     @classmethod
@@ -1334,6 +1431,24 @@ class AiService:
                 payload.get("g")
                 if isinstance(payload.get("g"), list)
                 else payload.get("risk_flags") if isinstance(payload.get("risk_flags"), list) else []
+            ),
+            "symptom_change_type": str(
+                payload.get("change_type") or payload.get("symptom_change_type") or "none"
+            ).strip(),
+            "replaced_concepts": (
+                payload.get("replaced_concepts")
+                if isinstance(payload.get("replaced_concepts"), list)
+                else []
+            ),
+            "symptom_scope_complete": type(
+                payload.get("scope_complete")
+                if "scope_complete" in payload
+                else payload.get("symptom_scope_complete")
+            ) is bool
+            and bool(
+                payload.get("scope_complete")
+                if "scope_complete" in payload
+                else payload.get("symptom_scope_complete")
             ),
             "confidence": payload.get("c") or payload.get("confidence") or 0,
         }
@@ -1975,7 +2090,7 @@ class AiService:
         if any(term in message for term in ("咳嗽", "流涕", "鼻塞", "咽痛")):
             return "请继续说明症状持续多久，是否伴有发热或呼吸费力；"
         if any(term in message for term in ("头晕", "头痛", "站不稳", "视物")):
-            return "请继续说明是否伴有恶心、视物模糊或站立不稳；"
+            return "请继续说明头晕更像周围在转还是眼前发黑；"
         if any(term in message for term in ("腹泻", "胃痛", "腹痛", "呕吐")):
             return "请继续说明症状持续多久、次数，以及能否正常饮水；"
         if any(term in message for term in ("过敏", "瘙痒", "皮疹", "红肿")):
@@ -2029,12 +2144,41 @@ class AiService:
         return ""
 
     @staticmethod
-    def _apply_provider_options(payload: dict[str, Any], enable_thinking: bool) -> None:
+    def _valid_inquiry_extract_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if not (
+            isinstance(payload.get("case_summary"), str)
+            and isinstance(payload.get("observations"), list)
+            and isinstance(payload.get("next_action"), str)
+            and isinstance(payload.get("assistant_reply"), str)
+            and isinstance(payload.get("risk_level"), str)
+        ):
+            return False
+        return all(
+            field not in payload or type(payload[field]) is bool
+            for field in (
+                "clinical_ready",
+                "material_symptom_change",
+                "symptom_scope_complete",
+            )
+        )
+
+    @staticmethod
+    def _apply_provider_options(
+        payload: dict[str, Any],
+        enable_thinking: bool,
+        reasoning_effort: str = "high",
+    ) -> None:
         api_base = settings.ai_api_base.lower()
         if "deepseek.com" in api_base:
             payload["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
             if enable_thinking:
-                payload["reasoning_effort"] = "high"
+                payload["reasoning_effort"] = (
+                    reasoning_effort
+                    if reasoning_effort in {"low", "high", "max"}
+                    else "high"
+                )
                 payload.pop("temperature", None)
             return
         if enable_thinking:
@@ -2102,6 +2246,88 @@ class AiService:
         error = "；".join(dict.fromkeys(errors)) or "未知错误"
         logger.warning("AI structured completion failed purpose=%s error=%s", purpose, error)
         return None, error
+
+    def _request_json_response(
+        self,
+        payload: dict[str, Any],
+        key: str,
+        *,
+        purpose: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Call the Responses endpoint for the final inquiry assessment."""
+        max_attempts = max(1, min(int(settings.ai_inquiry_max_attempts), 2))
+        attempt_timeout = max(
+            8.0,
+            min(
+                float(settings.ai_inquiry_timeout_seconds),
+                max(float(settings.ai_inquiry_attempt_timeout_seconds), 30.0),
+            ),
+        )
+        retry_delay = max(0.0, min(float(settings.ai_inquiry_retry_delay_seconds), 2.0))
+        endpoint = str(settings.ai_responses_api_base).strip()
+        errors: list[str] = []
+        retryable_http_codes = {408, 409, 425, 429, 500, 502, 503, 504}
+
+        for attempt in range(1, max_attempts + 1):
+            request = Request(
+                endpoint,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Accept": "application/json",
+                    "User-Agent": "ZykhInquiryResponses/1.0",
+                },
+            )
+            retryable = True
+            try:
+                with urlopen(request, timeout=attempt_timeout) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                status = str(data.get("status") or "completed")
+                if status != "completed":
+                    incomplete = data.get("incomplete_details")
+                    detail = (
+                        str(incomplete.get("reason") or "").strip()
+                        if isinstance(incomplete, dict)
+                        else ""
+                    )
+                    errors.append(
+                        f"Responses 状态 {status}"
+                        + (f"（{detail}）" if detail else "")
+                    )
+                else:
+                    parsed = self._parse_json_content(
+                        self._extract_responses_output_text(data)
+                    )
+                    if isinstance(parsed, dict):
+                        return parsed, ""
+                    errors.append("Responses 返回结构无法解析")
+            except HTTPError as exc:
+                retryable = exc.code in retryable_http_codes
+                errors.append(f"HTTP {exc.code}")
+            except (URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
+                errors.append(self._compact_error(exc))
+
+            if not retryable or attempt >= max_attempts:
+                break
+            if retry_delay:
+                time.sleep(retry_delay * attempt)
+
+        error = "；".join(dict.fromkeys(errors)) or "未知错误"
+        logger.warning("AI Responses completion failed purpose=%s error=%s", purpose, error)
+        return None, error
+
+    @staticmethod
+    def _extract_responses_output_text(data: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for item in data.get("output") or []:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for content in item.get("content") or []:
+                if isinstance(content, dict) and content.get("type") == "output_text":
+                    parts.append(str(content.get("text") or ""))
+        return "".join(parts).strip()
 
     @staticmethod
     def _extract_message_text(data: dict[str, Any]) -> str:
