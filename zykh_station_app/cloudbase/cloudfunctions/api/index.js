@@ -3,7 +3,7 @@ const cloud = require("wx-server-sdk");
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.2-vitals-history";
+const schemaRevision = "2.3-medicine-sync-contract";
 
 const collections = {
   devices: "devices",
@@ -83,6 +83,77 @@ function normalizeVitals(vitals = {}) {
     quality: firstPresent(vitals.quality, vitals.signal_quality, vitals.status, "unknown"),
     createdAt: firstPresent(vitals.createdAt, vitals.created_at, vitals.measured_at, vitals.time),
   });
+}
+
+function presentValue(source, ...names) {
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(source || {}, name)) {
+      return { present: true, value: source[name] };
+    }
+  }
+  return { present: false, value: undefined };
+}
+
+function validateNonNegativeInteger(source, ...names) {
+  const field = presentValue(source, ...names);
+  if (!field.present) return;
+  const value = Number(field.value);
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${names[0]} must be a non-negative integer`);
+}
+
+function validateMedicineCommand(payload = {}) {
+  const operation = String(payload.operation || "upsert").toLowerCase();
+  if (!["upsert", "patch"].includes(operation)) throw new Error("unsupported medicine operation");
+  if (operation === "patch" && (!payload.patch || typeof payload.patch !== "object" || Array.isArray(payload.patch))) {
+    throw new Error("medicine patch required");
+  }
+  const source = operation === "patch" ? payload.patch : payload;
+  const slotValues = [
+    payload.hardware_slot,
+    payload.hardwareSlot,
+    payload.slot,
+    source.hardware_slot,
+    source.hardwareSlot,
+    source.slot,
+  ].filter(value => value !== undefined && value !== null && value !== "");
+  if (new Set(slotValues.map(value => String(value).trim())).size > 1) {
+    throw new Error("conflicting medicine slot fields");
+  }
+  const slotField = firstPresent(
+    ...slotValues,
+  );
+  const slot = Number(slotField);
+  if (!Number.isInteger(slot) || slot < 1 || slot > 23) throw new Error("medicine slot must be between 1 and 23");
+
+  const allowedPatchFields = new Set([
+    "name", "manufacturer", "barcode", "code", "category", "spec", "trace_code", "traceCode",
+    "stock", "quantity", "low_stock_line", "lowStockLine", "unit", "expire_date", "expireDate",
+    "expiryPrecision", "hardware_slot", "hardwareSlot", "slot",
+  ]);
+  if (operation === "patch") {
+    const unknown = Object.keys(source).filter(key => !allowedPatchFields.has(key));
+    if (unknown.length) throw new Error(`unsupported medicine patch field: ${unknown[0]}`);
+    if (Object.keys(source).length === 0) throw new Error("medicine patch must include at least one field");
+  }
+
+  validateNonNegativeInteger(source, "quantity", "stock");
+  validateNonNegativeInteger(source, "lowStockLine", "low_stock_line");
+  const name = presentValue(source, "name");
+  if (name.present && !String(name.value || "").trim()) throw new Error("medicine name must not be empty");
+  if (operation === "upsert" && !String(name.value || "").trim()) throw new Error("medicine name required");
+
+  const camelExpiry = presentValue(source, "expireDate");
+  const snakeExpiry = presentValue(source, "expire_date");
+  if (camelExpiry.present && snakeExpiry.present && String(camelExpiry.value) !== String(snakeExpiry.value)) {
+    throw new Error("conflicting medicine expiry fields");
+  }
+  const expiry = String(camelExpiry.present ? camelExpiry.value : snakeExpiry.present ? snakeExpiry.value : "").trim();
+  if (expiry && !/^\d{4}-\d{2}(?:-\d{2})?$/.test(expiry)) throw new Error("invalid medicine expiry");
+  const precision = presentValue(source, "expiryPrecision");
+  if (precision.present) {
+    const expected = /^\d{4}-\d{2}-\d{2}$/.test(expiry) ? "day" : /^\d{4}-\d{2}$/.test(expiry) ? "month" : "unknown";
+    if (!expiry || String(precision.value) !== expected) throw new Error("medicine expiryPrecision does not match expireDate");
+  }
 }
 
 function expectedDeviceSecret(deviceId) {
@@ -505,6 +576,7 @@ async function createCommand(data, wxContext, isHttp) {
   if (isHttp) throw new Error("miniprogram function invocation required");
   if (!wxContext.OPENID) throw new Error("miniprogram identity required");
   if (!allowedCommandTypes.has(data.type)) throw new Error("unsupported command type");
+  if (data.type === "UPSERT_MEDICINE") validateMedicineCommand(data.payload || {});
   if (data.type === "OPEN_CABINET" && (!data.payload || data.payload.remote_confirmed !== true)) {
     throw new Error("remote cabinet confirmation required");
   }

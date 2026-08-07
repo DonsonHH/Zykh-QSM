@@ -62,6 +62,7 @@ class InquiryOrchestrator:
         user = self._load_user(request.service_user_id)
         now = db.now_text()
         user_name = str(user.get("name") or request.guest_name.strip() or "访客")
+        user_profile = self._profile_with_note(user)
         fallback_reply = (
             f"{user_name}，你好。今天哪里不舒服？慢慢说，我会边听边帮你整理。"
             if user
@@ -72,7 +73,7 @@ class InquiryOrchestrator:
             opening(
                 {
                     "name": user_name,
-                    "profile": str(user.get("profile") or ""),
+                    "profile": user_profile,
                     "allergies": str(user.get("allergies") or ""),
                 },
                 fallback_reply,
@@ -85,7 +86,7 @@ class InquiryOrchestrator:
             user_id=str(user.get("id") or ""),
             user_name=user_name,
             user_age=int(user.get("age") or 0),
-            user_profile=str(user.get("profile") or ""),
+            user_profile=user_profile,
             user_allergies=str(user.get("allergies") or ""),
             stage="symptoms",
             reply=reply,
@@ -125,6 +126,16 @@ class InquiryOrchestrator:
                 emergency_extracted,
                 source="safety_rules",
                 forced_guard=emergency,
+            )
+
+        if self._ranking_retry_pending(session) and self._is_ranking_retry_request(transcript):
+            # A retry contains no new clinical evidence. Re-run only the
+            # inventory-backed ranking step and keep the existing session,
+            # instead of feeding the command back through symptom extraction.
+            return self._finish(
+                session,
+                session.extracted_information.model_copy(deep=True),
+                source=session.source,
             )
 
         # The current utterance is passed separately to the model. The in-memory
@@ -787,12 +798,14 @@ class InquiryOrchestrator:
         elif not options:
             if rank_failed or rank_message or not extracted.ai_available:
                 extracted.pending_clarification = ""
-                session.stage = "result"
-                session.next_action = "complete"
+                session.stage = "clarification"
+                session.next_action = "ask"
                 session.reply = (
                     "药品匹配服务这次没有稳定返回结果，已保留本次问询信息。"
                     "请稍后重新匹配，症状明显加重时请及时联系医生或药师。"
                 )
+                session.model_action_intent = "ask"
+                session.action_reason = "药品匹配暂未完成，可在同一会话中重试。"
             elif empty_message:
                 extracted.pending_clarification = ""
                 session.stage = "result"
@@ -840,7 +853,11 @@ class InquiryOrchestrator:
                 if (item_text := text(item, item_limit))
             ]
 
-        def safe_action_list(value: object) -> list[str]:
+        def safe_action_list(
+            value: object,
+            *,
+            block_medication_directions: bool = False,
+        ) -> list[str]:
             blocked_phrases = (
                 "确诊",
                 "肯定是",
@@ -857,6 +874,22 @@ class InquiryOrchestrator:
             safe: list[str] = []
             for item in text_list(value, 3, 90):
                 if any(phrase in item for phrase in blocked_phrases):
+                    continue
+                if block_medication_directions and re.search(
+                    r"服用|口服|含服|再服|加服|外用|涂抹|滴入|喷用|"
+                    r"吃(?!不下|不进|不了)",
+                    item,
+                ):
+                    # The model may suggest observation or basic care, but all
+                    # medicine names and directions must come from the
+                    # deterministic, inventory-backed treatment options.
+                    continue
+                if block_medication_directions and re.search(
+                    r"(?:建议|可以|可|考虑|继续|改用|使用).{0,18}"
+                    r"(?:药|片|胶囊|颗粒|口服液|丸|散|膏|凝胶|喷雾|滴剂|"
+                    r"布洛芬|芬必得|阿莫西林|头孢|奥司他韦|蒙脱石|碘伏)",
+                    item,
+                ):
                     continue
                 if re.search(
                     r"(?:自行|直接).{0,8}(?:服用|口服|吃|使用).{0,16}"
@@ -925,8 +958,14 @@ class InquiryOrchestrator:
         return InquiryClinicalAssessment(
             summary=summary,
             possible_conditions=conditions,
-            next_steps=safe_action_list(raw.get("next_steps")),
-            seek_care_if=safe_action_list(raw.get("seek_care_if")),
+            next_steps=safe_action_list(
+                raw.get("next_steps"),
+                block_medication_directions=True,
+            ),
+            seek_care_if=safe_action_list(
+                raw.get("seek_care_if"),
+                block_medication_directions=True,
+            ),
         )
 
     @staticmethod
@@ -1232,6 +1271,26 @@ class InquiryOrchestrator:
         )
 
     @staticmethod
+    def _is_ranking_retry_request(transcript: str) -> bool:
+        text = transcript.strip()
+        return any(
+            phrase in text
+            for phrase in ("重新匹配", "再匹配一次", "重试匹配", "再试一次", "再试试")
+        )
+
+    @staticmethod
+    def _ranking_retry_pending(session: InquirySessionResponse) -> bool:
+        extracted = session.extracted_information
+        return bool(
+            session.stage == "clarification"
+            and session.next_action == "ask"
+            and extracted.symptom_collection_complete
+            and not extracted.pending_clarification
+            and not session.treatment_options
+            and "重新匹配" in session.reply
+        )
+
+    @staticmethod
     def _has_meaningful_complaint(extracted: InquiryExtractedInformation) -> bool:
         if extracted.case_summary.strip():
             return True
@@ -1420,10 +1479,18 @@ class InquiryOrchestrator:
         db.init_db()
         with db.connect() as conn:
             row = conn.execute(
-                "SELECT id, name, age, profile, allergies FROM service_users WHERE id=?",
+                "SELECT id, name, age, profile, allergies, note FROM service_users WHERE id=?",
                 (user_id,),
             ).fetchone()
         return dict(row) if row else {}
+
+    @staticmethod
+    def _profile_with_note(user: dict[str, object]) -> str:
+        values = [
+            " ".join(str(user.get(field) or "").split()).strip()
+            for field in ("profile", "note")
+        ]
+        return "；".join(dict.fromkeys(value for value in values if value))[:360]
 
     @staticmethod
     def _merge_interpretation(
@@ -1630,6 +1697,16 @@ class InquiryOrchestrator:
         budget.  Conversely, a newly present concept can change risk and the next
         useful question even when the model omitted its material-change flag.
         """
+        if (
+            current.pending_clarification == "additional_symptoms"
+            and interpretation.symptom_scope_complete
+            and interpretation.symptom_change_type == "add"
+        ):
+            # This is the expected positive answer to the one scope question,
+            # not a later change to an already established complaint. Merge it
+            # into the initial scope and begin focused clarification once.
+            interpretation.material_symptom_change = False
+            return
         if (
             interpretation.material_symptom_change
             or interpretation.symptom_change_type != "add"

@@ -111,13 +111,17 @@ class FakeInterpreter:
         self.results = list(results)
         self.ranking = ranking or {"ok": True, "source": "cloud", "options": []}
         self.contexts: list[dict] = []
+        self.profiles: list[dict] = []
+        self.opening_profiles: list[dict] = []
         self.rank_candidates_seen: list[dict] = []
 
-    def opening_question(self, _profile, fallback):
+    def opening_question(self, profile, fallback):
+        self.opening_profiles.append(profile)
         return fallback, "assistant"
 
-    def interpret(self, _transcript, existing, _profile):
+    def interpret(self, _transcript, existing, profile):
         self.contexts.append(existing)
+        self.profiles.append(profile)
         if not self.results:
             return SymptomInterpretation(
                 available=False,
@@ -323,6 +327,22 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(session.user_name, "张三")
         self.assertEqual(session.stage, "symptoms")
         self.assertEqual(service.get_session(session.session_id).user_id, "zhangsan")
+
+    def test_registered_long_term_medication_note_is_in_the_model_profile(self) -> None:
+        service, interpreter = self.service(
+            [case(concept="咽喉疼痛", evidence="嗓子疼", scope_complete=False)]
+        )
+
+        session = self.create(service)
+        service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我嗓子疼"),
+        )
+
+        long_term_medication = "本人降压药和鼻喷剂按既往医嘱使用"
+        self.assertIn(long_term_medication, session.user_profile)
+        self.assertIn(long_term_medication, interpreter.opening_profiles[0]["profile"])
+        self.assertIn(long_term_medication, interpreter.profiles[0]["profile"])
 
     def test_model_controls_the_next_question_without_fixed_field_order(self) -> None:
         service, _ = self.service(
@@ -907,11 +927,13 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(interpreter.rank_candidates_seen, [])
 
     def test_candidate_ranking_failure_keeps_the_session_retryable(self) -> None:
-        service, _ = self.service(
+        service, interpreter = self.service(
             [
                 case(
                     action="analyze",
-                    duration="半天",
+                    concept="便秘",
+                    evidence="排便困难",
+                    duration="两天",
                     used="未使用",
                     allergy="无",
                 )
@@ -926,15 +948,49 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.process_turn(
             session.session_id,
-            InquiryTurnRequest(transcript="有点不舒服半天，没用药，没有过敏"),
+            InquiryTurnRequest(transcript="排便困难两天，没用药，没有过敏"),
         )
 
-        self.assertEqual(result.stage, "result")
-        self.assertEqual(result.next_action, "complete")
+        self.assertEqual(result.session_id, session.session_id)
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
         self.assertIn("稍后重新匹配", result.reply)
         self.assertNotIn("连接", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
+        self.assertEqual(result.extracted_information.duration, "两天")
+        self.assertEqual(result.extracted_information.used_medicines, "未使用")
+        self.assertEqual(result.extracted_information.allergy_or_contraindication, "无")
+
+        interpreter.results.append(
+            case(
+                action="analyze",
+                concept="便秘",
+                evidence="排便困难",
+                duration="两天",
+                used="未使用",
+                allergy="无",
+            )
+        )
+        interpreter.ranking = {
+            "ok": True,
+            "source": "cloud",
+            "options": [
+                {
+                    "label": "主方案",
+                    "medicine_ids": ["slot-06-lactulose"],
+                }
+            ],
+        }
+        retried = service.process_turn(
+            result.session_id,
+            InquiryTurnRequest(transcript="请重新匹配"),
+        )
+
+        self.assertEqual(retried.session_id, session.session_id)
+        self.assertEqual(retried.stage, "result")
+        self.assertEqual(retried.next_action, "show_recommendation")
+        self.assertTrue(retried.can_view_medicines)
 
     def test_model_end_closes_the_session_without_a_candidate(self) -> None:
         service, interpreter = self.service(
@@ -1258,6 +1314,49 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIn("过敏", result.reply)
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(interpreter.rank_candidates_seen, [])
+
+    def test_bare_medicine_answer_is_bound_to_the_pending_question(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="便秘",
+                    evidence="排便困难",
+                    duration="两天",
+                    used="",
+                    allergy="无",
+                ),
+                case(
+                    action="analyze",
+                    concept="便秘",
+                    evidence="排便困难",
+                    duration="两天",
+                    used="",
+                    allergy="无",
+                ),
+            ]
+        )
+        session = self.create(service)
+        medicine_question = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="排便困难两天，没有药物过敏"),
+        )
+        self.assertEqual(
+            medicine_question.extracted_information.pending_clarification,
+            "used_medicines",
+        )
+
+        continued = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="没吃"),
+        )
+
+        self.assertEqual(continued.extracted_information.used_medicines, "未使用")
+        self.assertNotEqual(
+            continued.extracted_information.pending_clarification,
+            "used_medicines",
+        )
+        self.assertNotIn("有没有吃过", continued.reply)
 
     def test_bare_medicine_name_answers_the_previous_allergy_question(self) -> None:
         service, _ = self.service(
@@ -1621,6 +1720,50 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIn("其他明显不舒服", result.reply)
         self.assertEqual(result.extracted_information.pending_clarification, "additional_symptoms")
 
+    def test_positive_scope_answer_merges_the_symptom_then_starts_focused_clarification(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    concept="咽喉疼痛",
+                    evidence="嗓子疼",
+                    reply="吞咽时会更痛吗？",
+                    scope_complete=False,
+                ),
+                case(
+                    concept="发冷",
+                    evidence="还有发冷",
+                    reply="发冷时有没有量过体温？",
+                    scope_complete=True,
+                    change_type="add",
+                ),
+            ]
+        )
+        session = self.create(service)
+        scope = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我嗓子疼"),
+        )
+        self.assertEqual(scope.extracted_information.pending_clarification, "additional_symptoms")
+
+        focused = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="还有发冷"),
+        )
+
+        present = {
+            item.concept
+            for item in focused.extracted_information.observations
+            if item.status == "present"
+        }
+        self.assertEqual(present, {"咽喉疼痛", "发冷"})
+        self.assertTrue(focused.extracted_information.symptom_scope_confirmed)
+        self.assertNotEqual(
+            focused.extracted_information.pending_clarification,
+            "additional_symptoms",
+        )
+        self.assertNotIn("其他明显不舒服", focused.reply)
+        self.assertEqual(len(focused.extracted_information.asked_clarifications), 1)
+
     def test_complaint_replacement_preserves_other_symptoms_and_restarts_budget(self) -> None:
         service, _ = self.service(
             [
@@ -1784,6 +1927,58 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(condition.supporting_evidence, ["咽喉疼痛：存在"])
         self.assertEqual(condition.non_supporting_evidence, ["本次额温：36.8℃"])
         self.assertIn("急性上呼吸道感染", assessment.summary)
+
+    def test_completed_turn_does_not_expose_model_generated_medication_directions(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="暑热后胃肠不适",
+                    evidence="晒后头晕恶心",
+                    duration="半天",
+                    used="未使用",
+                    allergy="无",
+                    risk="medium",
+                )
+            ],
+            ranking={
+                "ok": True,
+                "source": "cloud",
+                "assessment": {
+                    "possible_conditions": [],
+                    "next_steps": [
+                        "服用布洛芬1片，每日3次",
+                        "建议使用阿莫西林胶囊",
+                        "症状持续时再服阿莫西林2粒",
+                    ],
+                    "seek_care_if": [
+                        "持续呕吐，吃不下东西",
+                        "症状持续时再服阿莫西林2粒",
+                        "吃一片芬必得",
+                    ],
+                },
+                "options": [
+                    {
+                        "label": "主方案",
+                        "medicine_ids": ["slot-08-huoxiang-zhengqi"],
+                    }
+                ],
+            },
+        )
+
+        result = service.process_turn(
+            self.create(service).session_id,
+            InquiryTurnRequest(transcript="晒后头晕恶心半天，没用药，没有过敏"),
+        )
+
+        self.assertEqual(
+            result.extracted_information.final_assessment.next_steps,
+            [],
+        )
+        self.assertEqual(
+            result.extracted_information.final_assessment.seek_care_if,
+            ["持续呕吐，吃不下东西"],
+        )
 
     def test_final_assessment_summary_does_not_turn_unknown_fever_into_absence(self) -> None:
         assessment = InquiryOrchestrator._assessment_from_ranking(

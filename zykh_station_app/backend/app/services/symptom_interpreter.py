@@ -289,6 +289,8 @@ class SymptomInterpreter:
     @classmethod
     def used_medicine_answer(cls, transcript: str, *, allow_short_answer: bool = False) -> str:
         text = transcript.strip()
+        if allow_short_answer and text in {"没吃", "还没吃", "没用", "还没用"}:
+            return "未使用"
         if any(
             term in text
             for term in (

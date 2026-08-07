@@ -494,8 +494,10 @@ class AiService:
             key,
             purpose="inquiry_rank",
         )
-        if isinstance(parsed, dict):
+        if self._valid_inquiry_ranking_payload(parsed):
             return {"ok": True, "source": "cloud_responses", **parsed}
+        if isinstance(parsed, dict):
+            cloud_error = "Responses 返回的问询排序结构不完整"
 
         # The handoff target is Responses, but some DeepSeek deployments only
         # publish the OpenAI-compatible Chat Completions contract. Keep the
@@ -521,8 +523,10 @@ class AiService:
             key,
             purpose="inquiry_rank_chat_fallback",
         )
-        if isinstance(chat_parsed, dict):
+        if self._valid_inquiry_ranking_payload(chat_parsed):
             return {"ok": True, "source": "cloud_chat_fallback", **chat_parsed}
+        if isinstance(chat_parsed, dict):
+            chat_error = "Chat Completions 返回的问询排序结构不完整"
         return self._offline_inquiry_rank(
             system_prompt,
             user_prompt,
@@ -562,7 +566,13 @@ class AiService:
     ) -> dict[str, Any]:
         if self._use_offline_inquiry_rules():
             return self.offline_inquiry.rank(context, candidates)
-        return self._rank_inquiry_candidates_local(system_prompt, user_prompt, reason)
+        result = self._rank_inquiry_candidates_local(system_prompt, user_prompt, reason)
+        if result.get("ok") and not isinstance(result.get("assessment"), dict):
+            result = {
+                **result,
+                "assessment": self.offline_inquiry.assessment(context),
+            }
+        return result
 
     def _offline_recommendation(
         self,
@@ -2163,6 +2173,64 @@ class AiService:
                 "symptom_scope_complete",
             )
         )
+
+    @staticmethod
+    def _valid_inquiry_ranking_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        assessment = payload.get("assessment")
+        options = payload.get("options")
+        if not isinstance(assessment, dict) or not isinstance(options, list):
+            return False
+        if not isinstance(assessment.get("summary"), str):
+            return False
+        for field in ("possible_conditions", "next_steps", "seek_care_if"):
+            if not isinstance(assessment.get(field), list):
+                return False
+        if not all(isinstance(item, str) for item in assessment["next_steps"]):
+            return False
+        if not all(isinstance(item, str) for item in assessment["seek_care_if"]):
+            return False
+        for condition in assessment["possible_conditions"]:
+            if not isinstance(condition, dict):
+                return False
+            if not (
+                isinstance(condition.get("name"), str)
+                and condition["name"].strip()
+            ):
+                return False
+            if condition.get("likelihood") not in {
+                "more_likely",
+                "possible",
+                "needs_exclusion",
+            }:
+                return False
+            for field in ("supporting_evidence_ids", "non_supporting_evidence_ids"):
+                if field in condition and not (
+                    isinstance(condition[field], list)
+                    and all(isinstance(item, str) for item in condition[field])
+                ):
+                    return False
+        if not any(
+            item.strip()
+            for field in ("next_steps", "seek_care_if")
+            for item in assessment[field]
+        ) and not assessment["possible_conditions"]:
+            return False
+        for option in options:
+            if not isinstance(option, dict):
+                return False
+            if not all(
+                isinstance(option.get(field), str)
+                for field in ("option_id", "label", "reason")
+            ):
+                return False
+            if not (
+                isinstance(option.get("medicine_ids"), list)
+                and all(isinstance(item, str) for item in option["medicine_ids"])
+            ):
+                return False
+        return True
 
     @staticmethod
     def _apply_provider_options(

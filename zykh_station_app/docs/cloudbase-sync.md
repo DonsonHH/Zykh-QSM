@@ -17,7 +17,7 @@ SQLite / QSM 外设
 ## 已同步数据
 
 - 设备在线状态和同步代理版本；
-- 23 个药柜仓位及药品信息；
+- 23 个药柜仓位及药品信息，包括规格、追溯码、库存、低库存线和原始有效期精度；
 - 服务对象；
 - 今日计划；
 - 体征记录；
@@ -61,15 +61,15 @@ curl -sS -H 'Content-Type: application/json' \
   https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api
 ```
 
-返回中的 `schemaVersion` 应为 `2`，并带有 `schemaRevision`。终端把 revision 纳入 snapshot hash；云函数清理或映射逻辑升级后会自动触发一次完整重同步。
+返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为 `2.3-medicine-sync-contract`。终端把 revision 纳入 snapshot hash；本次药品字段契约以及后续云函数清理或映射逻辑升级后会自动触发一次完整重同步。
 
 ## 小程序反向命令
 
 可将 `cloudbase/miniprogram/remoteCommands.js` 放入小程序工具目录。它使用云函数 `CREATE_COMMAND`，避免页面直接拼装命令结构。
 
-`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅优先使用 CloudBase 数据库变更监听，5 秒周期刷新作为断线兜底；v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
+`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅优先使用 CloudBase 数据库变更监听，5 秒周期刷新作为断线兜底；v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。2 秒设备心跳中的 `syncSummary.recentInquiries` 只携带摘要字段和 `messageCount`，不携带完整 `messages`。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
 
-`remoteCommands.js` 优先调用 v2 的 `CREATE_COMMAND`。云端仍是 v1 时会兼容为小程序直接写入 `commands` 集合；CloudBase 自动附带的 `_openid` 仍由终端核验，确定性 `requestId` 也会防止重复创建同一次开柜请求。
+`remoteCommands.js` 优先调用 v2 的 `CREATE_COMMAND`。只有云函数明确返回 `unknown action: CREATE_COMMAND` 时，才兼容为小程序直接写入旧版 `commands` 集合；网络超时、权限拒绝、命令类型或字段校验失败都会原样返回失败。CloudBase 自动附带的 `_openid` 仍由终端核验，确定性 `requestId` 也会防止重复创建同一次开柜请求。
 
 `CREATE_COMMAND` 只接受微信小程序通过 `wx.cloud.callFunction` 发起的 Event 调用。公共 HTTP `/api` 即使携带相同 action 也会被拒绝，防止外部请求伪造远程开柜命令。
 
@@ -90,6 +90,37 @@ UPSERT_SERVICE_USER
 UPSERT_TODAY_PLAN
 OPEN_CABINET
 ```
+
+`UPSERT_MEDICINE` 以 `hardware_slot`（兼容 `hardwareSlot` / `slot`）作为药品身份，不以条码去重。局部修改使用嵌套补丁：
+
+```json
+{
+  "operation": "patch",
+  "hardware_slot": 13,
+  "patch": {
+    "name": "布洛芬缓释胶囊",
+    "spec": "0.3克×10粒",
+    "traceCode": "TRACE-EXAMPLE",
+    "quantity": 0,
+    "lowStockLine": 2,
+    "expireDate": "2029-01",
+    "expiryPrecision": "month"
+  }
+}
+```
+
+终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按 `slot` 升序提供药品；命令字段到 SQLite 与快照字段的对应关系为：
+
+| 命令字段 | SQLite | 小程序快照字段 |
+|---|---|---|
+| `hardware_slot` / `hardwareSlot` / `slot` | `hardware_slot` | `slot`, `hardwareSlot` |
+| `spec` | `spec` | `spec` |
+| `traceCode` / `trace_code` | `trace_code` | `traceCode`, `trace_code` |
+| `quantity` / `stock` | `stock` | `quantity`, `stock` |
+| `lowStockLine` / `low_stock_line` | `low_stock_line` | `lowStockLine`, `low_stock_line` |
+| `expireDate` / `expire_date` | `expire_date` | `expireDate`, `expire_date`, `expiryPrecision` |
+
+`expireDate` 原样保留 `YYYY-MM` 或 `YYYY-MM-DD`；`expiryPrecision` 由终端据此生成为 `month` 或 `day`。命令中若同时携带 `expiryPrecision`，云函数会先校验它与日期格式一致。
 
 远程开柜必须包含：
 

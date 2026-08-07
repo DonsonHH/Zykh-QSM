@@ -259,6 +259,53 @@ class AiServiceTest(unittest.TestCase):
         self.assertIs(result["symptom_scope_complete"], False)
         self.assertIn("不问能否站立或行走", client.last_messages[0]["content"])
 
+    @patch("app.services.ai_service.settings")
+    def test_local_candidate_ranking_uses_the_same_structured_assessment_contract(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "local"
+        mocked_settings.offline_inquiry_mode = "model"
+        client = FakeLocalClient(
+            json.dumps(
+                {
+                    "summary": "板端模型已整理候选。",
+                    "options": [],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        result = AiService(local_client=client).rank_inquiry_candidates(
+            {
+                "case_summary": "暑热不适",
+                "observations": [
+                    {
+                        "concept": "头晕",
+                        "status": "present",
+                        "evidence": "暴晒后头晕",
+                    }
+                ],
+                "evidence_catalog": {"obs-1": "头晕：暴晒后头晕"},
+            },
+            [
+                {
+                    "id": "slot-08-huoxiang-zhengqi",
+                    "name": "藿香正气丸",
+                    "category": "肠胃",
+                }
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["summary"], "板端模型已整理候选。")
+        self.assertEqual(result["options"], [])
+        assessment = result["assessment"]
+        self.assertIn("暑热", assessment["possible_conditions"][0]["name"])
+        self.assertTrue(assessment["next_steps"])
+        self.assertTrue(assessment["seek_care_if"])
+
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
     def test_guarded_dizziness_reply_does_not_reintroduce_a_mobility_template(
@@ -372,8 +419,8 @@ class AiServiceTest(unittest.TestCase):
                                             "assessment": {
                                                 "summary": "未形成确定诊断。",
                                                 "possible_conditions": [],
-                                                "next_steps": [],
-                                                "seek_care_if": [],
+                                                "next_steps": ["继续观察症状变化"],
+                                                "seek_care_if": ["症状明显加重"],
                                             },
                                             "options": [],
                                         },
@@ -455,6 +502,138 @@ class AiServiceTest(unittest.TestCase):
         chat_payload = json.loads(requests[1].data.decode("utf-8"))
         self.assertEqual(chat_payload["response_format"], {"type": "json_object"})
         self.assertIn("messages", chat_payload)
+
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_final_ranking_rejects_responses_without_the_business_contract(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+    ) -> None:
+        configure_cloud(mocked_settings)
+        mocked_urlopen.side_effect = [
+            FakeHttpResponse(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        {"unexpected": "provider shape is valid"},
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "assessment": {
+                                            "summary": "信息有限，仍需结合变化继续观察。",
+                                            "possible_conditions": [],
+                                            "next_steps": ["记录症状变化"],
+                                            "seek_care_if": ["症状明显加重"],
+                                        },
+                                        "options": [],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            },
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        result = AiService().rank_inquiry_candidates(
+            {"case_summary": "轻微不适"},
+            [],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "cloud_chat_fallback")
+        self.assertEqual(result["assessment"]["next_steps"], ["记录症状变化"])
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        requests = [call.args[0] for call in mocked_urlopen.call_args_list]
+        self.assertEqual(requests[0].full_url, "https://api.deepseek.com/responses")
+        self.assertEqual(requests[1].full_url, "https://api.deepseek.com/chat/completions")
+
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_final_ranking_rejects_an_assessment_with_no_displayable_guidance(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+    ) -> None:
+        configure_cloud(mocked_settings)
+        empty_assessment = {
+            "summary": "只有摘要不会触发结果页的分析区域。",
+            "possible_conditions": [],
+            "next_steps": ["   "],
+            "seek_care_if": [],
+        }
+        fallback_assessment = {
+            "summary": "现有信息仍需结合变化观察。",
+            "possible_conditions": [],
+            "next_steps": ["记录症状变化"],
+            "seek_care_if": ["症状明显加重"],
+        }
+        mocked_urlopen.side_effect = [
+            FakeHttpResponse(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        {"assessment": empty_assessment, "options": []},
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            FakeHttpResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    {"assessment": fallback_assessment, "options": []},
+                                    ensure_ascii=False,
+                                )
+                            },
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        result = AiService().rank_inquiry_candidates(
+            {"case_summary": "信息有限"},
+            [],
+        )
+
+        self.assertEqual(result["source"], "cloud_chat_fallback")
+        self.assertEqual(result["assessment"], fallback_assessment)
+        self.assertEqual(mocked_urlopen.call_count, 2)
 
 
 if __name__ == "__main__":

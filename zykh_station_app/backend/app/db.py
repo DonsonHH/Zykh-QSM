@@ -60,9 +60,12 @@ def init_db() -> None:
               manufacturer TEXT DEFAULT '',
               name TEXT NOT NULL,
               category TEXT NOT NULL,
+              spec TEXT NOT NULL DEFAULT '',
+              trace_code TEXT NOT NULL DEFAULT '',
               tags_json TEXT NOT NULL,
               contraindications_json TEXT NOT NULL,
               stock INTEGER NOT NULL,
+              low_stock_line INTEGER NOT NULL DEFAULT 1,
               unit TEXT NOT NULL,
               expire_date TEXT NOT NULL,
               image_hint TEXT NOT NULL,
@@ -74,6 +77,9 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "medicines", "manufacturer", "TEXT DEFAULT ''")
+        _ensure_column(conn, "medicines", "spec", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "trace_code", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "low_stock_line", "INTEGER NOT NULL DEFAULT 1")
         _ensure_column(conn, "medicines", "indications", "TEXT DEFAULT ''")
         _ensure_column(conn, "medicines", "dosage", "TEXT DEFAULT ''")
         _ensure_column(conn, "medicines", "guidance_source", "TEXT DEFAULT 'pending'")

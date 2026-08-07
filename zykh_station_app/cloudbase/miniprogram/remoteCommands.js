@@ -40,6 +40,11 @@ async function createLegacyCommand(type, payload, requestId) {
   return Object.assign({ _id: result._id, compatibilityMode: true }, row);
 }
 
+function isMissingCreateCommandAction(error) {
+  const message = String(error && error.message ? error.message : error || "");
+  return /unknown action\s*:\s*CREATE_COMMAND\b/i.test(message);
+}
+
 async function createCommand(type, payload = {}, requestId = "") {
   try {
     const response = await wx.cloud.callFunction({
@@ -49,14 +54,21 @@ async function createCommand(type, payload = {}, requestId = "") {
         data: { deviceId: deviceId(), type, payload, requestId },
       },
     });
-    if (response.result && response.result.ok === false) {
+    if (!response || !response.result) {
+      throw new Error("云端命令创建返回无效数据");
+    }
+    if (response.result.ok === false) {
       throw new Error(response.result.error || "云端命令创建失败");
     }
     return response.result;
   } catch (error) {
-    // The deployed v1 function has no CREATE_COMMAND action. A mini program
-    // database write still carries _openid, which the terminal validates.
-    return createLegacyCommand(type, payload, requestId);
+    if (isMissingCreateCommandAction(error)) {
+      // Only a confirmed v1 API compatibility miss may use the legacy write.
+      // Timeouts, permission errors and payload validation failures must remain
+      // visible to the caller instead of being presented as successful submits.
+      return createLegacyCommand(type, payload, requestId);
+    }
+    throw error;
   }
 }
 

@@ -602,6 +602,9 @@ class InquiryAiContractTest(unittest.TestCase):
             result["options"][0]["medicine_ids"],
             ["slot-17-iodophor", "slot-20-bandage"],
         )
+        self.assertTrue(result["assessment"]["possible_conditions"])
+        self.assertTrue(result["assessment"]["next_steps"])
+        self.assertTrue(result["assessment"]["seek_care_if"])
         self.assertEqual(client.last_kwargs["max_tokens"], 32)
 
     @patch("app.services.ai_service.settings")
@@ -627,6 +630,9 @@ class InquiryAiContractTest(unittest.TestCase):
             [option["medicine_ids"] for option in result["options"]],
             [["iodophor", "bandage"], ["gauze"]],
         )
+        self.assertTrue(result["assessment"]["possible_conditions"])
+        self.assertTrue(result["assessment"]["next_steps"])
+        self.assertTrue(result["assessment"]["seek_care_if"])
 
     @patch("app.services.ai_service.settings")
     def test_local_candidate_ranking_keeps_four_items_in_a_care_sequence(
