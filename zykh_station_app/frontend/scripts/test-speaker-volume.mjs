@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { normalizeSpeakerGain, speakerGainToPercent, speakerPercentToGain } from "../src/utils/volume.js";
@@ -57,7 +60,7 @@ assert.match(
 );
 assert.match(
   relayScript,
-  /\/api\/audio\/host\/speaker-volume[\s\S]*pactl set-sink-volume "\$SINK_NAME" "\$\{saved_percent\}%"/,
+  /\/api\/audio\/host\/speaker-volume[\s\S]*pactl set-sink-volume "\$target_sink" "\$\{saved_percent\}%"/,
   "audio relay startup does not restore the saved calibrated volume"
 );
 assert.match(
@@ -65,5 +68,55 @@ assert.match(
   /def audio_beep[\s\S]*volume is not None and int\(volume\) <= 0[\s\S]*"muted": True/,
   "a zero-volume beep can still fall through to the legacy board default"
 );
+
+const fakeCommandDirectory = await mkdtemp(join(tmpdir(), "zykh-volume-relay-test-"));
+const relayCallLog = join(fakeCommandDirectory, "pactl.log");
+async function writeFakeCommand(name, source) {
+  const path = join(fakeCommandDirectory, name);
+  await writeFile(path, source);
+  await chmod(path, 0o755);
+}
+
+try {
+  await writeFakeCommand("pactl", `#!/bin/sh
+if [ "$1 $2 $3" = "list short sinks" ]; then
+  printf '1\\tcustom\\n'
+elif [ "$1" = "set-sink-volume" ]; then
+  printf '%s\\n' "$*" >> "$QA_RELAY_LOG"
+fi
+exit 0
+`);
+  await writeFakeCommand("curl", `#!/bin/sh
+case "$*" in
+  *speaker-volume*) printf '{"ok":true,"gain":180,"percent":50}' ;;
+esac
+exit 0
+`);
+  await writeFakeCommand("parec", "#!/bin/sh\nexit 0\n");
+  await writeFakeCommand("nc", "#!/bin/sh\nexit 0\n");
+  await writeFakeCommand("adb", "#!/bin/sh\nexit 0\n");
+
+  const relayRun = spawnSync("sh", [`${root}../scripts/relay_host_audio_to_qsm.sh`], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeCommandDirectory}:${process.env.PATH}`,
+      TMPDIR: fakeCommandDirectory,
+      QA_RELAY_LOG: relayCallLog,
+      BACKEND_URL: "http://127.0.0.1:9",
+      PULSE_SOURCE: "custom.monitor",
+      QSM_AUDIO_VOLUME_SINK: "custom",
+      QSM_AUDIO_CREATE_SINK: "0",
+      QSM_AUDIO_SET_DEFAULT: "0",
+      QSM_AUDIO_MOVE_EXISTING: "0",
+      QSM_AUDIO_RESTORE_ON_EXIT: "0",
+      QSM_AUDIO_UNLOAD_SINK_ON_EXIT: "0"
+    }
+  });
+  assert.equal(relayRun.status, 0, `isolated relay startup failed: ${relayRun.stderr || relayRun.stdout}`);
+  assert.equal((await readFile(relayCallLog, "utf8")).trim(), "set-sink-volume custom 50%");
+} finally {
+  await rm(fakeCommandDirectory, { recursive: true, force: true });
+}
 
 console.log("speaker volume contract: ok");

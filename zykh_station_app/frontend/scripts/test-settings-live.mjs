@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { mockDashboard } from "../src/api/mockData.js";
 
 const baseUrl = process.env.QA_BASE_URL;
 if (!baseUrl) {
@@ -67,7 +68,27 @@ async function fulfillApiRequest({ requestId, request }) {
       simulated: true
     };
   } else if (url.pathname === "/api/dashboard") {
-    payload = {};
+    payload = mockDashboard;
+  } else if (url.pathname === "/api/medicines") {
+    await delay(90);
+    payload = { medicines: [] };
+  } else if (url.pathname === "/api/records/summary") {
+    await delay(90);
+    payload = { summary: { today_service_users: 0, pending_sync_count: 0, local_record_count: 0, today_plan_count: 0 } };
+  } else if (url.pathname === "/api/records/recent") {
+    await delay(90);
+    payload = { records: [] };
+  } else if (url.pathname === "/api/records/service-users") {
+    await delay(90);
+    payload = { users: [] };
+  } else if (url.pathname === "/api/records/today-plans") {
+    await delay(90);
+    payload = { plans: [] };
+  } else if (url.pathname === "/api/sync/status") {
+    await delay(90);
+    payload = { status: "已同步", pending_count: 0 };
+  } else if (url.pathname === "/api/qsm/capabilities") {
+    payload = { camera: "unavailable", vitals: "available" };
   }
   await cdp("Fetch.fulfillRequest", {
     requestId,
@@ -326,6 +347,148 @@ try {
     await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
   }
 
+  result.navigation = await evaluate(`(async () => {
+    const waitFor = async (selector, predicate = () => true) => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const element = document.querySelector(selector);
+        if (element && predicate(element)) return element;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Timed out waiting for ' + selector);
+    };
+    const navButton = (label) => [...document.querySelectorAll('.bottom-nav button')]
+      .find((button) => button.textContent.trim() === label);
+    const animationProperties = (animation) => [...new Set(animation.effect.getKeyframes().flatMap((frame) =>
+      Object.keys(frame).filter((key) => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))
+    ))];
+    const measure = async (name, trigger, destinationSelector) => {
+      const longTasks = [];
+      const observer = new PerformanceObserver((list) => {
+        longTasks.push(...list.getEntries().map(({ duration, startTime }) => ({ duration, startTime })));
+      });
+      try { observer.observe({ entryTypes: ['longtask'] }); } catch {}
+      const frameGaps = [];
+      let previousFrame = 0;
+      let collecting = true;
+      const tick = (timestamp) => {
+        if (previousFrame) frameGaps.push(timestamp - previousFrame);
+        previousFrame = timestamp;
+        if (collecting) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+
+      const startedAt = performance.now();
+      const control = typeof trigger === 'function' ? trigger() : document.querySelector(trigger);
+      if (!control) throw new Error('Missing route trigger for ' + name);
+      control.click();
+      await waitFor(destinationSelector);
+      await new Promise(requestAnimationFrame);
+      const destinationRenderedMs = performance.now() - startedAt;
+
+      let cueAnimation = null;
+      let fallbackCueAnimation = null;
+      const cueDeadline = performance.now() + 280;
+      while (performance.now() < cueDeadline && !cueAnimation) {
+        const activeAnimations = document.getAnimations();
+        cueAnimation = activeAnimations.find((animation) =>
+          animation.effect?.target?.matches?.('.page-entry-cue, .admin-section-entry-cue')
+        );
+        fallbackCueAnimation ||= activeAnimations.find((animation) => animation.effect?.target?.matches?.('.bottom-nav-icon'));
+        if (!cueAnimation) await new Promise(requestAnimationFrame);
+      }
+      cueAnimation ||= fallbackCueAnimation;
+      const cueTarget = cueAnimation?.effect?.target;
+      const cueBounds = cueTarget?.getBoundingClientRect();
+      const cue = cueAnimation ? {
+        target: cueTarget.className?.baseVal || cueTarget.className || cueTarget.tagName,
+        properties: animationProperties(cueAnimation),
+        areaRatio: cueBounds ? (cueBounds.width * cueBounds.height) / (innerWidth * innerHeight) : 1
+      } : null;
+      const fullSurfaceAnimation = document.getAnimations().some((animation) =>
+        animation.effect?.target?.matches?.('main, .page-cache, .admin-workspace, .records-main-grid, .settings-card-grid')
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 390));
+      collecting = false;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      longTasks.push(...observer.takeRecords().map(({ duration, startTime }) => ({ duration, startTime })));
+      observer.disconnect();
+      return {
+        name,
+        destinationRenderedMs,
+        maxFrameGapMs: Math.max(0, ...frameGaps),
+        longTasks,
+        cue,
+        fullSurfaceAnimation
+      };
+    };
+
+    const samples = [];
+    samples.push(await measure('settings-home', '.basic-settings-header .icon-action', '.home-page-cache.active .home-page'));
+    samples.push(await measure('home-medicines', () => navButton('药品'), '.medicines-page-cache.active .medicines-page'));
+    samples.push(await measure('medicines-scan', '.medicines-page-cache.active .scan-button', '.scan-page'));
+    samples.push(await measure('scan-home', '.scan-heading .icon-action', '.home-page-cache.active .home-page'));
+    samples.push(await measure('home-vitals', 'button[aria-label="开始身体状态测量"]', '.vitals-page'));
+    samples.push(await measure('vitals-home', '.vitals-back-button', '.home-page-cache.active .home-page'));
+    samples.push(await measure('home-inquiry', () => navButton('问询'), '.inquiry-page'));
+    samples.push(await measure('inquiry-records', () => navButton('记录'), '.records-page'));
+    samples.push(await measure('records-home', () => navButton('首页'), '.home-page-cache.active .home-page'));
+    samples.push(await measure('home-settings', '.system-check-button', '.settings-page-cache.active .basic-settings-page'));
+    samples.push(await measure('settings-admin', '.admin-entry-button', '.admin-login-page'));
+    samples.push(await measure('admin-settings', '.admin-login-exit', '.settings-page-cache.active .basic-settings-page'));
+    return samples;
+  })()`);
+
+  await cdp("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }]
+  });
+  result.reducedMotionNavigation = await evaluate(`(async () => {
+    const button = document.querySelector('.basic-settings-header .icon-action');
+    button.click();
+    const deadline = performance.now() + 3000;
+    while (performance.now() < deadline && !document.querySelector('.home-page-cache.active .home-page')) {
+      await new Promise(requestAnimationFrame);
+    }
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      transitionMarker: document.documentElement.dataset.pageTransition || '',
+      cueAnimations: document.getAnimations().filter((animation) =>
+        animation.effect?.target?.matches?.('.page-entry-cue, .bottom-nav-icon')
+      ).map((animation) => animation.animationName).filter(Boolean)
+    };
+  })()`);
+
+  await cdp("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "no-preference" }]
+  });
+  await cdp("Page.navigate", { url: `${baseUrl}/?page=home` });
+  await waitForApp();
+  await delay(180);
+  result.idleMotion = await evaluate(`(() => {
+    const animations = document.getAnimations().filter((animation) =>
+      animation.effect?.target?.matches?.('.idle-wake-button, .idle-wake-glyph, .idle-wake-area h1')
+    );
+    const properties = [...new Set(animations.flatMap((animation) => animation.effect.getKeyframes().flatMap((frame) =>
+      Object.keys(frame).filter((key) => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))
+    )))];
+    return {
+      count: animations.length,
+      properties,
+      fullSurfaceAnimation: document.getAnimations().some((animation) => animation.effect?.target?.matches?.('.idle-screen'))
+    };
+  })()`);
+
+  await cdp("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }]
+  });
+  await cdp("Page.navigate", { url: `${baseUrl}/?page=home` });
+  await waitForApp();
+  await delay(100);
+  result.reducedIdleAnimationCount = await evaluate(`document.getAnimations().filter((animation) =>
+    animation.effect?.target?.matches?.('.idle-wake-button, .idle-wake-glyph, .idle-wake-area h1')
+  ).length`);
+
   console.log(JSON.stringify(result, null, 2));
 
   assert.deepEqual(result.viewport, { width: 960, height: 600, dpr: 2 });
@@ -363,6 +526,20 @@ try {
   );
   assert.equal(result.finalSaveLabel, "设置已保存");
   assert.equal(result.finalSpeakerPercent, result.initialSpeakerPercent);
+  assert.equal(result.navigation.length, 12, "live motion coverage lost a kiosk route");
+  for (const sample of result.navigation) {
+    assert.ok(sample.cue, `${sample.name} produced no localized transition cue`);
+    assert.deepEqual(sample.cue.properties.sort(), ["opacity", "transform"], `${sample.name} cue animates unsupported properties`);
+    assert.ok(sample.cue.areaRatio < 0.12, `${sample.name} cue covers too much of the kiosk surface`);
+    assert.equal(sample.fullSurfaceAnimation, false, `${sample.name} animates a full kiosk surface`);
+    assert.ok(sample.maxFrameGapMs <= 67, `${sample.name} frame gap is ${sample.maxFrameGapMs.toFixed(1)}ms`);
+    assert.ok(sample.longTasks.every(({ duration }) => duration < 50), `${sample.name} produced long tasks: ${JSON.stringify(sample.longTasks)}`);
+  }
+  assert.deepEqual(result.reducedMotionNavigation, { transitionMarker: "", cueAnimations: [] });
+  assert.ok(result.idleMotion.count >= 1, "idle screen has no localized motion cue");
+  assert.ok(result.idleMotion.properties.every((property) => ["opacity", "transform"].includes(property)), "idle screen animates unsupported properties");
+  assert.equal(result.idleMotion.fullSurfaceAnimation, false, "idle screen animates its full surface");
+  assert.equal(result.reducedIdleAnimationCount, 0, "idle motion ignores reduced-motion preference");
 
 } finally {
   await stopBrowser();

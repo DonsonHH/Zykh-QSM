@@ -254,7 +254,11 @@ assert.match(
 const recordsPage = await readFile(`${sourceRoot}/pages/Records.jsx`, "utf8");
 const recordSummary = await readFile(`${sourceRoot}/components/RecordSummaryCards.jsx`, "utf8");
 assert.match(recordsPage, /initialLoading[\s\S]*<RecordSummaryCards[^>]*loading=\{initialLoading\}/, "records initial load has no visible state");
+assert.match(recordsPage, /aria-busy=\{initialLoading\}/, "records initial load is not exposed to assistive technology");
 assert.match(recordSummary, /LoaderCircle className="localized-loader"/, "records initial load does not use a localized spinner");
+const syncStatus = await readFile(`${sourceRoot}/components/SyncStatusCard.jsx`, "utf8");
+assert.doesNotMatch(syncStatus, /RefreshCw[^>]*localized-loader/, "the semantic sync icon must remain static");
+assert.match(syncStatus, /aria-busy=\{syncing\}/, "manual sync does not expose its busy state");
 const adminConsole = await readFile(`${sourceRoot}/pages/AdminConsole.jsx`, "utf8");
 assert.match(adminConsole, /admin-login-copy page-entry-cue/, "device console entry has no localized page cue");
 for (const file of ["AdminOverview", "AdminUsers", "AdminPlans", "AdminCabinet", "AdminDevices", "AdminInquiries", "AdminLogs"]) {
@@ -269,8 +273,8 @@ assert.doesNotMatch(
 const inquiryChatMotion = await readFile(`${sourceRoot}/components/InquiryChatStep.jsx`, "utf8");
 assert.match(
   inquiryChatMotion,
-  /prefers-reduced-motion:\s*reduce[\s\S]*behavior:\s*reducedMotion \? "auto" : "smooth"/,
-  "inquiry chat keeps smooth scrolling when reduced motion is requested"
+  /prefers-reduced-motion:\s*reduce[\s\S]*shouldSmooth\s*=\s*!reducedMotion\s*&&\s*!streaming[\s\S]*behavior:\s*shouldSmooth \? "smooth" : "auto"/,
+  "inquiry chat keeps smooth scrolling during reduced motion or streamed updates"
 );
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
 assert.match(

@@ -23,6 +23,7 @@
     "test:network-display": "node scripts/test-network-display-mode.mjs",
     "test:settings": "node scripts/test-settings-layout.mjs && node scripts/test-speaker-volume.mjs",
     "test:settings-live": "node scripts/test-settings-live.mjs",
+    "test:motion-live": "node scripts/test-settings-live.mjs",
     "test:scan-layout": "node scripts/test-scan-layout.mjs",
     "test:kiosk-ui": "node scripts/test-kiosk-layout-performance.mjs",
     "test:render-boundaries": "node scripts/test-render-boundaries.mjs",

@@ -9,6 +9,7 @@ HOST_STREAM_PORT="${QSM_AUDIO_HOST_STREAM_PORT:-19001}"
 STREAM_RATE="${QSM_AUDIO_STREAM_RATE:-16000}"
 TMP_DIR="${TMPDIR:-/tmp}/zykh-audio-relay"
 SINK_NAME="${QSM_AUDIO_SINK_NAME:-qsm_relay}"
+VOLUME_SINK="${QSM_AUDIO_VOLUME_SINK:-$SINK_NAME}"
 CREATE_SINK="${QSM_AUDIO_CREATE_SINK:-1}"
 SET_DEFAULT="${QSM_AUDIO_SET_DEFAULT:-1}"
 MOVE_EXISTING="${QSM_AUDIO_MOVE_EXISTING:-1}"
@@ -36,6 +37,7 @@ fail_hard() {
 }
 
 apply_saved_sink_volume() {
+  target_sink="$1"
   if ! command -v pactl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
     fail_soft "无法恢复已保存的外放音量：缺少 pactl 或 python3。"
     return 0
@@ -49,10 +51,10 @@ apply_saved_sink_volume() {
       return 0
       ;;
   esac
-  if pactl set-sink-volume "$SINK_NAME" "${saved_percent}%" >/dev/null 2>&1; then
+  if pactl set-sink-volume "$target_sink" "${saved_percent}%" >/dev/null 2>&1; then
     log "已恢复外放音量：${saved_percent}%"
   else
-    fail_soft "已读取外放音量 ${saved_percent}%，但未能应用到 $SINK_NAME。"
+    fail_soft "已读取外放音量 ${saved_percent}%，但未能应用到 $target_sink。"
   fi
 }
 
@@ -107,7 +109,6 @@ if [ -z "$SOURCE" ] && command -v pactl >/dev/null 2>&1; then
 
   if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx "$SINK_NAME"; then
     SOURCE="${SINK_NAME}.monitor"
-    apply_saved_sink_volume
     if [ "$SET_DEFAULT" = "1" ]; then
       pactl set-default-sink "$SINK_NAME" >/dev/null 2>&1 || true
       log "已将本机默认音频输出切换到：$SINK_NAME"
@@ -124,6 +125,12 @@ fi
 
 if [ -z "$SOURCE" ]; then
   fail_hard "没有找到可用的系统声音 monitor；请设置 PULSE_SOURCE，或确认 pactl/PulseAudio/PipeWire 正常。"
+fi
+
+if command -v pactl >/dev/null 2>&1 && pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx "$VOLUME_SINK"; then
+  apply_saved_sink_volume "$VOLUME_SINK"
+else
+  fail_soft "未找到音量控制输出 $VOLUME_SINK，本次保留系统当前音量。"
 fi
 
 log "开始转发本机声音：source=$SOURCE volume=$VOLUME backend=$BACKEND_URL"

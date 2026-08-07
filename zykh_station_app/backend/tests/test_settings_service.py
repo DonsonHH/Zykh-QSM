@@ -107,6 +107,21 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(db.get_setting("speaker_volume"), "180")
         self.assertEqual(db.get_setting("speaker_volume_scale_version"), "2")
 
+    def test_versioned_invalid_low_gain_is_clamped_without_replaying_migration(self) -> None:
+        db.set_setting("speaker_volume", "8")
+        db.set_setting("speaker_volume_scale_version", "2")
+        service = SettingsService()
+
+        with (
+            patch.object(service, "_wifi_radio_enabled", return_value=True),
+            patch.object(service, "_microphone_available", return_value=True),
+            patch("app.services.settings_service.NetworkService.status", return_value={}),
+        ):
+            result = service.get()
+
+        self.assertEqual(result.settings.speaker_volume, 128)
+        self.assertEqual(db.get_setting("speaker_volume"), "128")
+
     def test_update_canonicalizes_legacy_gain_before_hardware_and_storage(self) -> None:
         service = SettingsService()
         request = BasicSettingsUpdateRequest(speaker_volume=45)

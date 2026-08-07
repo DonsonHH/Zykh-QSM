@@ -61,22 +61,36 @@ def _legacy_gain_to_percent(gain: int) -> int:
 
 
 def canonicalize_speaker_gain(gain: int | float) -> int:
-    """Accept the new raw scale while preserving old inaudible slider intent."""
+    """Migrate only values that are unambiguously from the old inaudible range."""
     normalized = int(_clamp(_round_like_javascript(float(gain or 0)), 0, SPEAKER_GAIN_MAX))
+    # Version 2 legitimately emits raw 128 for 1%, so an unversioned 128 is
+    # deliberately preserved. Values 1..127 can only come from the old scale.
     if normalized <= 0 or normalized >= SPEAKER_GAIN_AUDIBLE_FLOOR:
         return normalized
     return speaker_percent_to_gain(_legacy_gain_to_percent(normalized))
 
 
+def _normalize_current_scale_gain(gain: int | float) -> int:
+    normalized = int(_clamp(_round_like_javascript(float(gain or 0)), 0, SPEAKER_GAIN_MAX))
+    return 0 if normalized <= 0 else max(SPEAKER_GAIN_AUDIBLE_FLOOR, normalized)
+
+
 def get_persisted_speaker_gain(default: int = 230) -> int:
+    raw_value = db.get_setting("speaker_volume", str(default))
+    parsed = True
     try:
-        stored = int(db.get_setting("speaker_volume", str(default)))
+        stored = int(raw_value)
     except ValueError:
+        parsed = False
         stored = default
 
     version = db.get_setting(SPEAKER_VOLUME_SCALE_VERSION_KEY, "")
-    gain = canonicalize_speaker_gain(stored)
-    if stored != gain:
+    gain = (
+        _normalize_current_scale_gain(stored)
+        if version == SPEAKER_VOLUME_SCALE_VERSION
+        else canonicalize_speaker_gain(stored)
+    )
+    if not parsed or stored != gain:
         db.set_setting("speaker_volume", str(gain))
     if version != SPEAKER_VOLUME_SCALE_VERSION:
         db.set_setting(SPEAKER_VOLUME_SCALE_VERSION_KEY, SPEAKER_VOLUME_SCALE_VERSION)

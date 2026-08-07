@@ -83,8 +83,9 @@ export function InquiryChatStep({
 
   useEffect(() => {
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    bottomRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "end" });
-  }, [localPending, sending, session.messages, streamedReply]);
+    const shouldSmooth = !reducedMotion && !streaming && !sending && !localPending;
+    bottomRef.current?.scrollIntoView({ behavior: shouldSmooth ? "smooth" : "auto", block: "end" });
+  }, [localPending, sending, session.messages, streamedReply, streaming]);
 
   useEffect(() => {
     const reply = session.reply || "";

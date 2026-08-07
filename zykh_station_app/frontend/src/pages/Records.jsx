@@ -79,7 +79,7 @@ export function Records({ notify, networkStatus }) {
   }
 
   return (
-    <main className="records-page" id="main-content">
+    <main className="records-page" id="main-content" aria-busy={initialLoading}>
       <RecordSummaryCards summary={summary} loading={initialLoading} />
       <div className="records-main-grid">
         <ServiceUserList users={serviceUsers} />
