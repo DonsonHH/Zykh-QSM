@@ -12,7 +12,7 @@ import {
   UserRound
 } from "lucide-react";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
-import { chiefComplaint } from "../utils/inquiryFacts.js";
+import { fullComplaint } from "../utils/inquiryFacts.js";
 import { buildInformationReviewSpeech } from "../utils/inquirySpeech.js";
 
 const AUTO_CONFIRM_SECONDS = 15;
@@ -201,7 +201,7 @@ function ReviewVital({ icon: Icon, label, value }) {
 
 function buildFacts(extracted) {
   return {
-    complaint: chiefComplaint(extracted),
+    complaint: fullComplaint(extracted),
     duration: extracted.duration || "尚未说明",
     usedMedicines: extracted.used_medicines || "尚未说明",
     allergy: extracted.allergy_or_contraindication || "尚未说明"

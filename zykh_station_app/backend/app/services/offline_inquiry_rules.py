@@ -34,7 +34,7 @@ GENERIC_DETAIL_QUESTIONS = (
     ),
     (
         "现在属于轻微、明显，还是已经影响正常活动？",
-        "这种不舒服目前对走路、吃饭或休息有影响吗？",
+        "这种不舒服现在是轻微、明显，还是很严重？",
     ),
     (
         "除了这个表现，还有没有其他同时出现的不舒服？",
@@ -210,8 +210,15 @@ class OfflineInquiryRules:
     def rank(self, context: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
         text = self._ranking_text(context)
         rule = self._match_rule(text)
+        assessment = self.assessment(context, rule)
         if not rule:
-            return {"ok": True, "source": "offline_rules", "summary": "未匹配到合适的家庭药品。", "options": []}
+            return {
+                "ok": True,
+                "source": "offline_rules",
+                "summary": "未匹配到合适的家庭药品。",
+                "assessment": assessment,
+                "options": [],
+            }
         available = {str(item.get("id") or ""): item for item in candidates}
         options: list[dict[str, Any]] = []
         primary_ids, alternative_ids = self._conditional_medicine_ids(rule, text)
@@ -225,7 +232,59 @@ class OfflineInquiryRules:
             "ok": True,
             "source": "offline_rules",
             "summary": f"本地问询已按“{rule.concept}”整理可核对的家庭药品。",
+            "assessment": assessment,
             "options": options,
+        }
+
+    @classmethod
+    def assessment(
+        cls,
+        context: dict[str, Any],
+        rule: OfflineSymptomRule | None = None,
+    ) -> dict[str, Any]:
+        matched_rule = rule or cls._match_rule(cls._ranking_text(context))
+        evidence_catalog = context.get("evidence_catalog")
+        observations = context.get("observations")
+        evidence_ids: list[str] = []
+        if isinstance(evidence_catalog, dict) and isinstance(observations, list):
+            for index, observation in enumerate(observations, start=1):
+                evidence_id = f"obs-{index}"
+                if (
+                    isinstance(observation, dict)
+                    and observation.get("status") == "present"
+                    and evidence_id in evidence_catalog
+                ):
+                    evidence_ids.append(evidence_id)
+                if len(evidence_ids) >= 2:
+                    break
+        if not matched_rule:
+            return {
+                "summary": "现有信息不足以形成明确的可能性排序，仍需结合症状和体征变化观察。",
+                "possible_conditions": [],
+                "next_steps": ["继续记录症状和体征变化。"],
+                "seek_care_if": ["症状明显加重或出现新的明显不适时，请及时联系医生。"],
+            }
+
+        next_steps = ["休息并记录症状变化。"]
+        if matched_rule.needs_vitals:
+            next_steps.insert(0, "结合本次额温、心率和血氧结果继续观察。")
+        return {
+            "summary": (
+                f"现有信息主要表现为{matched_rule.concept}，"
+                "只能作为可能性分析，仍需结合后续变化继续判断。"
+            ),
+            "possible_conditions": [
+                {
+                    "name": f"{matched_rule.concept}相关原因"[:36],
+                    "likelihood": "possible",
+                    "supporting_evidence_ids": evidence_ids,
+                    "non_supporting_evidence_ids": [],
+                }
+            ],
+            "next_steps": next_steps[:3],
+            "seek_care_if": [
+                "症状明显加重、持续不缓解或出现新的明显不适时，请及时联系医生。"
+            ],
         }
 
     @classmethod

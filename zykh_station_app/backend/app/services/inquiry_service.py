@@ -67,8 +67,32 @@ class InquiryService:
             and extracted.used_medicines not in {"", "不确定"}
             and extracted.allergy_or_contraindication not in {"", "不确定"}
         ):
+            candidate_context = "；".join(
+                value
+                for value in (
+                    (
+                        f"已用药：{extracted.used_medicines}"
+                        if extracted.used_medicines != "未使用"
+                        else ""
+                    ),
+                    f"过敏/禁忌：{extracted.allergy_or_contraindication}",
+                )
+                if value
+            )
             safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                extracted.allergy_or_contraindication
+                candidate_context
+            )
+            focused_pool = self.safety_engine.knowledge.focus_candidate_pool(
+                "；".join(
+                    value
+                    for value in (
+                        extracted.case_summary,
+                        request.symptoms_text,
+                        extracted.duration,
+                    )
+                    if value
+                ),
+                safe_pool,
             )
             ranking = self.interpreter.rank_candidates(
                 {
@@ -79,10 +103,22 @@ class InquiryService:
                     "allergy_or_contraindication": extracted.allergy_or_contraindication,
                     "risk_level": guard.risk_level,
                 },
-                [candidate.model_dump() for candidate in safe_pool],
+                [candidate.model_dump() for candidate in focused_pool],
             )
             if ranking.get("ok"):
-                options = self.safety_engine.knowledge.options_from_ai_selection(ranking, safe_pool)
+                fresh_pool = self.safety_engine.knowledge.safe_candidate_pool(
+                    candidate_context
+                )
+                fresh_by_id = {candidate.id: candidate for candidate in fresh_pool}
+                fresh_focused_pool = [
+                    fresh_by_id[candidate.id]
+                    for candidate in focused_pool
+                    if candidate.id in fresh_by_id
+                ]
+                options = self.safety_engine.knowledge.options_from_ai_selection(
+                    ranking,
+                    fresh_focused_pool,
+                )
         candidates = [
             medicine
             for option in options[:2]

@@ -11,11 +11,14 @@ class Medicine(BaseModel):
     manufacturer: str = ""
     name: str
     category: str
+    spec: str = ""
+    trace_code: str = ""
     tags: list[str]
     indications: str = ""
     dosage: str = ""
     contraindications: list[str]
     stock: int
+    low_stock_line: int = 1
     unit: str
     expire_date: str
     image_hint: str
@@ -47,11 +50,14 @@ class MedicineUpdateRequest(BaseModel):
     manufacturer: str | None = None
     barcode: str | None = None
     category: str | None = None
+    spec: str | None = None
+    trace_code: str | None = None
     tags: list[str] | None = None
     indications: str | None = None
     dosage: str | None = None
     contraindications: list[str] | None = None
     stock: int | None = None
+    low_stock_line: int | None = None
     unit: str | None = None
     expire_date: str | None = None
     safety_note: str | None = None

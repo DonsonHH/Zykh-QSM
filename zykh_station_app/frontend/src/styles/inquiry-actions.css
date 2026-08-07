@@ -3,20 +3,20 @@
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
 }
 
 .treatment-result-header {
   min-width: 0;
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
 }
 
 .treatment-risk-icon {
-  width: 58px;
-  height: 58px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
   border-radius: 18px;
@@ -31,34 +31,14 @@
   box-shadow: inset 0 0 0 1px rgba(8, 124, 104, 0.12);
 }
 
-.treatment-result-header p,
-.treatment-result-header h2,
-.treatment-result-header span {
+.treatment-result-header h2 {
   margin: 0;
-}
-
-.treatment-result-header p {
-  color: var(--primary);
-  font-size: 14px;
-  line-height: 1;
-  font-weight: 900;
 }
 
 .treatment-result-header h2 {
   color: var(--text);
   font-size: 29px;
   line-height: 1.05;
-}
-
-.treatment-result-header > div > span {
-  display: block;
-  margin-top: 5px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .treatment-result-meta {
@@ -74,10 +54,178 @@
   font-weight: 800;
 }
 
-.treatment-option-grid {
+.treatment-result-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #aac4e2 transparent;
+  touch-action: pan-y;
+  padding-right: 4px;
+}
+
+.treatment-result-body.with-assessment {
+  gap: 8px;
+}
+
+.treatment-result-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.treatment-result-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #aac4e2;
+}
+
+.treatment-result-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.clinical-assessment-card {
+  flex: 0 0 auto;
+  min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid #dce8f5;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f7fbff 0%, #fbfdff 58%, #f7fcfa 100%);
+  padding: 10px 12px;
+}
+
+.assessment-conditions,
+.assessment-next-steps {
+  min-width: 0;
+}
+
+.clinical-assessment-card h3 {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: #263f5b;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.clinical-assessment-card h3 svg {
+  color: var(--primary);
+}
+
+.clinical-assessment-card h3 small {
+  border-radius: 6px;
+  background: #edf3fa;
+  padding: 3px 5px;
+  color: #6c7f94;
+  font-size: 11px;
+}
+
+.condition-chip-list {
+  min-width: 0;
+  display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.condition-chip {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px 7px;
+  box-shadow: inset 0 0 0 1px rgba(128, 154, 184, 0.15);
+}
+
+.condition-chip strong {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #203750;
+  font-size: 16px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.condition-chip strong em {
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: #e9f4ff;
+  padding: 2px 4px;
+  color: #2466b6;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.condition-chip > span,
+.condition-chip > small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: #61758b;
+  font-size: 14px;
+  line-height: 1.28;
+}
+
+.condition-chip > small {
+  color: #8a6a42;
+}
+
+.assessment-empty {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.assessment-next-steps {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  border-top: 1px solid #dfe9f3;
+  padding-top: 8px;
+}
+
+.assessment-next-steps p {
+  margin: 0 0 1px;
+  color: #4a6078;
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 750;
+}
+
+.assessment-next-steps > span,
+.assessment-next-steps > em {
+  color: #536a82;
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.assessment-next-steps > em {
+  border-radius: 6px;
+  background: #fff4e8;
+  padding: 3px 5px;
+  color: #9a570e;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.treatment-option-grid {
+  flex: 0 0 auto;
+  min-height: max-content;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   gap: 10px;
 }
 
@@ -92,16 +240,16 @@
 .treatment-option-card {
   position: relative;
   min-width: 0;
-  min-height: 0;
+  min-height: max-content;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: auto auto;
   column-gap: 9px;
   overflow: hidden;
   border: 1px solid #dce7f2;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #fbfdff;
-  padding: 12px;
+  padding: 10px;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(15, 35, 70, 0.03);
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
@@ -131,8 +279,8 @@
 }
 
 .option-choice-mark {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border-radius: 10px;
@@ -177,11 +325,13 @@
 
 .option-heading small {
   grid-column: 1 / -1;
-  display: block;
-  overflow: visible;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--muted);
-  font-size: 14px;
-  line-height: 1.32;
+  font-size: 15px;
+  line-height: 1.3;
 }
 
 .option-medicine-list {
@@ -190,10 +340,9 @@
   display: grid;
   grid-auto-rows: max-content;
   align-content: start;
-  gap: 7px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  margin-top: 10px;
+  gap: 6px;
+  overflow: visible;
+  margin-top: 8px;
   padding-right: 3px;
 }
 
@@ -233,15 +382,15 @@
 
 .option-medicine-row strong {
   color: var(--text);
-  font-size: 16px;
-  line-height: 1.05;
+  font-size: 17px;
+  line-height: 1.15;
 }
 
 .option-medicine-row small {
   display: block;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.22;
+  font-size: 14px;
+  line-height: 1.28;
   font-weight: 750;
   overflow-wrap: anywhere;
 }
@@ -251,9 +400,14 @@
   font-weight: 850;
 }
 
+.option-medicine-row small.medicine-fit-reason {
+  color: #356a83;
+  font-weight: 800;
+}
+
 .option-medicine-row em {
   color: var(--primary);
-  font-size: 12px;
+  font-size: 14px;
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
@@ -572,4 +726,85 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
+}
+
+@media (max-width: 1100px) and (max-height: 650px) {
+  .inquiry-treatment-result {
+    gap: 6px;
+  }
+
+  .treatment-result-header {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .treatment-risk-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+  }
+
+  .treatment-result-body.with-assessment {
+    gap: 6px;
+  }
+
+  .treatment-option-card {
+    grid-template-columns: 26px minmax(0, 1fr);
+    column-gap: 7px;
+    border-radius: 14px;
+    padding: 8px;
+  }
+
+  .treatment-confirm-bar {
+    grid-template-columns: minmax(210px, 1.15fr) minmax(190px, 0.85fr);
+  }
+
+  .treatment-confirm-notice {
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  .option-choice-mark {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+
+  .option-heading em {
+    padding: 3px 6px;
+  }
+
+  .option-medicine-list {
+    gap: 5px;
+    margin-top: 6px;
+  }
+
+  .option-medicine-row {
+    min-height: 52px;
+    grid-template-columns: 17px minmax(0, 1fr) auto;
+    gap: 5px;
+    border-radius: 10px;
+    padding: 5px 7px;
+  }
+
+  .clinical-assessment-card {
+    gap: 5px;
+    border-radius: 13px;
+    padding: 7px 9px;
+  }
+
+  .clinical-assessment-card h3 {
+    margin-bottom: 4px;
+  }
+
+  .condition-chip {
+    gap: 2px;
+    padding: 5px 6px;
+  }
+
+  .assessment-next-steps {
+    gap: 2px;
+    padding-top: 5px;
+  }
 }

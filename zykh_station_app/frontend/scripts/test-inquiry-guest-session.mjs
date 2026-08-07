@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+const TEST_SCOPE = "生产身份识别与访客显式确认链路";
 const inquiryPage = await readFile(new URL("../src/pages/Inquiry.jsx", import.meta.url), "utf8");
+const identityGate = await readFile(new URL("../src/components/InquiryIdentityGate.jsx", import.meta.url), "utf8");
 const chatStep = await readFile(new URL("../src/components/InquiryChatStep.jsx", import.meta.url), "utf8");
 const surfaces = await readFile(new URL("../src/styles/design-polish.css", import.meta.url), "utf8");
+
+assert.match(inquiryPage, /activateIdentity, useFaceIdentity/);
+assert.match(inquiryPage, /useFaceIdentity\(\{ auto: false, activateOnMatch: false \}\)/);
+assert.match(inquiryPage, /restoredSessionId[\s\S]{0,900}loadInquirySession\(restoredSessionId\)/);
+assert.match(inquiryPage, /else if \(!identityConfirmed\)[\s\S]{0,220}identifyFace\(\{ force: true \}\)/);
+assert.match(inquiryPage, /function confirmIdentity\(\)[\s\S]{0,320}activateIdentity\(faceIdentity\)/);
+assert.match(inquiryPage, /function confirmGuestInquiry\(\)[\s\S]{0,420}activateIdentity\(visitor\)/);
+assert.match(inquiryPage, /!identityConfirmed \? \([\s\S]{0,260}<InquiryIdentityGate/);
+assert.match(identityGate, /是我，开始问询/);
+assert.match(identityGate, /不是我/);
+assert.match(identityGate, /重新识别/);
+assert.match(identityGate, /不等待识别，以访客身份继续/);
+assert.match(identityGate, /以访客身份继续/);
 
 assert.match(inquiryPage, /const mountedRef = useRef\(false\)/);
 assert.match(inquiryPage, /const creationToken = Symbol\("inquiry-session-creation"\)/);
@@ -34,4 +49,4 @@ assert.doesNotMatch(
   "inquiry surfaces can lose their edge on the low-gamut display"
 );
 
-console.log("Inquiry guest session and surface edge contracts passed.");
+console.log(`[${TEST_SCOPE}] contract passed; no identity bypass is exercised.`);

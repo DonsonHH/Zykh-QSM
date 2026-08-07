@@ -107,6 +107,69 @@ class OfflineInquiryRulesTest(unittest.TestCase):
         self.assertEqual(result["options"][0]["medicine_ids"], ["slot-08-huoxiang-zhengqi"])
         self.assertNotIn("slot-13-ibuprofen", result["options"][0]["medicine_ids"])
 
+    def test_offline_ranking_returns_a_displayable_structured_assessment(self) -> None:
+        result = self.rules.rank(
+            {
+                "case_summary": "暑热不适",
+                "observations": [
+                    {
+                        "concept": "头晕",
+                        "status": "present",
+                        "evidence": "暴晒后头晕",
+                    }
+                ],
+                "evidence_catalog": {"obs-1": "头晕：暴晒后头晕"},
+            },
+            [
+                {
+                    "id": "slot-08-huoxiang-zhengqi",
+                    "dosage": "请核对药品说明。",
+                }
+            ],
+        )
+
+        self.assertIn("summary", result)
+        self.assertTrue(result["options"])
+        assessment = result["assessment"]
+        self.assertIn("暑热", assessment["possible_conditions"][0]["name"])
+        self.assertEqual(
+            assessment["possible_conditions"][0]["likelihood"],
+            "possible",
+        )
+        self.assertEqual(
+            assessment["possible_conditions"][0]["supporting_evidence_ids"],
+            ["obs-1"],
+        )
+        self.assertTrue(assessment["next_steps"])
+        self.assertTrue(assessment["seek_care_if"])
+
+    def test_offline_assessment_does_not_claim_absent_observations_as_support(self) -> None:
+        result = self.rules.rank(
+            {
+                "case_summary": "咽喉不适",
+                "observations": [
+                    {
+                        "concept": "发热",
+                        "status": "absent",
+                        "evidence": "没有发热",
+                    },
+                    {
+                        "concept": "吞咽痛",
+                        "status": "present",
+                        "evidence": "吞咽时嗓子疼",
+                    },
+                ],
+                "evidence_catalog": {
+                    "obs-1": "发热：未出现（没有发热）",
+                    "obs-2": "吞咽痛：存在（吞咽时嗓子疼）",
+                },
+            },
+            [],
+        )
+
+        condition = result["assessment"]["possible_conditions"][0]
+        self.assertEqual(condition["supporting_evidence_ids"], ["obs-2"])
+
     def test_minor_wound_builds_primary_and_alternative_care_sequences(self) -> None:
         candidates = [
             {"id": medicine_id, "dosage": "按说明使用。"}
@@ -255,6 +318,17 @@ class OfflineInquiryRulesTest(unittest.TestCase):
                 questions = self.rules._detail_questions(rule)
                 self.assertEqual(len(questions), 3)
                 self.assertTrue(all(len(variants) >= 2 for variants in questions))
+
+    def test_offline_questions_do_not_routinely_ask_about_standing_or_walking(self) -> None:
+        banned = ("正常站立", "正常行走", "站立不稳", "走路不稳", "站不稳", "走路、")
+        for rule in RULES:
+            with self.subTest(rule=rule.key):
+                questions = self.rules._detail_questions(rule)
+                for question in (item for variants in questions for item in variants):
+                    self.assertFalse(
+                        any(term in question for term in banned),
+                        f"{rule.key} still contains a routine mobility question: {question}",
+                    )
 
     def test_heat_inquiry_collects_three_symptom_details_then_summarizes(self) -> None:
         existing = {"conversation_turns": 1, "conversation": [], "vitals": {}}

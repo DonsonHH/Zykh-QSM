@@ -4,7 +4,7 @@ export function aiSourceLabel(source) {
 
 export function aiSourcePresentation(source) {
   const normalized = String(source || "").toLowerCase();
-  if (normalized === "cloud" || normalized === "qsm_cloud") {
+  if (["cloud", "cloud_responses", "cloud_chat_fallback", "qsm_cloud"].includes(normalized)) {
     return { kind: "smart", label: "智能回复" };
   }
   if (["local_llm", "offline_rules"].includes(normalized)) {

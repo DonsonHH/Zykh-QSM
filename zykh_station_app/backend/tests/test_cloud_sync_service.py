@@ -13,6 +13,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
+from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
 from app.schemas.sync import SyncStatus  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
@@ -64,6 +65,31 @@ class AckFailureWorker(FakeCloudSyncWorker):
     def _execute_command(self, command_type: str, command: dict[str, object]) -> dict[str, object]:
         self.executions += 1
         return {"ok": True, "command_type": command_type}
+
+
+class MedicineRoundTripWorker(FakeV2CloudSyncWorker):
+    def __init__(self, command: dict[str, object]) -> None:
+        super().__init__(revision="2.3-medicine-sync-contract")
+        self.command = command
+        self.delivered = False
+
+    def _call(self, action: str, data: dict[str, object]):
+        self.calls.append((action, data))
+        if action == "PULL_COMMANDS":
+            if self.delivered:
+                return []
+            self.delivered = True
+            return [self.command]
+        if action == "PING":
+            return {"ok": True, "schemaVersion": 2, "schemaRevision": self.revision}
+        if action == "UPSERT_SNAPSHOT_BATCH":
+            rows = data.get("rows", [])
+            return {
+                "ok": True,
+                "count": len(rows),
+                "ids": [f"id-{data.get('kind')}-{index}" for index, _ in enumerate(rows)],
+            }
+        return {"ok": True}
 
 
 class CloudSyncServiceTest(unittest.TestCase):
@@ -182,6 +208,189 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(row["target_user_name"], "张三")
         self.assertEqual(row["symptoms_summary"], "轻微头晕")
         self.assertEqual(row["updatedAt"], "2026-07-19 08:03:00")
+
+    def test_sync_summary_excludes_full_dialogue_messages(self) -> None:
+        summary = CloudSyncWorker._sync_summary(
+            {
+                "medicines": [],
+                "serviceUsers": [],
+                "plans": [],
+                "inquiries": [
+                    {
+                        "session_id": "session-summary",
+                        "target_user_name": "张三",
+                        "title": "头晕问询",
+                        "reply": "建议先休息并观察。",
+                        "messages": [
+                            {"role": "user", "content": "有些头晕"},
+                            {"role": "assistant", "content": "持续多久了？"},
+                        ],
+                        "created_at": "2026-07-19 08:00:00",
+                        "updated_at": "2026-07-19 08:03:00",
+                    }
+                ],
+                "vitals": [],
+                "records": [],
+            }
+        )
+
+        inquiry = summary["recentInquiries"][0]
+        self.assertNotIn("messages", inquiry)
+        self.assertEqual(inquiry["messageCount"], 2)
+        self.assertEqual(inquiry["reply"], "建议先休息并观察。")
+
+    def test_medicine_patch_updates_only_explicit_fields_and_preserves_zero_stock(self) -> None:
+        repository = MedicineRepository()
+        original = repository.get_by_hardware_slot(1)
+        self.assertIsNotNone(original)
+
+        result = CloudSyncWorker._upsert_medicine(
+            {
+                "slot": 1,
+                "operation": "patch",
+                "patch": {
+                    "name": "一号仓演示药",
+                    "quantity": 0,
+                    "spec": "0.3克×10袋",
+                    "traceCode": "TRACE-001",
+                    "lowStockLine": 0,
+                },
+            }
+        )
+
+        updated = repository.get_by_hardware_slot(1)
+        self.assertEqual(result["medicine"]["hardware_slot"], 1)
+        self.assertEqual(updated.name, "一号仓演示药")
+        self.assertEqual(updated.stock, 0)
+        self.assertEqual(updated.spec, "0.3克×10袋")
+        self.assertEqual(updated.trace_code, "TRACE-001")
+        self.assertEqual(updated.low_stock_line, 0)
+        self.assertEqual(updated.barcode, original.barcode)
+        self.assertEqual(updated.category, original.category)
+        self.assertEqual(updated.unit, original.unit)
+        self.assertEqual(updated.expire_date, original.expire_date)
+
+    def test_medicine_patch_rejects_an_unknown_operation(self) -> None:
+        with self.assertRaisesRegex(CloudSyncError, "不支持的药品操作"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "replace-all",
+                    "hardware_slot": 1,
+                    "name": "不应写入的药品",
+                }
+            )
+
+    def test_medicine_patch_rejects_conflicting_outer_and_inner_slots(self) -> None:
+        with self.assertRaisesRegex(CloudSyncError, "仓位存在冲突"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "hardware_slot": 1,
+                    "patch": {
+                        "hardwareSlot": 2,
+                        "name": "不应串仓的药品",
+                    },
+                }
+            )
+
+    def test_medicine_upsert_uses_hardware_slot_not_barcode_as_identity(self) -> None:
+        repository = MedicineRepository()
+        slot_one = repository.get_by_hardware_slot(1)
+        self.assertIsNotNone(slot_one)
+        with db.connect() as conn:
+            conn.execute("DELETE FROM medicines WHERE hardware_slot=23")
+
+        result = CloudSyncWorker._upsert_medicine(
+            {
+                "hardware_slot": 23,
+                "name": "二十三号仓同条码药",
+                "barcode": slot_one.barcode,
+                "quantity": 0,
+                "unit": "盒",
+                "category": "家庭常用",
+                "spec": "10片",
+                "traceCode": "TRACE-023",
+                "lowStockLine": 2,
+                "expireDate": "2030-02",
+            }
+        )
+
+        slot_twenty_three = repository.get_by_hardware_slot(23)
+        self.assertEqual(result["medicine"]["hardware_slot"], 23)
+        self.assertIsNotNone(slot_twenty_three)
+        self.assertNotEqual(slot_twenty_three.id, slot_one.id)
+        self.assertEqual(slot_twenty_three.barcode, slot_one.barcode)
+        self.assertEqual(slot_twenty_three.stock, 0)
+        self.assertEqual(repository.get_by_hardware_slot(1).id, slot_one.id)
+
+    def test_snapshot_preserves_medicine_extension_fields_and_expiry_precision(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(1)
+        repository.update(
+            medicine.id,
+            {
+                "spec": "20毫克×12粒",
+                "trace_code": "TRACE-MONTH",
+                "low_stock_line": 3,
+                "expire_date": "2029-01",
+            },
+        )
+
+        monthly = next(row for row in CloudSyncWorker._build_snapshot()["medicines"] if row["slot"] == 1)
+        self.assertEqual(monthly["spec"], "20毫克×12粒")
+        self.assertEqual(monthly["traceCode"], "TRACE-MONTH")
+        self.assertEqual(monthly["lowStockLine"], 3)
+        self.assertEqual(monthly["expireDate"], "2029-01")
+        self.assertEqual(monthly["expiryPrecision"], "month")
+
+        repository.update(medicine.id, {"expire_date": "2029-01-31"})
+        daily = next(row for row in CloudSyncWorker._build_snapshot()["medicines"] if row["slot"] == 1)
+        self.assertEqual(daily["expireDate"], "2029-01-31")
+        self.assertEqual(daily["expiryPrecision"], "day")
+
+    def test_medicine_schema_migration_contains_sync_extension_columns(self) -> None:
+        with db.connect() as conn:
+            columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(medicines)").fetchall()}
+
+        self.assertTrue({"spec", "trace_code", "low_stock_line"}.issubset(columns))
+
+    def test_pulled_miniprogram_medicine_patch_round_trips_to_cloud_snapshot(self) -> None:
+        worker = MedicineRoundTripWorker(
+            {
+                "_id": "medicine-command-1",
+                "type": "UPSERT_MEDICINE",
+                "payload": {
+                    "operation": "patch",
+                    "hardware_slot": 1,
+                    "patch": {
+                        "name": "同步演示药",
+                        "spec": "0.3克×10袋",
+                        "traceCode": "TRACE-ROUNDTRIP",
+                        "quantity": 0,
+                        "lowStockLine": 2,
+                        "expireDate": "2030-02",
+                        "expiryPrecision": "month",
+                    },
+                },
+            }
+        )
+
+        worker.run_once()
+
+        medicine_batches = [
+            payload for action, payload in worker.calls
+            if action == "UPSERT_SNAPSHOT_BATCH" and payload.get("kind") == "medicines"
+        ]
+        synced = next(row for batch in medicine_batches for row in batch["rows"] if row["slot"] == 1)
+        self.assertEqual(synced["name"], "同步演示药")
+        self.assertEqual(synced["spec"], "0.3克×10袋")
+        self.assertEqual(synced["traceCode"], "TRACE-ROUNDTRIP")
+        self.assertEqual(synced["quantity"], 0)
+        self.assertEqual(synced["lowStockLine"], 2)
+        self.assertEqual(synced["expireDate"], "2030-02")
+        self.assertEqual(synced["expiryPrecision"], "month")
+        history = worker._command_history("medicine-command-1")
+        self.assertEqual(history["status"], "done")
 
     def test_snapshot_excludes_legacy_demo_spo2_records(self) -> None:
         repository = VitalsRepository()

@@ -180,6 +180,10 @@ class Settings:
         "AI_API_BASE",
         "https://api.deepseek.com/chat/completions",
     )
+    ai_responses_api_base: str = _env(
+        "AI_RESPONSES_API_BASE",
+        "https://api.deepseek.com/responses",
+    )
     ai_api_key: str = _env("AI_API_KEY", "")
     ai_api_key_file: Path = Path(_env("AI_API_KEY_FILE", str(DATA_DIR / "ai-api-key.txt")))
     ai_model: str = _env("AI_MODEL", "deepseek-v4-flash")
@@ -189,7 +193,7 @@ class Settings:
         "yes",
         "on",
     }
-    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "true").strip().lower() in {
+    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "false").strip().lower() in {
         "1",
         "true",
         "yes",

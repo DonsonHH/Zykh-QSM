@@ -1,4 +1,4 @@
-const MAX_SPEECH_LENGTH = 260;
+const MAX_SPEECH_LENGTH = 340;
 
 export function buildInformationReviewSpeech(result) {
   const userName = String(result?.user_name || "").trim();
@@ -26,11 +26,20 @@ export function buildRecommendationSpeech(result, selectedOption) {
   const reason = String(selectedOption?.when || "").trim();
   const instruction = usage || "具体用法请核对屏幕和药品实物说明。";
   const optionCount = Number(result?.treatment_options?.length || 0);
+  const assessment = result?.extracted_information?.final_assessment || {};
+  const firstCondition = assessment?.possible_conditions?.[0]?.name;
+  const conditionText = firstCondition
+    ? `结合现有信息，较先考虑${firstCondition}等可能情况，但这不是诊断。`
+    : "";
+  const seekCareText = assessment?.seek_care_if?.[0]
+    ? `如果${assessment.seek_care_if[0]}，请及时就医。`
+    : "";
   const selectionGuide = optionCount > 1
     ? "屏幕上有推荐方案和备选方案，请点选其中一个，不要同时使用。"
     : "屏幕上有一个推荐方案，请核对后选择。";
-  return `${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。确认后系统会依次打开对应药柜。`
-    .slice(0, MAX_SPEECH_LENGTH);
+  const disclaimer = "以上仅为健康信息和药仓内药品的辅助匹配，不构成诊断或处方；用药前请核对药盒说明、有效期和禁忌，并请听医嘱。";
+  const body = `${conditionText}${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。${seekCareText}确认后系统会依次打开对应药柜。`;
+  return `${body.slice(0, Math.max(0, MAX_SPEECH_LENGTH - disclaimer.length))}${disclaimer}`;
 }
 
 export function buildActionSpeech(actionMessage) {

@@ -541,7 +541,8 @@ class MedicineRepository:
         with db.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
+                       low_stock_line, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at
@@ -556,7 +557,8 @@ class MedicineRepository:
         with db.connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
+                       low_stock_line, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at
@@ -572,7 +574,8 @@ class MedicineRepository:
         with db.connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, slot, hardware_slot, barcode, name, category, tags_json,
+                SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
+                       low_stock_line, tags_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at
@@ -580,6 +583,25 @@ class MedicineRepository:
                 WHERE barcode=?
                 """,
                 (barcode,),
+            ).fetchone()
+        return self._row_to_medicine(row) if row else None
+
+    def get_by_hardware_slot(self, hardware_slot: int) -> Medicine | None:
+        self._ensure_seeded()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
+                       low_stock_line, tags_json,
+                       indications, dosage, contraindications_json, stock, unit, expire_date,
+                       image_hint, manufacturer, is_otc, is_emergency, safety_note,
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
+                FROM medicines
+                WHERE hardware_slot=?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (hardware_slot,),
             ).fetchone()
         return self._row_to_medicine(row) if row else None
 
@@ -594,11 +616,14 @@ class MedicineRepository:
             "manufacturer": medicine.manufacturer,
             "name": medicine.name,
             "category": medicine.category,
+            "spec": medicine.spec,
+            "trace_code": medicine.trace_code,
             "tags": medicine.tags,
             "indications": medicine.indications,
             "dosage": medicine.dosage,
             "contraindications": medicine.contraindications,
             "stock": medicine.stock,
+            "low_stock_line": medicine.low_stock_line,
             "unit": medicine.unit,
             "expire_date": medicine.expire_date,
             "is_otc": medicine.is_otc,
@@ -621,6 +646,8 @@ class MedicineRepository:
             if key in {
                 "barcode",
                 "manufacturer",
+                "spec",
+                "trace_code",
                 "expire_date",
                 "safety_note",
                 "indications",
@@ -636,6 +663,9 @@ class MedicineRepository:
             if key == "stock":
                 next_values[key] = max(int(value), 0)
                 continue
+            if key == "low_stock_line":
+                next_values[key] = max(int(value), 0)
+                continue
             if key in {"is_otc", "is_emergency", "guidance_review_required", "package_verified"}:
                 next_values[key] = bool(value)
 
@@ -644,9 +674,9 @@ class MedicineRepository:
             conn.execute(
                 """
                 UPDATE medicines
-                SET barcode=?, manufacturer=?, name=?, category=?, tags_json=?,
+                SET barcode=?, manufacturer=?, name=?, category=?, spec=?, trace_code=?, tags_json=?,
                     indications=?, dosage=?, contraindications_json=?, stock=?, unit=?, expire_date=?,
-                    image_hint=?, is_otc=?, is_emergency=?, safety_note=?, guidance_source=?,
+                    low_stock_line=?, image_hint=?, is_otc=?, is_emergency=?, safety_note=?, guidance_source=?,
                     guidance_review_required=?, package_verified=?, guidance_updated_at=?, updated_at=?
                 WHERE id=?
                 """,
@@ -655,6 +685,8 @@ class MedicineRepository:
                     next_values["manufacturer"],
                     next_values["name"],
                     next_values["category"],
+                    next_values["spec"],
+                    next_values["trace_code"],
                     json.dumps(next_values["tags"], ensure_ascii=False),
                     next_values["indications"],
                     next_values["dosage"],
@@ -662,6 +694,7 @@ class MedicineRepository:
                     int(next_values["stock"]),
                     next_values["unit"],
                     next_values["expire_date"],
+                    int(next_values["low_stock_line"]),
                     next_values["image_hint"],
                     1 if next_values["is_otc"] else 0,
                     1 if next_values["is_emergency"] else 0,
@@ -683,44 +716,55 @@ class MedicineRepository:
         manufacturer: str = "",
         name: str,
         spec: str = "",
+        trace_code: str = "",
         expire_date: str = "",
         stock: int = 1,
+        low_stock_line: int = 1,
         unit: str = "盒",
         category: str = "扫码录入",
         indications: str = "",
         dosage: str = "",
         hardware_slot: int | None = None,
         safety_note: str = "",
+        deduplicate_barcode: bool = True,
     ) -> Medicine:
         self._ensure_seeded()
         normalized_barcode = barcode.strip()
-        existing = self.get_by_barcode(normalized_barcode) if normalized_barcode else None
+        existing = self.get_by_barcode(normalized_barcode) if normalized_barcode and deduplicate_barcode else None
         if existing:
             return existing
 
-        slot_number = hardware_slot or self.first_empty_hardware_slot()
+        slot_number = hardware_slot if hardware_slot is not None else self.first_empty_hardware_slot()
         slot_label = f"S{slot_number:02d}"
-        medicine_id = self._scan_id(name, normalized_barcode)
-        stock = max(int(stock or 1), 1)
+        identity_name = f"{name}-{slot_label}" if not deduplicate_barcode else name
+        identity_barcode = "" if not deduplicate_barcode else normalized_barcode
+        medicine_id = self._scan_id(identity_name, identity_barcode)
+        stock = max(int(stock if stock is not None else 1), 0)
+        low_stock_line = max(int(low_stock_line if low_stock_line is not None else 1), 0)
         safety = safety_note or "扫码录入药品，开柜前请核对药盒、有效期和家庭用药记录。"
         with db.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO medicines(
-                  id, slot, hardware_slot, barcode, manufacturer, name, category, tags_json,
-                  indications, dosage, contraindications_json, stock, unit, expire_date, image_hint,
+                  id, slot, hardware_slot, barcode, manufacturer, name, category, spec, trace_code, tags_json,
+                  indications, dosage, contraindications_json, stock, low_stock_line, unit, expire_date, image_hint,
                   is_otc, is_emergency, safety_note, guidance_source,
                   guidance_review_required, package_verified, guidance_updated_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                  slot=excluded.slot,
+                  hardware_slot=excluded.hardware_slot,
                   barcode=excluded.barcode,
                   manufacturer=excluded.manufacturer,
                   name=excluded.name,
                   category=excluded.category,
+                  spec=excluded.spec,
+                  trace_code=excluded.trace_code,
                   indications=excluded.indications,
                   dosage=excluded.dosage,
                   stock=excluded.stock,
+                  low_stock_line=excluded.low_stock_line,
                   unit=excluded.unit,
                   expire_date=excluded.expire_date,
                   image_hint=excluded.image_hint,
@@ -739,14 +783,17 @@ class MedicineRepository:
                     manufacturer.strip(),
                     name.strip() or "待核验药品",
                     category.strip() or "扫码录入",
+                    spec.strip(),
+                    trace_code.strip(),
                     json.dumps(["扫码录入", "待核验"], ensure_ascii=False),
                     indications.strip(),
                     dosage.strip(),
                     json.dumps(["请人工核对药品说明"], ensure_ascii=False),
                     stock,
+                    low_stock_line,
                     unit.strip() or "盒",
                     expire_date.strip(),
-                    spec.strip() or "扫码录入",
+                    f"{manufacturer.strip()} {name.strip()}".strip() or "扫码录入药品",
                     1,
                     0,
                     safety,
@@ -761,6 +808,40 @@ class MedicineRepository:
         if created is None:
             raise RuntimeError("扫码药品录入失败。")
         return created
+
+    def create_at_hardware_slot(
+        self,
+        *,
+        hardware_slot: int,
+        barcode: str,
+        manufacturer: str = "",
+        name: str,
+        spec: str = "",
+        trace_code: str = "",
+        expire_date: str = "",
+        stock: int = 1,
+        low_stock_line: int = 1,
+        unit: str = "盒",
+        category: str = "家庭常用",
+        safety_note: str = "",
+    ) -> Medicine:
+        if self.get_by_hardware_slot(hardware_slot) is not None:
+            raise ValueError(f"{hardware_slot} 号仓已有药品。")
+        return self.create_from_scan(
+            barcode=barcode,
+            manufacturer=manufacturer,
+            name=name,
+            spec=spec,
+            trace_code=trace_code,
+            expire_date=expire_date,
+            stock=stock,
+            low_stock_line=low_stock_line,
+            unit=unit,
+            category=category,
+            hardware_slot=hardware_slot,
+            safety_note=safety_note,
+            deduplicate_barcode=False,
+        )
 
     def first_empty_hardware_slot(self) -> int:
         self._ensure_seeded()
@@ -1015,11 +1096,14 @@ class MedicineRepository:
             manufacturer=row["manufacturer"] or "",
             name=row["name"],
             category=row["category"],
+            spec=row["spec"] or "",
+            trace_code=row["trace_code"] or "",
             tags=json.loads(row["tags_json"]),
             indications=row["indications"] or "",
             dosage=row["dosage"] or "",
             contraindications=json.loads(row["contraindications_json"]),
             stock=int(row["stock"]),
+            low_stock_line=max(int(row["low_stock_line"]), 0),
             unit=row["unit"],
             expire_date=row["expire_date"],
             image_hint=row["image_hint"],

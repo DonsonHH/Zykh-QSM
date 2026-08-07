@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -226,10 +227,13 @@ class CloudSyncWorker:
             row.update(
                 {
                     "slot": medicine.hardware_slot,
-                    "spec": medicine.category,
+                    "hardwareSlot": medicine.hardware_slot,
+                    "spec": medicine.spec,
+                    "traceCode": medicine.trace_code,
                     "quantity": medicine.stock,
                     "expireDate": medicine.expire_date,
-                    "lowStockLine": 1,
+                    "expiryPrecision": CloudSyncWorker._expiry_precision(medicine.expire_date),
+                    "lowStockLine": medicine.low_stock_line,
                 }
             )
             medicines.append(row)
@@ -394,7 +398,9 @@ class CloudSyncWorker:
                     "risk_label": row.get("risk_label"),
                     "symptoms_summary": row.get("symptoms_summary"),
                     "reply": row.get("reply") or row.get("ai_message"),
-                    "messages": row.get("messages") or [],
+                    "messageCount": len(row.get("messages") or [])
+                    if isinstance(row.get("messages"), list)
+                    else max(0, CloudSyncWorker._int(row.get("messageCount")) or 0),
                     "created_at": row.get("created_at"),
                     "updated_at": row.get("updated_at") or row.get("created_at"),
                 }
@@ -570,37 +576,118 @@ class CloudSyncWorker:
 
     @staticmethod
     def _upsert_medicine(payload: dict[str, object]) -> dict[str, object]:
-        slot = CloudSyncWorker._int(payload.get("slot"))
-        name = str(payload.get("name") or "").strip()
-        if slot is None or not 1 <= slot <= 23 or not name:
-            raise CloudSyncError("补药命令缺少有效仓位或药品名称。")
+        operation = str(payload.get("operation") or "upsert").strip().lower()
+        if operation not in {"upsert", "patch"}:
+            raise CloudSyncError(f"不支持的药品操作：{operation or '空'}。")
+        nested_patch = payload.get("patch")
+        if operation == "patch" and not isinstance(nested_patch, dict):
+            raise CloudSyncError("药品补丁缺少 patch 字段。")
+        source = nested_patch if operation == "patch" else payload
+        assert isinstance(source, dict)
+
+        slot_present, slot_value = CloudSyncWorker._consistent_value(
+            payload, "仓位", "hardware_slot", "hardwareSlot", "slot"
+        )
+        source_slot_present, source_slot_value = CloudSyncWorker._consistent_value(
+            source, "仓位", "hardware_slot", "hardwareSlot", "slot"
+        )
+        if (
+            source is not payload
+            and slot_present
+            and source_slot_present
+            and str(slot_value).strip() != str(source_slot_value).strip()
+        ):
+            raise CloudSyncError("药品字段 仓位存在冲突值。")
+        selected_slot = slot_value if slot_present else source_slot_value
+        slot = CloudSyncWorker._int(selected_slot)
+        if slot is None or not 1 <= slot <= 23:
+            raise CloudSyncError("补药命令缺少有效仓位。")
+
         repository = MedicineRepository()
-        with db.connect() as conn:
-            row = conn.execute("SELECT id FROM medicines WHERE hardware_slot=?", (slot,)).fetchone()
-        if row:
+        existing = repository.get_by_hardware_slot(slot)
+        updates: dict[str, object] = {}
+        aliases = {
+            "name": ("name",),
+            "manufacturer": ("manufacturer",),
+            "barcode": ("barcode", "code"),
+            "category": ("category",),
+            "spec": ("spec",),
+            "trace_code": ("traceCode", "trace_code"),
+            "stock": ("quantity", "stock"),
+            "low_stock_line": ("lowStockLine", "low_stock_line"),
+            "unit": ("unit",),
+            "expire_date": ("expireDate", "expire_date"),
+        }
+        for target, names in aliases.items():
+            present, value = CloudSyncWorker._consistent_value(source, names[0], *names)
+            if not present or value is None:
+                continue
+            if target in {"stock", "low_stock_line"}:
+                number = CloudSyncWorker._int(value)
+                if number is None or number < 0:
+                    raise CloudSyncError(f"药品字段 {names[0]} 必须是非负整数。")
+                updates[target] = number
+            else:
+                updates[target] = str(value).strip()
+        for required_text in ("name", "category", "unit"):
+            if required_text in updates and not str(updates[required_text]).strip():
+                raise CloudSyncError(f"药品字段 {required_text} 不能为空。")
+        if "expire_date" in updates:
+            precision = CloudSyncWorker._expiry_precision(updates["expire_date"])
+            if updates["expire_date"] and precision == "unknown":
+                raise CloudSyncError("药品有效期必须是 YYYY-MM 或 YYYY-MM-DD。")
+            precision_present, supplied_precision = CloudSyncWorker._consistent_value(
+                source, "expiryPrecision", "expiryPrecision"
+            )
+            if precision_present and str(supplied_precision or "") != precision:
+                raise CloudSyncError("expiryPrecision 与有效期格式不一致。")
+
+        if existing:
+            if operation == "patch" and not updates:
+                raise CloudSyncError("药品补丁没有可更新字段。")
             updated = repository.update(
-                str(row["id"]),
-                {
-                    "name": name,
-                    "barcode": payload.get("barcode") or payload.get("code") or "",
-                    "category": payload.get("category") or payload.get("spec") or "家庭常用",
-                    "stock": CloudSyncWorker._int(payload.get("quantity") or payload.get("stock")) or 1,
-                    "unit": payload.get("unit") or "盒",
-                    "expire_date": payload.get("expireDate") or payload.get("expire_date") or "",
-                },
+                existing.id,
+                updates,
             )
         else:
-            updated = repository.create_from_scan(
-                barcode=str(payload.get("barcode") or payload.get("code") or ""),
-                name=name,
-                spec=str(payload.get("spec") or ""),
-                expire_date=str(payload.get("expireDate") or payload.get("expire_date") or ""),
-                stock=CloudSyncWorker._int(payload.get("quantity") or payload.get("stock")) or 1,
-                unit=str(payload.get("unit") or "盒"),
-                category=str(payload.get("category") or "家庭常用"),
+            name = str(updates.get("name") or "").strip()
+            if not name:
+                raise CloudSyncError("新仓位药品缺少名称。")
+            updated = repository.create_at_hardware_slot(
                 hardware_slot=slot,
+                barcode=str(updates.get("barcode") or ""),
+                manufacturer=str(updates.get("manufacturer") or ""),
+                name=name,
+                spec=str(updates.get("spec") or ""),
+                trace_code=str(updates.get("trace_code") or ""),
+                expire_date=str(updates.get("expire_date") or ""),
+                stock=int(updates["stock"]) if "stock" in updates else 1,
+                low_stock_line=int(updates["low_stock_line"]) if "low_stock_line" in updates else 1,
+                unit=str(updates.get("unit") or "盒"),
+                category=str(updates.get("category") or "家庭常用"),
             )
         return {"medicine": updated.model_dump(mode="json") if updated else None}
+
+    @staticmethod
+    def _consistent_value(
+        source: dict[str, object], label: str, *names: str
+    ) -> tuple[bool, object | None]:
+        values = [(name, source[name]) for name in names if name in source]
+        if not values:
+            return False, None
+        normalized = {str(value).strip() for _, value in values}
+        if len(normalized) > 1:
+            raise CloudSyncError(f"药品字段 {label} 存在冲突值。")
+        return True, values[0][1]
+
+    @staticmethod
+    def _expiry_precision(value: object) -> str:
+        text = str(value or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return "day"
+        if re.fullmatch(r"\d{4}-\d{2}", text):
+            return "month"
+        return "unknown"
 
     @staticmethod
     def _upsert_service_user(payload: dict[str, object]) -> dict[str, object]:
