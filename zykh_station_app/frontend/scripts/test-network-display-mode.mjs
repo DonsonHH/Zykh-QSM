@@ -65,6 +65,13 @@ assert.doesNotMatch(
   /wifi_enabled|sim_enabled|切换 Wi-Fi|切换数据网络/,
   "basic settings still exposes physical network controls"
 );
+assert.match(settingsPage, /联网模式/, "settings is missing the online presentation mode");
+assert.match(settingsPage, /断网模式/, "settings is missing the offline presentation mode");
+assert.doesNotMatch(
+  settingsPage,
+  /仅改变显示与同步|不会切换实际|小程序实时连接|本地模式|显示网络图标|暂停同步/,
+  "demo settings exposes internal implementation details"
+);
 assert.match(adminDevices, /updateAdminNetwork/, "device console is missing real network controls");
 assert.doesNotMatch(
   inquiryChat,

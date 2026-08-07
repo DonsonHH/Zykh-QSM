@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Bug,
-  Cloud,
-  CloudOff,
+  Check,
+  CircleCheck,
   Clock3,
   LoaderCircle,
   Mic2,
-  RadioTower,
   SunMedium,
-  Volume2
+  Volume2,
+  Wifi,
+  WifiOff,
+  Wrench
 } from "lucide-react";
 import { loadBasicSettings, saveBasicSettings } from "../api/settings.js";
 import { playBeep } from "../api/audio.js";
@@ -65,13 +66,19 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const mountedRef = useRef(true);
   const controlsLocked = loading || saveState === "saving";
   const speakerPercent = speakerGainToPercent(values.speaker_volume);
-
-  const networkDescription = useMemo(() => {
-    if (values.network_mode === "local" || values.network_mode === "offline") {
-      return "本地图标已启用，小程序实时连接已暂停。";
-    }
-    return "显示实际网络状态，小程序保持实时连接。";
-  }, [values.network_mode]);
+  const offlineMode = values.network_mode === "local" || values.network_mode === "offline";
+  const networkDescription = offlineMode
+    ? "设备当前处于断网模式"
+    : "设备已联网，网络服务运行正常";
+  const saveLabel = saveState === "loading"
+    ? "正在读取"
+    : saveState === "pending"
+      ? "等待保存"
+      : saveState === "saving"
+        ? "正在保存"
+        : saveState === "error"
+          ? "保存失败"
+          : "设置已保存";
 
   useEffect(() => {
     mountedRef.current = true;
@@ -183,11 +190,12 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         </div>
         <span className={`settings-autosave-state ${saveState}`} role="status" aria-live="polite">
           {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={18} className="spin" aria-hidden="true" /> : null}
-          {saveState === "loading" ? "正在读取" : saveState === "pending" ? "等待自动保存" : saveState === "saving" ? "正在自动保存" : saveState === "error" ? "自动保存失败" : "已自动保存"}
+          {saveState === "saved" ? <CircleCheck size={18} aria-hidden="true" /> : null}
+          {saveLabel}
         </span>
         <button className="admin-entry-button" type="button" onClick={() => onNavigate("admin")}>
-          <Bug size={20} aria-hidden="true" />
-          管理员调试
+          <Wrench size={20} aria-hidden="true" />
+          设备调试
         </button>
       </header>
 
@@ -200,41 +208,48 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           </div>
         ) : null}
         <article className="basic-settings-panel network-panel">
-          <header>
-            <RadioTower size={26} aria-hidden="true" />
-            <h3>连接与同步</h3>
+          <header className="settings-section-heading">
+            <span className="settings-section-icon"><Wifi size={25} aria-hidden="true" /></span>
+            <div>
+              <h3>网络</h3>
+              <p>选择设备的网络状态</p>
+            </div>
           </header>
-          <p className="settings-panel-intro">选择终端对外显示和小程序同步状态。</p>
-          <div className="network-mode-control" aria-label="连接与同步模式">
+          <div className="network-mode-control" role="radiogroup" aria-label="网络模式">
             <button
               type="button"
-              className={values.network_mode === "sim" ? "active" : ""}
+              className={`network-mode-button online ${!offlineMode ? "active" : ""}`}
+              role="radio"
+              aria-checked={!offlineMode}
               disabled={controlsLocked}
               onClick={() => update("network_mode", "sim")}
             >
-              <Cloud size={22} aria-hidden="true" />
-              <span><strong>联网模式</strong><small>显示网络图标 · 实时同步</small></span>
+              <span className="network-mode-icon"><Wifi size={25} aria-hidden="true" /></span>
+              <span className="network-mode-copy"><strong>联网模式</strong><small>网络连接正常</small></span>
+              <span className="network-mode-check" aria-hidden="true"><Check size={17} /></span>
             </button>
             <button
               type="button"
-              className={values.network_mode !== "sim" ? "active" : ""}
+              className={`network-mode-button offline ${offlineMode ? "active" : ""}`}
+              role="radio"
+              aria-checked={offlineMode}
               disabled={controlsLocked}
               onClick={() => update("network_mode", "local")}
             >
-              <CloudOff size={22} aria-hidden="true" />
-              <span><strong>本地模式</strong><small>显示本地图标 · 暂停同步</small></span>
+              <span className="network-mode-icon"><WifiOff size={25} aria-hidden="true" /></span>
+              <span className="network-mode-copy"><strong>断网模式</strong><small>设备保持离线</small></span>
+              <span className="network-mode-check" aria-hidden="true"><Check size={17} /></span>
             </button>
-          </div>
-          <div className="settings-mode-scope">
-            <strong>仅改变显示与同步</strong>
-            <span>不会切换实际 Wi-Fi、数据网络、AI 问询或语音路径。</span>
           </div>
         </article>
 
         <article className="basic-settings-panel sound-panel">
-          <header>
-            <Volume2 size={26} aria-hidden="true" />
-            <h3>声音</h3>
+          <header className="settings-section-heading">
+            <span className="settings-section-icon"><Volume2 size={25} aria-hidden="true" /></span>
+            <div>
+              <h3>声音</h3>
+              <p>调整播报与收音音量</p>
+            </div>
           </header>
           <RangeSetting
             icon={Volume2}
@@ -263,9 +278,12 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         </article>
 
         <article className="basic-settings-panel display-panel">
-          <header>
-            <SunMedium size={26} aria-hidden="true" />
-            <h3>屏幕</h3>
+          <header className="settings-section-heading">
+            <span className="settings-section-icon"><SunMedium size={25} aria-hidden="true" /></span>
+            <div>
+              <h3>屏幕</h3>
+              <p>调整显示与息屏时间</p>
+            </div>
           </header>
           <RangeSetting
             icon={SunMedium}

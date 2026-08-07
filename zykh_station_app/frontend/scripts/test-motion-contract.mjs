@@ -135,7 +135,7 @@ const settingsPage = await readFile(`${sourceRoot}/pages/Settings.jsx`, "utf8");
 const settingsStyles = await readFile(`${sourceRoot}/styles/settings.css`, "utf8");
 assert.match(settingsPage, /controlsLocked = loading \|\| saveState === "saving"/, "settings controls are editable while device state is unresolved");
 assert.match(settingsPage, /settings-loading-shield[\s\S]*正在读取设备设置[\s\S]*读取完成后即可修改/, "settings loading lock is not explicit to the operator");
-assert.match(settingsStyles, /\.network-mode-control button\s*\{[\s\S]*min-height:\s*70px[\s\S]*align-items:\s*center/, "settings mode buttons do not share stable touch geometry");
+assert.match(settingsStyles, /\.network-mode-button\s*\{[\s\S]*min-height:\s*92px[\s\S]*align-items:\s*center/, "settings mode buttons do not share stable touch geometry");
 assert.match(settingsStyles, /\.settings-loading-shield\s*\{[\s\S]*position:\s*absolute[\s\S]*inset:\s*0/, "settings loading shield does not cover all controls");
 const wakeHandler = app.match(/const handleWake = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[commitViewChange\]\);/)?.[1] || "";
 assert.ok(wakeHandler, "home wake handler is missing");
