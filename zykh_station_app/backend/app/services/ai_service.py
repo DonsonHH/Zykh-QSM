@@ -2009,25 +2009,13 @@ class AiService:
         except OSError:
             return False
 
-    @staticmethod
-    def _network_local_mode() -> bool:
-        return db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() in {"local", "offline"}
-
     def _should_attempt_cloud(self) -> bool:
         if settings.ai_mode != "auto":
-            return True
-        if self._network_local_mode() and bool(
-            getattr(settings, "ai_cloud_in_local_display", False)
-        ):
             return True
         return self._cloud_reachable()
 
     def _use_local_ai_runtime(self) -> bool:
-        if settings.ai_mode == "local":
-            return True
-        return self._network_local_mode() and not bool(
-            getattr(settings, "ai_cloud_in_local_display", False)
-        )
+        return settings.ai_mode == "local"
 
     @staticmethod
     def _read_key(value: str, path) -> str:

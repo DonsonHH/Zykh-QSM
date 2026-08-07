@@ -2,61 +2,36 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Bug,
+  Cloud,
+  CloudOff,
   Clock3,
   LoaderCircle,
   Mic2,
   RadioTower,
   SunMedium,
-  Volume2,
-  Wifi
+  Volume2
 } from "lucide-react";
 import { loadBasicSettings, saveBasicSettings } from "../api/settings.js";
-import { testAudioRelay } from "../api/audio.js";
+import { playBeep } from "../api/audio.js";
 import { loadNetworkStatus } from "../api/network.js";
+import { speakerGainToPercent, speakerPercentToGain } from "../utils/volume.js";
 
 const DEFAULT_SETTINGS = {
-  wifi_enabled: true,
-  sim_enabled: true,
   network_mode: "sim",
   speaker_volume: 230,
   microphone_volume: 70,
   display_brightness: 100,
-  idle_timeout_seconds: 90,
-  wifi_ssid: "",
-  sim_connected: false,
-  sim_operator: "",
-  sim_operator_code: "",
-  sim_phone_number: "",
-  microphone_available: false
+  idle_timeout_seconds: 90
 };
 
 const EDITABLE_KEYS = [
-  "wifi_enabled",
-  "sim_enabled",
   "network_mode",
   "speaker_volume",
   "microphone_volume",
   "display_brightness",
   "idle_timeout_seconds"
 ];
-const STATUS_KEYS = ["wifi_ssid", "sim_connected", "sim_operator", "sim_operator_code", "sim_phone_number", "microphone_available"];
 const AUTOSAVE_DELAY_MS = 900;
-
-function SettingsSwitch({ checked, onChange, label, disabled = false }) {
-  return (
-    <button
-      className={`settings-switch ${checked ? "is-on" : ""}`}
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-    >
-      <span aria-hidden="true" />
-    </button>
-  );
-}
 
 function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange, disabled = false }) {
   return (
@@ -80,7 +55,6 @@ function RangeSetting({ icon: Icon, label, value, min, max, unit, onChange, disa
 
 export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const [values, setValues] = useState(DEFAULT_SETTINGS);
-  const [simDisplayEnabled, setSimDisplayEnabled] = useState(DEFAULT_SETTINGS.sim_enabled);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState("loading");
   const [testing, setTesting] = useState(false);
@@ -90,35 +64,23 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
   const saveTimerRef = useRef(0);
   const mountedRef = useRef(true);
   const controlsLocked = loading || saveState === "saving";
+  const speakerPercent = speakerGainToPercent(values.speaker_volume);
 
   const networkDescription = useMemo(() => {
     if (values.network_mode === "local" || values.network_mode === "offline") {
-      return "当前为本地模式，语音输入与播报在设备内完成。";
+      return "本地图标已启用，小程序实时连接已暂停。";
     }
-    if (values.wifi_enabled && values.wifi_ssid) {
-      return `已连接 ${values.wifi_ssid}`;
-    }
-    if (values.sim_enabled && values.sim_connected) {
-      return "Wi-Fi 不可用时可使用数据网络。";
-    }
-    return "当前未检测到可用联网链路。";
-  }, [values]);
+    return "显示实际网络状态，小程序保持实时连接。";
+  }, [values.network_mode]);
 
   useEffect(() => {
     mountedRef.current = true;
     loadBasicSettings()
       .then((data) => {
-        const next = {
-          ...DEFAULT_SETTINGS,
-          ...(data.settings || {}),
-          sim_operator: data.settings?.sim_operator || "",
-          sim_operator_code: data.settings?.sim_operator_code || "",
-          sim_phone_number: data.settings?.sim_phone_number || ""
-        };
+        const next = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
         valuesRef.current = next;
         savedValuesRef.current = next;
         setValues(next);
-        setSimDisplayEnabled(Boolean(next.sim_enabled));
         setSaveState("saved");
       })
       .catch((error) => {
@@ -164,9 +126,6 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           EDITABLE_KEYS.forEach((key) => {
             if (Object.hasOwn(changes, key)) nextSaved[key] = serverValues[key];
           });
-          STATUS_KEYS.forEach((key) => {
-            nextSaved[key] = serverValues[key];
-          });
           savedValuesRef.current = nextSaved;
 
           if (!mountedRef.current) return;
@@ -174,9 +133,6 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
             const next = { ...current };
             EDITABLE_KEYS.forEach((key) => {
               if (Object.hasOwn(changes, key) && current[key] === snapshot[key]) next[key] = serverValues[key];
-            });
-            STATUS_KEYS.forEach((key) => {
-              next[key] = serverValues[key];
             });
             valuesRef.current = next;
             return next;
@@ -209,8 +165,8 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
 
   function testSpeaker() {
     setTesting(true);
-    testAudioRelay({ volume: values.speaker_volume, text: "声音测试完成。" })
-      .then((data) => notify(data.ok ? "测试声音已播放" : data.message || "外放测试失败"))
+    playBeep(values.speaker_volume)
+      .then((data) => notify(data.ok ? "外设测试音已播放" : data.message || "外放测试失败"))
       .catch((error) => notify(error.message || "外放测试失败"))
       .finally(() => setTesting(false));
   }
@@ -245,33 +201,19 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
         ) : null}
         <article className="basic-settings-panel network-panel">
           <header>
-            <Wifi size={26} aria-hidden="true" />
-            <h3>网络与运行模式</h3>
+            <RadioTower size={26} aria-hidden="true" />
+            <h3>连接与同步</h3>
           </header>
-          <div className="basic-setting-toggle-row">
-            <div>
-              <strong>Wi-Fi</strong>
-              <span>{values.wifi_ssid || (values.wifi_enabled ? "已开启" : "已关闭")}</span>
-            </div>
-            <SettingsSwitch checked={values.wifi_enabled} disabled={controlsLocked} onChange={(next) => update("wifi_enabled", next)} label="切换 Wi-Fi" />
-          </div>
-          <div className="basic-setting-toggle-row">
-            <div>
-              <strong>数据网络</strong>
-              <span>{!simDisplayEnabled ? "已关闭" : values.sim_connected ? `${values.sim_operator || "移动网络"}已连接` : "等待数据网络"}</span>
-              <small>{values.sim_phone_number || "模块未提供号码"}{values.sim_operator_code ? ` · ${values.sim_operator_code}` : ""}</small>
-            </div>
-            <SettingsSwitch checked={simDisplayEnabled} disabled={controlsLocked} onChange={setSimDisplayEnabled} label="切换数据网络显示" />
-          </div>
-          <div className="network-mode-control" aria-label="问询运行模式">
+          <p className="settings-panel-intro">选择终端对外显示和小程序同步状态。</p>
+          <div className="network-mode-control" aria-label="连接与同步模式">
             <button
               type="button"
               className={values.network_mode === "sim" ? "active" : ""}
               disabled={controlsLocked}
               onClick={() => update("network_mode", "sim")}
             >
-              <RadioTower size={20} aria-hidden="true" />
-              联网优先
+              <Cloud size={22} aria-hidden="true" />
+              <span><strong>联网模式</strong><small>显示网络图标 · 实时同步</small></span>
             </button>
             <button
               type="button"
@@ -279,8 +221,13 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
               disabled={controlsLocked}
               onClick={() => update("network_mode", "local")}
             >
-              本地模式
+              <CloudOff size={22} aria-hidden="true" />
+              <span><strong>本地模式</strong><small>显示本地图标 · 暂停同步</small></span>
             </button>
+          </div>
+          <div className="settings-mode-scope">
+            <strong>仅改变显示与同步</strong>
+            <span>不会切换实际 Wi-Fi、数据网络、AI 问询或语音路径。</span>
           </div>
         </article>
 
@@ -292,16 +239,16 @@ export function Settings({ notify, onNavigate, onNetworkStatusChange }) {
           <RangeSetting
             icon={Volume2}
             label="外放音量"
-            value={values.speaker_volume}
+            value={speakerPercent}
             min={0}
-            max={255}
-            unit=""
+            max={100}
+            unit="%"
             disabled={controlsLocked}
-            onChange={(value) => update("speaker_volume", value)}
+            onChange={(value) => update("speaker_volume", speakerPercentToGain(value))}
           />
           <RangeSetting
             icon={Mic2}
-            label="麦克风增益"
+            label="麦克风采集音量"
             value={values.microphone_volume}
             min={0}
             max={100}

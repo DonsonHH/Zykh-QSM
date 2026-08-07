@@ -73,6 +73,24 @@ class AdminServiceTest(unittest.TestCase):
         self.assertTrue(result["devices"]["camera"]["ok"])
         self.assertEqual(result["network"]["mode"], "wifi")
 
+    def test_protected_network_control_forwards_only_physical_switches_and_audits(self) -> None:
+        response = SimpleNamespace(warnings=[])
+        with patch(
+            "app.services.admin_service.SettingsService.update",
+            return_value=response,
+        ) as update:
+            result = AdminService().update_network_settings(
+                wifi_enabled=False,
+                sim_enabled=True,
+            )
+
+        request = update.call_args.args[0]
+        self.assertIs(result, response)
+        self.assertFalse(request.wifi_enabled)
+        self.assertTrue(request.sim_enabled)
+        self.assertIsNone(request.network_mode)
+        self.assertEqual(AdminService().recent_audit(1)[0].action, "network.update")
+
     def test_restart_action_uses_only_configured_server_command(self) -> None:
         configured = SimpleNamespace(
             admin_allow_system_actions=True,

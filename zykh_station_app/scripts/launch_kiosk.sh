@@ -13,7 +13,7 @@ KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
-KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"
+KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-0}"
 KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
 KIOSK_TOUCH_KEYBOARD="${KIOSK_TOUCH_KEYBOARD:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
@@ -577,11 +577,6 @@ prepare_sim_fallback() {
     return 0
   fi
 
-  preferred_mode="$(curl -fsS --max-time 3 "$BACKEND_URL/api/settings/basic" 2>/dev/null \
-    | sed -n 's/.*"network_mode":"\([^"]*\)".*/\1/p' \
-    | head -n 1)"
-  [ -n "$preferred_mode" ] || preferred_mode="sim"
-
   log "检查 QSM 数据网络备用通道..."
   response="$(curl -fsS --max-time 35 -X POST "$BACKEND_URL/api/network/start-4g" 2>/dev/null || true)"
   if printf '%s' "$response" | grep -q '"ok":true'; then
@@ -590,14 +585,6 @@ prepare_sim_fallback() {
     warn "QSM 数据网络备用通道尚未就绪；Wi-Fi 和本地功能仍可继续使用。"
   fi
 
-  case "$preferred_mode" in
-    local|offline)
-      curl -fsS --max-time 3 -X POST \
-        -H 'Content-Type: application/json' \
-        -d "{\"mode\":\"$preferred_mode\"}" \
-        "$BACKEND_URL/api/network/mode" >/dev/null 2>&1 || true
-      ;;
-  esac
 }
 
 install_qsm_tether_helper_if_needed

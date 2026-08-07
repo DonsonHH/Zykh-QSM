@@ -16,12 +16,14 @@ assert.deepEqual(LOCAL_REPLY_STREAM_PROFILE, { chunkSize: 1, intervalMs: 72 });
 assert.deepEqual(CLOUD_REPLY_STREAM_PROFILE, { chunkSize: 4, intervalMs: 42 });
 assert.deepEqual(inquiryReplyStreamProfile("offline_rules"), LOCAL_REPLY_STREAM_PROFILE);
 assert.deepEqual(inquiryReplyStreamProfile("local_llm"), LOCAL_REPLY_STREAM_PROFILE);
-assert.deepEqual(inquiryReplyStreamProfile("cloud", true), LOCAL_REPLY_STREAM_PROFILE);
+assert.deepEqual(inquiryReplyStreamProfile("cloud", true), CLOUD_REPLY_STREAM_PROFILE);
 assert.deepEqual(inquiryReplyStreamProfile("cloud", false), CLOUD_REPLY_STREAM_PROFILE);
 assert.doesNotMatch(inquiry, /offlineReplyDelayMs|waitForReplyPresentation/,
   "inquiry replies still wait for the legacy fixed offline delay");
-assert.match(chat, /inquiryReplyStreamProfile\(session\.source, localDisplayMode\)/,
-  "chat replies do not select a streaming profile from source and display mode");
+assert.match(chat, /inquiryReplyStreamProfile\(session\.source\)/,
+  "chat replies do not select a streaming profile from the actual response source");
+assert.doesNotMatch(chat, /localDisplayMode/,
+  "display mode still changes inquiry reply presentation");
 assert.match(chat, /index \+ streamProfile\.chunkSize/,
   "chat replies do not reveal text using the selected streaming chunk size");
 assert.match(chat, /streamProfile\.intervalMs/,

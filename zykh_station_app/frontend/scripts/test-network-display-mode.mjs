@@ -6,10 +6,13 @@ import { getNetworkIndicators, isLocalNetworkMode } from "../src/utils/network.j
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
+const adminDevices = await readFile(`${root}src/components/admin/AdminDevices.jsx`, "utf8");
+const inquiryChat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
 
 const hiddenNetwork = {
   mode: "sim",
   transport: "sim",
+  display_mode: "local",
   ai_mode: "cloud",
   wifi_connected: false,
   sim_connected: true,
@@ -19,7 +22,7 @@ const hiddenNetwork = {
 assert.equal(
   isLocalNetworkMode(hiddenNetwork),
   true,
-  "hidden Wi-Fi/SIM controls must keep local ASR and TTS selected"
+  "local display mode must hide the physical network icons"
 );
 const indicators = getNetworkIndicators(hiddenNetwork);
 assert.equal(indicators.localMode, true);
@@ -57,15 +60,16 @@ assert.equal(qsmConnectedWithWifi.localMode, false);
 assert.equal(qsmConnectedWithWifi.sim.connected, true);
 assert.equal(qsmConnectedWithWifi.sim.bars, 4);
 
-assert.match(
-  settingsPage,
-  /SettingsSwitch[\s\S]{0,80}checked=\{simDisplayEnabled\}[\s\S]{0,100}onChange=\{setSimDisplayEnabled\}/,
-  "the settings SIM demo switch cannot change its displayed state"
-);
 assert.doesNotMatch(
   settingsPage,
-  /SettingsSwitch[^\n]*update\("sim_enabled"/,
-  "the settings SIM demo switch still changes the live network setting"
+  /wifi_enabled|sim_enabled|切换 Wi-Fi|切换数据网络/,
+  "basic settings still exposes physical network controls"
+);
+assert.match(adminDevices, /updateAdminNetwork/, "device console is missing real network controls");
+assert.doesNotMatch(
+  inquiryChat,
+  /isLocalNetworkMode/,
+  "display mode still changes inquiry audio or presentation behavior"
 );
 
 console.log("network display mode contract: ok");

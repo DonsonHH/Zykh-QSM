@@ -48,6 +48,14 @@ export function loadAdminOverview() {
   return adminRequest("/api/admin/overview");
 }
 
+export function loadAdminNetwork() {
+  return adminRequest("/api/admin/network");
+}
+
+export function updateAdminNetwork(payload) {
+  return adminRequest("/api/admin/network", { method: "PATCH", payload });
+}
+
 export function loadAdminLogs(source = "backend") {
   return adminRequest(`/api/admin/logs?source=${encodeURIComponent(source)}`);
 }

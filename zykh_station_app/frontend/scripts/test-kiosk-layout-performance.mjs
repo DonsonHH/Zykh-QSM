@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -21,7 +21,7 @@ const headful = process.env.QA_HEADFUL === "1";
 const safeGraphics = process.env.QA_SAFE_GRAPHICS !== "0";
 const requireApi = process.env.QA_REQUIRE_API !== "0";
 const screenshotDir = process.env.QA_SCREENSHOT_DIR
-  ? join(frontendRoot, process.env.QA_SCREENSHOT_DIR)
+  ? resolve(frontendRoot, process.env.QA_SCREENSHOT_DIR)
   : "";
 const profileDir = await mkdtemp(join(tmpdir(), "zykh-chrome-kiosk-ui-"));
 const debuggingPort = 9300 + Math.floor(Math.random() * 500);
@@ -325,6 +325,7 @@ async function openAdminConsole(pin) {
     }))()`);
     if (state.authenticated) {
       await delay(350);
+      await prepareAdminDeviceConsole();
       return;
     }
     if (state.loginReady) break;
@@ -343,11 +344,30 @@ async function openAdminConsole(pin) {
   while (Date.now() < deadline) {
     if (await evaluate("Boolean(document.querySelector('.admin-console'))")) {
       await delay(350);
+      await prepareAdminDeviceConsole();
       return;
     }
     await delay(50);
   }
   throw new Error("Admin console did not open with the supplied QA_ADMIN_PIN");
+}
+
+async function prepareAdminDeviceConsole() {
+  await evaluate(`(() => {
+    document.querySelector('[data-touch-keyboard] button[aria-label="关闭屏幕键盘"]')?.click();
+    const deviceButton = [...document.querySelectorAll('.admin-sidebar nav button')]
+      .find((button) => button.textContent?.includes('设备控制'));
+    deviceButton?.click();
+  })()`);
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await evaluate("Boolean(document.querySelector('.admin-devices-view .admin-network-controls'))")) {
+      await delay(350);
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error("Admin device console did not render");
 }
 
 async function capture(name) {

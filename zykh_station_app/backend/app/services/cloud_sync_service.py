@@ -65,12 +65,13 @@ class CloudSyncWorker:
         self._thread = None
 
     def runtime_status(self, base: SyncStatus) -> SyncStatus:
+        realtime_enabled = self._realtime_enabled()
         with self._state_lock:
             return base.model_copy(
                 update={
-                    "connected": self._connected,
+                    "connected": self._connected if realtime_enabled else False,
                     "device_id": settings.cloud_sync_device_id,
-                    "last_error": self._last_error,
+                    "last_error": self._last_error if realtime_enabled else "",
                     "last_command_at": self._last_command_at,
                     "interval_seconds": settings.cloud_sync_interval_seconds,
                 }
@@ -79,6 +80,11 @@ class CloudSyncWorker:
     def run_once(self) -> tuple[int, str]:
         if not settings.cloud_sync_enabled:
             raise CloudSyncError("云同步已关闭。")
+        if not self._realtime_enabled():
+            with self._state_lock:
+                self._connected = False
+                self._last_error = ""
+            raise CloudSyncError("本地模式已暂停微信小程序实时连接。")
         if not self._run_lock.acquire(blocking=False):
             return 0, "同步正在进行。"
         try:
@@ -164,6 +170,11 @@ class CloudSyncWorker:
             except CloudSyncError:
                 pass
             self._stop_event.wait(max(1.0, settings.cloud_sync_interval_seconds))
+
+    @staticmethod
+    def _realtime_enabled() -> bool:
+        mode = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
+        return mode not in {"local", "offline"}
 
     def _call(self, action: str, data: dict[str, object]) -> Any:
         payload_data = dict(data)

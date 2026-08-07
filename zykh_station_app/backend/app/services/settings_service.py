@@ -108,18 +108,9 @@ class SettingsService:
 
     def _set_wifi(self, enabled: bool) -> str:
         if not enabled:
-            keep_hidden_transport = bool(
-                getattr(settings, "network_keep_sim_transport_when_hidden", False)
-            )
-            if not self._bool_setting("sim_enabled", True) and not keep_hidden_transport:
+            if not self._bool_setting("sim_enabled", True):
                 return "请先开启数据网络；为避免失去连接，Wi-Fi 保持开启。"
-            previous_mode = db.get_setting(
-                "network_mode",
-                getattr(settings, "network_preferred_mode", "sim"),
-            )
             sim_result = NetworkService().start_4g()
-            if previous_mode in {"local", "offline"}:
-                db.set_setting("network_mode", previous_mode)
             if not sim_result.get("ok"):
                 detail = str(sim_result.get("message") or "数据网络备用通道未就绪。")
                 return f"{detail} 为避免失去连接，Wi-Fi 保持开启。"
@@ -138,14 +129,8 @@ class SettingsService:
     def _set_sim(self, enabled: bool) -> str:
         db.set_setting("sim_enabled", "true" if enabled else "false")
         if enabled:
-            previous_mode = db.get_setting("network_mode", settings.network_preferred_mode)
             result = NetworkService().start_4g()
-            if previous_mode in {"local", "offline"}:
-                db.set_setting("network_mode", previous_mode)
             return "" if result.get("ok") else str(result.get("message") or "SIM 网络启动失败，请检查外设连接。")
-
-        if bool(getattr(settings, "network_keep_sim_transport_when_hidden", False)):
-            return ""
 
         tether = NetworkService().disable_host_tether()
         command = (

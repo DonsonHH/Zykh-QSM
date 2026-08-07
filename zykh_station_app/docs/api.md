@@ -327,7 +327,7 @@ Records 16 kHz mono audio on QSM and calls the resident offline Paraformer servi
 
 ### POST /api/audio/speak
 
-Speaks text through the QSM speaker. Online mode uses host-connected Qwen realtime TTS and streams 24 kHz PCM deltas immediately; local mode uses the host-resident Sherpa-ONNX TTS model and streams generated PCM to QSM. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`. It never calls the QSM board-side TTS service.
+Speaks text through the QSM speaker. The persisted terminal display mode does not select the speech route: `auto` tries host-connected Qwen realtime TTS and falls back to the host-resident Sherpa-ONNX model only when needed. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`. It never calls the QSM board-side TTS service.
 
 ### POST /api/audio/host/warmup
 
@@ -335,7 +335,7 @@ Loads the host offline voice model in advance. This is used by the kiosk startup
 
 ### WebSocket /api/audio/asr/realtime
 
-Streams real FF Camera microphone PCM into Qwen realtime ASR while online. In local mode it keeps the same browser control channel, buffers audio until the user stops speaking, then sends the complete utterance to the resident QSM Paraformer recognizer. Cloud mode can emit partial transcripts; local mode emits one final transcript.
+Streams real FF Camera microphone PCM into Qwen realtime ASR. The persisted terminal display mode does not select ASR: the route starts with Qwen realtime ASR and retains the existing Paraformer fallback when cloud recognition is unavailable. Cloud mode can emit partial transcripts; the fallback emits one final transcript.
 
 ### GET /api/audio/status
 
@@ -370,7 +370,7 @@ Returns the persisted user-adjustable settings together with current Wi-Fi, data
 
 ### `PATCH /api/settings/basic`
 
-Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mode`, `speaker_volume`, `microphone_volume`, `display_brightness` or `idle_timeout_seconds`. Only submitted fields are applied. Hardware failures are returned in `warnings` without discarding the saved preference.
+Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mode`, `speaker_volume`, `microphone_volume`, `display_brightness` or `idle_timeout_seconds`. Only submitted fields are applied. The terminal UI exposes `network_mode` only: it changes the top-bar connection presentation and whether mini-program realtime sync runs, without changing physical Wi-Fi/SIM, AI, ASR or TTS routes. Physical network controls are reserved for the protected administrator API. Hardware failures are returned in `warnings` without discarding the saved preference.
 
 ## Administrator debug API
 
@@ -378,6 +378,7 @@ Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mod
 
 - `POST /api/admin/session`, `DELETE /api/admin/session`
 - `GET /api/admin/overview`
+- `GET|PATCH /api/admin/network`
 - `GET /api/admin/logs?source=backend`
 - `GET|POST|PATCH|DELETE /api/admin/users...`
 - `POST|DELETE /api/admin/users/{id}/face`

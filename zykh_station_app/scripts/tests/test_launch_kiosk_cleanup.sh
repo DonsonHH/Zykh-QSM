@@ -107,6 +107,7 @@ assert_contains '--force-device-scale-factor=2' "$FAKE_BROWSER_EVENTS" "kiosk di
 assert_contains '^stopped ' "$FAKE_BROWSER_EVENTS" "browser scale did not end with the kiosk process"
 assert_contains '^stopped ' "$FAKE_RELAY_EVENTS" "audio relay was not stopped after SIGHUP"
 assert_contains '\[kiosk\] 本机音频转发已停止。' "$LOG_FILE" "audio cleanup was not reported"
+assert_not_contains '离线模型' "$LOG_FILE" "offline inquiry model started without explicit opt-in"
 
 printf 'launch_kiosk cleanup: OK\n'
 

@@ -10,9 +10,9 @@ export const CLOUD_REPLY_STREAM_PROFILE = Object.freeze({
 
 const localReplySources = new Set(["offline_rules", "local_llm"]);
 
-export function inquiryReplyStreamProfile(source, localMode = false) {
+export function inquiryReplyStreamProfile(source) {
   const normalizedSource = String(source || "").trim().toLowerCase();
-  return localMode || localReplySources.has(normalizedSource)
+  return localReplySources.has(normalizedSource)
     ? LOCAL_REPLY_STREAM_PROFILE
     : CLOUD_REPLY_STREAM_PROFILE;
 }

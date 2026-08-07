@@ -22,6 +22,7 @@ from ..schemas.admin import AdminAuditRecord
 from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlanCreateRequest, TodayPlanUpdateRequest
+from ..schemas.settings import BasicSettingsResponse, BasicSettingsUpdateRequest
 from ..repositories.inquiry_repository import InquiryRepository
 from .dispense_service import DispenseService
 from .dispense_archive_service import DispenseArchiveService
@@ -30,6 +31,7 @@ from .identity_service import IdentityService
 from .medicine_service import MedicineService
 from .network_service import NetworkService
 from .records_service import RecordsService
+from .settings_service import SettingsService
 
 
 class AdminServiceError(Exception):
@@ -97,6 +99,34 @@ class AdminService:
             "recent_audit": self.recent_audit(8),
             "recent_dispense_archives": DispenseArchiveService().list_recent(6),
         }
+
+    def network_settings(self) -> BasicSettingsResponse:
+        return SettingsService().get()
+
+    def update_network_settings(
+        self,
+        *,
+        wifi_enabled: bool | None = None,
+        sim_enabled: bool | None = None,
+    ) -> BasicSettingsResponse:
+        response = SettingsService().update(
+            BasicSettingsUpdateRequest(
+                wifi_enabled=wifi_enabled,
+                sim_enabled=sim_enabled,
+            )
+        )
+        changed = []
+        if wifi_enabled is not None:
+            changed.append(f"wifi={'on' if wifi_enabled else 'off'}")
+        if sim_enabled is not None:
+            changed.append(f"sim={'on' if sim_enabled else 'off'}")
+        self.audit(
+            "network.update",
+            "physical-network",
+            "success" if not response.warnings else "warning",
+            ", ".join(changed) or "no-change",
+        )
+        return response
 
     def list_users(self) -> tuple[list, dict[str, dict[str, object]]]:
         users = RecordsService().list_service_users()

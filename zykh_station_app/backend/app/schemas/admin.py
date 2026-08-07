@@ -84,6 +84,11 @@ class AdminSystemActionRequest(BaseModel):
     confirmation: str = ""
 
 
+class AdminNetworkUpdateRequest(BaseModel):
+    wifi_enabled: bool | None = None
+    sim_enabled: bool | None = None
+
+
 class AdminActionResponse(BaseModel):
     ok: bool
     accepted: bool = False

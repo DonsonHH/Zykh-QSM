@@ -15,11 +15,11 @@ import {
   WifiOff,
   X
 } from "lucide-react";
-import { loadHostAudioStatus, testAudioRelay } from "../api/audio.js";
+import { loadHostAudioStatus, playBeep } from "../api/audio.js";
 import { loadDeviceCheck } from "../api/device.js";
-import { loadNetworkStatus, setNetworkMode, startQsm4g } from "../api/network.js";
-import { isLocalNetworkMode } from "../utils/network.js";
+import { loadNetworkStatus } from "../api/network.js";
 import { useExitPresence } from "../hooks/useExitPresence.js";
+import { speakerGainToPercent, speakerPercentToGain } from "../utils/volume.js";
 
 const fallbackCheck = {
   qsm_mode: "mock",
@@ -46,11 +46,9 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const [check, setCheck] = useState(fallbackCheck);
   const [network, setNetwork] = useState(networkStatus || null);
   const [audio, setAudio] = useState(null);
-  const [volume, setVolume] = useState(230);
+  const [volumePercent, setVolumePercent] = useState(speakerGainToPercent(230));
   const [loading, setLoading] = useState(false);
   const [testingAudio, setTestingAudio] = useState(false);
-  const [switchingNetwork, setSwitchingNetwork] = useState(false);
-  const [starting4g, setStarting4g] = useState(false);
 
   function refresh() {
     setLoading(true);
@@ -80,38 +78,12 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
     }
   }, [open]);
 
-  function switchNetwork(mode) {
-    setSwitchingNetwork(true);
-    setNetworkMode(mode)
-      .then((nextNetwork) => {
-        setNetwork(nextNetwork);
-        onNetworkStatusChange?.(nextNetwork);
-        notify(mode === "sim" ? "已切换到 SIM 网络优先" : "已切换到离线模型");
-      })
-      .catch((error) => notify(error.message || "网络模式切换失败"))
-      .finally(() => setSwitchingNetwork(false));
-  }
-
   function runAudioTest() {
     setTestingAudio(true);
-    testAudioRelay({ text: "外放测试，声音链路正常。", volume })
-      .then((result) => notify(result.ok ? "已请求外设外放测试" : result.message || "外放测试失败"))
+    playBeep(speakerPercentToGain(volumePercent))
+      .then((result) => notify(result.ok ? "外设测试音已播放" : result.message || "外放测试失败"))
       .catch((error) => notify(error.message || "外放测试失败"))
       .finally(() => setTestingAudio(false));
-  }
-
-  function run4gStart() {
-    setStarting4g(true);
-    startQsm4g()
-      .then((result) => {
-        if (result.network) {
-          setNetwork(result.network);
-          onNetworkStatusChange?.(result.network);
-        }
-        notify(result.ok ? "4G 联网检查完成" : "4G 联网未完成，请检查 SIM 和外设网络");
-      })
-      .catch((error) => notify(error.message || "4G 联网启动失败"))
-      .finally(() => setStarting4g(false));
   }
 
   if (!present) {
@@ -121,15 +93,15 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const alertItems = [...(check.errors || []), ...(check.warnings || [])];
   const modeLabel = check.qsm_mode === "real" ? "真实模式" : "本地模式";
   const currentNetwork = network || networkStatus || {};
-  const networkLocal = isLocalNetworkMode(currentNetwork);
-  const networkGood = !networkLocal && currentNetwork.signal === "good";
-  const NetworkIcon = networkLocal ? WifiOff : Signal;
+  const networkOffline = !currentNetwork.wifi_connected && !currentNetwork.sim_connected;
+  const networkGood = currentNetwork.signal === "good";
+  const NetworkIcon = networkOffline ? WifiOff : Signal;
   const rows = [
     {
       icon: NetworkIcon,
       label: "网络状态",
-      value: networkLocal ? "本地化运行" : currentNetwork.label || "SIM网络",
-      ok: networkLocal ? Boolean(currentNetwork.local_ai?.ready) : networkGood || currentNetwork.simulated
+      value: currentNetwork.label || (networkOffline ? "暂无可用链路" : "已连接"),
+      ok: networkGood || currentNetwork.simulated
     },
     {
       icon: BrainCircuit,
@@ -219,22 +191,10 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
 
         <div className="system-check-notes settings-notes">
           <div className="settings-control-panel">
-            <strong>网络与声音</strong>
-            <div className="settings-segment" aria-label="网络模式">
-              <button type="button" className={!networkLocal ? "active" : ""} disabled={switchingNetwork} onClick={() => switchNetwork("sim")}>
-                SIM网络
-              </button>
-              <button type="button" className={networkLocal ? "active" : ""} disabled={switchingNetwork} onClick={() => switchNetwork("local")}>
-                离线模型
-              </button>
-            </div>
-            <button className="secondary-action settings-test-button" type="button" onClick={run4gStart} disabled={starting4g || networkLocal}>
-              <Signal size={22} aria-hidden="true" />
-              <span>{networkLocal ? "离线模型无需联网" : starting4g ? "联网中..." : "启动4G联网"}</span>
-            </button>
+            <strong>声音链路</strong>
             <label className="settings-range">
-              <span>外放音量 SPK_VOL {volume}</span>
-              <input type="range" min="0" max="255" step="5" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
+              <span>外放音量 {volumePercent}%</span>
+              <input type="range" min="0" max="100" step="1" value={volumePercent} onChange={(event) => setVolumePercent(Number(event.target.value))} />
             </label>
             <button className="secondary-action settings-test-button" type="button" onClick={runAudioTest} disabled={testingAudio}>
               <Volume2 size={22} aria-hidden="true" />
@@ -249,7 +209,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
             <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查外设连接"}</p>
             <p>
               声音：
-              {networkLocal ? "本地模式下仍可使用外设喇叭播放提示音。" : "外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。"}
+              外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。
             </p>
           </div>
           <div className="settings-control-panel">

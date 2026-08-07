@@ -17,7 +17,6 @@ import {
 import { RiskBadge } from "./RiskBadge.jsx";
 import { aiSourcePresentation } from "../utils/ai.js";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
-import { isLocalNetworkMode } from "../utils/network.js";
 import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
 
 const riskLabels = {
@@ -282,7 +281,7 @@ async function playResultSpeech(text, networkStatus, playbackGenerationRef) {
   await stopAudioPlayback().catch(() => null);
   if (generation !== playbackGenerationRef.current) return;
   try {
-    await speakText(text, undefined, 1.12, isLocalNetworkMode(networkStatus) ? "offline" : "auto");
+    await speakText(text, undefined, 1.12, "auto");
   } catch {
     if (generation === playbackGenerationRef.current) speakResultLocally(text);
   }

@@ -58,15 +58,15 @@ class FakeWeatherContext:
 
 
 class InquiryAiContractTest(unittest.TestCase):
-    @patch("app.services.ai_service.AiService._cloud_reachable", return_value=False)
-    @patch("app.services.ai_service.AiService._network_local_mode", return_value=True)
+    @patch("app.services.ai_service.AiService._cloud_reachable", return_value=True)
+    @patch("app.services.ai_service.db.get_setting", return_value="local")
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
-    def test_local_display_mode_still_uses_cloud_inquiry_for_demo(
+    def test_local_display_mode_does_not_change_cloud_inquiry(
         self,
         mocked_settings,
         mocked_urlopen,
-        _mocked_local_mode,
+        mocked_display_mode,
         _mocked_cloud_probe,
     ) -> None:
         mocked_settings.ai_mode = "auto"
@@ -116,15 +116,14 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertEqual(result["source"], "cloud")
         self.assertEqual(local_client.calls, 0)
         mocked_urlopen.assert_called_once()
+        mocked_display_mode.assert_not_called()
 
-    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
     def test_cloud_inquiry_includes_chengdu_weather_as_non_diagnostic_context(
         self,
         mocked_settings,
         mocked_urlopen,
-        _mocked_local_mode,
     ) -> None:
         mocked_settings.ai_mode = "cloud"
         mocked_settings.ai_api_key = "test-key"
@@ -184,14 +183,12 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertIn("不能仅凭天气认定中暑", request_payload["messages"][0]["content"])
         self.assertEqual(len(weather.calls), 1)
 
-    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
     def test_cloud_inquiry_retries_once_after_a_transient_timeout(
         self,
         mocked_settings,
         mocked_urlopen,
-        _mocked_local_mode,
     ) -> None:
         mocked_settings.ai_mode = "cloud"
         mocked_settings.ai_api_key = "test-key"
@@ -240,14 +237,12 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 2)
         self.assertEqual(local_client.last_messages, [])
 
-    @patch("app.services.ai_service.AiService._network_local_mode", return_value=False)
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
     def test_cloud_inquiry_retries_once_after_an_invalid_json_completion(
         self,
         mocked_settings,
         mocked_urlopen,
-        _mocked_local_mode,
     ) -> None:
         mocked_settings.ai_mode = "cloud"
         mocked_settings.ai_api_key = "test-key"

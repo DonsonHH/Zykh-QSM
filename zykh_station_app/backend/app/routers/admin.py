@@ -13,6 +13,7 @@ from ..schemas.admin import (
     AdminInquiryHistoryResponse,
     AdminMedicinesResponse,
     AdminMedicineUpdateRequest,
+    AdminNetworkUpdateRequest,
     AdminOverviewResponse,
     AdminSessionRequest,
     AdminSessionResponse,
@@ -25,6 +26,7 @@ from ..schemas.admin import (
     AdminUserUpdateRequest,
 )
 from ..schemas.dispense import DispenseOpenResponse
+from ..schemas.settings import BasicSettingsResponse
 from ..services.admin_auth_service import AdminAuthError, AdminAuthService
 from ..services.admin_service import AdminService, AdminServiceError
 
@@ -77,6 +79,22 @@ def delete_session(token: str = Depends(require_admin)) -> dict[str, object]:
 @router.get("/overview", response_model=AdminOverviewResponse)
 def admin_overview(_: str = Depends(require_admin)) -> AdminOverviewResponse:
     return AdminOverviewResponse(**AdminService().overview())
+
+
+@router.get("/network", response_model=BasicSettingsResponse)
+def admin_network_settings(_: str = Depends(require_admin)) -> BasicSettingsResponse:
+    return AdminService().network_settings()
+
+
+@router.patch("/network", response_model=BasicSettingsResponse)
+def admin_update_network_settings(
+    payload: AdminNetworkUpdateRequest,
+    _: str = Depends(require_admin),
+) -> BasicSettingsResponse:
+    return AdminService().update_network_settings(
+        wifi_enabled=payload.wifi_enabled,
+        sim_enabled=payload.sim_enabled,
+    )
 
 
 @router.get("/logs", response_model=AdminLogsResponse)

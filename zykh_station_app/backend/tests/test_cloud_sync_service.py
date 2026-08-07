@@ -14,6 +14,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
+from app.schemas.sync import SyncStatus  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.cloud_sync_service import CloudSyncError, CloudSyncWorker  # noqa: E402
 
@@ -88,6 +89,33 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertNotIn("UPLOAD_SNAPSHOT", actions)
         self.assertGreater(count, 0)
         self.assertEqual(SyncRepository().get_status().sync_status, "已同步")
+
+    def test_local_display_mode_pauses_miniprogram_realtime_calls(self) -> None:
+        db.set_setting("network_mode", "local")
+        worker = FakeCloudSyncWorker()
+
+        with self.assertRaisesRegex(CloudSyncError, "本地模式"):
+            worker.run_once()
+
+        self.assertEqual(worker.calls, [])
+
+    def test_local_display_mode_hides_stale_cloud_connection_error(self) -> None:
+        db.set_setting("network_mode", "local")
+        worker = FakeCloudSyncWorker()
+        worker._connected = True
+        worker._last_error = "previous cloud timeout"
+
+        status = worker.runtime_status(
+            SyncStatus(
+                sync_status="待同步",
+                pending_count=2,
+                last_sync_at="",
+                network_mode="家庭网络",
+            )
+        )
+
+        self.assertFalse(status.connected)
+        self.assertEqual(status.last_error, "")
 
     def test_completed_command_is_acknowledged_without_reexecution(self) -> None:
         worker = FakeCloudSyncWorker()

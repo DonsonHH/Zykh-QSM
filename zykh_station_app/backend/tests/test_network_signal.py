@@ -153,7 +153,7 @@ class NetworkSignalTest(unittest.TestCase):
         self.assertTrue(status["qsm_sim_connected"])
         self.assertFalse(status["host_tether_ready"])
 
-    def test_local_display_mode_hides_network_but_keeps_cloud_inquiry_route(self) -> None:
+    def test_local_display_mode_only_changes_presentation_and_sync(self) -> None:
         service = NetworkService()
         with (
             patch("app.services.network_service.db.get_setting", return_value="local"),
@@ -184,11 +184,43 @@ class NetworkSignalTest(unittest.TestCase):
         ):
             status = service.status()
 
-        self.assertEqual(status["ai_mode"], "cloud")
+        self.assertEqual(status["ai_mode"], "offline_rules")
         self.assertEqual(status["label"], "本地模式")
+        self.assertEqual(status["display_mode"], "local")
+        self.assertFalse(status["realtime_sync_enabled"])
         self.assertTrue(status["local_ai"]["ready"])
         self.assertFalse(status["local_ai"]["runtime_ready"])
-        self.assertNotIn("本地问询服务尚未就绪。", status["warnings"])
+
+    def test_local_display_mode_keeps_physical_wifi_status(self) -> None:
+        service = NetworkService()
+        with (
+            patch("app.services.network_service.db.get_setting", return_value="local"),
+            patch.object(service, "_interface_ipv4", return_value=""),
+            patch.object(service, "_default_interface", return_value="wlan0"),
+            patch.object(service, "_wifi_status", return_value={
+                "wifi_connected": True,
+                "wifi_signal": "good",
+                "wifi_ssid": "Station",
+                "wifi_interface": "wlan0",
+                "wifi_signal_dbm": -48,
+                "wifi_signal_percent": 86,
+                "wifi_signal_bars": 4,
+                "wifi_signal_level": "excellent",
+            }),
+            patch.object(service, "_host_tether_ready", return_value=False),
+            patch.object(service, "_qsm_network_status", return_value={}),
+            patch.object(service, "_sim_identity", return_value={
+                "sim_operator": "",
+                "sim_operator_code": "",
+                "sim_phone_number": "",
+            }),
+            patch("app.services.network_service.LocalAiClient.status", return_value={"ready": False}),
+        ):
+            status = service.status()
+
+        self.assertEqual(status["transport"], "wifi")
+        self.assertEqual(status["display_mode"], "local")
+        self.assertFalse(status["realtime_sync_enabled"])
 
 
 if __name__ == "__main__":

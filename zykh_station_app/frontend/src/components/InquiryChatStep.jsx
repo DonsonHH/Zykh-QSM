@@ -17,7 +17,6 @@ import {
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { StrokeDrawIcon } from "./StrokeDrawIcon.jsx";
 import { aiSourcePresentation } from "../utils/ai.js";
-import { isLocalNetworkMode } from "../utils/network.js";
 import { markNetworkActivity } from "../utils/networkActivity.js";
 import { VoiceEvent, VoicePhase, nextVoicePhase } from "../utils/voiceSession.js";
 import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
@@ -76,8 +75,7 @@ export function InquiryChatStep({
   const listening = voicePhase === VoicePhase.LISTENING;
   const transcribingVoice = voicePhase === VoicePhase.TRANSCRIBING;
   const voiceOverlayOpen = preparingVoice || listening || transcribingVoice || Boolean(transcriptPreview);
-  const localDisplayMode = isLocalNetworkMode(networkStatus);
-  const streamProfile = inquiryReplyStreamProfile(session.source, localDisplayMode);
+  const streamProfile = inquiryReplyStreamProfile(session.source);
   const lastAssistantId = useMemo(
     () => [...(session.messages || [])].reverse().find((message) => message.role === "assistant")?.id || "",
     [session.messages]
@@ -143,13 +141,12 @@ export function InquiryChatStep({
     window.speechSynthesis?.cancel();
     await stopAudioPlayback().catch(() => null);
     if (generation !== playbackGenerationRef.current) return;
-    const mode = isLocalNetworkMode(networkStatus) ? "offline" : "auto";
     if (announceVitals && session.next_action === "measure_vitals") {
       preservePlaybackOnExitRef.current = true;
       onReplyPlaybackStart?.();
     }
     try {
-      const result = await speakText(text, undefined, 1.12, mode);
+      const result = await speakText(text, undefined, 1.12, "auto");
       if (!result?.ok) throw new Error(result?.message || "语音播报未完成");
     } catch {
       if (generation === playbackGenerationRef.current) await speakLocally(text);
@@ -189,9 +186,8 @@ export function InquiryChatStep({
     moveVoice(VoiceEvent.START);
     setVoiceMessage("正在连接麦克风，请看到“正在听”后再说话。");
     try {
-      const runtimeMode = isLocalNetworkMode(networkStatus) ? "local" : "cloud";
       markNetworkActivity("upload");
-      const ws = new WebSocket(websocketUrl(`/api/audio/asr/realtime?mode=${runtimeMode}`));
+      const ws = new WebSocket(websocketUrl("/api/audio/asr/realtime?mode=cloud"));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
       ws.onopen = () => setVoiceMessage("正在准备语音识别...");

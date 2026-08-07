@@ -276,6 +276,7 @@
 .admin-section-panel,
 .admin-audit-panel,
 .admin-device-status-panel,
+.admin-network-controls,
 .admin-system-actions,
 .admin-cabinet-grid-panel,
 .admin-editor-panel,
@@ -294,6 +295,7 @@
 
 .admin-section-panel > header,
 .admin-device-status-panel > header,
+.admin-network-controls > header,
 .admin-system-actions > header,
 .admin-editor-panel > header,
 .admin-cabinet-grid-panel > header {
@@ -304,6 +306,7 @@
 
 .admin-section-panel h3,
 .admin-device-status-panel h3,
+.admin-network-controls h3,
 .admin-system-actions h3,
 .admin-editor-panel h3,
 .admin-cabinet-grid-panel h3 {
@@ -821,9 +824,117 @@
 .cabinet-editor-grid textarea { height: 56px; }
 
 .admin-device-status-panel {
-  height: 250px;
+  min-height: 0;
+  flex: 1;
   padding: 15px;
 }
+
+.admin-devices-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 14px;
+  flex: 1;
+}
+
+.admin-device-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-network-controls {
+  padding: 14px 15px;
+}
+
+.admin-network-controls > header p {
+  margin: 3px 0 0;
+  color: #667085;
+  font-size: 11px;
+}
+
+.admin-network-control-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 11px;
+}
+
+.admin-network-control-grid article {
+  min-width: 0;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 9px;
+}
+
+.admin-network-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #eaf2ff;
+  color: #2563eb;
+}
+
+.admin-network-control-grid strong,
+.admin-network-control-grid small {
+  display: block;
+}
+
+.admin-network-control-grid strong { font-size: 13px; }
+.admin-network-control-grid small {
+  max-width: 130px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #667085;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-network-switch {
+  position: relative;
+  width: 64px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border-radius: 999px;
+  background: #d3dce7;
+  padding: 0 7px 0 28px;
+  color: #526173;
+}
+
+.admin-network-switch > span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(15, 35, 70, 0.18);
+  transition: transform 180ms ease;
+}
+
+.admin-network-switch b { font-size: 9px; white-space: nowrap; }
+.admin-network-switch.is-on {
+  justify-content: flex-start;
+  background: #2563eb;
+  padding: 0 28px 0 7px;
+  color: #fff;
+}
+.admin-network-switch.is-on > span { transform: translateX(34px); }
+.admin-network-switch:disabled { cursor: default; opacity: 0.62; }
 
 .admin-device-status-panel > header span {
   margin-left: auto;
@@ -850,7 +961,6 @@
 
 .admin-system-actions {
   min-height: 0;
-  flex: 1;
   padding: 15px;
 }
 
@@ -865,6 +975,14 @@
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 12px;
+}
+
+.admin-devices-layout .admin-system-actions > div {
+  grid-template-columns: 1fr;
+}
+
+.admin-devices-layout .admin-system-action {
+  height: 82px;
 }
 
 .admin-system-action {

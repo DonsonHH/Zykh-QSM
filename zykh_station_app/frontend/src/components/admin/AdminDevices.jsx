@@ -1,6 +1,6 @@
-import React, { useState } from "react";
-import { MonitorOff, MonitorUp, Power, RefreshCw, RotateCw, ServerCog, ShieldAlert } from "lucide-react";
-import { runAdminSystemAction } from "../../api/admin.js";
+import React, { useEffect, useState } from "react";
+import { LoaderCircle, MonitorOff, MonitorUp, Power, RefreshCw, RotateCw, ServerCog, ShieldAlert, Signal, Wifi } from "lucide-react";
+import { loadAdminNetwork, runAdminSystemAction, updateAdminNetwork } from "../../api/admin.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
 
 const actions = [
@@ -16,10 +16,30 @@ function deviceLabel(value) {
   return "暂不可用";
 }
 
+function NetworkSwitch({ checked, busy, label, onChange }) {
+  return (
+    <button
+      type="button"
+      className={`admin-network-switch ${checked ? "is-on" : ""}`}
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={busy}
+      onClick={() => onChange(!checked)}
+    >
+      <span aria-hidden="true" />
+      {busy ? <LoaderCircle className="admin-spin" size={15} aria-hidden="true" /> : <b>{checked ? "已开启" : "已关闭"}</b>}
+    </button>
+  );
+}
+
 export function AdminDevices({ overview, loading, onRefresh, notify, onSessionExpired }) {
   const [pending, setPending] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [networkSettings, setNetworkSettings] = useState(null);
+  const [networkBusy, setNetworkBusy] = useState("");
   const devices = overview?.devices || {};
+  const network = overview?.network || {};
   const rows = [
     ["外设网关", devices.gateway],
     ["摄像头", devices.camera],
@@ -27,6 +47,32 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
     ["指纹模块", devices.fingerprint],
     ["麦克风", devices.microphone]
   ];
+
+  useEffect(() => {
+    loadAdminNetwork()
+      .then((result) => setNetworkSettings(result.settings || null))
+      .catch((error) => {
+        if (/会话/.test(error.message || "")) onSessionExpired();
+        notify(error.message || "网络设置读取失败");
+      });
+  }, [notify, onSessionExpired]);
+
+  function updatePhysicalNetwork(key, enabled) {
+    const label = key === "wifi_enabled" ? "Wi-Fi" : "数据网络";
+    setNetworkBusy(key);
+    updateAdminNetwork({ [key]: enabled })
+      .then((result) => {
+        setNetworkSettings(result.settings || null);
+        const warning = result.warnings?.[0];
+        notify(warning || `${label}已${enabled ? "开启" : "关闭"}`);
+        onRefresh();
+      })
+      .catch((error) => {
+        if (/会话/.test(error.message || "")) onSessionExpired();
+        notify(error.message || `${label}操作失败`);
+      })
+      .finally(() => setNetworkBusy(""));
+  }
 
   function execute(value) {
     setBusy(true);
@@ -48,24 +94,43 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
         <div><h2>设备控制</h2><p>查看外设状态并执行受保护的主机操作</p></div>
         <button type="button" className="admin-button secondary compact" onClick={onRefresh} disabled={loading}><RefreshCw size={17} />重新检查</button>
       </div>
-      <section className="admin-device-status-panel">
-        <header><ServerCog size={20} /><h3>外设检查</h3><span>{overview?.generated_at || ""}</span></header>
-        <div className="admin-device-table">
-          {rows.map(([label, value]) => (
-            <div key={label}><span className={`admin-status-dot ${value?.ok ? "ok" : "warn"}`} /><strong>{label}</strong><span>{deviceLabel(value)}</span><code>{value?.status || (value?.ok ? "ready" : "unavailable")}</code></div>
-          ))}
+      <div className="admin-devices-layout">
+        <div className="admin-device-column">
+          <section className="admin-network-controls">
+            <header><Signal size={20} /><div><h3>物理网络</h3><p>真实控制主机 Wi-Fi 与 QSM 数据网络</p></div></header>
+            <div className="admin-network-control-grid">
+              <article>
+                <span className="admin-network-icon"><Wifi size={21} /></span>
+                <div><strong>Wi-Fi</strong><small>{networkSettings?.wifi_ssid || (network.wifi_connected ? "已连接" : "未连接")}</small></div>
+                <NetworkSwitch checked={Boolean(networkSettings?.wifi_enabled)} busy={!networkSettings || networkBusy === "wifi_enabled"} label="真实切换 Wi-Fi" onChange={(enabled) => updatePhysicalNetwork("wifi_enabled", enabled)} />
+              </article>
+              <article>
+                <span className="admin-network-icon"><Signal size={21} /></span>
+                <div><strong>数据网络</strong><small>{networkSettings?.sim_connected ? networkSettings.sim_operator || "已连接" : network.sim_present ? "已检测 SIM" : "未连接"}</small></div>
+                <NetworkSwitch checked={Boolean(networkSettings?.sim_enabled)} busy={!networkSettings || networkBusy === "sim_enabled"} label="真实切换数据网络" onChange={(enabled) => updatePhysicalNetwork("sim_enabled", enabled)} />
+              </article>
+            </div>
+          </section>
+          <section className="admin-device-status-panel">
+            <header><ServerCog size={20} /><h3>外设检查</h3><span>{overview?.generated_at || ""}</span></header>
+            <div className="admin-device-table">
+              {rows.map(([label, value]) => (
+                <div key={label}><span className={`admin-status-dot ${value?.ok ? "ok" : "warn"}`} /><strong>{label}</strong><span>{deviceLabel(value)}</span><code>{value?.status || (value?.ok ? "ready" : "unavailable")}</code></div>
+              ))}
+            </div>
+          </section>
         </div>
-      </section>
-      <section className="admin-system-actions">
-        <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要二次确认并写入审计日志</p></div></header>
-        <div>
-          {actions.map(({ icon: Icon, ...action }) => (
-            <button key={action.id} type="button" className={`admin-system-action ${action.tone}`} onClick={() => setPending(action)}>
-              <span><Icon size={21} /></span><div><strong>{action.title}</strong><small>{action.description}</small></div>
-            </button>
-          ))}
-        </div>
-      </section>
+        <section className="admin-system-actions">
+          <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要二次确认并写入审计日志</p></div></header>
+          <div>
+            {actions.map(({ icon: Icon, ...action }) => (
+              <button key={action.id} type="button" className={`admin-system-action ${action.tone}`} onClick={() => setPending(action)}>
+                <span><Icon size={21} /></span><div><strong>{action.title}</strong><small>{action.description}</small></div>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
       <AdminConfirmDialog open={Boolean(pending)} title={pending?.title} description={pending?.description} expected={pending?.expected || ""} confirmLabel="确认执行" tone={pending?.tone} busy={busy} onCancel={() => setPending(null)} onConfirm={execute} />
     </div>
   );

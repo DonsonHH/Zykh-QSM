@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.schemas.settings import BasicSettingsUpdateRequest  # noqa: E402
+from app.services.network_service import NetworkService  # noqa: E402
 from app.services.settings_service import SettingsService  # noqa: E402
 
 
@@ -117,8 +118,9 @@ class SettingsServiceTest(unittest.TestCase):
         run.assert_called_once_with(["nmcli", "radio", "wifi", "off"])
         self.assertEqual(db.get_setting("wifi_enabled"), "false")
 
-    def test_hiding_sim_for_demo_does_not_stop_physical_transport(self) -> None:
+    def test_disabling_sim_stops_physical_transport_even_with_legacy_flag(self) -> None:
         service = SettingsService()
+        command_result = SimpleNamespace(returncode=0, stdout="", stderr="")
         with (
             patch(
                 "app.services.settings_service.settings",
@@ -127,17 +129,17 @@ class SettingsServiceTest(unittest.TestCase):
                     network_preferred_mode="sim",
                 ),
             ),
-            patch("app.services.settings_service.NetworkService.disable_host_tether") as disable,
-            patch.object(service, "_run") as run,
+            patch("app.services.settings_service.NetworkService.disable_host_tether", return_value={"ok": True}) as disable,
+            patch.object(service, "_run", return_value=command_result) as run,
         ):
             warning = service._set_sim(False)
 
         self.assertEqual(warning, "")
         self.assertEqual(db.get_setting("sim_enabled"), "false")
-        disable.assert_not_called()
-        run.assert_not_called()
+        disable.assert_called_once_with()
+        run.assert_called_once()
 
-    def test_wifi_can_switch_off_with_hidden_sim_transport(self) -> None:
+    def test_wifi_stays_on_when_real_sim_control_is_disabled(self) -> None:
         service = SettingsService()
         db.set_setting("sim_enabled", "false")
         db.set_setting("network_mode", "local")
@@ -154,12 +156,26 @@ class SettingsServiceTest(unittest.TestCase):
                 "app.services.settings_service.NetworkService.start_4g",
                 side_effect=lambda: db.set_setting("network_mode", "sim") or {"ok": True},
             ) as start_4g,
-            patch.object(service, "_run", return_value=command_result),
+            patch.object(service, "_run", return_value=command_result) as run,
         ):
             warning = service._set_wifi(False)
 
-        self.assertEqual(warning, "")
-        start_4g.assert_called_once_with()
+        self.assertIn("Wi-Fi 保持开启", warning)
+        start_4g.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(db.get_setting("network_mode"), "local")
+
+    def test_starting_real_data_network_preserves_display_mode(self) -> None:
+        db.set_setting("network_mode", "local")
+        service = NetworkService()
+        with (
+            patch("app.services.network_service.QsmClient.start_4g_network", return_value={"ok": True}),
+            patch.object(service, "_prepare_host_tether", return_value={"ok": True, "message": "ready"}),
+            patch.object(service, "status", return_value={"display_mode": "local"}),
+        ):
+            result = service.start_4g()
+
+        self.assertTrue(result["ok"])
         self.assertEqual(db.get_setting("network_mode"), "local")
 
 

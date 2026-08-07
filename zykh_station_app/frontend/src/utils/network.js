@@ -1,4 +1,6 @@
 export function isLocalNetworkMode(networkStatus) {
+  const displayMode = String(networkStatus?.display_mode || "").toLowerCase();
+  if (displayMode) return displayMode === "local";
   const mode = String(networkStatus?.mode || "").toLowerCase();
   const transport = String(networkStatus?.transport || "").toLowerCase();
   const aiMode = String(networkStatus?.ai_mode || "").toLowerCase();

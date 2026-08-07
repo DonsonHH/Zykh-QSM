@@ -19,9 +19,16 @@ class SyncService:
             try:
                 synced_count, message = cloud_sync_worker.run_once()
             except CloudSyncError as exc:
+                detail = str(exc)
+                if "本地模式" in detail:
+                    return SyncMockResponse(
+                        synced_count=0,
+                        message=detail,
+                        status=self.get_status(),
+                    )
                 return SyncMockResponse(
                     synced_count=0,
-                    message=f"云端暂不可用，本地数据将继续排队：{exc}",
+                    message=f"云端暂不可用，本地数据将继续排队：{detail}",
                     status=self.get_status(),
                 )
             return SyncMockResponse(synced_count=synced_count, message=message, status=self.get_status())

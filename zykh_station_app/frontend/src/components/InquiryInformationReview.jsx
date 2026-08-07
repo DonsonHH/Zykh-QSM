@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
-import { isLocalNetworkMode } from "../utils/network.js";
 import { buildInformationReviewSpeech } from "../utils/inquirySpeech.js";
 
 const AUTO_CONFIRM_SECONDS = 15;
@@ -154,7 +153,7 @@ async function playReviewSpeech(text, networkStatus, playbackGenerationRef) {
   await stopAudioPlayback().catch(() => null);
   if (generation !== playbackGenerationRef.current) return;
   try {
-    await speakText(text, undefined, 1.12, isLocalNetworkMode(networkStatus) ? "offline" : "auto");
+    await speakText(text, undefined, 1.12, "auto");
   } catch {
     if (
       !window.speechSynthesis

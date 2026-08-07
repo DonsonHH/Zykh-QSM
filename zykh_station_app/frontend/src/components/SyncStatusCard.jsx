@@ -16,12 +16,12 @@ export function SyncStatusCard({ syncStatus, syncing, networkStatus, onSync }) {
   const localMode = isLocalNetworkMode(networkStatus);
   const synced = !localMode && syncStatus?.sync_status === "已同步" && Number(syncStatus?.pending_count || 0) === 0;
   const title = localMode
-    ? "本地保存，待联网"
+    ? "本地保存，实时同步已暂停"
     : synced
       ? "已实时同步"
       : `${syncStatus?.pending_count || 0} 条等待同步`;
   const detail = localMode
-    ? "联网后自动同步至微信小程序"
+    ? "切换到联网模式后自动同步至微信小程序"
     : synced
       ? `最近同步 ${formatSyncTime(syncStatus?.last_sync_at)}`
       : "正在等待同步至微信小程序云端";

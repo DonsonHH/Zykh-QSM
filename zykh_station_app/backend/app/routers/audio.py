@@ -514,19 +514,11 @@ def _normalize_asr_mode(value: str | None) -> str:
 
 
 def _tts_mode_for_network() -> str:
-    try:
-        preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
-    except Exception:
-        return "auto"
-    return "offline" if preferred in {"local", "offline"} else "auto"
+    return "auto"
 
 
 def _asr_mode_for_network() -> str:
-    try:
-        preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
-    except Exception:
-        return "cloud"
-    return "local" if preferred in {"local", "offline"} else "cloud"
+    return "cloud"
 
 
 async def _audio_asr_local(

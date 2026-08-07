@@ -57,42 +57,16 @@ class NetworkService:
         local_ai = local_inquiry_status(LocalAiClient().status())
         local_ai_ready = bool(local_ai.get("ready"))
         local_rule_mode = local_ai.get("mode") == "offline_rules"
-        cloud_in_local_display = bool(getattr(settings, "ai_cloud_in_local_display", False))
         local_label = "本地模式"
         local_ai_mode = "offline_rules" if local_rule_mode else "local_llm" if local_ai_ready else "local_unavailable"
-        local_warnings = (
-            []
-            if cloud_in_local_display or local_ai_ready
-            else ["本地问询服务尚未就绪。"]
-        )
+        local_warnings = [] if local_ai_ready else ["本地问询服务尚未就绪。"]
         sim_enabled = self._bool_setting("sim_enabled", True)
         sim_identity = self._sim_identity(qsm_network, qsm_at)
-
-        if preferred in {"local", "offline"}:
-            return {
-                "ok": True,
-                "mode": "local",
-                "transport": "local",
-                "status": "offline",
-                "signal": "none",
-                "label": local_label,
-                "ai_mode": "cloud" if cloud_in_local_display else local_ai_mode,
-                "local_ai": local_ai,
-                "sim_interface": interface,
-                "sim_ip": sim_ip,
-                "default_interface": default_iface,
-                **wifi,
-                "sim_present": sim_present,
-                "sim_connected": sim_connected,
-                "qsm_sim_connected": qsm_connected,
-                "host_tether_ready": host_tether_ready,
-                "sim_signal": str(qsm_network.get("signal") or ("good" if sim_connected else "none")),
-                "sim_enabled": sim_enabled,
-                **sim_identity,
-                **sim_signal_data,
-                "simulated": False,
-                "warnings": ["当前显示为本地模式。", *local_warnings],
-            }
+        display_local = preferred in {"local", "offline"}
+        presentation = {
+            "display_mode": "local" if display_local else "online",
+            "realtime_sync_enabled": not display_local,
+        }
 
         if wifi["wifi_connected"]:
             return {
@@ -118,6 +92,7 @@ class NetworkService:
                 **sim_signal_data,
                 "simulated": False,
                 "source": "host",
+                **presentation,
                 "warnings": (
                     []
                     if not sim_enabled or sim_transport_ready
@@ -153,6 +128,7 @@ class NetworkService:
                 **sim_signal_data,
                 "simulated": False,
                 "source": "qsm",
+                **presentation,
                 "warnings": [],
             }
 
@@ -181,6 +157,7 @@ class NetworkService:
                 **sim_signal_data,
                 "simulated": False,
                 "source": "qsm",
+                **presentation,
                 "warnings": [
                     "数据网络已连接，但主机备用通道未就绪。"
                     if qsm_connected
@@ -212,6 +189,7 @@ class NetworkService:
                 **sim_identity,
                 **sim_signal_data,
                 "simulated": False,
+                **presentation,
                 "warnings": [] if sim_route else ["SIM接口已获取地址，但默认出口未走 SIM。"],
             }
 
@@ -237,6 +215,7 @@ class NetworkService:
             **sim_identity,
             **sim_signal_data,
             "simulated": False,
+            **presentation,
             "warnings": ["未检测到可用 SIM 出口。", *local_warnings],
         }
 
@@ -339,7 +318,6 @@ class NetworkService:
             return phone_number
 
     def start_4g(self) -> dict[str, object]:
-        db.set_setting("network_mode", "sim")
         result = QsmClient().start_4g_network()
         tether = self._prepare_host_tether() if result.get("ok") else {
             "ok": False,

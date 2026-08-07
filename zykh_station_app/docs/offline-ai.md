@@ -53,10 +53,10 @@ The download is resumable and verifies both exact size and SHA-256. The deploy s
 6. establishes `tcp:18083 -> tcp:8083`;
 7. starts the model and runs health plus real inference smoke checks.
 
-`launch_kiosk.sh` calls `ensure_qsm_offline_ai.sh` by default. Disable that startup check only for troubleshooting:
+`launch_kiosk.sh` currently leaves the QSM offline inquiry model stopped to conserve board resources. Start it explicitly only when offline-model work is needed:
 
 ```bash
-KIOSK_OFFLINE_AI=0 sh scripts/launch_kiosk.sh
+KIOSK_OFFLINE_AI=1 sh scripts/launch_kiosk.sh
 ```
 
 ## Lifecycle

@@ -95,8 +95,8 @@
   position: relative;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1.08fr 1fr 1fr;
-  gap: 14px;
+  grid-template-columns: 0.92fr 1.08fr 1fr;
+  gap: 16px;
 }
 
 .settings-loading-shield {
@@ -138,11 +138,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   border: 1px solid #dbe7f3;
   border-radius: 18px;
   background: #fff;
-  padding: 18px;
+  padding: 20px;
   box-shadow: 0 8px 22px rgba(15, 35, 70, 0.055);
 }
 
@@ -160,91 +160,6 @@
   line-height: 1.2;
 }
 
-.basic-setting-toggle-row {
-  min-height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid #e2eaf3;
-  border-radius: 14px;
-  background: #f8fafd;
-  padding: 8px 12px;
-}
-
-.basic-setting-toggle-row > div {
-  min-width: 0;
-}
-
-.basic-setting-toggle-row strong,
-.basic-setting-toggle-row span {
-  display: block;
-}
-
-.basic-setting-toggle-row small {
-  display: block;
-  margin-top: 2px;
-  overflow: hidden;
-  color: #8691a2;
-  font-size: 12px;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.basic-setting-toggle-row strong {
-  font-size: 17px;
-  line-height: 1.15;
-}
-
-.basic-setting-toggle-row span {
-  margin-top: 4px;
-  overflow: hidden;
-  color: #667085;
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-switch {
-  position: relative;
-  width: 54px;
-  min-width: 54px;
-  height: 32px;
-  min-height: 32px;
-  display: block;
-  align-self: center;
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  overflow: hidden;
-  border: 0;
-  border-radius: 999px;
-  background: #cbd5e1;
-  padding: 3px;
-}
-
-.settings-switch span {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 26px;
-  height: 26px;
-  display: block;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.2);
-  transition: transform 180ms ease;
-}
-
-.settings-switch.is-on {
-  background: #1677ff;
-}
-
-.settings-switch.is-on span {
-  transform: translateX(22px);
-}
-
-.settings-switch:disabled,
 .network-mode-control button:disabled,
 .basic-settings-range input:disabled,
 .idle-time-setting select:disabled {
@@ -252,33 +167,84 @@
 }
 
 .network-mode-control {
-  min-height: 56px;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
-  margin-top: auto;
   border-radius: 14px;
   background: #edf2f8;
-  padding: 5px;
+  padding: 6px;
 }
 
 .network-mode-control button {
-  min-height: 46px;
+  min-height: 70px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
+  justify-content: flex-start;
+  gap: 11px;
   border-radius: 11px;
   background: transparent;
+  padding: 9px 12px;
   color: #667085;
-  font-size: 15px;
-  font-weight: 800;
+  text-align: left;
 }
 
 .network-mode-control button.active {
   background: #fff;
   color: #1677ff;
   box-shadow: 0 3px 9px rgba(15, 35, 70, 0.08);
+}
+
+.network-mode-control button > span,
+.network-mode-control button strong,
+.network-mode-control button small {
+  display: block;
+}
+
+.network-mode-control button strong {
+  color: inherit;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.network-mode-control button small {
+  margin-top: 4px;
+  color: #7b8798;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.settings-panel-intro {
+  margin: -3px 0 0;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.settings-mode-scope {
+  margin-top: auto;
+  border: 1px solid #d9e6f4;
+  border-radius: 13px;
+  background: #f7faff;
+  padding: 12px 13px;
+}
+
+.settings-mode-scope strong,
+.settings-mode-scope span {
+  display: block;
+}
+
+.settings-mode-scope strong {
+  color: #315f9d;
+  font-size: 13px;
+}
+
+.settings-mode-scope span {
+  margin-top: 5px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .basic-settings-range {
@@ -368,4 +334,18 @@
 .settings-test-sound:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.basic-settings-page button:focus-visible,
+.basic-settings-page input:focus-visible,
+.basic-settings-page select:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.28);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-autosave-state .spin,
+  .settings-loading-shield .spin {
+    animation: none;
+  }
 }
