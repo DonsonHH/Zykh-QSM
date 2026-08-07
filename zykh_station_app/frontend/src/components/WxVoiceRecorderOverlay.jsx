@@ -93,12 +93,6 @@ export function WxVoiceRecorderOverlay({
                   : "松开完成 · 上滑取消"}
           </p>
 
-          <span className="wx-voice-diagonal-guide" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-
           <div className="wx-voice-hold-surface" aria-hidden="true">
             <span className="wx-voice-mic"><Mic size={39} strokeWidth={2.1} /></span>
             <strong>{cancelGesture ? "取消录音" : listening ? "按住说话" : processing ? "请稍候" : "保持按住"}</strong>

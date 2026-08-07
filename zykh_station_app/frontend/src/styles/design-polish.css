@@ -57,7 +57,8 @@ select:focus-visible {
 .scan-result-panel,
 .vitals-guide-panel,
 .vitals-result-panel,
-.basic-settings-panel,
+.settings-mode-card,
+.settings-preference-card,
 .coming-panel {
   border-color: var(--border-strong);
   box-shadow: var(--surface-shadow);
@@ -217,7 +218,8 @@ button:disabled,
   .scan-result-panel,
   .vitals-guide-panel,
   .vitals-result-panel,
-  .basic-settings-panel,
+  .settings-mode-card,
+  .settings-preference-card,
   .bottom-nav {
     border-color: CanvasText;
     box-shadow: none;

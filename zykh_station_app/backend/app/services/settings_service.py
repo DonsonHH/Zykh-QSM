@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -11,6 +12,10 @@ from .. import db
 from ..config import settings
 from ..schemas.settings import BasicSettings, BasicSettingsResponse, BasicSettingsUpdateRequest
 from .network_service import NetworkService
+
+SPEAKER_GAIN_MAX = 255
+SPEAKER_GAIN_AUDIBLE_FLOOR = 128
+SPEAKER_PERCENT_AUDIBLE_FLOOR = 1
 
 
 class SettingsService:
@@ -148,8 +153,23 @@ class SettingsService:
         return str(tether.get("message") or "SIM 开关状态已保存，但外设网络接口未能关闭。")
 
     def _set_host_speaker_volume(self, volume: int) -> None:
-        percent = max(0, min(round((int(volume) / 255) * 100), 100))
+        percent = self._speaker_gain_to_percent(volume)
         self._run(["pactl", "set-sink-volume", "qsm_relay", f"{percent}%"], timeout=3)
+
+    @staticmethod
+    def _speaker_gain_to_percent(volume: int) -> int:
+        gain = max(0, min(int(volume), SPEAKER_GAIN_MAX))
+        if gain == 0:
+            return 0
+        audible_gain = max(SPEAKER_GAIN_AUDIBLE_FLOOR, gain)
+        floor_db = 20 * math.log10(SPEAKER_GAIN_AUDIBLE_FLOOR / SPEAKER_GAIN_MAX)
+        decibels = 20 * math.log10(audible_gain / SPEAKER_GAIN_MAX)
+        position = (decibels - floor_db) / -floor_db
+        percent = round(
+            SPEAKER_PERCENT_AUDIBLE_FLOOR
+            + position * (100 - SPEAKER_PERCENT_AUDIBLE_FLOOR)
+        )
+        return max(SPEAKER_PERCENT_AUDIBLE_FLOOR, min(percent, 100))
 
     @staticmethod
     def _qsm_mic_volume(volume: int) -> dict[str, object]:

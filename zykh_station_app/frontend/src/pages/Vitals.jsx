@@ -181,7 +181,7 @@ export function Vitals({
           <button className="vitals-back-button" type="button" onClick={handleBack} aria-label="返回上一页" title="返回">
             <ArrowLeft size={25} aria-hidden="true" />
           </button>
-          <h2>{measuring ? status.title : phase === "complete" ? "测量结果" : embedded ? "AI问询 · 体征测量" : "身体状态测量"}</h2>
+          <h2 className="page-entry-cue">{measuring ? status.title : phase === "complete" ? "测量结果" : embedded ? "AI问询 · 体征测量" : "身体状态测量"}</h2>
         </div>
 
         <div className={`vitals-visual-guide ${measuring ? "measuring" : phase}`}>

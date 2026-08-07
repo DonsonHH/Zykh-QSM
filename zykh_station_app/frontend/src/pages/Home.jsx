@@ -6,7 +6,7 @@ import { HomeHero } from "../components/HomeHero.jsx";
 
 export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
   const [quickDispense, setQuickDispense] = useState(null);
-  const [loadingMedicine, setLoadingMedicine] = useState(false);
+  const [loadingMedicineId, setLoadingMedicineId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
@@ -38,14 +38,14 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
   }
 
   function startQuickDispense(plan) {
-    if (!plan?.medicine_id || loadingMedicine) return;
-    setLoadingMedicine(true);
+    if (!plan?.medicine_id || loadingMedicineId) return;
+    setLoadingMedicineId(String(plan.id || plan.medicine_id));
     setModalError("");
     setModalResult("");
     loadMedicine(plan.medicine_id)
       .then((response) => setQuickDispense({ plan, medicine: response.medicine }))
       .catch((error) => notify(error.message || "用药计划读取失败"))
-      .finally(() => setLoadingMedicine(false));
+      .finally(() => setLoadingMedicineId(""));
   }
 
   function submitQuickDispense(payload) {
@@ -80,7 +80,7 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
         quickActions={dashboard?.quick_actions || []}
         onQuickAction={handleQuickAction}
         onQuickDispense={startQuickDispense}
-        quickDispenseBusy={loadingMedicine}
+        quickDispenseBusyId={loadingMedicineId}
       />
       <DispenseConfirmModal
         medicine={quickDispense?.medicine || null}

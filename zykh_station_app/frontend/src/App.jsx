@@ -57,6 +57,8 @@ export function App() {
   const [toast, setToast] = useState("");
   const [medicineFocus, setMedicineFocus] = useState(null);
   const [medicinesMounted, setMedicinesMounted] = useState(initialPage === "medicines");
+  const [settingsMounted, setSettingsMounted] = useState(initialPage === "settings");
+  const [basicSettingsSnapshot, setBasicSettingsSnapshot] = useState(null);
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
   const [networkStatus, setNetworkStatus] = useState(null);
   const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
@@ -109,6 +111,7 @@ export function App() {
 
   useEffect(() => {
     const applySettings = (settings) => {
+      setBasicSettingsSnapshot((current) => sameSnapshot(current, settings) ? current : settings);
       const value = Number(settings?.idle_timeout_seconds);
       if (Number.isFinite(value)) setIdleSeconds(Math.max(0, value));
     };
@@ -117,6 +120,17 @@ export function App() {
     window.addEventListener("zykh:settings-updated", handleSettings);
     return () => window.removeEventListener("zykh:settings-updated", handleSettings);
   }, []);
+
+  useEffect(() => {
+    if (settingsMounted || !basicSettingsSnapshot || idle || page === "admin") return undefined;
+    const mountSettings = () => setSettingsMounted(true);
+    if (typeof window.requestIdleCallback === "function") {
+      const idleCallback = window.requestIdleCallback(mountSettings, { timeout: 1200 });
+      return () => window.cancelIdleCallback(idleCallback);
+    }
+    const timer = window.setTimeout(mountSettings, 300);
+    return () => window.clearTimeout(timer);
+  }, [basicSettingsSnapshot, idle, page, settingsMounted]);
 
   useEffect(() => {
     loadNetworkStatus().then(updateNetworkStatus).catch(() => updateNetworkStatus(null));
@@ -147,6 +161,7 @@ export function App() {
   useEffect(() => {
     if (idle || page === "admin") {
       setMedicinesMounted(false);
+      setSettingsMounted(false);
     }
   }, [idle, page]);
 
@@ -212,6 +227,9 @@ export function App() {
       }
       if (nextPage === "medicines") {
         setMedicinesMounted(true);
+      }
+      if (nextPage === "settings") {
+        setSettingsMounted(true);
       }
       pageRef.current = nextPage;
       setPage(nextPage);
@@ -305,7 +323,22 @@ export function App() {
                 <MemoMedicines notify={notify} focus={medicineFocus} onNavigate={handleNav} />
               </div>
             ) : null}
-            {page === "home" || page === "medicines" ? null : page === "inquiry" ? (
+            {settingsMounted ? (
+              <div
+                className={`page-cache settings-page-cache ${page === "settings" ? "active" : "inactive"}`}
+                id={page === "settings" ? "main-content" : undefined}
+                aria-hidden={page !== "settings"}
+                inert={page !== "settings" ? "" : undefined}
+              >
+                <MemoSettings
+                  initialSettings={basicSettingsSnapshot}
+                  notify={notify}
+                  onNavigate={handleNav}
+                  onNetworkStatusChange={updateNetworkStatus}
+                />
+              </div>
+            ) : null}
+            {page === "home" || page === "medicines" || page === "settings" ? null : page === "inquiry" ? (
               <MemoInquiry
                 notify={notify}
                 onViewCandidates={handleViewCandidates}
@@ -318,13 +351,6 @@ export function App() {
               <MemoScan notify={notify} onNavigate={handleNav} />
             ) : page === "vitals" ? (
               <MemoVitals notify={notify} onNavigate={handleNav} returnPage={vitalsReturnPage} />
-            ) : page === "settings" ? (
-              <MemoSettings
-                notify={notify}
-                onNavigate={handleNav}
-                networkStatus={networkStatus}
-                onNetworkStatusChange={updateNetworkStatus}
-              />
             ) : (
               <ComingSoon page={page} />
             )}

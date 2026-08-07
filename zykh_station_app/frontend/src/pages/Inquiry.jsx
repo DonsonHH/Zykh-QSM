@@ -6,6 +6,7 @@ import {
   Clock3,
   Droplets,
   HeartPulse,
+  LoaderCircle,
   Pill,
   ScanFace,
   ShieldAlert,
@@ -441,7 +442,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     <main className={`inquiry-page conversation-layout ${vitalsSubflow ? "vitals-subflow" : ""}`} id="main-content">
       {!vitalsSubflow ? <aside className="inquiry-context-panel" aria-label="使用人信息">
         {contextReady ? <section className="inquiry-user-card dynamic">
-          <div className="context-heading user-context-heading">
+          <div className="context-heading user-context-heading page-entry-cue">
             <UserRound size={26} aria-hidden="true" />
             <div className="user-context-copy"><span>使用人</span><h2>{displayedUser?.name || "等待确认"}</h2></div>
             <span className={`identity-confirmation-icon ${identityPresentation.tone}`} role="img" aria-label={identityPresentation.label} title={identityPresentation.label}>
@@ -516,7 +517,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             networkStatus={networkStatus}
           />
         ) : (
-          <div className="inquiry-session-loading" role="status">正在建立本次问询...</div>
+          <div className="inquiry-session-loading" role="status">
+            <LoaderCircle className="localized-loader" size={30} aria-hidden="true" />
+            <span>正在建立本次问询...</span>
+          </div>
         )}
       </section>
     </main>

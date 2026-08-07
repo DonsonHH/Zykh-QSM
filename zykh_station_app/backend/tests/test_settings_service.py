@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +91,31 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(db.get_setting("speaker_volume"), "150")
         self.assertEqual(db.get_setting("idle_timeout_seconds"), "300")
         self.assertEqual(result.settings.network_mode, "local")
+
+    def test_host_speaker_uses_same_calibrated_percentage_as_terminal(self) -> None:
+        service = SettingsService()
+        expected = {
+            0: 0,
+            128: 1,
+            180: 50,
+            230: 85,
+            255: 100,
+        }
+
+        with patch.object(service, "_run") as run:
+            for gain in expected:
+                service._set_host_speaker_volume(gain)
+
+        self.assertEqual(
+            run.call_args_list,
+            [
+                call(
+                    ["pactl", "set-sink-volume", "qsm_relay", f"{percent}%"],
+                    timeout=3,
+                )
+                for percent in expected.values()
+            ],
+        )
 
     def test_wifi_stays_on_when_sim_backup_cannot_be_prepared(self) -> None:
         service = SettingsService()

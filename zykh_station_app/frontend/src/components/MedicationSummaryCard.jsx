@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Fingerprint, ListChecks } from "lucide-react";
+import { CalendarClock, Fingerprint, ListChecks, LoaderCircle } from "lucide-react";
 import { medicationPlanTimeLabel, selectNearestMedicationPlans } from "../utils/medicationPlans.js";
 import { MedicationTaskPicker } from "./MedicationTaskPicker.jsx";
 
-export function MedicationSummaryCard({ medication, onQuickDispense, quickDispenseBusy = false }) {
+export function MedicationSummaryCard({ medication, onQuickDispense, quickDispenseBusyId = "" }) {
   const [now, setNow] = useState(new Date());
   const [taskPickerOpen, setTaskPickerOpen] = useState(false);
   const plans = useMemo(() => {
@@ -58,12 +58,16 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
         className={`home-medication-list plan-count-${visiblePlans.length}${visiblePlans.length === 4 ? " is-full" : ""}`}
         aria-label="最近的待执行用药任务"
       >
-        {visiblePlans.length ? visiblePlans.map((plan) => (
+        {visiblePlans.length ? visiblePlans.map((plan) => {
+          const planBusy = Boolean(quickDispenseBusyId)
+            && String(plan.id || plan.medicine_id) === String(quickDispenseBusyId);
+          return (
           <button
             key={plan.id}
             type="button"
             className="home-medication-row"
-            disabled={quickDispenseBusy}
+            disabled={Boolean(quickDispenseBusyId)}
+            aria-busy={planBusy}
             aria-label={`${medicationPlanTimeLabel(plan)}，${plan.target_user}，${plan.medicine}，进入取药`}
             onClick={() => onQuickDispense?.(plan)}
           >
@@ -74,11 +78,12 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
               <small>待取出</small>
             </span>
             <span className="home-medication-action" aria-hidden="true">
-              <Fingerprint size={20} />
-              取药
+              {planBusy ? <LoaderCircle className="localized-loader" size={20} /> : <Fingerprint size={20} />}
+              {planBusy ? "读取中" : "取药"}
             </span>
           </button>
-        )) : (
+          );
+        }) : (
           <div className="home-medication-empty">今日暂无待执行任务</div>
         )}
       </div>
@@ -86,7 +91,7 @@ export function MedicationSummaryCard({ medication, onQuickDispense, quickDispen
       <MedicationTaskPicker
         open={taskPickerOpen}
         plans={plans}
-        busy={quickDispenseBusy}
+        busy={Boolean(quickDispenseBusyId)}
         onClose={() => setTaskPickerOpen(false)}
         onPickPlan={pickPlanAndDispense}
       />

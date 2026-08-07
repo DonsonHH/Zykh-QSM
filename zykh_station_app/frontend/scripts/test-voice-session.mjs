@@ -50,8 +50,8 @@ assert.match(voiceOverlay, /wx-voice-hold-surface/, "the recording surface has n
 assert.match(voiceOverlay, /wx-voice-review-toolbar/, "the transcript preview still uses two competing primary actions");
 assert.match(voiceOverlay, /上滑取消/, "the recording interaction does not explain the cancel gesture");
 assert.match(voiceOverlay, /WAVE_RATIOS/, "the waveform does not retain the reference's balanced 21-bar profile");
-assert.match(voiceOverlay, /wx-voice-diagonal-guide/, "recording has no lower-right to upper-left motion cue");
-assert.match(appCss, /@keyframes wxVoiceDiagonalGuide/, "the diagonal recording motion is not implemented");
+assert.doesNotMatch(voiceOverlay, /wx-voice-diagonal-guide/, "recording still renders the removed decorative motion guide");
+assert.doesNotMatch(appCss, /wxVoiceDiagonalGuide|wx-voice-diagonal-guide/, "recording still spends frames on decorative diagonal motion");
 assert.doesNotMatch(chat, /voice-overlay-stage|voice-overlay-pulse/, "the rejected circular pulse recorder remains in use");
 assert.match(chat, /lang="zh-CN"/, "the keyboard input is not declared as Simplified Chinese");
 assert.doesNotMatch(chat, /if \(data\.final\) finishVoice\(data\.text\)/, "ASR final events still auto-send while the user is holding the button");

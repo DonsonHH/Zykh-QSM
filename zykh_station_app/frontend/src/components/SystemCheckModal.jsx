@@ -79,6 +79,10 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   }, [open]);
 
   function runAudioTest() {
+    if (volumePercent === 0) {
+      notify("当前为静音，请先调高外放音量");
+      return;
+    }
     setTestingAudio(true);
     playBeep(speakerPercentToGain(volumePercent))
       .then((result) => notify(result.ok ? "外设测试音已播放" : result.message || "外放测试失败"))

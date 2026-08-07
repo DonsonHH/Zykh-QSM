@@ -742,16 +742,16 @@
     font-size: 18px;
   }
 
-  .basic-settings-grid {
+  .settings-card-grid {
     gap: 20px;
   }
 
-  .basic-settings-panel {
+  .settings-card {
     gap: 18px;
     padding: 24px;
   }
 
-  .basic-settings-panel > header h3 {
+  .settings-section-heading h3 {
     font-size: 25px;
   }
 
@@ -772,7 +772,7 @@
   }
 
   .network-mode-control {
-    min-height: 68px;
+    grid-template-rows: repeat(2, minmax(106px, 124px));
   }
 
   .network-mode-control button {
@@ -1718,7 +1718,7 @@
     font-size: 17px;
   }
 
-  /* Settings: preserve three independent control groups in the 960x600 workspace. */
+  /* Settings: keep the primary mode visible and stack the denser preferences. */
   .basic-settings-page {
     grid-template-rows: 50px minmax(0, 1fr);
     gap: 8px;
@@ -1736,12 +1736,12 @@
   }
 
   .basic-settings-title h2 {
-    font-size: 23px;
+    font-size: 26px;
   }
 
   .basic-settings-title span {
     max-width: 430px;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .settings-autosave-state {
@@ -1756,50 +1756,70 @@
     font-size: 14px;
   }
 
-  .basic-settings-grid {
-    grid-template-columns: 1.08fr 1fr 0.94fr;
+  .settings-card-grid {
+    grid-template-columns: minmax(280px, 0.82fr) minmax(0, 1.68fr);
+    grid-template-rows: minmax(216px, 1.36fr) minmax(158px, 1fr);
+    gap: 12px;
+  }
+
+  .settings-card {
     gap: 10px;
+    border-radius: var(--surface-radius);
+    padding: 14px;
   }
 
-  .basic-settings-panel {
-    gap: 9px;
-    border-radius: 16px;
-    padding: 12px;
+  .settings-section-heading {
+    min-height: 50px;
   }
 
-  .basic-settings-panel > header h3 {
-    font-size: 18px;
+  .settings-section-heading h3 {
+    font-size: 20px;
   }
 
-  .basic-setting-toggle-row {
-    min-height: 56px;
-    padding: 7px 9px;
-  }
-
-  .basic-setting-toggle-row strong,
   .basic-settings-range-label strong,
   .idle-time-setting strong {
     font-size: 15px;
   }
 
-  .basic-setting-toggle-row span,
-  .basic-setting-toggle-row small {
-    font-size: 11px;
-  }
-
   .network-mode-control {
-    min-height: 50px;
-    padding: 4px;
+    grid-template-rows: repeat(2, minmax(84px, 1fr));
+    gap: 10px;
   }
 
   .network-mode-control button {
-    min-height: 42px;
-    font-size: 13px;
+    min-height: 84px;
   }
 
-  .basic-settings-range {
-    gap: 5px 8px;
-    padding-bottom: 9px;
+  .sound-panel .basic-settings-range {
+    min-height: 68px;
+    grid-template-rows: auto 30px;
+    gap: 3px 8px;
+    padding: 5px 11px 3px;
+  }
+
+  .sound-panel .basic-settings-range input {
+    height: 30px;
+  }
+
+  .sound-section-body {
+    grid-template-rows: minmax(68px, 1fr) 48px;
+    gap: 8px 10px;
+  }
+
+  .display-section-body {
+    grid-template-columns: minmax(0, 1.08fr) minmax(240px, 0.92fr);
+    gap: 10px;
+  }
+
+  .display-panel .basic-settings-range {
+    min-height: 64px;
+    grid-template-rows: auto 28px;
+    gap: 2px 8px;
+    padding: 4px 10px 2px;
+  }
+
+  .display-panel .basic-settings-range input {
+    height: 28px;
   }
 
   .settings-test-sound {
@@ -1808,7 +1828,7 @@
   }
 
   .idle-time-setting {
-    min-height: 54px;
+    min-height: 64px;
     padding: 6px 7px 6px 9px;
   }
 

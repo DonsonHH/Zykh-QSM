@@ -3,7 +3,7 @@ import { InquiryEntryCard } from "./InquiryEntryCard.jsx";
 import { MedicationSummaryCard } from "./MedicationSummaryCard.jsx";
 import { QuickActions } from "./QuickActions.jsx";
 
-export function HomeHero({ dashboard, onNavigate, quickActions, onQuickAction, onQuickDispense, quickDispenseBusy }) {
+export function HomeHero({ dashboard, onNavigate, quickActions, onQuickAction, onQuickDispense, quickDispenseBusyId }) {
   const vitalsAction = quickActions.find((action) => action.id === "vitals") || {
     id: "vitals",
     title: "身体状态测量",
@@ -17,7 +17,7 @@ export function HomeHero({ dashboard, onNavigate, quickActions, onQuickAction, o
         <MedicationSummaryCard
           medication={dashboard?.medication || {}}
           onQuickDispense={onQuickDispense}
-          quickDispenseBusy={quickDispenseBusy}
+          quickDispenseBusyId={quickDispenseBusyId}
         />
         <QuickActions actions={[vitalsAction]} onSelect={onQuickAction} />
       </div>

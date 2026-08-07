@@ -153,7 +153,7 @@ export function Scan({ notify, onNavigate }) {
           <button className="icon-action" type="button" onClick={() => onNavigate("home")} aria-label="返回首页">
             <ArrowLeft size={24} aria-hidden="true" />
           </button>
-          <h2>扫码核验</h2>
+          <h2 className="page-entry-cue">扫码核验</h2>
         </div>
 
         <div className={`camera-stage live ${cameraStatus === "unavailable" ? "unavailable" : ""}`}>

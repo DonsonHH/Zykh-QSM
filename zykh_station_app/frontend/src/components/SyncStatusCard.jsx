@@ -39,7 +39,7 @@ export function SyncStatusCard({ syncStatus, syncing, networkStatus, onSync }) {
         <span>{detail}</span>
       </div>
       <button type="button" onClick={onSync} disabled={syncing}>
-        <RefreshCw size={21} aria-hidden="true" />
+        <RefreshCw className={syncing ? "localized-loader" : undefined} size={21} aria-hidden="true" />
         {syncing ? "同步中..." : localMode ? "刷新状态" : "立即同步"}
       </button>
     </section>

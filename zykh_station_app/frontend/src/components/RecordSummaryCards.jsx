@@ -14,7 +14,7 @@ export function RecordSummaryCards({ summary }) {
         const Icon = item.icon;
         return (
           <article key={item.key} className={`record-summary-card ${item.tone}`}>
-            <span aria-hidden="true">
+            <span className={item.key === "today_service_users" ? "page-entry-cue" : undefined} aria-hidden="true">
               <Icon size={24} />
             </span>
             <p>{item.label}</p>

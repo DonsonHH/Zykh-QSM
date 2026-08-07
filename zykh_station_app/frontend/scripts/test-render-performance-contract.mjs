@@ -34,6 +34,21 @@ assert.match(
   /\.page-cache\.inactive\s*\{[^}]*display:\s*none/,
   "inactive cached pages still participate in layout and paint"
 );
+assert.match(
+  appSource,
+  /requestIdleCallback\(mountSettings[\s\S]*settings-page-cache/,
+  "settings are not prepared during idle time before the first operator click"
+);
+assert.match(
+  styles,
+  /\.settings-page-cache\.inactive\s*\{[^}]*display:\s*block[^}]*visibility:\s*hidden/,
+  "the contained settings cache loses its precomputed layout while hidden"
+);
+assert.match(
+  styles,
+  /\.settings-page-cache\.inactive \.page-entry-cue,[\s\S]*\.settings-page-cache\.inactive \.spin\s*\{[^}]*animation:\s*none\s*!important/,
+  "the hidden settings cache can still consume compositor time"
+);
 assert.doesNotMatch(appSource, /startTransition/, "navigation is still scheduled as a low-priority update");
 assert.doesNotMatch(
   motionStyles,

@@ -417,7 +417,7 @@ async function readLayout() {
       criticalClipping.push('inquiry-facts-overlap-vitals');
     }
     for (const element of document.querySelectorAll(
-      '.basic-settings-panel, .admin-login-panel, .admin-sidebar, .admin-workspace, .idle-brand, .idle-wake-area'
+      '.settings-card, .admin-login-panel, .admin-sidebar, .admin-workspace, .idle-brand, .idle-wake-area'
     )) {
       const bounds = element.getBoundingClientRect();
       const clipped = bounds.top < -1 || bounds.left < -1 ||

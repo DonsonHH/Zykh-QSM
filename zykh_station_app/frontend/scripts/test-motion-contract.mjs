@@ -25,6 +25,19 @@ async function listFiles(directory, prefix = "") {
   return files;
 }
 
+function cssBlock(source, marker) {
+  const start = source.indexOf(marker);
+  assert.ok(start >= 0, `${marker} is missing`);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`${marker} is not closed`);
+}
+
 const sourceFiles = (await listFiles(sourceRoot)).filter((file) => /\.(jsx|js|css)$/.test(file));
 const drawUsers = [];
 
@@ -84,6 +97,7 @@ assert.match(styles, /stroke-dashoffset:\s*0/, "draw animation does not finish o
 assert.match(styles, /prefers-reduced-motion:\s*reduce/, "reduced motion fallback is missing");
 
 const appStyles = await readFile(`${sourceRoot}/styles/app.css`, "utf8");
+const adminStyles = await readFile(`${sourceRoot}/styles/admin.css`, "utf8");
 assert.match(appStyles, /--motion-phase-duration:\s*1600ms/, "normal CSS motion phase did not return to 1.6 seconds");
 assert.match(appStyles, /--motion-cycle-duration:\s*3200ms/, "normal CSS motion cycle did not return to 3.2 seconds");
 assert.doesNotMatch(appStyles, /idle-(?:background-breathe|wake-prompt|reminder-breathe)/, "idle screen keeps a continuous paint animation");
@@ -94,6 +108,11 @@ assert.match(appStyles, /\.vitals-measure-progress/, "vitals progress feedback i
 assert.match(appStyles, /transform-origin:\s*left center/, "vitals progress does not advance from left to right");
 assert.doesNotMatch(appStyles, /vitals-heart-pulses/, "vitals page renders more than one loading signal");
 assert.doesNotMatch(appStyles, /vitals-loader-(?:rotate|arc)/, "legacy rotating vitals loader is still present");
+assert.doesNotMatch(appStyles, /wxVoiceBubbleGrow/, "voice capture still animates layout width");
+const vitalsHeartbeatKeyframes = cssBlock(appStyles, "@keyframes vitals-heart-beat");
+assert.doesNotMatch(vitalsHeartbeatKeyframes, /box-shadow:/, "vitals heartbeat still repaints a large shadow");
+const adminBiometricKeyframes = cssBlock(adminStyles, "@keyframes admin-biometric-pulse");
+assert.doesNotMatch(adminBiometricKeyframes, /box-shadow:/, "admin biometric progress still animates a painted shadow");
 assert.match(appStyles, /\.toast\s*\{[\s\S]*top:\s*16px[\s\S]*transform:\s*translate\(-50%, -16px\)/, "toast does not enter downward from the top bar");
 assert.match(appStyles, /\.medicine-card-context \.medicine-efficacy\s*\{[\s\S]*color:\s*var\(--primary\)/, "medicine category labels are not consistently blue");
 assert.match(appStyles, /\.detail-section\.dosage-section h3 svg\s*\{[\s\S]*color:\s*var\(--primary\)/, "medicine detail dosage icon is not blue");
@@ -133,7 +152,8 @@ assert.doesNotMatch(app, /loadDashboard\(identity|__unconfirmed__/, "home dashbo
 
 const settingsPage = await readFile(`${sourceRoot}/pages/Settings.jsx`, "utf8");
 const settingsStyles = await readFile(`${sourceRoot}/styles/settings.css`, "utf8");
-assert.match(settingsPage, /controlsLocked = loading \|\| saveState === "saving"/, "settings controls are editable while device state is unresolved");
+assert.match(settingsPage, /controlsLocked = loading;/, "settings controls are editable while initial device state is unresolved");
+assert.doesNotMatch(settingsPage, /controlsLocked = [^;]*saveState === "saving"/, "autosave still freezes the full settings workspace");
 assert.match(settingsPage, /settings-loading-shield[\s\S]*正在读取设备设置[\s\S]*读取完成后即可修改/, "settings loading lock is not explicit to the operator");
 assert.match(settingsStyles, /\.network-mode-button\s*\{[\s\S]*min-height:\s*92px[\s\S]*align-items:\s*center/, "settings mode buttons do not share stable touch geometry");
 assert.match(settingsStyles, /\.settings-loading-shield\s*\{[\s\S]*position:\s*absolute[\s\S]*inset:\s*0/, "settings loading shield does not cover all controls");
@@ -177,7 +197,53 @@ assert.doesNotMatch(
 assert.match(motionSystem, /\.inquiry-assistant-orbit,[\s\S]*animation:\s*none/, "home decorative motion still consumes frames");
 assert.doesNotMatch(motionSystem, /kiosk-frame:not\(\.idle-frame\) > main[\s\S]*animation-name/, "page feedback animates the full high-resolution page surface");
 assert.match(motionSystem, /bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation-duration:\s*150ms/, "navigation lost its localized confirmation animation");
+assert.match(
+  motionSystem,
+  /html\[data-page-transition="forward"\] \.page-entry-cue[\s\S]*animation-name:\s*kiosk-page-cue-forward/,
+  "non-tab pages have no localized forward entry cue"
+);
+assert.match(
+  motionSystem,
+  /html\[data-page-transition="backward"\] \.page-entry-cue[\s\S]*animation-name:\s*kiosk-page-cue-backward/,
+  "non-tab pages have no localized backward entry cue"
+);
+for (const cueName of ["kiosk-page-cue-forward", "kiosk-page-cue-backward"]) {
+  const keyframes = cssBlock(motionSystem, `@keyframes ${cueName}`);
+  assert.doesNotMatch(
+    keyframes,
+    /(?:filter|box-shadow|width|height|top|left|background):/,
+    `${cueName} animates paint or layout instead of transform and opacity`
+  );
+}
+assert.match(motionSystem, /\.localized-loader\s*\{[^}]*animation:\s*kiosk-local-spinner/, "localized async work has no progress cue");
+assert.doesNotMatch(
+  cssBlock(motionSystem, "@keyframes kiosk-local-spinner"),
+  /(?:filter|box-shadow|width|height|top|left|background|opacity):/,
+  "localized loading cue animates more than a compositor transform"
+);
+for (const file of [
+  "components/InquiryEntryCard.jsx",
+  "components/RecordSummaryCards.jsx",
+  "pages/Medicines.jsx",
+  "pages/Inquiry.jsx",
+  "pages/Scan.jsx",
+  "pages/Vitals.jsx",
+  "pages/Settings.jsx"
+]) {
+  const content = await readFile(`${sourceRoot}/${file}`, "utf8");
+  assert.match(content, /page-entry-cue/, `${file} has no localized page entry target`);
+}
 assert.match(motionSystem, /prefers-reduced-motion:\s*reduce[\s\S]*bottom-nav button\.active \.bottom-nav-icon[\s\S]*animation:\s*none/, "navigation feedback ignores reduced motion");
+assert.match(
+  motionSystem,
+  /prefers-reduced-motion:\s*reduce[\s\S]*page-entry-cue[\s\S]*animation:\s*none\s*!important/,
+  "localized page feedback ignores reduced motion"
+);
+assert.match(
+  motionSystem,
+  /prefers-reduced-motion:\s*reduce[\s\S]*localized-loader[\s\S]*animation:\s*none\s*!important/,
+  "localized loading feedback ignores reduced motion"
+);
 assert.match(
   motionSystem,
   /prefers-reduced-motion:\s*reduce[\s\S]*\.idle-wake-glyph,[\s\S]*\.idle-reminder-icon svg:last-child[\s\S]*animation:\s*none\s*!important/,

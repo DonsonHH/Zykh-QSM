@@ -19,7 +19,7 @@ export function InquiryEntryCard({ inquiry, onStart }) {
           </span>
         </div>
         <div className="inquiry-assistant-content">
-          <p>{inquiry.title || "AI应急问询"}</p>
+          <p className="page-entry-cue">{inquiry.title || "AI应急问询"}</p>
           <strong>说出不适，我来逐步问询</strong>
           <div className="inquiry-capability-strip" aria-label="问询流程">
             <article>
