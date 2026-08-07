@@ -203,7 +203,7 @@ sh scripts/deploy_qsm_vitals.sh
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
-AI 云通道使用 DeepSeek Chat Completions 完成低延迟逐轮语义抽取，最终病因分析与候选排序优先使用配置的 Responses 端点；端点不可用或返回无效结构时自动回退到官方 Chat Completions JSON 契约。快速抽取默认关闭 thinking；最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
+AI 云通道使用 DeepSeek Chat Completions 完成低延迟逐轮语义抽取，最终病因分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到官方 Chat Completions JSON 契约。快速抽取默认关闭 thinking；最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"

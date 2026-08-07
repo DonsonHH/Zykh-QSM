@@ -2323,13 +2323,13 @@ class AiService:
         purpose: str,
     ) -> tuple[dict[str, Any] | None, str]:
         """Call the Responses endpoint for the final inquiry assessment."""
-        max_attempts = max(1, min(int(settings.ai_inquiry_max_attempts), 2))
+        # Responses is the preferred final-assessment contract, but it must not
+        # hold the kiosk here while the documented Chat Completions fallback is
+        # available. Keep this provider probe to one bounded attempt.
+        max_attempts = 1
         attempt_timeout = max(
-            8.0,
-            min(
-                float(settings.ai_inquiry_timeout_seconds),
-                max(float(settings.ai_inquiry_attempt_timeout_seconds), 30.0),
-            ),
+            12.0,
+            min(float(settings.ai_inquiry_attempt_timeout_seconds), 15.0),
         )
         retry_delay = max(0.0, min(float(settings.ai_inquiry_retry_delay_seconds), 2.0))
         endpoint = str(settings.ai_responses_api_base).strip()

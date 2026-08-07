@@ -131,9 +131,11 @@ or return invalid structure, the session remains retryable, returns no candidate
 and does not expose connection or fallback terminology in its user-facing reply.
 Environment-sensitive cloud requests may include current Chengdu weather as
 supporting context; it cannot replace measured vitals or establish a diagnosis.
-Final assessment first calls the configured Responses endpoint. If that provider
-contract is unavailable or invalid, the backend retries the same constrained
-JSON task through Chat Completions before considering the offline fallback.
+Final assessment first calls the configured Responses endpoint once, with its
+request timeout clamped to 12–15 seconds. If that provider contract times out,
+is unavailable or is invalid, the backend immediately retries the same
+constrained JSON task through Chat Completions before considering the offline
+fallback.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
