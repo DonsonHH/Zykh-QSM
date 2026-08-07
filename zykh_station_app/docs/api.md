@@ -107,10 +107,13 @@ Adds one speech transcript. The selected cloud or local model reads the full
 conversation, profile, vitals and recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
-fixed symptom taxonomy or fixed field order. The first decision slot confirms
-the complete concurrent symptom scope and does not consume the focused-question
-budget; one stable complaint then permits at most four clinically useful symptom
-questions and may finish earlier when evidence is sufficient. An explicit
+fixed symptom taxonomy or fixed observation-field order. A deterministic policy
+maps the model's proposed question to bounded decision topics for one-question,
+budget and repetition checks, and supplies a fallback question only when the
+proposal is missing or unsafe. The first decision slot confirms the complete
+concurrent symptom scope and does not consume the focused-question budget; one
+stable complaint then permits at most four clinically useful symptom questions
+and may finish earlier when evidence is sufficient. An explicit
 complaint replacement or a newly added major symptom that changes the decision
 starts a recalculated budget; a refinement of an existing symptom does not.
 Every assistant turn asks one

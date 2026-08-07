@@ -81,11 +81,14 @@ hard-safe pool.
 Deterministic code is deliberately narrower: it intercepts non-negotiable danger
 signals, may raise but never lower model risk, excludes expired, unavailable,
 non-OTC or contraindicated medicines, and revalidates the selected option before
-the existing dispense service runs. There is no fixed symptom taxonomy or fixed
-question table in the session workflow. The cloud route ranks the safe pool with
-the model; the constrained offline route uses the compact model concepts for a
-deterministic similarity ordering so safety is retained without another slow
-generation.
+the existing dispense service runs. Extracted observations keep open, user-led
+symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
+layer classifies the model's proposed question into decision topics so it can
+enforce one question per turn, the four-question budget and no-repeat rules; it
+uses a small fallback-question set only when the proposal is missing or unsafe.
+The cloud route ranks the safe pool with the model; the constrained offline route
+uses the compact model concepts for a deterministic similarity ordering so safety
+is retained without another slow generation.
 
 Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.md).
 
