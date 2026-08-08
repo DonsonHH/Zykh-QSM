@@ -861,6 +861,48 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(stored["reviewed_by"], "")
         self.assertEqual(stored["reviewed_at"], "")
 
+    def test_policy_resync_does_not_revive_an_invalidated_bundled_combination(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        member = repository.get_by_hardware_slot(3)
+        self.assertIsNotNone(member)
+
+        repository.update(member.id, {"aliases": [*member.aliases, "重新审核的新别名"]})
+        changed = repository.get_by_id(member.id)
+        repository.update(
+            member.id,
+            {
+                "aliases": changed.aliases,
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 14:30:00",
+            },
+        )
+        with db.connect() as conn:
+            before = conn.execute(
+                "SELECT review_status, reviewed_by FROM approved_medicine_combinations "
+                "WHERE combination_id=?",
+                ("candidate-adult-watery-diarrhea-separated-v1",),
+            ).fetchone()
+            conn.execute(
+                "UPDATE app_settings SET value=? "
+                "WHERE key='medicine_combination_policy_version'",
+                ("older-policy-version",),
+            )
+        self.assertEqual(before["review_status"], "invalidated")
+        self.assertEqual(before["reviewed_by"], "")
+
+        repository.list_all()
+
+        with db.connect() as conn:
+            after = conn.execute(
+                "SELECT review_status, reviewed_by FROM approved_medicine_combinations "
+                "WHERE combination_id=?",
+                ("candidate-adult-watery-diarrhea-separated-v1",),
+            ).fetchone()
+        self.assertEqual(after["review_status"], "invalidated")
+        self.assertEqual(after["reviewed_by"], "")
+
     def test_inventory_upgrade_replaces_only_the_two_changed_slots(self) -> None:
         repository = MedicineRepository()
         repository.list_all()

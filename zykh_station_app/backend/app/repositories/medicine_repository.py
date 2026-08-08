@@ -2521,12 +2521,20 @@ class MedicineRepository:
             combination_id = str(definition["combination_id"])
             existing = conn.execute(
                 """
-                SELECT provenance, reviewed_by
+                SELECT provenance, review_status, reviewed_by
                 FROM approved_medicine_combinations
                 WHERE combination_id=?
                 """,
                 (combination_id,),
             ).fetchone()
+            if (
+                existing is not None
+                and str(existing["review_status"] or "").strip().lower() == "invalidated"
+            ):
+                # An inventory or safety change permanently revokes the previous
+                # snapshot. A later bundled-policy migration must not silently
+                # turn that revoked evidence back into an active cabinet plan.
+                continue
             if existing is not None and (
                 str(existing["provenance"] or "")
                 not in {

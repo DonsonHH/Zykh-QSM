@@ -98,6 +98,14 @@ class DispenseService:
             raise DispenseError("药品库存记录已经变化，请重新核对。", status_code=409)
         if latest.stock < request.quantity:
             raise DispenseError("当前库存不足，不能执行取药。", status_code=409)
+        if (
+            request.verification_method == "inquiry_confirmed"
+            and not request.expected_review_fingerprint.strip()
+        ):
+            raise DispenseError(
+                "问询方案缺少当前审核凭据，请返回结果页重新核对后再取药。",
+                status_code=409,
+            )
         if request.expected_review_fingerprint:
             if (
                 MedicineKnowledgeRepository.review_fingerprint(latest)

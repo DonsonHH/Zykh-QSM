@@ -215,6 +215,34 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
+    def test_inquiry_confirmed_dispense_requires_the_displayed_review_fingerprint(self) -> None:
+        medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
+        self.assertIsNotNone(medicine)
+        calls: list[tuple[str, int, bool]] = []
+
+        def recording_dispense(slot: str, quantity: int, dry_run: bool = False):
+            calls.append((slot, quantity, dry_run))
+            return {"ok": True, "detail": "unexpected"}
+
+        self.service.qsm_client.dispense = recording_dispense
+
+        with self.assertRaisesRegex(DispenseError, "重新核对") as raised:
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="AI应急问询方案取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    verification_method="inquiry_confirmed",
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(calls, [])
+
     def test_inquiry_fingerprint_is_rechecked_immediately_before_qsm_dispense(self) -> None:
         medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
         self.assertIsNotNone(medicine)
@@ -448,6 +476,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 "safety_reviewed_at": "2026-08-08T00:00:00+08:00",
             },
         )
+        medicine = MedicineService().get_medicine(medicine.id)
+        self.assertIsNotNone(medicine)
         plan = self.records.create_today_plan(
             TodayPlanCreateRequest(
                 time="11:45",
@@ -476,6 +506,11 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     target_user_name="张三",
                     verification_method=verification_method,
                     today_plan_id=today_plan_id,
+                    expected_review_fingerprint=(
+                        MedicineKnowledgeRepository.review_fingerprint(medicine)
+                        if verification_method == "inquiry_confirmed"
+                        else ""
+                    ),
                 ),
                 force_dry_run=False,
             )

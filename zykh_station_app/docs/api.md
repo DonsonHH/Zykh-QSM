@@ -79,19 +79,23 @@ can return the stable notices `used_medicine_duplicate`, `allergy_conflict` and
 enter the candidate pool.
 
 Multi-medicine model output is fail-closed. A selection of two to four medicines
-must exactly match a pharmacist-reviewed combination whose member identity
-fingerprints still match the current rows. A repeated active ingredient or a
-reviewed `block` rule in the ingredient-conflict matrix overrides an approved
-combination. More than four medicines are rejected as a whole and are never
-truncated. The production combination table is intentionally seeded empty: when
-no pharmacist-signed combination exists, multi-medicine options are disabled;
-single reviewed medicines remain available.
+must exactly match a case-scoped reviewed combination whose member identity and
+safety-review fingerprints still match the current rows. A repeated active
+ingredient or a reviewed `block` rule in the ingredient-conflict matrix overrides
+an approved combination. More than four medicines are rejected as a whole and
+are never truncated. The fixed cabinet seeds only three versioned, evidence-backed
+combination artifacts: two low-risk superficial-wound care sequences and one
+low-risk adult watery-diarrhoea sequence with separated administration. Their
+provenance, case predicates, member order, reviewed usage and source references
+are stored with the review snapshot. When none matches the grounded case,
+multi-medicine output is disabled and single reviewed medicines remain available.
 
 Approved combinations are explicit review artifacts, not permanent properties of
 row IDs. Any member identity, safety content, package/guidance state or safety
 review metadata change marks every linked approved combination `invalidated` and
-clears its prior reviewer metadata. Restoring or re-reviewing the medicine does not
-revive those rows; a pharmacist must review and save a new exact combination.
+clears its prior reviewer metadata. Restoring or re-reviewing the medicine, or
+installing a later bundled-policy version, does not revive those rows; an
+authorized local reviewer must explicitly save a new exact combination.
 
 ### GET /api/medicines/{medicine_id}
 
