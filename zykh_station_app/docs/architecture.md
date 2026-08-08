@@ -56,27 +56,26 @@ Phase eight switches the runtime defaults to real-device first:
 - medicine scan requires barcode decode, visual recognition or manual confirmation;
 - records and dashboard values come from SQLite instead of fixed page constants;
 - sync reports `未配置` until a real cloud endpoint is configured;
-- inquiry uses a DeepSeek-compatible endpoint when reachable and routes failures
-  to the real QSM Qwen3.5 model. If both models are unavailable, the inquiry
-  remains retryable and cannot generate a medicine candidate; transport and
+- inquiry uses the configured DeepSeek-compatible cloud endpoint in both terminal
+  presentation modes. If the cloud model is unavailable, deterministic rules keep
+  the session retryable and cannot generate a medicine candidate; transport and
   fallback terminology stays out of terminal-facing copy.
 
 ## AI routing
 
-`services/ai_service.py` owns cloud-first routing, open case extraction,
-conversation actions and candidate ranking. `services/local_ai_client.py` is the
-narrow OpenAI-compatible adapter for QSM llama.cpp. The model decides how to
-describe the case, what single question to ask next, whether vitals are needed
-and whether recent history is semantically related. It can rank only IDs admitted
-by the hard-safe pool and may return no candidate.
+`services/ai_service.py` owns cloud routing, open case extraction, conversation
+actions and candidate ranking. Legacy `services/local_ai_client.py` remains only
+for explicit diagnostics and is not part of the production inquiry path. The
+cloud model decides how to describe the case, what single question to ask next,
+whether vitals are needed and whether recent history is semantically related. It
+can rank only IDs admitted by the hard-safe pool and may return no candidate.
 
 For online environment-sensitive complaints such as heat exposure, the service
 can attach current Chengdu weather from Open-Meteo to the model request. This is
 supporting context only and cannot establish a cause or replace measured vitals.
-The offline 0.8B route uses a compact wire adapter for the board context budget,
-but expands into and validates the same case-understanding contract as the cloud
-route. It preserves topic evidence, question topic, clinical readiness and
-symptom-change semantics rather than maintaining a second clinical schema.
+The two presentation modes share this model path. Local presentation mode changes
+the status icon, mini-program realtime sync and speech route only; it does not
+select a second language model or a second clinical schema.
 
 Deterministic code is deliberately narrower: it intercepts non-negotiable danger
 signals, may raise but never lower model risk, excludes expired, unavailable,
@@ -86,10 +85,10 @@ symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
 layer classifies the model's proposed question into decision topics so it can
 enforce one question per turn, the four-question budget and no-repeat rules; it
 uses a small fallback-question set only when the proposal is missing or unsafe.
-The cloud and QSM routes rank the hard-safe pool against the same semantic output
-contract and validator. QSM may receive a category-narrowed catalog, but the
-model itself must return the complete `assessment + options` object and may only
-select catalog IDs. Deterministic rules do not supply or impersonate a missing
+The cloud Responses route and its cloud Chat Completions fallback rank the
+hard-safe pool against the same semantic output contract and validator. The model
+must return the complete `assessment + options` object and may only select catalog
+IDs. Deterministic rules do not supply or impersonate a missing
 model assessment: on an unavailable or invalid final rank, the session remains
 retryable and exposes no candidate. Rules remain available only for bounded
 dialogue continuity and non-negotiable danger interception.

@@ -154,9 +154,12 @@ starts a recalculated budget; a refinement of an existing symptom does not.
 Every assistant turn asks one
 decision question. The model may choose `measure_vitals` only after symptom scope
 has been confirmed and only when core vitals materially affect the next decision. The frontend
-finishes the spoken guidance, pauses for 2.2 seconds, then renders the vitals
-tool inside the inquiry flow. It does not navigate away or transfer results
-through browser storage. Cloud turn extraction, Responses final analysis and
+finishes the spoken guidance, pauses for 3 seconds, then renders the vitals tool
+inside the inquiry flow. It does not navigate away or transfer results through
+browser storage. Returning from a completed measurement preserves the measured
+values and immediately replaces the tool with a visible processing state while
+the final model analysis is pending; the information-review view appears when the
+response arrives. Cloud turn extraction, Responses final analysis and
 the Chat Completions final fallback share `AI_INQUIRY_REASONING_EFFORT` (default
 `high`); legacy `AI_INQUIRY_ENABLE_THINKING` applies only when the new setting is
 absent.
@@ -178,6 +181,27 @@ return invalid structure, deterministic rules preserve bounded follow-up and
 danger-signal handling only. The session remains retryable, returns no final
 assessment or candidate and does not expose connection or fallback terminology
 in its user-facing reply.
+
+The current no-candidate and risk boundary is deterministic around the model:
+
+- `emergency` blocks candidates for unnegated chest pain together with breathing
+  difficulty, configured emergency phrases, or SpO₂ below 90%;
+- `high` blocks candidates for configured persistent/severe danger phrases,
+  stable SpO₂ from 90% through 93%, or temperature at or above 39℃;
+- semantic model risk may raise the level to `high|emergency`, but cannot lower a
+  deterministic decision;
+- `low|medium` permits candidate evaluation but does not guarantee an option. A
+  row is excluded when stock is empty, package identity or reviewed safety facts
+  are unavailable, the expiry date is invalid/past, guidance is incomplete, or a
+  prescription/chronic medicine has no current plan;
+- symptom retrieval may find no reliably related row, the model may correctly
+  return no option, or current-use duplication, allergy and history checks may
+  exclude every related row;
+- an unavailable/invalid final ranking leaves the same session retryable with no
+  candidate, and an unknown, duplicate or unauthorized multi-medicine selection
+  is rejected rather than silently shortened;
+- inventory, expiry, identity, reviewed safety facts, approved-combination scope,
+  current profile/allergies and stock are checked again before cabinet control.
 Environment-sensitive cloud requests may include current Chengdu weather as
 supporting context; it cannot replace measured vitals or establish a diagnosis.
 Final assessment first calls the configured Responses endpoint once, with its

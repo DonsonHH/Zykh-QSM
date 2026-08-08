@@ -8239,6 +8239,28 @@ a:focus-visible {
   font-weight: 900;
 }
 
+.inquiry-vitals-handoff {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+
+.inquiry-vitals-handoff > svg {
+  color: var(--primary);
+}
+
+.inquiry-vitals-handoff strong {
+  font-size: 25px;
+  line-height: 1.2;
+}
+
+.inquiry-vitals-handoff span {
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 800;
+}
+
 .flow-candidate-list article strong em {
   display: inline-flex;
   margin-right: 8px;

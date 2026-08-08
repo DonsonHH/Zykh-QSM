@@ -81,6 +81,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
+  const attachingVitalsRef = useRef(false);
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
   const resetOnResultLeaveRef = useRef(false);
@@ -274,7 +275,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     }
   }
 
-  function handleSessionUpdate(data) {
+  const handleSessionUpdate = useCallback((data) => {
     setSession(data);
     if (data.stage === "result") {
       setResultConfirmed(false);
@@ -285,7 +286,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       setVitalsFlow("chat");
       launchedVitalsRequestRef.current = "";
     }
-  }
+  }, []);
 
   const handleReplyPlaybackStart = useCallback(() => {
     if (!session || session.next_action !== "measure_vitals" || attachingVitals) return;
@@ -298,40 +299,36 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     }, 3000);
   }, [attachingVitals, session]);
 
-  const handleVitalsComplete = useCallback(async (vitals) => {
-    if (!sessionId || attachingVitals) return;
+  const submitVitalsOutcome = useCallback(async (payload) => {
+    if (!sessionId || attachingVitalsRef.current) return;
+    attachingVitalsRef.current = true;
     setAttachingVitals(true);
+    setVitalsFlow("processing");
     try {
-      const updated = await attachInquiryVitals(sessionId, buildInquiryVitalsPayload(vitals));
+      const updated = await attachInquiryVitals(sessionId, payload);
       if (!mountedRef.current) return;
       setVitalsFlow("chat");
       handleSessionUpdate(updated);
     } catch (error) {
+      if (mountedRef.current) setVitalsFlow("chat");
       notify(error.message || "体征信息未能写入本次问询");
     } finally {
+      attachingVitalsRef.current = false;
       setAttachingVitals(false);
     }
-  }, [attachingVitals, notify, sessionId]);
+  }, [handleSessionUpdate, notify, sessionId]);
 
-  const handleVitalsExit = useCallback(async (outcome) => {
-    if (!sessionId || attachingVitals) return;
-    setAttachingVitals(true);
-    try {
-      const updated = await attachInquiryVitals(sessionId, {
-        status: outcome?.status === "failed" ? "failed" : "cancelled",
-        error_message: outcome?.error_message || "",
-        measured_at: new Date().toISOString()
-      });
-      if (!mountedRef.current) return;
-      setVitalsFlow("chat");
-      handleSessionUpdate(updated);
-    } catch (error) {
-      setVitalsFlow("chat");
-      notify(error.message || "已返回问询，体征状态暂未写入");
-    } finally {
-      setAttachingVitals(false);
-    }
-  }, [attachingVitals, notify, sessionId]);
+  const handleVitalsComplete = useCallback((vitals) => {
+    return submitVitalsOutcome(buildInquiryVitalsPayload(vitals));
+  }, [submitVitalsOutcome]);
+
+  const handleVitalsExit = useCallback((outcome) => {
+    return submitVitalsOutcome({
+      status: outcome?.status === "failed" ? "failed" : "cancelled",
+      error_message: outcome?.error_message || "",
+      measured_at: new Date().toISOString()
+    });
+  }, [submitVitalsOutcome]);
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
     if (!sessionId || openingTreatmentRef.current) return;
@@ -385,6 +382,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setTreatmentAction(null);
     setVitalsFlow("chat");
     setAttachingVitals(false);
+    attachingVitalsRef.current = false;
     launchedVitalsRequestRef.current = "";
     window.clearTimeout(vitalsLaunchTimerRef.current);
     stopAudioPlayback().catch(() => null);
@@ -484,6 +482,12 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onComplete={handleVitalsComplete}
             onExit={handleVitalsExit}
           />
+        ) : vitalsFlow === "processing" ? (
+          <div className="inquiry-session-loading inquiry-vitals-handoff" role="status" aria-live="polite" aria-busy="true">
+            <LoaderCircle className="localized-loader" size={34} aria-hidden="true" />
+            <strong>正在整理体征与问询信息</strong>
+            <span>请稍候，完成后将自动进入病历确认。</span>
+          </div>
         ) : !identityConfirmed ? (
           <InquiryIdentityGate candidate={candidateUser} status={faceIdentityStatus} onConfirm={confirmIdentity} onRetry={retryIdentity} onRequestGuest={confirmGuestInquiry} />
         ) : showReview ? (

@@ -284,6 +284,16 @@ export function useVitalsSession({
       await cancel({ exit: true });
       return;
     }
+    if (phase === "complete" && coreComplete) {
+      completionReportedRef.current = true;
+      const disposition = inquiryVitalsDisposition(result);
+      if (disposition.kind === "complete") {
+        await onComplete?.(result);
+      } else {
+        await onExit?.(disposition.outcome);
+      }
+      return;
+    }
     onExit?.({
       status: phase === "failed" ? "failed" : "cancelled",
       error_message: errorMessage || result?.error_message || ""

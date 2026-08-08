@@ -17,6 +17,8 @@ assert.doesNotMatch(inquiry, /InquiryVitalsTransition/, "AI inquiry still render
 assert.doesNotMatch(inquiry, /setVitalsFlow\("transition"\)/, "AI inquiry still enters the intermediate transition state");
 assert.match(inquiry, /status:\s*"complete"/, "complete vitals are not attached to the active inquiry session");
 assert.match(inquiry, /"failed"\s*:\s*"cancelled"/, "failed and cancelled measurements do not return to AI");
+assert.match(inquiry, /setVitalsFlow\("processing"\)/, "vitals handoff does not leave the completed measurement immediately");
+assert.match(inquiry, /inquiry-vitals-handoff[\s\S]*正在整理体征与问询信息/, "vitals handoff has no visible pending state");
 assert.doesNotMatch(inquiry, /onNavigate\("vitals"/, "AI inquiry still navigates to a separate vitals page");
 assert.doesNotMatch(inquiry, /zykh-latest-vitals/, "AI vitals still depend on sessionStorage result transfer");
 assert.doesNotMatch(
@@ -35,6 +37,11 @@ assert.match(chat, /preservePlaybackOnExitRef/, "entering vitals interrupts the 
 
 assert.match(vitalsSession, /completionReportedRef/, "embedded vitals can submit the same result repeatedly");
 assert.match(vitalsSession, /onComplete\?\.\(result\)/, "completed vitals do not return to AI");
+assert.match(
+  vitalsSession,
+  /phase === "complete" && coreComplete[\s\S]*inquiryVitalsDisposition\(result\)[\s\S]*onComplete\?\.\(result\)/,
+  "returning from a completed measurement discards the measured vitals"
+);
 assert.match(vitalsSession, /onExit\?\.\(\{\s*status:\s*"cancelled"/, "cancelled vitals do not return to AI");
 assert.match(vitalsSession, /prepareQsmVitals/, "shared vitals session module does not own device prewarm");
 assert.match(vitalsSession, /startVitalsSession/, "shared vitals session module does not own measurement start");
