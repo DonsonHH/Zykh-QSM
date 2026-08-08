@@ -61,7 +61,7 @@ curl -sS -H 'Content-Type: application/json' \
   https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api
 ```
 
-返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为 `2.3-medicine-sync-contract`。终端把 revision 纳入 snapshot hash；本次药品字段契约以及后续云函数清理或映射逻辑升级后会自动触发一次完整重同步。
+返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为 `2.4-medicine-safety-contract`。终端把 revision 纳入 snapshot hash；本次药品字段契约以及后续云函数清理或映射逻辑升级后会自动触发一次完整重同步。
 
 ## 小程序反向命令
 
@@ -109,6 +109,17 @@ OPEN_CABINET
 }
 ```
 
+小程序可以上传待审核的安全资料草稿：`aliases`、`active_ingredients`、
+`structured_contraindications`，并可显式携带
+`safety_review_status: "draft"`。终端会清空草稿的审核人和审核时间，且草稿不会进入
+AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提交
+`safety_reviewed_by` 或 `safety_reviewed_at`；这些审核动作只允许在受控本地流程完成。
+药师组合白名单和成分冲突矩阵同样不接受小程序远程写入。
+
+若补丁同时更换药品身份，终端会清空未在该补丁中提供的旧安全资料，但保留同一补丁
+显式携带的三类新草稿字段。空仓 `upsert` 也会在创建药品后保存同一 payload 的草稿，
+并保持 `package_verified=false` 与 `safety_review_status=draft`。
+
 终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按 `slot` 升序提供药品；命令字段到 SQLite 与快照字段的对应关系为：
 
 | 命令字段 | SQLite | 小程序快照字段 |
@@ -118,6 +129,10 @@ OPEN_CABINET
 | `traceCode` / `trace_code` | `trace_code` | `traceCode`, `trace_code` |
 | `quantity` / `stock` | `stock` | `quantity`, `stock` |
 | `lowStockLine` / `low_stock_line` | `low_stock_line` | `lowStockLine`, `low_stock_line` |
+| `aliases` | `aliases_json`（草稿） | `aliases` |
+| `active_ingredients` | `active_ingredients_json`（草稿） | `active_ingredients` |
+| `structured_contraindications` | `structured_contraindications_json`（草稿） | `structured_contraindications` |
+| `safety_review_status` | 远程只允许 `draft` | `safety_review_status` |
 | `expireDate` / `expire_date` | `expire_date` | `expireDate`, `expire_date`, `expiryPrecision` |
 
 `expireDate` 原样保留 `YYYY-MM` 或 `YYYY-MM-DD`；`expiryPrecision` 由终端据此生成为 `month` 或 `day`。命令中若同时携带 `expiryPrecision`，云函数会先校验它与日期格式一致。

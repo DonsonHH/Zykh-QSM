@@ -17,6 +17,8 @@ from app.repositories.medicine_repository import (  # noqa: E402
     MedicineRepository,
 )
 from app.schemas.medicine import MedicineUpdateRequest  # noqa: E402
+from app.services.medicine_guidance_service import MedicineGuidanceService  # noqa: E402
+from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
 
 
@@ -38,6 +40,27 @@ class StubGuidanceService:
                 "guidance_updated_at": db.now_text(),
             },
         )
+
+
+class StubSafetyFactsAiService:
+    def generate_medicine_guidance(self, _medicine):
+        return {
+            "ok": True,
+            "guidance": {
+                "indications": "用于测试症状",
+                "dosage": "按实物包装说明书使用",
+                "contraindications": ["测试辅料过敏者禁用"],
+                "aliases": ["动态品牌名", "动态通用名"],
+                "active_ingredients": ["动态有效成分"],
+                "structured_contraindications": [
+                    {
+                        "concept_code": "ingredient_allergy",
+                        "display_text": "测试辅料过敏者禁用",
+                    }
+                ],
+                "safety_note": "资料待药师核验",
+            },
+        }
 
 
 class MedicineGuidanceTest(unittest.TestCase):
@@ -154,6 +177,42 @@ class MedicineGuidanceTest(unittest.TestCase):
 
         self.assertEqual(self.guidance.calls, [])
         self.assertEqual(result.medicine.stock, 4)
+
+    def test_dynamic_scan_enrichment_persists_safety_facts_as_unreviewed_draft(self) -> None:
+        scanned = self.repository.create_from_scan(
+            barcode="dynamic-guidance-barcode",
+            manufacturer="动态厂家",
+            name="动态扫码药品",
+            spec="测试规格",
+            expire_date="2030-12",
+            hardware_slot=24,
+        )
+        guidance = MedicineGuidanceService(
+            repository=self.repository,
+            ai_service=StubSafetyFactsAiService(),
+        )
+
+        enriched = guidance.enrich_medicine(scanned.id)
+        persisted = self.repository.get_by_id(scanned.id)
+
+        self.assertEqual(enriched.aliases, ["动态品牌名", "动态通用名"])
+        self.assertEqual(persisted.active_ingredients, ["动态有效成分"])
+        self.assertEqual(
+            persisted.structured_contraindications,
+            [
+                {
+                    "concept_code": "ingredient_allergy",
+                    "display_text": "测试辅料过敏者禁用",
+                }
+            ],
+        )
+        self.assertEqual(persisted.safety_review_status, "draft")
+        self.assertEqual(persisted.safety_reviewed_by, "")
+        self.assertEqual(persisted.safety_reviewed_at, "")
+        self.assertNotIn(
+            persisted.id,
+            {item.id for item in MedicineKnowledgeRepository(self.repository).safe_candidate_pool("")},
+        )
 
 
 if __name__ == "__main__":

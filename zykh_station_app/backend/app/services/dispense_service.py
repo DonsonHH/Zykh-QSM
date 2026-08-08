@@ -60,8 +60,16 @@ class DispenseService:
             raise DispenseError("该药品资料尚未补全，完成实物包装和说明书核验前不可取药。")
         if not medicine.package_verified:
             raise DispenseError("该药品包装规格尚未人工核验，核验完成前不可取药。")
+        if request.verification_method == "inquiry_confirmed" and (
+            medicine.safety_review_status != "reviewed"
+            or not medicine.safety_reviewed_by.strip()
+            or not medicine.safety_reviewed_at.strip()
+        ):
+            raise DispenseError("该药品安全资料尚未完成审核，审核完成前不可取药。")
         if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
             raise DispenseError("该药品已过有效期，不可取药；请联系管理员更换库存。")
+        if medicine.stock < request.quantity:
+            raise DispenseError("当前库存不足，不能执行取药。", status_code=409)
         if not medicine.is_otc and not request.today_plan_id:
             raise DispenseError("该药品需凭处方或既往用药计划取用，请先完成医生审核。")
         canonical_name, target_user_type = self._resolve_identity(request.target_user_id, request.target_user_name)
@@ -85,6 +93,21 @@ class DispenseService:
                 )
             except ValueError as exc:
                 raise DispenseError(str(exc)) from exc
+        latest = self.medicine_repository.get_by_id(request.medicine_id)
+        if latest is None or latest.slot != request.slot:
+            raise DispenseError("药品库存记录已经变化，请重新核对。", status_code=409)
+        if latest.stock < request.quantity:
+            raise DispenseError("当前库存不足，不能执行取药。", status_code=409)
+        if request.expected_review_fingerprint:
+            if (
+                MedicineKnowledgeRepository.review_fingerprint(latest)
+                != request.expected_review_fingerprint
+            ):
+                raise DispenseError(
+                    "药品身份或安全资料已变化，请重新核对后再取药。",
+                    status_code=409,
+                )
+        medicine = latest
         dry_run = self._should_dry_run(request, medicine, force_dry_run)
         qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
         qsm_ok = bool(qsm_result.get("ok"))

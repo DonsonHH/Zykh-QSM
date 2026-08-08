@@ -3,7 +3,7 @@ const cloud = require("wx-server-sdk");
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.3-medicine-sync-contract";
+const schemaRevision = "2.4-medicine-safety-contract";
 
 const collections = {
   devices: "devices",
@@ -129,6 +129,7 @@ function validateMedicineCommand(payload = {}) {
     "name", "manufacturer", "barcode", "code", "category", "spec", "trace_code", "traceCode",
     "stock", "quantity", "low_stock_line", "lowStockLine", "unit", "expire_date", "expireDate",
     "expiryPrecision", "hardware_slot", "hardwareSlot", "slot",
+    "aliases", "active_ingredients", "structured_contraindications", "safety_review_status",
   ]);
   if (operation === "patch") {
     const unknown = Object.keys(source).filter(key => !allowedPatchFields.has(key));
@@ -138,6 +139,28 @@ function validateMedicineCommand(payload = {}) {
 
   validateNonNegativeInteger(source, "quantity", "stock");
   validateNonNegativeInteger(source, "lowStockLine", "low_stock_line");
+  for (const fieldName of ["aliases", "active_ingredients"]) {
+    const field = presentValue(source, fieldName);
+    if (!field.present) continue;
+    if (!Array.isArray(field.value) || field.value.length > 12
+        || field.value.some(value => !String(value || "").trim())) {
+      throw new Error(`${fieldName} must be a non-empty text array with at most 12 items`);
+    }
+  }
+  const structured = presentValue(source, "structured_contraindications");
+  if (structured.present && (
+    !Array.isArray(structured.value)
+    || structured.value.length > 12
+    || structured.value.some(item => !item || typeof item !== "object" || Array.isArray(item)
+      || !String(item.concept_code || "").trim()
+      || !String(item.display_text || "").trim())
+  )) {
+    throw new Error("structured_contraindications must contain concept_code and display_text");
+  }
+  const safetyReviewStatus = presentValue(source, "safety_review_status");
+  if (safetyReviewStatus.present && String(safetyReviewStatus.value || "").trim().toLowerCase() !== "draft") {
+    throw new Error("remote safety_review_status must remain draft");
+  }
   const name = presentValue(source, "name");
   if (name.present && !String(name.value || "").trim()) throw new Error("medicine name must not be empty");
   if (operation === "upsert" && !String(name.value || "").trim()) throw new Error("medicine name required");

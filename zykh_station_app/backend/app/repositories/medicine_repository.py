@@ -1,16 +1,100 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from uuid import uuid4
 
 from .. import db
-from ..schemas.medicine import Medicine
+from ..schemas.medicine import (
+    ApprovedMedicineCombination,
+    Medicine,
+    MedicineIngredientConflictRule,
+)
 
 
 MEDICINE_SEED_VERSION = "home-real-cabinet-v7-slot-03-13-online-identity"
 MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v6-slot-03-13-online"
 PACKAGE_VERIFICATION_VERSION = "fixed-inventory-identity-v1"
+MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v3-controlled-ingredients"
+BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-label-reference-v2"
+BUNDLED_LABEL_SAFETY_IDS = frozenset(
+    {
+        "slot-04-amoxicillin",
+        "slot-06-lactulose",
+        "slot-10-gauze",
+        "slot-12-hydrotalcite",
+        "slot-14-oseltamivir",
+        "slot-15-mupirocin",
+        "slot-16-ketoconazole",
+        "slot-17-iodophor",
+        "slot-18-budesonide-nasal",
+        "slot-19-ketoprofen-gel",
+        "slot-20-bandage",
+        "slot-21-amlodipine",
+        "slot-22-cotton-swab",
+        "slot-23-desloratadine",
+    }
+)
+NON_DRUG_COMBINATION_BASELINE_IDS = frozenset(
+    {"slot-10-gauze", "slot-20-bandage", "slot-22-cotton-swab"}
+)
+
+
+# Compatibility seed only. Inquiry decisions read these facts from SQLite via
+# Medicine entities; this mapping is never consulted by the runtime safety path.
+DEFAULT_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "slot-01-fufang-ganmaoling": {
+        "aliases": ("复方感冒灵", "999感冒灵"),
+        "active_ingredients": ("对乙酰氨基酚",),
+    },
+    "slot-02-centrum": {"aliases": ("善存", "多维元素"), "active_ingredients": ()},
+    "slot-03-diosmectite": {
+        "aliases": ("思密达", "蒙脱石"),
+        "active_ingredients": ("蒙脱石",),
+    },
+    "slot-04-amoxicillin": {"aliases": ("阿莫西林",), "active_ingredients": ("阿莫西林",)},
+    "slot-05-nin-jiom-pei-pa-koa": {
+        "aliases": ("京都念慈庵", "川贝枇杷膏", "枇杷膏"),
+        "active_ingredients": (),
+    },
+    "slot-06-lactulose": {"aliases": ("乳果糖",), "active_ingredients": ("乳果糖",)},
+    "slot-07-yinhuang": {"aliases": ("银黄", "银黄颗粒"), "active_ingredients": ()},
+    "slot-08-huoxiang-zhengqi": {"aliases": ("藿香正气",), "active_ingredients": ()},
+    "slot-09-bifid-triple": {"aliases": ("贝飞达", "双歧杆菌三联活菌"), "active_ingredients": ()},
+    "slot-10-gauze": {"aliases": ("医用纱布", "纱布"), "active_ingredients": ()},
+    "slot-11-guilin-xiguashuang": {"aliases": ("桂林西瓜霜", "西瓜霜"), "active_ingredients": ()},
+    "slot-12-hydrotalcite": {"aliases": ("铝碳酸镁",), "active_ingredients": ("铝碳酸镁",)},
+    "slot-13-ibuprofen": {"aliases": ("芬必得", "布洛芬"), "active_ingredients": ("布洛芬",)},
+    "slot-14-oseltamivir": {"aliases": ("奥司他韦", "磷酸奥司他韦"), "active_ingredients": ("奥司他韦",)},
+    "slot-15-mupirocin": {"aliases": ("莫匹罗星",), "active_ingredients": ("莫匹罗星",)},
+    "slot-16-ketoconazole": {"aliases": ("酮康唑",), "active_ingredients": ("酮康唑",)},
+    "slot-17-iodophor": {"aliases": ("碘伏", "聚维酮碘"), "active_ingredients": ("聚维酮碘",)},
+    "slot-18-budesonide-nasal": {"aliases": ("雷诺考特", "布地奈德"), "active_ingredients": ("布地奈德",)},
+    "slot-19-ketoprofen-gel": {"aliases": ("法斯通", "酮洛芬"), "active_ingredients": ("酮洛芬",)},
+    "slot-20-bandage": {"aliases": ("创口贴",), "active_ingredients": ()},
+    "slot-21-amlodipine": {"aliases": ("氨氯地平",), "active_ingredients": ("氨氯地平",)},
+    "slot-22-cotton-swab": {"aliases": ("医用棉签", "棉签"), "active_ingredients": ()},
+    "slot-23-desloratadine": {"aliases": ("枸地氯雷他定",), "active_ingredients": ("枸地氯雷他定",)},
+}
+
+
+CONTRAINDICATION_CONCEPT_TERMS: dict[str, tuple[str, ...]] = {
+    "diabetes": ("糖尿病", "糖代谢异常"),
+    "renal_impairment": ("肾功能", "肾损害", "肾衰", "肾病"),
+    "liver_impairment": ("肝功能", "肝损害", "肝病"),
+    "hypercalcemia": ("高钙血症",),
+    "hyperphosphatemia": ("高磷血症",),
+    "hypophosphatemia": ("低磷血症",),
+    "myasthenia_gravis": ("重症肌无力",),
+    "galactose_intolerance": ("半乳糖不耐受",),
+    "intestinal_obstruction": ("肠梗阻",),
+    "peptic_ulcer": ("消化道溃疡", "胃溃疡"),
+    "hypotension": ("低血压",),
+    "pregnancy": ("孕妇", "怀孕", "妊娠"),
+    "breastfeeding": ("哺乳",),
+    "asthma": ("哮喘",),
+}
 
 DEFAULT_MEDICINES = [
     {
@@ -536,16 +620,377 @@ for _medicine in DEFAULT_MEDICINES:
 
 
 class MedicineRepository:
+    COMBINATION_SENSITIVE_FIELDS = frozenset(
+        {
+            "name",
+            "manufacturer",
+            "barcode",
+            "category",
+            "spec",
+            "tags",
+            "aliases",
+            "active_ingredients",
+            "indications",
+            "dosage",
+            "contraindications",
+            "structured_contraindications",
+            "expire_date",
+            "is_otc",
+            "is_emergency",
+            "safety_note",
+            "guidance_source",
+            "guidance_review_required",
+            "package_verified",
+            "guidance_updated_at",
+            "safety_review_status",
+            "safety_reviewed_by",
+            "safety_reviewed_at",
+        }
+    )
+
+    def save_approved_combination(
+        self,
+        *,
+        combination_id: str,
+        label: str,
+        medicine_ids: list[str],
+        review_status: str = "draft",
+        reviewed_by: str = "",
+        reviewed_at: str = "",
+    ) -> ApprovedMedicineCombination:
+        self._ensure_seeded()
+        normalized_status = review_status.strip().lower() or "draft"
+        if normalized_status not in {"draft", "reviewed"}:
+            raise ValueError("组合审核状态只能是 draft 或 reviewed。")
+        normalized_reviewer = reviewed_by.strip()
+        normalized_reviewed_at = reviewed_at.strip()
+        if normalized_status == "reviewed" and (
+            not normalized_reviewer or not normalized_reviewed_at
+        ):
+            raise ValueError("已审核组合必须填写审核人和审核时间。")
+        normalized_ids = [str(item).strip() for item in medicine_ids if str(item).strip()]
+        if not 2 <= len(normalized_ids) <= 4 or len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("药师核验组合必须包含 2 至 4 种互不重复的药品。")
+        updated_at = db.now_text()
+        with db.connect() as conn:
+            # Acquire the SQLite writer lock before reading member rows. The
+            # reviewed snapshot and combination upsert therefore cannot be
+            # interleaved with a medicine identity or safety update.
+            conn.execute("BEGIN IMMEDIATE")
+            member_identity_fingerprints: dict[str, str] = {}
+            if normalized_status == "reviewed":
+                placeholders = ",".join("?" for _ in normalized_ids)
+                rows = conn.execute(
+                    f"SELECT * FROM medicines WHERE id IN ({placeholders})",
+                    tuple(normalized_ids),
+                ).fetchall()
+                by_id = {
+                    str(row["id"]): self._row_to_medicine(row)
+                    for row in rows
+                }
+                members = [by_id.get(medicine_id) for medicine_id in normalized_ids]
+                if any(member is None for member in members):
+                    raise ValueError("已审核组合中的每种药品都必须具有当前可核验身份。")
+                if any(
+                    member.safety_review_status != "reviewed"
+                    or not member.safety_reviewed_by.strip()
+                    or not member.safety_reviewed_at.strip()
+                    for member in members
+                    if member is not None
+                ):
+                    raise ValueError("组合成员必须先完成可追溯的安全资料审核。")
+                if any(
+                    not member.active_ingredients
+                    and not self._is_controlled_non_drug_supply(member)
+                    for member in members
+                    if member is not None
+                ):
+                    raise ValueError("药品组合成员必须具有非空的已审核有效成分。")
+                member_identity_fingerprints = {
+                    member.id: self._identity_fingerprint(
+                        name=member.name,
+                        manufacturer=member.manufacturer,
+                        barcode=member.barcode,
+                        spec=member.spec,
+                        category=member.category,
+                    )
+                    for member in members
+                    if member is not None
+                }
+            conn.execute(
+                """
+                INSERT INTO approved_medicine_combinations(
+                  combination_id, label, medicine_ids_json, member_identity_fingerprints_json, review_status,
+                  reviewed_by, reviewed_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(combination_id) DO UPDATE SET
+                  label=excluded.label,
+                  medicine_ids_json=excluded.medicine_ids_json,
+                  member_identity_fingerprints_json=excluded.member_identity_fingerprints_json,
+                  review_status=excluded.review_status,
+                  reviewed_by=excluded.reviewed_by,
+                  reviewed_at=excluded.reviewed_at,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    combination_id.strip(),
+                    label.strip(),
+                    json.dumps(normalized_ids, ensure_ascii=False),
+                    json.dumps(member_identity_fingerprints, ensure_ascii=False, sort_keys=True),
+                    normalized_status,
+                    normalized_reviewer,
+                    normalized_reviewed_at,
+                    updated_at,
+                ),
+            )
+        return ApprovedMedicineCombination(
+            combination_id=combination_id.strip(),
+            label=label.strip(),
+            medicine_ids=normalized_ids,
+            member_identity_fingerprints=member_identity_fingerprints,
+            review_status=normalized_status,
+            reviewed_by=normalized_reviewer,
+            reviewed_at=normalized_reviewed_at,
+            updated_at=updated_at,
+        )
+
+    @classmethod
+    def _is_controlled_non_drug_supply(cls, medicine: Medicine) -> bool:
+        current_fingerprint = cls._identity_fingerprint(
+            name=medicine.name,
+            manufacturer=medicine.manufacturer,
+            barcode=medicine.barcode,
+            spec=medicine.spec,
+            category=medicine.category,
+        )
+        baseline_fingerprints = {
+            cls._identity_fingerprint(
+                name=item.get("name"),
+                manufacturer=item.get("manufacturer"),
+                barcode=item.get("barcode"),
+                spec=item.get("spec"),
+                category=item.get("category"),
+            )
+            for item in DEFAULT_MEDICINES
+            if str(item.get("id")) in NON_DRUG_COMBINATION_BASELINE_IDS
+        }
+        return current_fingerprint in baseline_fingerprints
+
+    def is_controlled_non_drug_supply(self, medicine_id: str) -> bool:
+        medicine = self.get_by_id(medicine_id)
+        return medicine is not None and self._is_controlled_non_drug_supply(medicine)
+
+    def list_reviewed_combinations(self) -> list[ApprovedMedicineCombination]:
+        self._ensure_seeded()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT combination_id, label, medicine_ids_json,
+                       member_identity_fingerprints_json, review_status,
+                       reviewed_by, reviewed_at, updated_at
+                FROM approved_medicine_combinations
+                WHERE review_status='reviewed'
+                  AND TRIM(reviewed_by) <> ''
+                  AND TRIM(reviewed_at) <> ''
+                ORDER BY updated_at, combination_id
+                """
+            ).fetchall()
+        combinations: list[ApprovedMedicineCombination] = []
+        for row in rows:
+            medicine_ids = json.loads(row["medicine_ids_json"] or "[]")
+            member_identity_fingerprints = json.loads(
+                row["member_identity_fingerprints_json"] or "{}"
+            )
+            if (
+                not isinstance(medicine_ids, list)
+                or not 2 <= len(medicine_ids) <= 4
+                or len(set(medicine_ids)) != len(medicine_ids)
+                or not isinstance(member_identity_fingerprints, dict)
+                or set(member_identity_fingerprints) != set(medicine_ids)
+                or any(
+                    not str(member_identity_fingerprints[medicine_id]).strip()
+                    for medicine_id in medicine_ids
+                )
+            ):
+                continue
+            combinations.append(
+                ApprovedMedicineCombination(
+                    combination_id=row["combination_id"],
+                    label=row["label"],
+                    medicine_ids=medicine_ids,
+                    member_identity_fingerprints=member_identity_fingerprints,
+                    review_status=row["review_status"],
+                    reviewed_by=row["reviewed_by"],
+                    reviewed_at=row["reviewed_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+        return combinations
+
+    def get_identity_fingerprints(self, medicine_ids: list[str]) -> dict[str, str]:
+        self._ensure_seeded()
+        normalized_ids = list(
+            dict.fromkeys(str(medicine_id).strip() for medicine_id in medicine_ids if str(medicine_id).strip())
+        )
+        if not normalized_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, name, manufacturer, barcode, spec, category
+                FROM medicines
+                WHERE id IN ({placeholders})
+                """,
+                tuple(normalized_ids),
+            ).fetchall()
+        return {
+            row["id"]: self._identity_fingerprint(
+                name=row["name"],
+                manufacturer=row["manufacturer"],
+                barcode=row["barcode"],
+                spec=row["spec"],
+                category=row["category"],
+            )
+            for row in rows
+        }
+
+    @staticmethod
+    def _identity_fingerprint(
+        *,
+        name: object,
+        manufacturer: object,
+        barcode: object,
+        spec: object,
+        category: object,
+    ) -> str:
+        identity = {
+            "name": str(name or "").strip().lower(),
+            "manufacturer": str(manufacturer or "").strip().lower(),
+            "barcode": str(barcode or "").strip().lower(),
+            "spec": str(spec or "").strip().lower(),
+            "category": str(category or "").strip().lower(),
+        }
+        encoded = json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def save_ingredient_conflict(
+        self,
+        *,
+        left_ingredient: str,
+        right_ingredient: str,
+        disposition: str = "block",
+        message: str = "",
+        review_status: str = "draft",
+        reviewed_by: str = "",
+        reviewed_at: str = "",
+    ) -> MedicineIngredientConflictRule:
+        self._ensure_seeded()
+        left = self._normalize_ingredient(left_ingredient)
+        right = self._normalize_ingredient(right_ingredient)
+        if not left or not right or left == right:
+            raise ValueError("成分冲突矩阵必须包含两种不同的有效成分。")
+        left, right = sorted((left, right))
+        normalized_status = review_status.strip().lower() or "draft"
+        normalized_reviewer = reviewed_by.strip()
+        normalized_reviewed_at = reviewed_at.strip()
+        if normalized_status == "reviewed" and (
+            not normalized_reviewer or not normalized_reviewed_at
+        ):
+            raise ValueError("已审核成分冲突必须填写审核人和审核时间。")
+        normalized_disposition = disposition.strip().lower() or "block"
+        if normalized_disposition != "block":
+            raise ValueError("成分冲突处置目前只允许 block。")
+        updated_at = db.now_text()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO medicine_ingredient_conflicts(
+                  left_ingredient, right_ingredient, disposition, message,
+                  review_status, reviewed_by, reviewed_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(left_ingredient, right_ingredient) DO UPDATE SET
+                  disposition=excluded.disposition,
+                  message=excluded.message,
+                  review_status=excluded.review_status,
+                  reviewed_by=excluded.reviewed_by,
+                  reviewed_at=excluded.reviewed_at,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    left,
+                    right,
+                    normalized_disposition,
+                    message.strip(),
+                    normalized_status,
+                    normalized_reviewer,
+                    normalized_reviewed_at,
+                    updated_at,
+                ),
+            )
+        return MedicineIngredientConflictRule(
+            left_ingredient=left,
+            right_ingredient=right,
+            disposition=normalized_disposition,
+            message=message.strip(),
+            review_status=normalized_status,
+            reviewed_by=normalized_reviewer,
+            reviewed_at=normalized_reviewed_at,
+            updated_at=updated_at,
+        )
+
+    def list_reviewed_ingredient_conflicts(self) -> list[MedicineIngredientConflictRule]:
+        self._ensure_seeded()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT left_ingredient, right_ingredient, disposition, message,
+                       review_status, reviewed_by, reviewed_at, updated_at
+                FROM medicine_ingredient_conflicts
+                WHERE review_status='reviewed'
+                  AND disposition='block'
+                  AND TRIM(reviewed_by) <> ''
+                  AND TRIM(reviewed_at) <> ''
+                ORDER BY left_ingredient, right_ingredient
+                """
+            ).fetchall()
+        return [
+            MedicineIngredientConflictRule(
+                left_ingredient=row["left_ingredient"],
+                right_ingredient=row["right_ingredient"],
+                disposition=row["disposition"],
+                message=row["message"],
+                review_status=row["review_status"],
+                reviewed_by=row["reviewed_by"],
+                reviewed_at=row["reviewed_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _normalize_ingredient(value: object) -> str:
+        return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").lower())
+
     def list_all(self) -> list[Medicine]:
         self._ensure_seeded()
         with db.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
-                       low_stock_line, tags_json,
+                       low_stock_line, tags_json, aliases_json, active_ingredients_json,
+                       structured_contraindications_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at,
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at
                 FROM medicines
                 ORDER BY hardware_slot, slot
                 """
@@ -558,10 +1003,12 @@ class MedicineRepository:
             row = conn.execute(
                 """
                 SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
-                       low_stock_line, tags_json,
+                       low_stock_line, tags_json, aliases_json, active_ingredients_json,
+                       structured_contraindications_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at,
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at
                 FROM medicines
                 WHERE id=?
                 """,
@@ -575,10 +1022,12 @@ class MedicineRepository:
             row = conn.execute(
                 """
                 SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
-                       low_stock_line, tags_json,
+                       low_stock_line, tags_json, aliases_json, active_ingredients_json,
+                       structured_contraindications_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at,
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at
                 FROM medicines
                 WHERE barcode=?
                 """,
@@ -592,10 +1041,12 @@ class MedicineRepository:
             row = conn.execute(
                 """
                 SELECT id, slot, hardware_slot, barcode, name, category, spec, trace_code,
-                       low_stock_line, tags_json,
+                       low_stock_line, tags_json, aliases_json, active_ingredients_json,
+                       structured_contraindications_json,
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
-                       guidance_source, guidance_review_required, package_verified, guidance_updated_at
+                       guidance_source, guidance_review_required, package_verified, guidance_updated_at,
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at
                 FROM medicines
                 WHERE hardware_slot=?
                 ORDER BY updated_at DESC
@@ -619,9 +1070,12 @@ class MedicineRepository:
             "spec": medicine.spec,
             "trace_code": medicine.trace_code,
             "tags": medicine.tags,
+            "aliases": medicine.aliases,
+            "active_ingredients": medicine.active_ingredients,
             "indications": medicine.indications,
             "dosage": medicine.dosage,
             "contraindications": medicine.contraindications,
+            "structured_contraindications": medicine.structured_contraindications,
             "stock": medicine.stock,
             "low_stock_line": medicine.low_stock_line,
             "unit": medicine.unit,
@@ -634,6 +1088,9 @@ class MedicineRepository:
             "guidance_review_required": medicine.guidance_review_required,
             "package_verified": medicine.package_verified,
             "guidance_updated_at": medicine.guidance_updated_at,
+            "safety_review_status": medicine.safety_review_status,
+            "safety_reviewed_by": medicine.safety_reviewed_by,
+            "safety_reviewed_at": medicine.safety_reviewed_at,
         }
         for key, value in updates.items():
             if value is None or key not in next_values:
@@ -654,11 +1111,26 @@ class MedicineRepository:
                 "dosage",
                 "guidance_source",
                 "guidance_updated_at",
+                "safety_review_status",
+                "safety_reviewed_by",
+                "safety_reviewed_at",
             }:
                 next_values[key] = str(value).strip()
                 continue
-            if key in {"tags", "contraindications"} and isinstance(value, list):
+            if key in {"tags", "aliases", "active_ingredients", "contraindications"} and isinstance(value, list):
                 next_values[key] = [str(item).strip() for item in value if str(item).strip()]
+                continue
+            if key == "structured_contraindications" and isinstance(value, list):
+                next_values[key] = [
+                    {
+                        "concept_code": str(item.get("concept_code") or "").strip(),
+                        "display_text": str(item.get("display_text") or "").strip(),
+                    }
+                    for item in value
+                    if isinstance(item, dict)
+                    and str(item.get("concept_code") or "").strip()
+                    and str(item.get("display_text") or "").strip()
+                ]
                 continue
             if key == "stock":
                 next_values[key] = max(int(value), 0)
@@ -669,15 +1141,93 @@ class MedicineRepository:
             if key in {"is_otc", "is_emergency", "guidance_review_required", "package_verified"}:
                 next_values[key] = bool(value)
 
+        identity_changed = any(
+            next_values[field] != getattr(medicine, field)
+            for field in ("name", "manufacturer", "barcode", "category", "spec")
+        )
+        safety_content_changed = any(
+            next_values[field] != getattr(medicine, field)
+            for field in (
+                "tags",
+                "aliases",
+                "active_ingredients",
+                "indications",
+                "dosage",
+                "contraindications",
+                "structured_contraindications",
+                "is_otc",
+                "is_emergency",
+                "safety_note",
+            )
+        )
+        explicitly_reviewed = (
+            str(updates.get("safety_review_status") or "").strip().lower() == "reviewed"
+            and bool(str(updates.get("safety_reviewed_by") or "").strip())
+            and bool(str(updates.get("safety_reviewed_at") or "").strip())
+        )
+        if identity_changed:
+            explicit_draft_facts = {
+                field: next_values[field]
+                for field in (
+                    "aliases",
+                    "active_ingredients",
+                    "structured_contraindications",
+                )
+                if field in updates and isinstance(updates[field], list)
+            }
+            # Identity-bearing edits may describe a different product even when
+            # they arrive as an ordinary slot patch. Never let the new package
+            # inherit reviewed facts, label guidance, or OTC eligibility from
+            # the previous medicine occupying that cabinet.
+            next_values.update(
+                tags=[],
+                aliases=[],
+                active_ingredients=[],
+                indications="",
+                dosage="",
+                contraindications=[],
+                structured_contraindications=[],
+                is_otc=False,
+                is_emergency=False,
+                safety_note="药品身份已变化，说明与安全资料待人工核验。",
+                guidance_source="pending",
+                guidance_review_required=True,
+                package_verified=False,
+                guidance_updated_at="",
+                safety_review_status="draft",
+                safety_reviewed_by="",
+                safety_reviewed_at="",
+            )
+            next_values.update(explicit_draft_facts)
+        elif safety_content_changed and not explicitly_reviewed:
+            # Editing reviewed safety or label content creates a new draft
+            # revision. Public/admin/cloud update paths cannot silently carry
+            # the prior pharmacist/label review onto changed facts.
+            next_values.update(
+                safety_review_status="draft",
+                safety_reviewed_by="",
+                safety_reviewed_at="",
+            )
+
         next_values["image_hint"] = f"{next_values['manufacturer']} {next_values['name']}".strip() or medicine.image_hint
+        combination_sensitive_changed = any(
+            next_values[field] != getattr(medicine, field)
+            for field in self.COMBINATION_SENSITIVE_FIELDS
+        )
         with db.connect() as conn:
+            if identity_changed:
+                conn.execute("DELETE FROM today_plans WHERE medicine_id=?", (medicine_id,))
+            if combination_sensitive_changed:
+                self._invalidate_combinations_for_medicine(conn, medicine_id)
             conn.execute(
                 """
                 UPDATE medicines
                 SET barcode=?, manufacturer=?, name=?, category=?, spec=?, trace_code=?, tags_json=?,
-                    indications=?, dosage=?, contraindications_json=?, stock=?, unit=?, expire_date=?,
+                    aliases_json=?, active_ingredients_json=?, indications=?, dosage=?,
+                    contraindications_json=?, structured_contraindications_json=?, stock=?, unit=?, expire_date=?,
                     low_stock_line=?, image_hint=?, is_otc=?, is_emergency=?, safety_note=?, guidance_source=?,
-                    guidance_review_required=?, package_verified=?, guidance_updated_at=?, updated_at=?
+                    guidance_review_required=?, package_verified=?, guidance_updated_at=?, safety_review_status=?,
+                    safety_reviewed_by=?, safety_reviewed_at=?, updated_at=?
                 WHERE id=?
                 """,
                 (
@@ -688,9 +1238,12 @@ class MedicineRepository:
                     next_values["spec"],
                     next_values["trace_code"],
                     json.dumps(next_values["tags"], ensure_ascii=False),
+                    json.dumps(next_values["aliases"], ensure_ascii=False),
+                    json.dumps(next_values["active_ingredients"], ensure_ascii=False),
                     next_values["indications"],
                     next_values["dosage"],
                     json.dumps(next_values["contraindications"], ensure_ascii=False),
+                    json.dumps(next_values["structured_contraindications"], ensure_ascii=False),
                     int(next_values["stock"]),
                     next_values["unit"],
                     next_values["expire_date"],
@@ -703,11 +1256,42 @@ class MedicineRepository:
                     1 if next_values["guidance_review_required"] else 0,
                     1 if next_values["package_verified"] else 0,
                     next_values["guidance_updated_at"],
+                    next_values["safety_review_status"],
+                    next_values["safety_reviewed_by"],
+                    next_values["safety_reviewed_at"],
                     db.now_text(),
                     medicine_id,
                 ),
             )
         return self.get_by_id(medicine_id)
+
+    @staticmethod
+    def _invalidate_combinations_for_medicine(conn, medicine_id: str) -> None:
+        rows = conn.execute(
+            """
+            SELECT combination_id, medicine_ids_json
+            FROM approved_medicine_combinations
+            WHERE review_status='reviewed'
+            """
+        ).fetchall()
+        affected_ids: list[str] = []
+        for row in rows:
+            try:
+                medicine_ids = json.loads(row["medicine_ids_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                medicine_ids = []
+            if isinstance(medicine_ids, list) and medicine_id in medicine_ids:
+                affected_ids.append(row["combination_id"])
+        if not affected_ids:
+            return
+        conn.executemany(
+            """
+            UPDATE approved_medicine_combinations
+            SET review_status='invalidated', reviewed_by='', reviewed_at='', updated_at=?
+            WHERE combination_id=? AND review_status='reviewed'
+            """,
+            [(db.now_text(), combination_id) for combination_id in affected_ids],
+        )
 
     def create_from_scan(
         self,
@@ -872,8 +1456,10 @@ class MedicineRepository:
                 self._sync_default_inventory(conn)
                 self._sync_default_guidance(conn)
                 self._sync_default_package_verification(conn)
+                self._sync_default_safety_facts(conn)
                 return
             self._insert_default_inventory(conn)
+            self._sync_default_safety_facts(conn)
 
     @staticmethod
     def _sync_default_inventory(conn) -> None:
@@ -1076,15 +1662,173 @@ class MedicineRepository:
             conn.execute(
                 """
                 UPDATE medicines SET package_verified=1
-                WHERE id=? AND name=? AND barcode=? AND manufacturer=?
+                WHERE id=? AND name=? AND barcode=? AND manufacturer=? AND spec=?
                 """,
-                (item["id"], item["name"], item["barcode"], item.get("manufacturer", "")),
+                (
+                    item["id"],
+                    item["name"],
+                    item["barcode"],
+                    item.get("manufacturer", ""),
+                    item.get("spec", ""),
+                ),
             )
         MedicineRepository._write_seed_version(
             conn,
             "package_verification_version",
             PACKAGE_VERIFICATION_VERSION,
         )
+
+    @staticmethod
+    def _sync_default_safety_facts(conn) -> None:
+        version = conn.execute(
+            "SELECT value FROM app_settings WHERE key='medicine_safety_facts_version'"
+        ).fetchone()
+        if version and version["value"] == MEDICINE_SAFETY_FACTS_VERSION:
+            return
+        reviewed_at = db.now_text()
+        for item in DEFAULT_MEDICINES:
+            facts = DEFAULT_MEDICINE_SAFETY_FACTS.get(str(item["id"]), {})
+            row = conn.execute(
+                """
+                SELECT id, name, barcode, manufacturer, spec, category, tags_json,
+                       indications, dosage, contraindications_json, is_otc,
+                       is_emergency, safety_note, guidance_source,
+                       aliases_json, active_ingredients_json,
+                       structured_contraindications_json, safety_review_status,
+                       safety_reviewed_by, safety_reviewed_at
+                FROM medicines
+                WHERE id=?
+                """,
+                (item["id"],),
+            ).fetchone()
+            if row is None:
+                continue
+            reviewer = str(row["safety_reviewed_by"] or "").strip()
+            reviewed_status = str(row["safety_review_status"] or "") == "reviewed"
+            legacy_machine_review = reviewed_status and reviewer == "fixed-inventory-safety-migration"
+            existing_bundled_review = reviewed_status and reviewer == BUNDLED_LABEL_SAFETY_REVIEWER
+            controlled_local_review = (
+                reviewed_status
+                and bool(reviewer)
+                and bool(str(row["safety_reviewed_at"] or "").strip())
+                and not legacy_machine_review
+                and not existing_bundled_review
+            )
+            if controlled_local_review:
+                continue
+
+            try:
+                current_tags = json.loads(row["tags_json"] or "[]")
+                current_contraindications = json.loads(row["contraindications_json"] or "[]")
+                current_aliases = json.loads(row["aliases_json"] or "[]")
+                current_ingredients = json.loads(row["active_ingredients_json"] or "[]")
+                current_structured = json.loads(row["structured_contraindications_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                current_tags = current_contraindications = None
+                current_aliases = current_ingredients = current_structured = None
+
+            identity_matches = not any(
+                str(row[field] or "") != str(item.get(field, "") or "")
+                for field in ("name", "barcode", "manufacturer", "spec", "category")
+            )
+            label_content_matches = (
+                identity_matches
+                and current_tags == list(item.get("tags", []))
+                and str(row["indications"] or "") == str(item.get("indications", "") or "")
+                and str(row["dosage"] or "") == str(item.get("dosage", "") or "")
+                and current_contraindications == list(item.get("contraindications", []))
+                and bool(row["is_otc"]) == bool(item.get("is_otc"))
+                and bool(row["is_emergency"]) == bool(item.get("is_emergency"))
+                and str(row["safety_note"] or "") == str(item.get("safety_note", "") or "")
+                and str(row["guidance_source"] or "")
+                == str(item.get("guidance_source", "") or "")
+            )
+            aliases = list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in (str(item["name"]), *facts.get("aliases", ()))
+                    if value and value.strip()
+                )
+            )
+            ingredients = list(facts.get("active_ingredients", ()))
+            structured = MedicineRepository._default_structured_contraindications(
+                list(item.get("contraindications", []))
+            )
+            facts_are_empty = (
+                current_aliases == []
+                and current_ingredients == []
+                and current_structured == []
+            )
+            facts_match_bundled_baseline = (
+                current_aliases == aliases
+                and current_ingredients == ingredients
+                and current_structured == structured
+            )
+            bundled_baseline_eligible = (
+                str(item["id"]) in BUNDLED_LABEL_SAFETY_IDS
+                and label_content_matches
+                and (facts_are_empty or facts_match_bundled_baseline)
+            )
+
+            next_status = "reviewed" if bundled_baseline_eligible else "draft"
+            next_reviewer = BUNDLED_LABEL_SAFETY_REVIEWER if bundled_baseline_eligible else ""
+            next_reviewed_at = reviewed_at if bundled_baseline_eligible else ""
+            status_changed = (
+                str(row["safety_review_status"] or "") != next_status
+                or reviewer != next_reviewer
+                or str(row["safety_reviewed_at"] or "") != next_reviewed_at
+            )
+            if status_changed or facts_are_empty:
+                MedicineRepository._invalidate_combinations_for_medicine(
+                    conn,
+                    str(item["id"]),
+                )
+            if facts_are_empty and label_content_matches:
+                conn.execute(
+                    """
+                    UPDATE medicines
+                    SET aliases_json=?, active_ingredients_json=?,
+                        structured_contraindications_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        json.dumps(aliases, ensure_ascii=False),
+                        json.dumps(ingredients, ensure_ascii=False),
+                        json.dumps(structured, ensure_ascii=False),
+                        item["id"],
+                    ),
+                )
+            if status_changed:
+                conn.execute(
+                    """
+                    UPDATE medicines
+                    SET safety_review_status=?, safety_reviewed_by=?, safety_reviewed_at=?
+                    WHERE id=?
+                    """,
+                    (next_status, next_reviewer, next_reviewed_at, item["id"]),
+                )
+        MedicineRepository._write_seed_version(
+            conn,
+            "medicine_safety_facts_version",
+            MEDICINE_SAFETY_FACTS_VERSION,
+        )
+
+    @staticmethod
+    def _default_structured_contraindications(
+        warnings: list[str],
+    ) -> list[dict[str, str]]:
+        structured: list[dict[str, str]] = []
+        for warning in warnings:
+            matched_codes = [
+                concept_code
+                for concept_code, terms in CONTRAINDICATION_CONCEPT_TERMS.items()
+                if any(term in warning for term in terms)
+            ]
+            for concept_code in matched_codes or ["label_warning"]:
+                structured.append(
+                    {"concept_code": concept_code, "display_text": warning}
+                )
+        return structured
 
     @staticmethod
     def _row_to_medicine(row: object) -> Medicine:
@@ -1099,9 +1843,12 @@ class MedicineRepository:
             spec=row["spec"] or "",
             trace_code=row["trace_code"] or "",
             tags=json.loads(row["tags_json"]),
+            aliases=json.loads(row["aliases_json"] or "[]"),
+            active_ingredients=json.loads(row["active_ingredients_json"] or "[]"),
             indications=row["indications"] or "",
             dosage=row["dosage"] or "",
             contraindications=json.loads(row["contraindications_json"]),
+            structured_contraindications=json.loads(row["structured_contraindications_json"] or "[]"),
             stock=int(row["stock"]),
             low_stock_line=max(int(row["low_stock_line"]), 0),
             unit=row["unit"],
@@ -1114,6 +1861,9 @@ class MedicineRepository:
             guidance_review_required=bool(row["guidance_review_required"]),
             package_verified=bool(row["package_verified"]),
             guidance_updated_at=row["guidance_updated_at"] or "",
+            safety_review_status=row["safety_review_status"] or "draft",
+            safety_reviewed_by=row["safety_reviewed_by"] or "",
+            safety_reviewed_at=row["safety_reviewed_at"] or "",
         )
 
     @staticmethod
@@ -1133,7 +1883,7 @@ class MedicineRepository:
                         guidance_source=?,
                         guidance_review_required=?,
                         guidance_updated_at=?
-                    WHERE id=? AND name=?
+                    WHERE id=? AND name=? AND barcode=? AND manufacturer=? AND spec=?
                     """,
                     (
                         item["indications"],
@@ -1145,6 +1895,9 @@ class MedicineRepository:
                         db.now_text(),
                         item["id"],
                         item["name"],
+                        item["barcode"],
+                        item.get("manufacturer", ""),
+                        item.get("spec", ""),
                     ),
                 )
             conn.execute(
@@ -1175,7 +1928,7 @@ class MedicineRepository:
                       WHEN TRIM(COALESCE(guidance_updated_at, ''))='' THEN ?
                       ELSE guidance_updated_at
                     END
-                WHERE id=?
+                WHERE id=? AND name=? AND barcode=? AND manufacturer=? AND spec=?
                 """,
                 (
                     item["indications"],
@@ -1183,6 +1936,10 @@ class MedicineRepository:
                     item["guidance_source"],
                     db.now_text(),
                     item["id"],
+                    item["name"],
+                    item["barcode"],
+                    item.get("manufacturer", ""),
+                    item.get("spec", ""),
                 ),
             )
 

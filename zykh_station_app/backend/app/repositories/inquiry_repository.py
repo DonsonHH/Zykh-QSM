@@ -106,6 +106,10 @@ class InquiryRepository:
         primary = session.primary_candidate.model_dump() if session.primary_candidate else None
         alternative = session.alternative_candidate.model_dump() if session.alternative_candidate else None
         treatment_options = [option.model_dump() for option in session.treatment_options]
+        extracted_payload = session.extracted_information.model_dump()
+        extracted_payload["medication_safety_notices"] = [
+            notice.model_dump() for notice in session.medication_safety_notices
+        ]
         with db.connect() as conn:
             conn.execute(
                 """
@@ -162,7 +166,7 @@ class InquiryRepository:
                     session.reasoning_summary,
                     session.model_action_intent,
                     session.action_reason,
-                    json.dumps(session.extracted_information.model_dump(), ensure_ascii=False),
+                    json.dumps(extracted_payload, ensure_ascii=False),
                     json.dumps(session.vitals, ensure_ascii=False) if session.vitals else "",
                     session.risk_level or "",
                     json.dumps(session.risk_reasons, ensure_ascii=False),
@@ -221,6 +225,10 @@ class InquiryRepository:
         values = dict(row)
         reply, source = _present_legacy_reply(values["reply"], values["source"])
         extracted_information = json.loads(values["extracted_json"] or "{}")
+        medication_safety_notices = extracted_information.pop(
+            "medication_safety_notices",
+            [],
+        )
         if legacy_demo_quarantined:
             reply = _LEGACY_DEMO_REVIEW_REPLY
             source = "legacy_data_quarantine"
@@ -270,6 +278,9 @@ class InquiryRepository:
                 []
                 if legacy_demo_quarantined
                 else json.loads(values["risk_reasons_json"] or "[]")
+            ),
+            medication_safety_notices=(
+                [] if legacy_demo_quarantined else medication_safety_notices
             ),
             next_action="escalate" if legacy_demo_quarantined else values["next_action"],
             primary_candidate=None

@@ -61,6 +61,7 @@ export function InquiryResultStep({
   const requiresExistingDirection = Boolean(
     selectedOption?.medicines?.some((medicine) => medicine.requires_existing_direction)
   );
+  const medicationSafetyNotices = result?.medication_safety_notices || [];
   const assessment = result?.extracted_information?.final_assessment || {};
   const showAssessment = !requiresEscalation && Boolean(
     assessment?.possible_conditions?.length
@@ -146,6 +147,16 @@ export function InquiryResultStep({
       </header>
 
       <div className={`treatment-result-body ${showAssessment ? "with-assessment" : ""}`}>
+        {medicationSafetyNotices.length ? (
+          <section className="medication-safety-notices" aria-label="用药安全核验提醒">
+            <header><AlertTriangle size={19} aria-hidden="true" /><strong>用药安全核验提醒</strong></header>
+            <ul>
+              {medicationSafetyNotices.map((notice, index) => (
+                <li key={`${notice.code || "notice"}-${index}`}>{notice.message}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {canProceed ? (
           <div className={`treatment-option-grid count-${Math.min(options.length, 2)}`} role="radiogroup" aria-label="用药方案">
           {options.slice(0, 2).map((option, optionIndex) => {

@@ -63,11 +63,35 @@ The endpoint always returns HTTP 200 for expected missing-device cases so the te
 ### GET /api/medicines
 
 Returns the home medicine list and available categories. Each medicine includes
-`indications`, `dosage`, `contraindications`, `guidance_source` and
-`guidance_review_required`. When an administrator changes a medicine name,
-manufacturer, barcode or category, the backend attempts a structured cloud
-guidance refresh. Generated guidance remains review-required and must be checked
-against the physical package leaflet.
+database-backed `aliases`, `active_ingredients`, `structured_contraindications`,
+`indications`, `dosage`, review metadata and package-verification state. When a
+medicine identity field (`name`, `manufacturer`, `barcode`, `spec` or `category`)
+changes, the repository clears the old guidance and safety facts, sets
+`package_verified=false`, and returns the safety profile to `draft`. Generated or
+remotely supplied facts also remain draft until a controlled local review records
+both the reviewer and review time. The identity change and deletion of linked
+`today_plans` occur in one SQLite transaction, so an existing plan can never be
+silently reassigned to a different product at the same slot or row ID.
+
+Inquiry candidate assessment reads only the current reviewed database facts. It
+can return the stable notices `used_medicine_duplicate`, `allergy_conflict` and
+`history_contraindication`; draft, expired, depleted or unverified medicines never
+enter the candidate pool.
+
+Multi-medicine model output is fail-closed. A selection of two to four medicines
+must exactly match a pharmacist-reviewed combination whose member identity
+fingerprints still match the current rows. A repeated active ingredient or a
+reviewed `block` rule in the ingredient-conflict matrix overrides an approved
+combination. More than four medicines are rejected as a whole and are never
+truncated. The production combination table is intentionally seeded empty: when
+no pharmacist-signed combination exists, multi-medicine options are disabled;
+single reviewed medicines remain available.
+
+Approved combinations are explicit review artifacts, not permanent properties of
+row IDs. Any member identity, safety content, package/guidance state or safety
+review metadata change marks every linked approved combination `invalidated` and
+clears its prior reviewer metadata. Restoring or re-reviewing the medicine does not
+revive those rows; a pharmacist must review and save a new exact combination.
 
 ### GET /api/medicines/{medicine_id}
 
@@ -76,6 +100,15 @@ Returns a single medicine detail.
 ### POST /api/dispense/confirm
 
 Requires the safety notice confirmation flag and writes a local 取药确认 record. By default it calls the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is optional; when configured, only the matching slot can open.
+
+An inquiry-originated confirmation (`verification_method=inquiry_confirmed`) also
+requires reviewed safety metadata and carries the exact review fingerprint that
+the user saw. The dispense boundary reloads both that fingerprint and live stock
+immediately before the QSM call; a changed identity, safety review or depleted
+stock returns HTTP 409 without calling the cabinet. `draft` is specifically an AI
+candidate gate: ordinary medicine-page and existing-plan workflows still use
+their package verification, expiry, prescription-plan and registered-allergy
+checks rather than treating an AI metadata draft as a universal cabinet lock.
 
 For an unregistered or unidentified face, the frontend sends
 `archive_identity_snapshot=true` after explicit guest confirmation. A successful
@@ -103,8 +136,10 @@ Restores one inquiry session with messages, identity, vitals snapshot and result
 
 ### POST /api/inquiry/sessions/{session_id}/turn
 
-Adds one speech transcript. The selected cloud or local model reads the full
-conversation, profile, vitals and recent natural-language case summaries. It
+Adds one speech transcript. `AI_MODE=auto|cloud` uses the cloud model first and
+then QSM after an unavailable or invalid cloud result; `AI_MODE=local` starts
+with QSM. The selected model reads the full conversation, profile, vitals and
+recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
 fixed symptom taxonomy or fixed observation-field order. A deterministic policy
@@ -121,7 +156,10 @@ decision question. The model may choose `measure_vitals` only after symptom scop
 has been confirmed and only when core vitals materially affect the next decision. The frontend
 finishes the spoken guidance, pauses for 2.2 seconds, then renders the vitals
 tool inside the inquiry flow. It does not navigate away or transfer results
-through browser storage.
+through browser storage. Cloud turn extraction, Responses final analysis and
+the Chat Completions final fallback share `AI_INQUIRY_REASONING_EFFORT` (default
+`high`); legacy `AI_INQUIRY_ENABLE_THINKING` applies only when the new setting is
+absent. QSM reasoning remains independently disabled.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool from the latest cabinet rows. It filters stock,
@@ -129,9 +167,14 @@ expiry, verified package guidance, OTC or existing-plan eligibility, allergies,
 chronic contraindications, current-episode medicine aliases and duplicate active
 ingredients. The model receives a smaller symptom-focused subset and may choose
 at most one primary and one alternative from exactly that subset, or choose none.
-The cabinet is read again after ranking before anything is displayed. If both model routes are unavailable
-or return invalid structure, the session remains retryable, returns no candidate
-and does not expose connection or fallback terminology in its user-facing reply.
+The cabinet is read again after ranking before anything is displayed. Cloud and
+QSM ranking outputs use the same complete `assessment + options` contract and
+validator; the QSM request may use a compact, category-narrowed adapter without
+changing those semantics. If the applicable model routes are unavailable or
+return invalid structure, deterministic rules preserve bounded follow-up and
+danger-signal handling only. The session remains retryable, returns no final
+assessment or candidate and does not expose connection or fallback terminology
+in its user-facing reply.
 Environment-sensitive cloud requests may include current Chengdu weather as
 supporting context; it cannot replace measured vitals or establish a diagnosis.
 Final assessment first calls the configured Responses endpoint once, with its
@@ -380,7 +423,11 @@ returns a short natural retry prompt and no medicine candidate.
 
 ### GET /api/ai/status
 
-Returns the selected AI mode, cloud configuration state and QSM offline-model health without exposing API keys.
+Returns the selected AI mode and cloud configuration state without exposing API
+keys. `model_ready` and `local.ready` report actual QSM model health;
+`rules_fallback_ready` reports deterministic continuity availability;
+`offline_inquiry_ready` is their aggregate. The aggregate does not change a
+false model-health value to true.
 
 ### POST /api/ai/chat/stream
 

@@ -584,6 +584,14 @@ class CloudSyncWorker:
             raise CloudSyncError("药品补丁缺少 patch 字段。")
         source = nested_patch if operation == "patch" else payload
         assert isinstance(source, dict)
+        remote_review_status = str(source.get("safety_review_status") or "").strip().lower()
+        if remote_review_status and remote_review_status != "draft":
+            raise CloudSyncError("药品安全资料不能远程标记为已审核。")
+        if any(
+            str(source.get(field) or "").strip()
+            for field in ("safety_reviewed_by", "safety_reviewed_at")
+        ):
+            raise CloudSyncError("药品安全资料不能远程标记为已审核。")
 
         slot_present, slot_value = CloudSyncWorker._consistent_value(
             payload, "仓位", "hardware_slot", "hardwareSlot", "slot"
@@ -629,6 +637,49 @@ class CloudSyncWorker:
                 updates[target] = number
             else:
                 updates[target] = str(value).strip()
+        for target in ("aliases", "active_ingredients"):
+            if target not in source:
+                continue
+            value = source[target]
+            if not isinstance(value, list):
+                raise CloudSyncError(f"药品字段 {target} 必须是文本数组。")
+            updates[target] = [
+                str(item).strip()
+                for item in value[:12]
+                if str(item).strip()
+            ]
+        if "structured_contraindications" in source:
+            value = source["structured_contraindications"]
+            if not isinstance(value, list):
+                raise CloudSyncError("药品字段 structured_contraindications 必须是对象数组。")
+            structured: list[dict[str, str]] = []
+            for item in value[:12]:
+                if not isinstance(item, dict):
+                    raise CloudSyncError("结构化禁忌项必须包含 concept_code 和 display_text。")
+                concept_code = str(item.get("concept_code") or "").strip()
+                display_text = str(item.get("display_text") or "").strip()
+                if not concept_code or not display_text:
+                    raise CloudSyncError("结构化禁忌项必须包含 concept_code 和 display_text。")
+                structured.append(
+                    {
+                        "concept_code": concept_code[:60],
+                        "display_text": display_text[:120],
+                    }
+                )
+            updates["structured_contraindications"] = structured
+        remote_draft_fields = {
+            "aliases",
+            "active_ingredients",
+            "structured_contraindications",
+            "safety_review_status",
+        }
+        if any(field in source for field in remote_draft_fields):
+            updates.update(
+                safety_review_status="draft",
+                safety_reviewed_by="",
+                safety_reviewed_at="",
+                guidance_review_required=True,
+            )
         for required_text in ("name", "category", "unit"):
             if required_text in updates and not str(updates[required_text]).strip():
                 raise CloudSyncError(f"药品字段 {required_text} 不能为空。")
@@ -666,6 +717,21 @@ class CloudSyncWorker:
                 unit=str(updates.get("unit") or "盒"),
                 category=str(updates.get("category") or "家庭常用"),
             )
+            draft_updates = {
+                field: updates[field]
+                for field in (
+                    "aliases",
+                    "active_ingredients",
+                    "structured_contraindications",
+                    "safety_review_status",
+                    "safety_reviewed_by",
+                    "safety_reviewed_at",
+                    "guidance_review_required",
+                )
+                if field in updates
+            }
+            if draft_updates:
+                updated = repository.update(updated.id, draft_updates) or updated
         return {"medicine": updated.model_dump(mode="json") if updated else None}
 
     @staticmethod

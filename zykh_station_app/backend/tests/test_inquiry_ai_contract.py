@@ -57,6 +57,24 @@ class FakeWeatherContext:
         return self.value
 
 
+def local_ranking_reply(options: list[dict], summary: str = "需要结合当前信息继续观察。") -> dict:
+    return {
+        "ok": True,
+        "reply": json.dumps(
+            {
+                "assessment": {
+                    "summary": summary,
+                    "possible_conditions": [],
+                    "next_steps": ["继续记录症状变化"],
+                    "seek_care_if": ["症状明显加重时及时联系医生"],
+                },
+                "options": options,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
 class InquiryAiContractTest(unittest.TestCase):
     @patch("app.services.ai_service.AiService._cloud_reachable", return_value=True)
     @patch("app.services.ai_service.db.get_setting", return_value="local")
@@ -402,7 +420,7 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertNotIn("slot-21-amlodipine", ids)
         self.assertTrue(ids)
 
-    def test_ai_selection_is_limited_to_the_safe_pool_and_two_options(self) -> None:
+    def test_ai_selection_rejects_a_whole_option_when_any_id_is_outside_the_safe_pool(self) -> None:
         knowledge = MedicineKnowledgeRepository()
         pool = knowledge.safe_candidate_pool("头孢过敏")
         options = knowledge.options_from_ai_selection(
@@ -436,14 +454,15 @@ class InquiryAiContractTest(unittest.TestCase):
             pool,
         )
 
-        self.assertEqual(len(options), 2)
+        self.assertEqual(len(options), 1)
         selected_ids = {medicine.id for option in options for medicine in option.medicines}
         self.assertNotIn("slot-04-amoxicillin", selected_ids)
-        self.assertEqual(options[0].label, "主方案")
-        self.assertEqual(options[0].medicines[0].recommended_usage, "口服，一次1丸，一日2次")
+        self.assertNotIn("slot-08-huoxiang-zhengqi", selected_ids)
+        self.assertEqual(options[0].label, "备选")
+        self.assertEqual(options[0].medicines[0].id, "slot-12-hydrotalcite")
         self.assertEqual(
-            options[1].medicines[0].recommended_usage,
-            options[1].medicines[0].dosage,
+            options[0].medicines[0].recommended_usage,
+            options[0].medicines[0].dosage,
         )
 
     @patch("app.services.ai_service.settings")
@@ -453,24 +472,18 @@ class InquiryAiContractTest(unittest.TestCase):
     ) -> None:
         mocked_settings.ai_mode = "local"
         client = FakeLocalClient(
-            {
-                "ok": True,
-                "reply": json.dumps(
+            local_ranking_reply(
+                [
                     {
-                        "summary": "手部浅表伤口需要先清洁并覆盖保护。",
-                        "options": [
-                            {
-                                "option_id": "primary",
-                                "label": "主方案",
-                                "reason": "这组护理用品更贴近浅表伤口的清洁和覆盖。",
-                                "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
-                                "usage_by_medicine": {},
-                            }
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+                        "option_id": "primary",
+                        "label": "主方案",
+                        "reason": "这组护理用品更贴近浅表伤口的清洁和覆盖。",
+                        "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
+                        "usage_by_medicine": {},
+                    }
+                ],
+                "手部浅表伤口需要先清洁并覆盖保护。",
+            )
         )
 
         result = AiService(local_client=client).rank_inquiry_candidates(
@@ -520,10 +533,7 @@ class InquiryAiContractTest(unittest.TestCase):
     ) -> None:
         mocked_settings.ai_mode = "local"
         client = FakeLocalClient(
-            {
-                "ok": True,
-                "reply": '{"summary":"目前还不能确认具体不适。","options":[]}',
-            }
+            local_ranking_reply([], "目前还不能确认具体不适。")
         )
 
         result = AiService(local_client=client).rank_inquiry_candidates(
@@ -559,10 +569,11 @@ class InquiryAiContractTest(unittest.TestCase):
         )
 
         self.assertTrue(client.last_messages)
+        self.assertTrue(result["ok"])
         self.assertEqual(result["options"], [])
 
     @patch("app.services.ai_service.settings")
-    def test_local_candidate_ranking_recovers_short_keys_from_a_truncated_reply(
+    def test_local_candidate_ranking_rejects_a_truncated_business_contract(
         self,
         mocked_settings,
     ) -> None:
@@ -597,18 +608,13 @@ class InquiryAiContractTest(unittest.TestCase):
             ],
         )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(
-            result["options"][0]["medicine_ids"],
-            ["slot-17-iodophor", "slot-20-bandage"],
-        )
-        self.assertTrue(result["assessment"]["possible_conditions"])
-        self.assertTrue(result["assessment"]["next_steps"])
-        self.assertTrue(result["assessment"]["seek_care_if"])
-        self.assertEqual(client.last_kwargs["max_tokens"], 32)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["source"], "rules_fallback")
+        self.assertEqual(result["options"], [])
+        self.assertEqual(client.last_kwargs["max_tokens"], 320)
 
     @patch("app.services.ai_service.settings")
-    def test_local_candidate_ranking_accepts_the_compact_board_model_format(
+    def test_local_candidate_ranking_rejects_the_legacy_line_format(
         self,
         mocked_settings,
     ) -> None:
@@ -626,13 +632,9 @@ class InquiryAiContractTest(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(
-            [option["medicine_ids"] for option in result["options"]],
-            [["iodophor", "bandage"], ["gauze"]],
-        )
-        self.assertTrue(result["assessment"]["possible_conditions"])
-        self.assertTrue(result["assessment"]["next_steps"])
-        self.assertTrue(result["assessment"]["seek_care_if"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["source"], "rules_fallback")
+        self.assertEqual(result["options"], [])
 
     @patch("app.services.ai_service.settings")
     def test_local_candidate_ranking_keeps_four_items_in_a_care_sequence(
@@ -640,7 +642,23 @@ class InquiryAiContractTest(unittest.TestCase):
         mocked_settings,
     ) -> None:
         mocked_settings.ai_mode = "local"
-        client = FakeLocalClient({"ok": True, "reply": "A=17,22,20,19|按顺序处理"})
+        client = FakeLocalClient(
+            local_ranking_reply(
+                [
+                    {
+                        "option_id": "primary",
+                        "label": "主方案",
+                        "reason": "按顺序处理",
+                        "medicine_ids": [
+                            "medicine-17",
+                            "medicine-22",
+                            "medicine-20",
+                            "medicine-19",
+                        ],
+                    }
+                ]
+            )
+        )
         candidates = [
             {"id": f"medicine-{slot}", "slot": str(slot), "name": f"用品{slot}", "category": "外伤护理"}
             for slot in (17, 22, 20, 19)
@@ -665,7 +683,16 @@ class InquiryAiContractTest(unittest.TestCase):
         client = FakeLocalClient(
             [
                 {"ok": True, "reply": "外伤护理"},
-                {"ok": True, "reply": "A=碘伏消毒液,创口贴|先清洁消毒再覆盖"},
+                local_ranking_reply(
+                    [
+                        {
+                            "option_id": "primary",
+                            "label": "主方案",
+                            "reason": "先清洁消毒再覆盖",
+                            "medicine_ids": ["iodophor", "bandage"],
+                        }
+                    ]
+                ),
             ]
         )
         candidates = [
@@ -712,7 +739,16 @@ class InquiryAiContractTest(unittest.TestCase):
     def test_local_ranking_focuses_clear_heatstroke_case_before_model_selection(self, mocked_settings) -> None:
         mocked_settings.ai_mode = "local"
         client = FakeLocalClient(
-            {"ok": True, "reply": "A=8|更贴合暑湿不适和头晕"}
+            local_ranking_reply(
+                [
+                    {
+                        "option_id": "primary",
+                        "label": "主方案",
+                        "reason": "更贴合暑湿不适和头晕",
+                        "medicine_ids": ["slot-08-huoxiang-zhengqi"],
+                    }
+                ]
+            )
         )
         result = AiService(local_client=client).rank_inquiry_candidates(
             {

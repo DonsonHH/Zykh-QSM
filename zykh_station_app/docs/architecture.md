@@ -73,10 +73,10 @@ by the hard-safe pool and may return no candidate.
 For online environment-sensitive complaints such as heat exposure, the service
 can attach current Chengdu weather from Open-Meteo to the model request. This is
 supporting context only and cannot establish a cause or replace measured vitals.
-The offline 0.8B route emits one compact case-understanding structure. To avoid
-a second slow board inference, local candidate ordering compares model-extracted
-complaint and care-purpose concepts with descriptions in the already-filtered
-hard-safe pool.
+The offline 0.8B route uses a compact wire adapter for the board context budget,
+but expands into and validates the same case-understanding contract as the cloud
+route. It preserves topic evidence, question topic, clinical readiness and
+symptom-change semantics rather than maintaining a second clinical schema.
 
 Deterministic code is deliberately narrower: it intercepts non-negotiable danger
 signals, may raise but never lower model risk, excludes expired, unavailable,
@@ -86,9 +86,13 @@ symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
 layer classifies the model's proposed question into decision topics so it can
 enforce one question per turn, the four-question budget and no-repeat rules; it
 uses a small fallback-question set only when the proposal is missing or unsafe.
-The cloud route ranks the safe pool with the model; the constrained offline route
-uses the compact model concepts for a deterministic similarity ordering so safety
-is retained without another slow generation.
+The cloud and QSM routes rank the hard-safe pool against the same semantic output
+contract and validator. QSM may receive a category-narrowed catalog, but the
+model itself must return the complete `assessment + options` object and may only
+select catalog IDs. Deterministic rules do not supply or impersonate a missing
+model assessment: on an unavailable or invalid final rank, the session remains
+retryable and exposes no candidate. Rules remain available only for bounded
+dialogue continuity and non-negotiable danger interception.
 
 Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.md).
 

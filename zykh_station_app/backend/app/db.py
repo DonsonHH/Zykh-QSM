@@ -80,12 +80,53 @@ def init_db() -> None:
         _ensure_column(conn, "medicines", "spec", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "medicines", "trace_code", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "medicines", "low_stock_line", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "medicines", "aliases_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "medicines", "active_ingredients_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "medicines", "structured_contraindications_json", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "medicines", "indications", "TEXT DEFAULT ''")
         _ensure_column(conn, "medicines", "dosage", "TEXT DEFAULT ''")
         _ensure_column(conn, "medicines", "guidance_source", "TEXT DEFAULT 'pending'")
         _ensure_column(conn, "medicines", "guidance_review_required", "INTEGER NOT NULL DEFAULT 1")
         _ensure_column(conn, "medicines", "package_verified", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "medicines", "guidance_updated_at", "TEXT DEFAULT ''")
+        _ensure_column(conn, "medicines", "safety_review_status", "TEXT NOT NULL DEFAULT 'draft'")
+        _ensure_column(conn, "medicines", "safety_reviewed_by", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "safety_reviewed_at", "TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approved_medicine_combinations (
+              combination_id TEXT PRIMARY KEY,
+              label TEXT NOT NULL,
+              medicine_ids_json TEXT NOT NULL,
+              member_identity_fingerprints_json TEXT NOT NULL DEFAULT '{}',
+              review_status TEXT NOT NULL DEFAULT 'draft',
+              reviewed_by TEXT NOT NULL DEFAULT '',
+              reviewed_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "member_identity_fingerprints_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medicine_ingredient_conflicts (
+              left_ingredient TEXT NOT NULL,
+              right_ingredient TEXT NOT NULL,
+              disposition TEXT NOT NULL DEFAULT 'block',
+              message TEXT NOT NULL DEFAULT '',
+              review_status TEXT NOT NULL DEFAULT 'draft',
+              reviewed_by TEXT NOT NULL DEFAULT '',
+              reviewed_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(left_ingredient, right_ingredient)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dispense_records (

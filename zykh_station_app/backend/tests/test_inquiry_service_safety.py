@@ -36,9 +36,14 @@ def ibuprofen(stock: int = 1) -> Medicine:
         is_otc=True,
         is_emergency=False,
         safety_note="避免与其他解热镇痛药重复使用",
+        aliases=["芬必得", "布洛芬"],
+        active_ingredients=["布洛芬"],
         guidance_source="verified_label",
         guidance_review_required=False,
         package_verified=True,
+        safety_review_status="reviewed",
+        safety_reviewed_by="test-pharmacist",
+        safety_reviewed_at="2026-08-08T00:00:00+08:00",
     )
 
 
@@ -121,6 +126,11 @@ class InquiryServiceSafetyTest(unittest.TestCase):
 
         self.assertEqual(result.candidate_medicines, [])
         self.assertEqual(interpreter.ranked_candidates, [[]])
+        self.assertEqual(
+            [notice.code for notice in result.medication_safety_notices],
+            ["used_medicine_duplicate"],
+        )
+        self.assertIn("布洛芬缓释胶囊", result.medication_safety_notices[0].message)
 
     def test_one_shot_evaluate_revalidates_inventory_after_ranking(self) -> None:
         service, _, source = self.service([[ibuprofen(1)], [ibuprofen(0)]])

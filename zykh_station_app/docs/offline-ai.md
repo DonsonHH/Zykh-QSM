@@ -53,10 +53,11 @@ The download is resumable and verifies both exact size and SHA-256. The deploy s
 6. establishes `tcp:18083 -> tcp:8083`;
 7. starts the model and runs health plus real inference smoke checks.
 
-`launch_kiosk.sh` currently leaves the QSM offline inquiry model stopped to conserve board resources. Start it explicitly only when offline-model work is needed:
+`launch_kiosk.sh` checks and starts the QSM offline inquiry model by default. To
+temporarily skip that startup during resource debugging, disable it explicitly:
 
 ```bash
-KIOSK_OFFLINE_AI=1 sh scripts/launch_kiosk.sh
+KIOSK_OFFLINE_AI=0 sh scripts/launch_kiosk.sh
 ```
 
 ## Lifecycle
@@ -81,6 +82,7 @@ adb shell 'sh /userdata/zykh_station_app/local-ai/start_local_ai.sh'
 ```text
 AI_MODE=auto
 AI_CLOUD_IN_LOCAL_DISPLAY=true
+AI_INQUIRY_REASONING_EFFORT=high
 NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
@@ -89,6 +91,7 @@ LOCAL_AI_HEALTH_PATH=/health
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
 LOCAL_AI_TIMEOUT_SECONDS=45
 LOCAL_AI_HEALTH_TIMEOUT_SECONDS=2
+OFFLINE_INQUIRY_MODE=model
 LOCAL_AI_CTX_SIZE=1536
 LOCAL_AI_THREADS=4
 LOCAL_AI_BATCH_SIZE=256
@@ -96,17 +99,23 @@ LOCAL_AI_UBATCH_SIZE=64
 LOCAL_AI_CACHE_RAM=64
 ```
 
-板端默认只保留最近 6 条有效对话，并以 `1024` 上下文、较小批次运行。这个配置用于控制
+板端默认只保留最近 6 条有效对话，并以 `1536` 上下文、较小批次运行。这个配置用于控制
 2GB 内存设备上的峰值占用，避免体征、身份识别或离线语音合成同时工作时系统终止
 `llama-server`。如更换内存更大的板卡，可通过上述环境变量单独放大。
 
 Modes:
 
-- `AI_MODE=auto`: cloud first; use the configured fallback only after a real cloud request failure.
-- `AI_MODE=local`: always use the QSM offline model.
-- `AI_MODE=cloud`: request cloud first, but still fail safely to the offline model if the request cannot complete.
+- `AI_MODE=auto`: use cloud when reachable, then the QSM model, then deterministic dialogue continuity.
+- `AI_MODE=cloud`: attempt cloud without the reachability preflight, then the same QSM-model and continuity sequence after an actual request failure.
+- `AI_MODE=local`: use the QSM model directly, then deterministic dialogue continuity if it is unavailable or invalid.
+- `OFFLINE_INQUIRY_MODE=model`: default model-first offline path. Explicit `rules` remains available for controlled legacy deployments.
+- `AI_INQUIRY_REASONING_EFFORT=high`: one `off|low|high|max` setting for cloud turn extraction, Responses final analysis and its Chat Completions fallback. If this variable is absent, legacy `AI_INQUIRY_ENABLE_THINKING=true/false` maps to `high/off`.
 - `AI_CLOUD_IN_LOCAL_DISPLAY=true`: the terminal may visibly enter local mode while inquiry still uses DeepSeek through the retained SIM transport. ASR and TTS remain local.
 - `NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true`: hiding the SIM switch does not stop QSM `usb0` or remove the host tether route.
+
+The QSM `llama-server` keeps its own `--reasoning off` setting. Cloud reasoning
+effort is not forwarded to the board and QSM output is never labelled as
+DeepSeek thinking.
 
 Inquiry-session source values remain internal diagnostics. The terminal UI uses
 accessible icons and natural retry guidance instead of exposing channel names,
@@ -125,12 +134,13 @@ Before and after inference, the backend enforces only hard boundaries:
 - stock, expiry, OTC eligibility and absolute-contraindication filtering before ranking;
 - model selection restricted to IDs in that filtered pool;
 - current-state revalidation before the existing dispense service runs;
-- zero candidates when both model routes fail;
+- deterministic fallback may continue one-question dialogue and danger-signal handling, but does not synthesize a final assessment;
+- zero candidates when the final ranking model is unavailable or returns an invalid contract;
 - emergency hard guards remain available even when neither model responds.
 
 ## Verified Performance
 
-On the connected RK3568 QSM with 2 GB RAM, the deployed model passed real Chinese inquiry requests. The observed run was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s. A warm compact case turn normally completes in roughly 10–15 seconds. For a large medicine pool, the model first chooses up to two relevant medicine categories and then ranks only the medicines in those categories; the complete two-pass selection observed roughly 20–30 seconds instead of timing out on an 18-medicine, 1536-token request. The host applies the safety pool before both calls and accepts only exact category and medicine names from that pool. With the language model and resident ASR loaded together, the board keeps the TTS model off-device, leaving more memory and CPU headroom; these timings are deployment observations, not hard guarantees.
+On the connected RK3568 QSM with 2 GB RAM, the deployed model passed real Chinese inquiry requests. The observed baseline was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s, with a warm compact case turn around 10–15 seconds. Large medicine pools are narrowed before the model returns the full `assessment + options` contract, and the host accepts only IDs from the hard-safe pool. The complete structured ranking response is longer than the former terse selector, so its end-to-end latency and peak memory still require a physical-board smoke check after deployment. The board keeps reasoning disabled and TTS off-device to preserve memory and CPU headroom; the baseline timings are observations, not guarantees.
 
 ## Offline Verification
 
@@ -146,5 +156,8 @@ curl -X POST http://127.0.0.1:8000/api/ai/chat \
 
 Expected session source is `local_llm`. To verify failure handling, stop the
 local model and repeat an `/api/inquiry/sessions/{id}/turn` request; the endpoint
-must stay available, return a natural retry prompt, and return no medicine
-candidate rather than HTTP 500 or terminal-facing transport details.
+must stay available through `rules_fallback`, return a natural retry prompt, and
+return no final assessment or medicine candidate rather than HTTP 500 or
+terminal-facing transport details. `/api/ai/status` reports `model_ready` and
+`rules_fallback_ready` separately; aggregate availability must not make an
+unavailable model appear ready.

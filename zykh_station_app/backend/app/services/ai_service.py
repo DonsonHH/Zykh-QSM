@@ -74,13 +74,18 @@ class AiService:
 
     def status(self) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
+        local = local_inquiry_status(self.local_client.status())
+        model_ready = bool(local.get("model_ready"))
+        rules_fallback_ready = bool(local.get("rules_fallback_ready"))
         return {
             "ok": True,
             "mode": settings.ai_mode,
             "cloud_configured": bool(key),
             "cloud_model": settings.ai_model,
-            "local": local_inquiry_status(self.local_client.status()),
-            "offline_inquiry_ready": self._use_offline_inquiry_rules(),
+            "local": local,
+            "model_ready": model_ready,
+            "rules_fallback_ready": rules_fallback_ready,
+            "offline_inquiry_ready": model_ready or rules_fallback_ready,
         }
 
     def warm_local(self) -> dict[str, Any]:
@@ -377,10 +382,11 @@ class AiService:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        reasoning_effort = self._inquiry_reasoning_effort()
         self._apply_provider_options(
             payload,
-            enable_thinking=settings.ai_inquiry_enable_thinking,
-            reasoning_effort="low",
+            enable_thinking=reasoning_effort != "off",
+            reasoning_effort=reasoning_effort,
         )
         parsed, cloud_error = self._request_json_completion(
             payload,
@@ -485,10 +491,12 @@ class AiService:
             "model": settings.ai_model,
             "instructions": system_prompt,
             "input": user_prompt,
-            "reasoning": {"effort": "low"},
             "text": {"format": {"type": "json_object"}},
             "max_output_tokens": 8192,
         }
+        reasoning_effort = self._inquiry_reasoning_effort()
+        if reasoning_effort != "off":
+            payload["reasoning"] = {"effort": reasoning_effort}
         parsed, cloud_error = self._request_json_response(
             payload,
             key,
@@ -515,8 +523,8 @@ class AiService:
         }
         self._apply_provider_options(
             chat_payload,
-            enable_thinking=settings.ai_enable_thinking,
-            reasoning_effort="high",
+            enable_thinking=reasoning_effort != "off",
+            reasoning_effort=reasoning_effort,
         )
         chat_parsed, chat_error = self._request_json_completion(
             chat_payload,
@@ -541,8 +549,8 @@ class AiService:
 
     @staticmethod
     def _use_offline_inquiry_rules() -> bool:
-        # Tests and explicit legacy deployments can still exercise the old
-        # small-model adapter by setting OFFLINE_INQUIRY_MODE=model.
+        # Model-first is the default; explicit rules mode remains available for
+        # controlled legacy deployments and deterministic acceptance tests.
         return str(getattr(settings, "offline_inquiry_mode", "model")).lower() == "rules"
 
     def _offline_inquiry_extract(
@@ -554,7 +562,19 @@ class AiService:
     ) -> dict[str, Any]:
         if self._use_offline_inquiry_rules():
             return self.offline_inquiry.extract(transcript, existing, profile)
-        return self._extract_inquiry_local(transcript, existing, profile, reason)
+        result = self._extract_inquiry_local(transcript, existing, profile, reason)
+        if result.get("ok"):
+            return result
+        fallback = self.offline_inquiry.extract(transcript, existing, profile)
+        return {
+            **fallback,
+            "source": "rules_fallback",
+            "diagnostic_note": str(
+                result.get("diagnostic_note")
+                or result.get("message")
+                or reason
+            ),
+        }
 
     def _offline_inquiry_rank(
         self,
@@ -567,10 +587,20 @@ class AiService:
         if self._use_offline_inquiry_rules():
             return self.offline_inquiry.rank(context, candidates)
         result = self._rank_inquiry_candidates_local(system_prompt, user_prompt, reason)
-        if result.get("ok") and not isinstance(result.get("assessment"), dict):
-            result = {
-                **result,
-                "assessment": self.offline_inquiry.assessment(context),
+        if not result.get("ok") or not self._valid_inquiry_ranking_payload(result):
+            return {
+                "ok": False,
+                "source": "rules_fallback",
+                "message": "药品匹配暂未完成。",
+                "diagnostic_note": str(
+                    result.get("message")
+                    or (
+                        "离线模型返回的问询排序结构不完整。"
+                        if result.get("ok")
+                        else reason
+                    )
+                ),
+                "options": [],
             }
         return result
 
@@ -602,9 +632,18 @@ class AiService:
             }
         context = payload.get("case") if isinstance(payload.get("case"), dict) else {}
         candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
-        if not context or not candidates:
-            return {"ok": True, "source": "local_llm", "summary": "", "options": []}
+        if not context:
+            return {
+                "ok": False,
+                "source": "ai_unavailable",
+                "message": "离线模型排序缺少病例上下文。",
+            }
 
+        evidence_catalog = (
+            context.get("evidence_catalog")
+            if isinstance(context.get("evidence_catalog"), dict)
+            else {}
+        )
         compact_case = {
             "s": str(context.get("case_summary") or "")[:80],
             "f": [
@@ -621,6 +660,11 @@ class AiService:
             "a": str(context.get("allergy_or_contraindication") or "")[:44],
             "r": str(context.get("risk_level") or "")[:12],
             "v": context.get("vitals") or {},
+            "x": {
+                str(evidence_id)[:32]: str(evidence)[:96]
+                for evidence_id, evidence in list(evidence_catalog.items())[:10]
+                if str(evidence_id).strip() and str(evidence).strip()
+            },
         }
         focused = self._semantic_focus_candidates(compact_case, candidates)
         if focused is not None:
@@ -634,26 +678,38 @@ class AiService:
                     "message": "离线模型暂未完成候选类别理解。",
                 }
             if not narrowed:
-                return {"ok": True, "source": "local_llm", "summary": "", "options": []}
-            candidates = narrowed
-        catalog: dict[str, list[list[str]]] = {}
+                candidates = []
+            else:
+                candidates = narrowed
+        catalog: dict[str, list[dict[str, Any]]] = {}
         for candidate in candidates:
-            if not str(candidate.get("id") or "").strip():
+            medicine_id = str(candidate.get("id") or "").strip()
+            if not medicine_id:
                 continue
             category = str(candidate.get("category") or "其他")[:12]
             catalog.setdefault(category, []).append(
-                [
-                    str(candidate.get("name") or "")[:16],
-                    str(candidate.get("indications") or "")[:42],
-                ]
+                {
+                    "id": medicine_id,
+                    "name": str(candidate.get("name") or "")[:16],
+                    "indications": str(candidate.get("indications") or "")[:42],
+                    "dosage": str(candidate.get("dosage") or "")[:48],
+                    "contraindications": [
+                        str(value)[:24]
+                        for value in candidate.get("contraindications") or []
+                    ][:3],
+                    "tags": [str(value)[:16] for value in candidate.get("tags") or []][:4],
+                    "safety_note": str(candidate.get("safety_note") or "")[:42],
+                }
             )
         compact_catalog = [[category, items] for category, items in catalog.items()]
         system_prompt = (
-            "你是家庭康护问询的候选理解助手。安全程序已过滤库存、有效期、OTC和绝对禁忌。"
-            "只从候选中选择与case直接相关的用品；不相关就返回空，不要因一个相似字硬选。"
-            "最多两个方案，每个最多四个药品；备选不是同时使用。浅表伤口可按清洁、消毒、覆盖顺序组合。"
-            "只输出一行：主方案写A=后接catalog中的药品名称，再写逗号和简短原因；"
-            "有备选时继续写分号和B=。名称必须原样复制。没有合适候选只输出NONE。不要输出剂量。"
+            "你执行与云端相同的家庭康护候选排序语义契约。安全程序已过滤库存、有效期、OTC和绝对禁忌。"
+            "只从catalog选择与case直接相关且安全的药品；不能诊断、补造事实、输出剂量或新增ID。"
+            "必须返回完整JSON根对象，包含assessment和options。assessment必须包含summary、possible_conditions、"
+            "next_steps、seek_care_if；possible_conditions每项包含name、likelihood、supporting_evidence_ids和"
+            "non_supporting_evidence_ids，证据ID只能来自case.x的键。options最多两个，每项包含option_id、label、reason、"
+            "medicine_ids、reason_by_medicine和usage_by_medicine；每个方案最多四种，备选不是联合使用。"
+            "没有合适药品时options=[]，但仍须返回完整assessment。只输出JSON。"
         )
         compact_prompt = json.dumps(
             # Catalog first maximizes llama.cpp prompt-cache reuse across
@@ -668,7 +724,8 @@ class AiService:
                 {"role": "user", "content": compact_prompt},
             ],
             temperature=0.0,
-            max_tokens=32,
+            max_tokens=320,
+            response_format={"type": "json_object"},
         )
         if not result.get("ok"):
             return {
@@ -677,14 +734,6 @@ class AiService:
                 "message": "离线模型暂未完成候选排序。",
             }
         reply = str(result.get("reply") or "")
-        line_options = self._parse_local_rank_line(reply, candidates)
-        if line_options is not None:
-            return {
-                "ok": True,
-                "source": "local_llm",
-                "summary": "",
-                "options": line_options,
-            }
         parsed = self._parse_json_content(reply)
         if not isinstance(parsed, dict):
             # A small local model can hit its output limit after the closing
@@ -746,31 +795,58 @@ class AiService:
                 raw_ids = raw.get("ids") if isinstance(raw.get("ids"), list) else raw.get("i")
             if not isinstance(raw_ids, list):
                 continue
-            medicine_ids = list(
-                dict.fromkeys(
-                    key_to_id.get(str(value or "").strip(), "")
-                    for value in raw_ids[:4]
-                    if key_to_id.get(str(value or "").strip(), "") in allowed_ids
-                )
-            )
+            normalized_keys = [str(value or "").strip() for value in raw_ids]
+            if (
+                not normalized_keys
+                or len(normalized_keys) > 4
+                or any(not key or key not in key_to_id for key in normalized_keys)
+            ):
+                return {
+                    "ok": False,
+                    "source": "ai_unavailable",
+                    "message": "离线模型返回了候选目录之外的药品。",
+                }
+            medicine_ids = [
+                key_to_id[key]
+                for key in normalized_keys
+                if key_to_id[key] in allowed_ids
+            ]
+            if len(set(medicine_ids)) != len(medicine_ids):
+                return {
+                    "ok": False,
+                    "source": "ai_unavailable",
+                    "message": "离线模型返回了重复药品。",
+                }
             if not medicine_ids:
                 continue
             usage = raw.get("usage_by_medicine")
             usage = usage if isinstance(usage, dict) else raw.get("usage")
             usage = usage if isinstance(usage, dict) else {}
+            reasons = raw.get("reason_by_medicine")
+            reasons = reasons if isinstance(reasons, dict) else {}
             options.append(
                 {
                     "option_id": "primary" if not options else "alternative",
                     "label": str(raw.get("label") or ("主方案" if not options else "备选方案")),
                     "reason": str(raw.get("reason") or raw.get("r") or "").strip(),
                     "medicine_ids": medicine_ids,
-                    "usage_by_medicine": usage,
+                    "reason_by_medicine": {
+                        medicine_id: str(reasons.get(medicine_id) or "").strip()
+                        for medicine_id in medicine_ids
+                        if str(reasons.get(medicine_id) or "").strip()
+                    },
+                    "usage_by_medicine": {
+                        medicine_id: str(usage.get(medicine_id) or "").strip()
+                        for medicine_id in medicine_ids
+                        if str(usage.get(medicine_id) or "").strip()
+                    },
                 }
             )
         return {
             "ok": True,
             "source": "local_llm",
             "summary": str(parsed.get("summary") or parsed.get("s") or "").strip()[:120],
+            "assessment": parsed.get("assessment"),
             "options": options,
         }
 
@@ -888,70 +964,6 @@ class AiService:
             if best >= 2 and focused and len(focused) < len(candidates):
                 return focused
         return None
-
-    @staticmethod
-    def _parse_local_rank_line(
-        reply: str,
-        candidates: list[dict[str, Any]],
-    ) -> list[dict[str, Any]] | None:
-        text = re.sub(r"\s+", " ", str(reply or "")).strip()
-        if not text:
-            return None
-        if re.match(r"^(?:NONE|无|没有合适)", text, flags=re.IGNORECASE):
-            return []
-        key_to_id: dict[str, str] = {}
-        name_to_id: dict[str, str] = {}
-        for item in candidates:
-            medicine_id = str(item.get("id") or "").strip()
-            slot = str(item.get("slot") or "").strip()
-            if medicine_id and slot:
-                key_to_id[slot] = medicine_id
-            name = str(item.get("name") or "").strip()
-            if medicine_id and name:
-                name_to_id[name] = medicine_id
-        options: list[dict[str, Any]] = []
-        matches = list(
-            re.finditer(
-                r"(?:^|[;；])\s*([AB])\s*=\s*(.*?)(?=(?:[;；]\s*[AB]\s*=)|$)",
-                text,
-                flags=re.IGNORECASE,
-            )
-        )
-        for match in matches:
-            segment = match.group(2).strip()
-            names = [name for name in name_to_id if name in segment][:4]
-            medicine_ids = [name_to_id[name] for name in names]
-            if not medicine_ids:
-                numeric_prefix = re.match(
-                    r"([0-9]+(?:\s*[,，]\s*[0-9]+){0,3})",
-                    segment,
-                )
-                keys = (
-                    re.split(r"\s*[,，]\s*", numeric_prefix.group(1))
-                    if numeric_prefix
-                    else []
-                )
-                medicine_ids = [key_to_id[key] for key in keys if key in key_to_id]
-            medicine_ids = list(
-                dict.fromkeys(medicine_ids)
-            )
-            if not medicine_ids:
-                continue
-            option_name = match.group(1).upper()
-            reason = segment
-            for name in names:
-                reason = reason.replace(name, "")
-            reason = re.sub(r"^[\s,，|｜:：-]+", "", reason).strip()
-            options.append(
-                {
-                    "option_id": "primary" if option_name == "A" else "alternative",
-                    "label": "主方案" if option_name == "A" else "备选方案",
-                    "reason": reason[:40],
-                    "medicine_ids": medicine_ids,
-                    "usage_by_medicine": {},
-                }
-            )
-        return options[:2] if options else None
 
     def generate_inquiry_recommendation(self, context: dict[str, Any]) -> dict[str, Any]:
         """Explain already-approved options without allowing the model to alter them."""
@@ -1179,6 +1191,12 @@ class AiService:
             }
             self._apply_contextual_answer(expanded, transcript, answer_target, existing)
             self._complete_local_inquiry(expanded, existing)
+            if not self._valid_inquiry_extract_payload(expanded):
+                return self._local_continuity_result(
+                    transcript,
+                    existing,
+                    "离线模型返回的问询结构不完整。",
+                )
             return {"ok": True, "source": "local_llm", **expanded}
         compact_existing = {
             "t": int(existing.get("conversation_turns") or 0),
@@ -1270,6 +1288,12 @@ class AiService:
             recovered = self._recover_local_transcript(transcript, existing)
             if recovered:
                 self._complete_local_inquiry(recovered, existing)
+                if not self._valid_inquiry_extract_payload(recovered):
+                    return self._local_continuity_result(
+                        transcript,
+                        existing,
+                        "离线模型返回的问询结构不完整。",
+                    )
                 return {"ok": True, "source": "local_llm", **recovered}
             return self._local_continuity_result(transcript, existing, reason)
         expanded = self._expand_local_inquiry(
@@ -1292,24 +1316,37 @@ class AiService:
             recovered = self._recover_local_transcript(transcript, existing)
             if recovered:
                 self._complete_local_inquiry(recovered, existing)
+                if not self._valid_inquiry_extract_payload(recovered):
+                    return self._local_continuity_result(
+                        transcript,
+                        existing,
+                        "离线模型返回的问询结构不完整。",
+                    )
                 return {"ok": True, "source": "local_llm", **recovered}
             return self._local_continuity_result(transcript, existing, "离线模型未提取到明确病例信息。")
         self._complete_local_inquiry(expanded, existing)
+        if not self._valid_inquiry_extract_payload(expanded):
+            return self._local_continuity_result(
+                transcript,
+                existing,
+                "离线模型返回的问询结构不完整。",
+            )
         return {"ok": True, "source": "local_llm", **expanded}
 
     @classmethod
     def _local_inquiry_system_prompt(cls) -> str:
         return (
-            "你是问询信息整理器，只凭said和known理解口语。不得诊断、选药或控硬件。"
-            "仅输出一行JSON：summary、facts、action、question、duration、"
-            "used_medicines、allergy；可含change_type、replaced_concepts、scope_complete。"
-            "facts最多2项，含concept、status、evidence；status仅present、absent、uncertain；"
-            "action仅ask、measure_vitals、analyze、escalate、end。summary和concept必须来自said；"
-            "同句多症状分别保留，否定项只能absent，未知留空，不得补造事实或病因。"
-            "纠正旧主诉用change_type=replace并列旧症状；新增或细化用add、refine，否则none。"
-            "scope_complete仅在用户已回答有无其他不适时为true。"
-            "question只问一件事、不重复known；说人话，不问能否站立或行走。"
-            "无不适则facts=[]并问哪里不舒服；主诉明确且体征有帮助才measure_vitals。"
+            "执行与云端相同的多轮健康问询语义，只凭said和known，不诊断、选药或控硬件。"
+            "仅为板端压缩JSON键：s=摘要，f=事实，u=疑点，du=时长，m=已用药，a=过敏禁忌，"
+            "at=本轮已答主题，te=主题证据，qt=下一问主题，cr=信息足够，mc=主诉实质变化，"
+            "ct=变化类型，rc=被替换症状，sc=症状范围已全，n=动作，q=问题，r=回复，"
+            "x=理由，k=风险，g=风险信号，c=置信度。只输出一行JSON。"
+            "f最多2项：[症状,status,原话,轮次,置信度]；"
+            "status仅present、absent、uncertain；n仅ask、measure_vitals、analyze、escalate、end。"
+            "同句多症状分别保留，否定只能absent，未知留空，不补造事实或病因。"
+            "ct仅none/add/refine/replace；replace时rc列旧症状；sc仅在已回答有无其他不适时为true。"
+            "q只问一件事且不重复known，"
+            "说人话，不问能否站立或行走；主诉明确且体征有帮助才measure_vitals。"
         )
 
     @classmethod
@@ -1418,6 +1455,33 @@ class AiService:
                 or payload.get("allergies")
                 or ""
             ).strip(),
+            "answered_topics_this_turn": (
+                payload.get("at")
+                if isinstance(payload.get("at"), list)
+                else payload.get("answered_topics_this_turn")
+                if isinstance(payload.get("answered_topics_this_turn"), list)
+                else []
+            ),
+            "topic_evidence": (
+                payload.get("te")
+                if isinstance(payload.get("te"), dict)
+                else payload.get("topic_evidence")
+                if isinstance(payload.get("topic_evidence"), dict)
+                else {}
+            ),
+            "question_topic": str(
+                payload.get("qt") or payload.get("question_topic") or "none"
+            ).strip(),
+            "clinical_ready": bool(payload.get("cr"))
+            if type(payload.get("cr")) is bool
+            else bool(payload.get("clinical_ready"))
+            if type(payload.get("clinical_ready")) is bool
+            else False,
+            "material_symptom_change": bool(payload.get("mc"))
+            if type(payload.get("mc")) is bool
+            else bool(payload.get("material_symptom_change"))
+            if type(payload.get("material_symptom_change")) is bool
+            else False,
             "next_question": str(
                 payload.get("q") or payload.get("next_question") or payload.get("question") or ""
             ).strip(),
@@ -1443,20 +1507,29 @@ class AiService:
                 else payload.get("risk_flags") if isinstance(payload.get("risk_flags"), list) else []
             ),
             "symptom_change_type": str(
-                payload.get("change_type") or payload.get("symptom_change_type") or "none"
+                payload.get("ct")
+                or payload.get("change_type")
+                or payload.get("symptom_change_type")
+                or "none"
             ).strip(),
             "replaced_concepts": (
-                payload.get("replaced_concepts")
+                payload.get("rc")
+                if isinstance(payload.get("rc"), list)
+                else payload.get("replaced_concepts")
                 if isinstance(payload.get("replaced_concepts"), list)
                 else []
             ),
             "symptom_scope_complete": type(
-                payload.get("scope_complete")
+                payload.get("sc")
+                if "sc" in payload
+                else payload.get("scope_complete")
                 if "scope_complete" in payload
                 else payload.get("symptom_scope_complete")
             ) is bool
             and bool(
-                payload.get("scope_complete")
+                payload.get("sc")
+                if "sc" in payload
+                else payload.get("scope_complete")
                 if "scope_complete" in payload
                 else payload.get("symptom_scope_complete")
             ),
@@ -1832,9 +1905,15 @@ class AiService:
                 "你是家庭用药终端的药品说明资料整理助手。",
                 "只整理公开药品说明中的适用症状、用法用量、禁忌提醒和安全提示，不诊断、不下处方。",
                 "给定信息不足以确认剂型、规格或人群剂量时，不得猜测；用法用量必须写明以实物包装说明书或既往医嘱为准。",
+                "同时整理可核对的商品别名、通用名或有效成分，以及结构化禁忌草稿；不确定时返回空数组，不能猜测。",
+                "structured_contraindications 每项只含 concept_code 和 display_text；全部结果仅作为待人工审核草稿。",
                 "不要声称已经联网检索、已经核验或来源于某份说明书，因为当前请求没有提供可验证的外部检索结果。",
                 "只输出合法 json 对象，不要 Markdown。",
-                "JSON 格式：{\"indications\":\"适用症状或用途\",\"dosage\":\"用法用量\",\"contraindications\":[\"禁忌1\",\"禁忌2\"],\"safety_note\":\"简短安全提示\"}",
+                "JSON 格式：{\"indications\":\"适用症状或用途\",\"dosage\":\"用法用量\","
+                "\"contraindications\":[\"禁忌1\",\"禁忌2\"],\"aliases\":[\"商品别名\"],"
+                "\"active_ingredients\":[\"有效成分\"],\"structured_contraindications\":[{"
+                "\"concept_code\":\"ingredient_allergy\",\"display_text\":\"禁忌原文\"}],"
+                "\"safety_note\":\"简短安全提示\"}",
             ]
         )
         user_prompt = json.dumps(
@@ -1845,6 +1924,7 @@ class AiService:
                     "manufacturer": str(medicine.get("manufacturer") or ""),
                     "barcode": str(medicine.get("barcode") or ""),
                     "category": str(medicine.get("category") or ""),
+                    "spec": str(medicine.get("spec") or ""),
                 },
             },
             ensure_ascii=False,
@@ -1880,9 +1960,30 @@ class AiService:
             return {"ok": False, "error_message": f"云端药品资料补全失败：{exc}。"}
 
         parsed = self._parse_json_content(self._extract_message_text(data))
-        if not isinstance(parsed, dict):
-            return {"ok": False, "error_message": "云端未返回可解析的药品资料。"}
+        if not self._valid_medicine_guidance_payload(parsed):
+            return {"ok": False, "error_message": "云端返回的动态药品安全资料不完整。"}
         return {"ok": True, "source": "cloud_ai", "guidance": parsed}
+
+    @staticmethod
+    def _valid_medicine_guidance_payload(payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if not all(
+            isinstance(payload.get(field), str)
+            for field in ("indications", "dosage", "safety_note")
+        ):
+            return False
+        for field in ("contraindications", "aliases", "active_ingredients"):
+            values = payload.get(field)
+            if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+                return False
+        structured = payload.get("structured_contraindications")
+        return isinstance(structured, list) and all(
+            isinstance(item, dict)
+            and isinstance(item.get("concept_code"), str)
+            and isinstance(item.get("display_text"), str)
+            for item in structured
+        )
 
     def stream_chunks(self, message: str) -> list[str]:
         reply = self.chat(message)["reply"]
@@ -2231,6 +2332,16 @@ class AiService:
             ):
                 return False
         return True
+
+    @staticmethod
+    def _inquiry_reasoning_effort() -> str:
+        configured = getattr(settings, "ai_inquiry_reasoning_effort", "")
+        if isinstance(configured, str):
+            normalized = configured.strip().lower()
+            if normalized in {"off", "low", "high", "max"}:
+                return normalized
+        legacy = getattr(settings, "ai_inquiry_enable_thinking", True)
+        return "high" if legacy is not False else "off"
 
     @staticmethod
     def _apply_provider_options(

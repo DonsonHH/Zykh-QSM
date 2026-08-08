@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Medicine(BaseModel):
@@ -14,9 +14,12 @@ class Medicine(BaseModel):
     spec: str = ""
     trace_code: str = ""
     tags: list[str]
+    aliases: list[str] = Field(default_factory=list)
+    active_ingredients: list[str] = Field(default_factory=list)
     indications: str = ""
     dosage: str = ""
     contraindications: list[str]
+    structured_contraindications: list[dict[str, str]] = Field(default_factory=list)
     stock: int
     low_stock_line: int = 1
     unit: str
@@ -29,6 +32,9 @@ class Medicine(BaseModel):
     guidance_review_required: bool = True
     package_verified: bool = True
     guidance_updated_at: str = ""
+    safety_review_status: str = "draft"
+    safety_reviewed_by: str = ""
+    safety_reviewed_at: str = ""
     dispense_count: int = 0
 
 
@@ -53,9 +59,12 @@ class MedicineUpdateRequest(BaseModel):
     spec: str | None = None
     trace_code: str | None = None
     tags: list[str] | None = None
+    aliases: list[str] | None = None
+    active_ingredients: list[str] | None = None
     indications: str | None = None
     dosage: str | None = None
     contraindications: list[str] | None = None
+    structured_contraindications: list[dict[str, str]] | None = None
     stock: int | None = None
     low_stock_line: int | None = None
     unit: str | None = None
@@ -69,6 +78,28 @@ class MedicineUpdateResponse(BaseModel):
     ok: bool = True
     message: str
     medicine: Medicine
+
+
+class ApprovedMedicineCombination(BaseModel):
+    combination_id: str
+    label: str
+    medicine_ids: list[str] = Field(default_factory=list)
+    member_identity_fingerprints: dict[str, str] = Field(default_factory=dict)
+    review_status: str = "draft"
+    reviewed_by: str = ""
+    reviewed_at: str = ""
+    updated_at: str = ""
+
+
+class MedicineIngredientConflictRule(BaseModel):
+    left_ingredient: str
+    right_ingredient: str
+    disposition: str = "block"
+    message: str = ""
+    review_status: str = "draft"
+    reviewed_by: str = ""
+    reviewed_at: str = ""
+    updated_at: str = ""
 
 
 class MedicineScanRequest(BaseModel):

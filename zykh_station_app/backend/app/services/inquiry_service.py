@@ -4,8 +4,14 @@ from uuid import uuid4
 
 from ..db import now_text
 from ..repositories.inquiry_repository import InquiryRepository
-from ..schemas.inquiry import InquiryEvaluateRequest, InquiryExtractedInformation, InquiryResult
+from ..schemas.inquiry import (
+    InquiryEvaluateRequest,
+    InquiryExtractedInformation,
+    InquiryResult,
+    MedicineSafetyNotice as InquiryMedicineSafetyNotice,
+)
 from .ai_service import AiService
+from .medicine_knowledge_repository import MedicineSafetyContext
 from .medicine_safety_engine import MedicineSafetyEngine
 from .symptom_interpreter import SymptomInterpreter
 
@@ -61,6 +67,7 @@ class InquiryService:
             ai_risk_reasons=interpretation.risk_signals,
         )
         options = []
+        medication_safety_notices: list[InquiryMedicineSafetyNotice] = []
         if (
             guard.risk_level in {"low", "medium"}
             and interpretation.available
@@ -79,11 +86,15 @@ class InquiryService:
                 )
                 if value
             )
-            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                candidate_context
-            )
-            focused_pool = self.safety_engine.knowledge.focus_candidate_pool(
-                "；".join(
+            safety_context = MedicineSafetyContext(
+                context_text=candidate_context,
+                used_medicines_text=(
+                    extracted.used_medicines
+                    if extracted.used_medicines != "未使用"
+                    else ""
+                ),
+                allergy_text=extracted.allergy_or_contraindication,
+                relevance_text="；".join(
                     value
                     for value in (
                         extracted.case_summary,
@@ -92,8 +103,15 @@ class InquiryService:
                     )
                     if value
                 ),
-                safe_pool,
             )
+            candidate_assessment = self.safety_engine.knowledge.assess_candidates(
+                safety_context,
+                limit=8,
+            )
+            medication_safety_notices = self._present_medication_safety_notices(
+                candidate_assessment.notices
+            )
+            focused_pool = candidate_assessment.candidates
             ranking = self.interpreter.rank_candidates(
                 {
                     "case_summary": extracted.case_summary,
@@ -105,20 +123,46 @@ class InquiryService:
                 },
                 [candidate.model_dump() for candidate in focused_pool],
             )
+            fresh_assessment = self.safety_engine.knowledge.assess_candidates(
+                safety_context,
+                limit=8,
+            )
+            medication_safety_notices = self._present_medication_safety_notices(
+                fresh_assessment.notices
+            )
+            fresh_by_id = {
+                candidate.id: candidate for candidate in fresh_assessment.candidates
+            }
+            fresh_focused_pool = [
+                fresh_by_id[candidate.id]
+                for candidate in focused_pool
+                if candidate.id in fresh_by_id
+            ]
             if ranking.get("ok"):
-                fresh_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                    candidate_context
+                selection_validator = getattr(
+                    self.safety_engine.knowledge,
+                    "validate_ai_selection",
+                    None,
                 )
-                fresh_by_id = {candidate.id: candidate for candidate in fresh_pool}
-                fresh_focused_pool = [
-                    fresh_by_id[candidate.id]
-                    for candidate in focused_pool
-                    if candidate.id in fresh_by_id
-                ]
-                options = self.safety_engine.knowledge.options_from_ai_selection(
-                    ranking,
-                    fresh_focused_pool,
-                )
+                if callable(selection_validator):
+                    selection_assessment = selection_validator(
+                        ranking,
+                        fresh_focused_pool,
+                    )
+                    options = selection_assessment.options
+                    medication_safety_notices = self._deduplicate_medication_safety_notices(
+                        [
+                            *medication_safety_notices,
+                            *self._present_medication_safety_notices(
+                                selection_assessment.notices
+                            ),
+                        ]
+                    )
+                else:
+                    options = self.safety_engine.knowledge.options_from_ai_selection(
+                        ranking,
+                        fresh_focused_pool,
+                    )
         candidates = [
             medicine
             for option in options[:2]
@@ -130,6 +174,11 @@ class InquiryService:
         allergy = extracted.allergy_or_contraindication.strip()
         if allergy and allergy not in {"无", "没有", "不确定"}:
             warnings.append(f"已记录过敏/禁忌信息：{allergy}")
+        warnings.extend(
+            notice.message
+            for notice in medication_safety_notices
+            if notice.message not in warnings
+        )
         risk_label = {
             "low": "低风险",
             "medium": "中风险",
@@ -156,6 +205,7 @@ class InquiryService:
             suggested_categories=categories,
             candidate_medicines=candidates,
             contraindication_warnings=warnings,
+            medication_safety_notices=medication_safety_notices,
             safety_notice=notice,
             next_steps=steps,
             can_proceed_to_dispense=can_view,
@@ -170,6 +220,33 @@ class InquiryService:
 
     def list_records(self) -> list[InquiryResult]:
         return self.repository.list_records()
+
+    @staticmethod
+    def _present_medication_safety_notices(notices) -> list[InquiryMedicineSafetyNotice]:
+        return InquiryService._deduplicate_medication_safety_notices(
+            [
+                InquiryMedicineSafetyNotice(
+                    code=str(getattr(notice, "code", "") or "").strip(),
+                    message=str(getattr(notice, "message", "") or "").strip(),
+                )
+                for notice in notices
+                if str(getattr(notice, "code", "") or "").strip()
+                and str(getattr(notice, "message", "") or "").strip()
+            ]
+        )
+
+    @staticmethod
+    def _deduplicate_medication_safety_notices(
+        notices: list[InquiryMedicineSafetyNotice],
+    ) -> list[InquiryMedicineSafetyNotice]:
+        unique: list[InquiryMedicineSafetyNotice] = []
+        seen: set[tuple[str, str]] = set()
+        for notice in notices:
+            key = (notice.code, notice.message)
+            if key not in seen:
+                seen.add(key)
+                unique.append(notice)
+        return unique
 
     @staticmethod
     def _safe_ai_notice(value: object) -> str:

@@ -14,8 +14,19 @@ from .medicine_guidance_service import MedicineGuidanceService
 
 
 class MedicineService:
-    GUIDANCE_BASE_FIELDS = {"name", "manufacturer", "barcode", "category"}
-    GUIDANCE_CONTENT_FIELDS = {"indications", "dosage", "contraindications", "safety_note"}
+    GUIDANCE_BASE_FIELDS = {"name", "manufacturer", "barcode", "category", "spec"}
+    GUIDANCE_CONTENT_FIELDS = {
+        "tags",
+        "aliases",
+        "active_ingredients",
+        "indications",
+        "dosage",
+        "contraindications",
+        "structured_contraindications",
+        "safety_note",
+        "is_otc",
+        "is_emergency",
+    }
 
     def __init__(
         self,

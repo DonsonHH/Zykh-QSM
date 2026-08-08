@@ -11,8 +11,16 @@ export function buildRecommendationSpeech(result, selectedOption) {
   if (["high", "emergency"].includes(result.risk_level)) {
     return result.reply || "当前存在需要优先处理的风险信号，请尽快联系医生或现场协助人员。";
   }
+  const disclaimer = "以上仅为健康信息和药仓内药品的辅助匹配，不构成诊断或处方；用药前请核对药盒说明、有效期和禁忌，并请听医嘱。";
+  const firstSafetyNotice = String(result?.medication_safety_notices?.[0]?.message || "").trim();
+  const safetyNoticeText = firstSafetyNotice
+    ? `用药安全提醒：${firstSafetyNotice.slice(0, 100)}`
+    : "";
   const medicines = selectedOption?.medicines || [];
-  if (!medicines.length) return result.reply || "当前没有通过安全核验的候选方案。";
+  if (!medicines.length) {
+    const body = `${safetyNoticeText}${result.reply || "当前没有通过安全核验的候选方案。"}`;
+    return `${body.slice(0, Math.max(0, MAX_SPEECH_LENGTH - disclaimer.length))}${disclaimer}`;
+  }
 
   const medicineNames = medicines.map((medicine) => medicine.name).join("、");
   const usage = medicines
@@ -37,8 +45,7 @@ export function buildRecommendationSpeech(result, selectedOption) {
   const selectionGuide = optionCount > 1
     ? "屏幕上有推荐方案和备选方案，请点选其中一个，不要同时使用。"
     : "屏幕上有一个推荐方案，请核对后选择。";
-  const disclaimer = "以上仅为健康信息和药仓内药品的辅助匹配，不构成诊断或处方；用药前请核对药盒说明、有效期和禁忌，并请听医嘱。";
-  const body = `${conditionText}${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。${seekCareText}确认后系统会依次打开对应药柜。`;
+  const body = `${safetyNoticeText}${conditionText}${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。${seekCareText}确认后系统会依次打开对应药柜。`;
   return `${body.slice(0, Math.max(0, MAX_SPEECH_LENGTH - disclaimer.length))}${disclaimer}`;
 }
 

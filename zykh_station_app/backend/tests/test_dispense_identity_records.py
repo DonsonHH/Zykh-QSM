@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
@@ -20,6 +20,7 @@ from app.schemas.medicine import MedicineScanRegisterRequest  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.dispense_service import DispenseError, DispenseService  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
+from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
 
@@ -177,6 +178,120 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(DispenseError, "包装规格尚未人工核验"):
             self.service.confirm(request, force_dry_run=False)
 
+    def test_unreviewed_inquiry_medicine_is_rejected_before_qsm_dispense(self) -> None:
+        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
+        self.assertIsNotNone(medicine)
+        MedicineService().repository.update(
+            medicine.id,
+            {
+                "safety_review_status": "draft",
+                "safety_reviewed_by": "",
+                "safety_reviewed_at": "",
+            },
+        )
+        calls: list[tuple[str, int, bool]] = []
+
+        def recording_dispense(slot: str, quantity: int, dry_run: bool = False):
+            calls.append((slot, quantity, dry_run))
+            return {"ok": True, "detail": "unexpected"}
+
+        self.service.qsm_client.dispense = recording_dispense
+
+        with self.assertRaisesRegex(DispenseError, "安全资料尚未完成审核"):
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="AI应急问询方案取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    target_user_id="zhangsan",
+                    target_user_name="张三",
+                    verification_method="inquiry_confirmed",
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(calls, [])
+
+    def test_inquiry_fingerprint_is_rechecked_immediately_before_qsm_dispense(self) -> None:
+        medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
+        self.assertIsNotNone(medicine)
+        replacement = medicine.model_copy(
+            update={
+                "name": "同仓位重新审核后的其他药品",
+                "barcode": "replacement-barcode",
+                "safety_reviewed_by": "test-pharmacist-replacement",
+                "safety_reviewed_at": "2026-08-08T16:00:00+08:00",
+            }
+        )
+        self.service.medicine_repository.get_by_id = Mock(
+            side_effect=[medicine, replacement]
+        )
+        qsm_calls: list[tuple[str, int, bool]] = []
+
+        def recording_dispense(slot: str, quantity: int, dry_run: bool = False):
+            qsm_calls.append((slot, quantity, dry_run))
+            return {"ok": True, "detail": "unexpected"}
+
+        self.service.qsm_client.dispense = recording_dispense
+
+        with self.assertRaisesRegex(DispenseError, "身份或安全资料已变化") as raised:
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="AI应急问询方案取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    verification_method="inquiry_confirmed",
+                    expected_review_fingerprint=(
+                        MedicineKnowledgeRepository.review_fingerprint(medicine)
+                    ),
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(qsm_calls, [])
+
+    def test_live_stock_is_rechecked_immediately_before_qsm_dispense(self) -> None:
+        medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
+        self.assertIsNotNone(medicine)
+        depleted = medicine.model_copy(update={"stock": 0})
+        self.service.medicine_repository.get_by_id = Mock(
+            side_effect=[medicine, depleted]
+        )
+        qsm_calls: list[tuple[str, int, bool]] = []
+
+        def recording_dispense(slot: str, quantity: int, dry_run: bool = False):
+            qsm_calls.append((slot, quantity, dry_run))
+            return {"ok": True, "detail": "unexpected"}
+
+        self.service.qsm_client.dispense = recording_dispense
+
+        with self.assertRaisesRegex(DispenseError, "库存不足") as raised:
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="AI应急问询方案取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    verification_method="inquiry_confirmed",
+                    expected_review_fingerprint=(
+                        MedicineKnowledgeRepository.review_fingerprint(medicine)
+                    ),
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(qsm_calls, [])
+
     def test_public_raw_open_endpoint_is_not_an_authorized_cabinet_path(self) -> None:
         with patch("app.routers.dispense.DispenseService") as service_class:
             with self.assertRaises(HTTPException) as raised:
@@ -324,6 +439,15 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
     def test_medicine_history_count_includes_successful_confirmation_variants_only(self) -> None:
         medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
         self.assertIsNotNone(medicine)
+        MedicineService().repository.update(
+            medicine.id,
+            {
+                "active_ingredients": ["测试用已审核藿香正气成分"],
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "test-pharmacist-fixture",
+                "safety_reviewed_at": "2026-08-08T00:00:00+08:00",
+            },
+        )
         plan = self.records.create_today_plan(
             TodayPlanCreateRequest(
                 time="11:45",

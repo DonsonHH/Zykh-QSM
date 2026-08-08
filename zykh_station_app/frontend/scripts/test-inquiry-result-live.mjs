@@ -42,6 +42,12 @@ const sessionFixture = {
   source: "cloud_responses",
   risk_level: "low",
   risk_reasons: ["未触发硬性危险信号"],
+  medication_safety_notices: [
+    {
+      code: "used_medicine_duplicate",
+      message: "因本次已使用同成分药品，复方感冒灵颗粒未纳入本次候选。"
+    }
+  ],
   can_view_medicines: true,
   action_status: "ready",
   action_progress_index: 0,
@@ -325,6 +331,7 @@ try {
       const optionCard = document.querySelector('.treatment-option-card');
       const medicineRow = optionCard.querySelector('.option-medicine-row:last-child');
       const confirmNotice = document.querySelector('.treatment-confirm-notice');
+      const medicationSafetyNotices = document.querySelector('.medication-safety-notices');
       const rect = (element) => {
         const value = element.getBoundingClientRect();
         return { top: value.top, right: value.right, bottom: value.bottom, left: value.left, width: value.width, height: value.height };
@@ -340,6 +347,7 @@ try {
         optionCard: rect(optionCard),
         medicineRow: rect(medicineRow),
         confirmNotice: rect(confirmNotice),
+        medicationSafetyNotices: rect(medicationSafetyNotices),
         resultHorizontalOverflow: result.scrollWidth - result.clientWidth,
         bodyHorizontalOverflow: body.scrollWidth - body.clientWidth,
         bodyScrollable: body.scrollHeight > body.clientHeight,
@@ -347,6 +355,7 @@ try {
         medicineListOverflow: getComputedStyle(medicineList).overflow,
         openButtonHeight: openButton.getBoundingClientRect().height,
         hasCauseHeading: assessment.textContent.includes('病因分析'),
+        hasMedicationSafetyNotice: medicationSafetyNotices.textContent.includes('复方感冒灵颗粒未纳入本次候选'),
         hasDisclaimer: footer.textContent.includes('不构成诊断或处方') && footer.textContent.includes('请听医嘱')
       };
     })()`));
@@ -372,6 +381,9 @@ try {
       `medicine details overflow the option card: ${JSON.stringify({ viewport: result.viewport, optionCard: result.optionCard, medicineRow: result.medicineRow })}`
     );
     assert.ok(result.assessment.top >= result.options.top, "assessment appears before treatment options");
+    assert.equal(result.hasMedicationSafetyNotice, true, "deterministic medication safety notice is not visible");
+    assert.ok(result.medicationSafetyNotices.left >= result.body.left - 1 && result.medicationSafetyNotices.right <= result.body.right + 1, "medication safety notice overflows the result body");
+    assert.ok(result.medicationSafetyNotices.bottom <= result.options.top + 1, "medication safety notice must appear before treatment options");
     assert.ok(result.confirmNotice.width >= 200, "medical disclaimer is squeezed into an unreadable column");
     assert.ok(result.openButtonHeight >= 48, "confirm action is below the touch target height");
     assert.equal(result.hasCauseHeading, true, "structured cause assessment is missing");

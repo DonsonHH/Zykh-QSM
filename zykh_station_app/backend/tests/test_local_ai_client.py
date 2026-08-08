@@ -93,6 +93,9 @@ class LocalAiClientTest(unittest.TestCase):
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["model"], "Qwen3.5-0.8B-Q4_K_M")
         self.assertFalse(body["stream"])
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning", body)
+        self.assertNotIn("reasoning_effort", body)
 
     @patch("app.services.local_ai_client.settings", LOCAL_SETTINGS)
     def test_connection_failure_is_structured(self) -> None:
@@ -270,7 +273,9 @@ class AiServiceOfflineTest(unittest.TestCase):
                         "used_medicines": "",
                         "allergy_or_contraindication": "",
                         "next_question": "这种情况持续多久了？",
+                        "assistant_reply": "这种情况持续多久了？",
                         "next_action": "ask",
+                        "risk_level": "low",
                         "confidence": 0.9,
                     },
                     ensure_ascii=False,
@@ -284,7 +289,7 @@ class AiServiceOfflineTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["source"], "local_llm")
         self.assertEqual(result["observations"][0]["concept"], "轻微流涕")
-        self.assertNotIn("risk_level", result)
+        self.assertEqual(result["risk_level"], "low")
 
     @patch("app.services.ai_service.settings")
     def test_local_inquiry_extraction_uses_a_small_but_complete_json_budget(self, mocked_settings) -> None:

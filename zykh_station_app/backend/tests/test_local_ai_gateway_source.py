@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class LocalAiGatewaySourceTest(unittest.TestCase):
+    def test_kiosk_starts_the_offline_model_by_default_without_enabling_qsm_reasoning(self) -> None:
+        launch_source = (ROOT / "scripts" / "launch_kiosk.sh").read_text(encoding="utf-8")
+        runtime_source = (ROOT / "qsm_gateway" / "start_local_ai.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"', launch_source)
+        self.assertIn("--reasoning off", runtime_source)
+        self.assertIn("--reasoning-budget 0", runtime_source)
+        self.assertNotIn("AI_INQUIRY_REASONING_EFFORT", runtime_source)
+
     def test_qsm_runtime_uses_bounded_memory_defaults(self) -> None:
         source = (ROOT / "qsm_gateway" / "start_local_ai.sh").read_text(encoding="utf-8")
 

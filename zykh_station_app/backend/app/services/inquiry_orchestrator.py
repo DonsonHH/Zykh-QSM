@@ -11,6 +11,7 @@ from ..schemas.inquiry import (
     InquiryClinicalAssessment,
     InquiryExtractedInformation,
     InquiryInformationRevisionRequest,
+    MedicineSafetyNotice as InquiryMedicineSafetyNotice,
     InquirySessionCreateRequest,
     InquirySessionResponse,
     InquiryTreatmentConfirmRequest,
@@ -34,6 +35,7 @@ from .inquiry_dialogue_policy import (
     symptom_scope_confirmation_question,
 )
 from .medicine_safety_engine import MedicineSafetyEngine
+from .medicine_knowledge_repository import MedicineSafetyContext
 from .spoken_answer import is_contextual_negative_answer
 from .symptom_interpreter import SymptomInterpretation, SymptomInterpreter
 
@@ -304,19 +306,73 @@ class InquiryOrchestrator:
 
             if not self._medicine_information_confirmed(session.extracted_information):
                 raise DispenseError("用药和过敏信息尚未确认，不能执行开柜。", status_code=409)
+            self._refresh_registered_user_safety_context(session)
             direction_plans = self._existing_direction_plans(session.user_id)
             completed_direction_ids = {
                 str(item.get("medicine_id") or "")
                 for item in session.action_items
                 if isinstance(item, dict) and item.get("ok")
             }
-            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                self._candidate_context(session),
-                existing_direction_ids=set(direction_plans) | completed_direction_ids,
+            candidate_assessment = self.safety_engine.knowledge.assess_candidates(
+                self._medicine_safety_context(
+                    session,
+                    existing_direction_ids=(
+                        frozenset(direction_plans) | frozenset(completed_direction_ids)
+                    ),
+                ),
+                limit=8,
             )
+            safe_pool = candidate_assessment.candidates
             allowed_ids = {candidate.id for candidate in safe_pool}
-            fresh_option = displayed_option
-            if any(medicine.id not in allowed_ids for medicine in displayed_option.medicines):
+            fresh_by_id = {candidate.id: candidate for candidate in safe_pool}
+            candidate_invalid = any(
+                medicine.id not in allowed_ids
+                or fresh_by_id[medicine.id].name != medicine.name
+                or fresh_by_id[medicine.id].slot != medicine.slot
+                or fresh_by_id[medicine.id].category != medicine.category
+                or fresh_by_id[medicine.id].review_fingerprint != medicine.review_fingerprint
+                for medicine in displayed_option.medicines
+            )
+            fresh_notices = self._present_medication_safety_notices(
+                candidate_assessment.notices
+            )
+            displayed_ids = [medicine.id for medicine in displayed_option.medicines]
+            selection_assessment = self.safety_engine.knowledge.validate_ai_selection(
+                {
+                    "options": [
+                        {
+                            "medicine_ids": displayed_ids,
+                            "label": displayed_option.label,
+                            "reason": displayed_option.when,
+                        }
+                    ]
+                },
+                safe_pool,
+            )
+            validated_options = [
+                option
+                for option in selection_assessment.options
+                if [medicine.id for medicine in option.medicines] == displayed_ids
+            ]
+            selection_invalid = not validated_options
+            selection_notices = (
+                []
+                if candidate_invalid
+                else self._present_medication_safety_notices(
+                    selection_assessment.notices
+                )
+            )
+            session.medication_safety_notices = self._deduplicate_medication_safety_notices(
+                [*fresh_notices, *selection_notices]
+            )
+            if candidate_invalid or selection_invalid:
+                if not session.medication_safety_notices:
+                    session.medication_safety_notices = [
+                        InquiryMedicineSafetyNotice(
+                            code="inventory_changed",
+                            message="药品库存、有效期或安全资料已变化，原方案已停止，请重新核对。",
+                        )
+                    ]
                 session.treatment_options = []
                 session.can_view_medicines = False
                 session.action_status = "idle"
@@ -325,6 +381,7 @@ class InquiryOrchestrator:
                 self._commit(session)
                 raise DispenseError("库存或安全信息已经变化，请重新核对方案。", status_code=409)
 
+            fresh_option = validated_options[0]
             expected = len(fresh_option.medicines)
             if expected <= 0:
                 raise DispenseError("所选方案没有可执行药品。", status_code=409)
@@ -375,6 +432,7 @@ class InquiryOrchestrator:
                             target_user_id=session.user_id,
                             target_user_name=session.user_name,
                             verification_method="inquiry_confirmed",
+                            expected_review_fingerprint=treatment_medicine.review_fingerprint,
                             today_plan_id=(
                                 direction_plans.get(medicine.id, "")
                                 if treatment_medicine.requires_existing_direction
@@ -685,27 +743,67 @@ class InquiryOrchestrator:
         rank_summary = ""
         rank_assessment = InquiryClinicalAssessment()
         rank_failed = False
+        medication_safety_notices: list[InquiryMedicineSafetyNotice] = []
+        all_relevant_candidates_blocked = False
         if (
             allow_candidates
             and guard.risk_level in {"low", "medium"}
             and self._medicine_information_confirmed(extracted)
         ):
             existing_direction_ids = set(self._existing_direction_plans(session.user_id))
-            candidate_context = self._candidate_context(session)
-            safe_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                candidate_context,
-                existing_direction_ids=existing_direction_ids,
+            safety_context = self._medicine_safety_context(
+                session,
+                existing_direction_ids=frozenset(existing_direction_ids),
+            )
+            candidate_assessment = self.safety_engine.knowledge.assess_candidates(
+                safety_context,
+                limit=8,
+            )
+            medication_safety_notices = self._present_medication_safety_notices(
+                candidate_assessment.notices
             )
             ranking_context = self._ranking_context(session, extracted, guard)
-            focused_pool = self.safety_engine.knowledge.focus_candidate_pool(
-                self._candidate_retrieval_text(extracted),
-                safe_pool,
+            focused_pool = candidate_assessment.candidates
+            initial_candidate_ids = {candidate.id for candidate in focused_pool}
+            all_relevant_candidates_blocked = bool(
+                medication_safety_notices and not focused_pool
             )
             ranker = getattr(self.interpreter, "rank_candidates", None)
             if callable(ranker):
                 ranking = ranker(
                     ranking_context,
                     [candidate.model_dump() for candidate in focused_pool],
+                )
+                # Ranking can involve a network or local-model round trip. This
+                # second live assessment is authoritative for both candidates
+                # and the deterministic notices shown to the user.
+                fresh_assessment = self.safety_engine.knowledge.assess_candidates(
+                    safety_context,
+                    limit=8,
+                )
+                medication_safety_notices = self._present_medication_safety_notices(
+                    fresh_assessment.notices
+                )
+                fresh_by_id = {
+                    candidate.id: candidate for candidate in fresh_assessment.candidates
+                }
+                fresh_focused_pool = [
+                    fresh_by_id[candidate.id]
+                    for candidate in focused_pool
+                    if candidate.id in fresh_by_id
+                ]
+                fresh_conflict_ids = {
+                    str(getattr(notice, "medicine_id", "") or "").strip()
+                    for notice in fresh_assessment.notices
+                    if str(getattr(notice, "medicine_id", "") or "").strip()
+                }
+                all_relevant_candidates_blocked = bool(
+                    medication_safety_notices
+                    and not fresh_assessment.candidates
+                    and (
+                        not initial_candidate_ids
+                        or initial_candidate_ids <= fresh_conflict_ids
+                    )
                 )
                 rank_source = str(ranking.get("source") or source)
                 rank_message = str(ranking.get("message") or "")
@@ -718,23 +816,30 @@ class InquiryOrchestrator:
                         rank_assessment.summary
                         or str(ranking.get("summary") or "").strip()[:180]
                     )
-                    # Ranking may involve a network round trip. Re-read the live
-                    # cabinet before display and keep only candidates the model
-                    # actually saw that are still eligible now.
-                    fresh_pool = self.safety_engine.knowledge.safe_candidate_pool(
-                        candidate_context,
-                        existing_direction_ids=existing_direction_ids,
+                    selection_validator = getattr(
+                        self.safety_engine.knowledge,
+                        "validate_ai_selection",
+                        None,
                     )
-                    fresh_by_id = {candidate.id: candidate for candidate in fresh_pool}
-                    fresh_focused_pool = [
-                        fresh_by_id[candidate.id]
-                        for candidate in focused_pool
-                        if candidate.id in fresh_by_id
-                    ]
-                    options = self.safety_engine.knowledge.options_from_ai_selection(
-                        ranking,
-                        fresh_focused_pool,
-                    )
+                    if callable(selection_validator):
+                        selection_assessment = selection_validator(
+                            ranking,
+                            fresh_focused_pool,
+                        )
+                        options = selection_assessment.options
+                        medication_safety_notices = self._deduplicate_medication_safety_notices(
+                            [
+                                *medication_safety_notices,
+                                *self._present_medication_safety_notices(
+                                    selection_assessment.notices
+                                ),
+                            ]
+                        )
+                    else:
+                        options = self.safety_engine.knowledge.options_from_ai_selection(
+                            ranking,
+                            fresh_focused_pool,
+                        )
                 else:
                     rank_failed = True
             else:
@@ -748,6 +853,7 @@ class InquiryOrchestrator:
         session.extracted_information = extracted
         session.risk_level = guard.risk_level
         session.risk_reasons = guard.risk_reasons
+        session.medication_safety_notices = medication_safety_notices
         session.treatment_options = options
         session.primary_candidate = (
             self._candidate_from_treatment(options[0].medicines[0])
@@ -796,7 +902,15 @@ class InquiryOrchestrator:
             session.extracted_information = extracted
             self._clear_decision(session)
         elif not options:
-            if rank_failed or rank_message or not extracted.ai_available:
+            if all_relevant_candidates_blocked:
+                extracted.pending_clarification = ""
+                session.stage = "result"
+                session.next_action = "complete"
+                session.reply = (
+                    "用药安全核验发现相关药品与本次已用药、过敏或既往情况存在冲突，"
+                    "目前没有其他通过核验的候选药品。请查看安全提醒，并联系医生或药师核对。"
+                )
+            elif rank_failed or rank_message or not extracted.ai_available:
                 extracted.pending_clarification = ""
                 session.stage = "clarification"
                 session.next_action = "ask"
@@ -1195,6 +1309,47 @@ class InquiryOrchestrator:
             if value and value.strip()
         )
 
+    def _medicine_safety_context(
+        self,
+        session: InquirySessionResponse,
+        *,
+        existing_direction_ids: frozenset[str] = frozenset(),
+    ) -> MedicineSafetyContext:
+        extracted = session.extracted_information
+        used_medicines = (
+            extracted.used_medicines
+            if extracted.used_medicines and extracted.used_medicines != "未使用"
+            else ""
+        )
+        allergy_text = "；".join(
+            dict.fromkeys(
+                value.strip()
+                for value in (
+                    session.user_allergies,
+                    extracted.allergy_or_contraindication,
+                )
+                if value and value.strip()
+            )
+        )
+        return MedicineSafetyContext(
+            context_text=self._candidate_context(session),
+            history_text=session.user_profile,
+            allergy_text=allergy_text,
+            used_medicines_text=used_medicines,
+            relevance_text=self._candidate_retrieval_text(extracted),
+            existing_direction_ids=existing_direction_ids,
+        )
+
+    def _refresh_registered_user_safety_context(
+        self,
+        session: InquirySessionResponse,
+    ) -> None:
+        current_user = self._load_user(session.user_id)
+        if not current_user:
+            return
+        session.user_profile = self._profile_with_note(current_user)
+        session.user_allergies = str(current_user.get("allergies") or "")
+
     @staticmethod
     def _existing_direction_plans(user_id: str) -> dict[str, str]:
         if not str(user_id or "").strip():
@@ -1456,6 +1611,7 @@ class InquiryOrchestrator:
             contraindications=value.contraindications,
             aliases=value.aliases,
             active_ingredients=value.active_ingredients,
+            review_fingerprint=value.review_fingerprint,
             match_reason=value.match_reason,
             requires_existing_direction=value.requires_existing_direction,
         )
@@ -1810,6 +1966,7 @@ class InquiryOrchestrator:
     def _clear_decision(session: InquirySessionResponse) -> None:
         session.risk_level = None
         session.risk_reasons = []
+        session.medication_safety_notices = []
         session.primary_candidate = None
         session.alternative_candidate = None
         session.treatment_options = []
@@ -1872,6 +2029,7 @@ class InquiryOrchestrator:
     def _replace_with_guard_failure(session: InquirySessionResponse, guard) -> None:
         session.risk_level = guard.risk_level
         session.risk_reasons = guard.risk_reasons
+        session.medication_safety_notices = []
         session.primary_candidate = None
         session.alternative_candidate = None
         session.treatment_options = []
@@ -1885,6 +2043,29 @@ class InquiryOrchestrator:
         session.next_action = "escalate"
         session.action_message = "安全状态已经变化，本次不再执行开柜。"
         session.reply = session.action_message
+
+    @staticmethod
+    def _present_medication_safety_notices(notices) -> list[InquiryMedicineSafetyNotice]:
+        return InquiryOrchestrator._deduplicate_medication_safety_notices(
+            [
+                InquiryMedicineSafetyNotice(
+                    code=str(getattr(notice, "code", "") or "").strip(),
+                    message=str(getattr(notice, "message", "") or "").strip(),
+                )
+                for notice in notices or []
+                if str(getattr(notice, "code", "") or "").strip()
+                and str(getattr(notice, "message", "") or "").strip()
+            ]
+        )
+
+    @staticmethod
+    def _deduplicate_medication_safety_notices(
+        notices: list[InquiryMedicineSafetyNotice],
+    ) -> list[InquiryMedicineSafetyNotice]:
+        unique: dict[tuple[str, str], InquiryMedicineSafetyNotice] = {}
+        for notice in notices:
+            unique.setdefault((notice.code, notice.message), notice)
+        return list(unique.values())
 
     @staticmethod
     def _append_text(existing: str, value: str) -> str:

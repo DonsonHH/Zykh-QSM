@@ -14,6 +14,12 @@ const medicinePatch = {
     lowStockLine: 2,
     expireDate: "2030-02",
     expiryPrecision: "month",
+    aliases: ["云端草稿别名"],
+    active_ingredients: ["云端草稿成分"],
+    structured_contraindications: [
+      { concept_code: "ingredient_allergy", display_text: "云端草稿辅料过敏者禁用" },
+    ],
+    safety_review_status: "draft",
   },
 };
 
@@ -57,6 +63,7 @@ async function testCommandCompatibility() {
   const medicineCommand = await commands.createCommand("UPSERT_MEDICINE", medicinePatch);
   assert.deepEqual(submitted.data.payload, medicinePatch);
   assert.equal(medicineCommand.payload.patch.quantity, 0);
+  assert.equal(medicineCommand.payload.patch.safety_review_status, "draft");
 
   for (const message of [
     "request timeout",

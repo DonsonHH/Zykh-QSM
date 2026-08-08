@@ -18,6 +18,7 @@ from app.repositories.sync_repository import SyncRepository  # noqa: E402
 from app.schemas.sync import SyncStatus  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.cloud_sync_service import CloudSyncError, CloudSyncWorker  # noqa: E402
+from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 
 
 class FakeCloudSyncWorker(CloudSyncWorker):
@@ -69,7 +70,7 @@ class AckFailureWorker(FakeCloudSyncWorker):
 
 class MedicineRoundTripWorker(FakeV2CloudSyncWorker):
     def __init__(self, command: dict[str, object]) -> None:
-        super().__init__(revision="2.3-medicine-sync-contract")
+        super().__init__(revision="2.4-medicine-safety-contract")
         self.command = command
         self.delivered = False
 
@@ -269,6 +270,178 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(updated.category, original.category)
         self.assertEqual(updated.unit, original.unit)
         self.assertEqual(updated.expire_date, original.expire_date)
+
+    def test_identity_patch_invalidates_reviewed_guidance_and_safety_facts(self) -> None:
+        repository = MedicineRepository()
+        original = repository.get_by_hardware_slot(13)
+        repository.update(
+            original.id,
+            {
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 10:00:00",
+            },
+        )
+        original = repository.get_by_id(original.id)
+        self.assertEqual(original.safety_review_status, "reviewed")
+        self.assertEqual(original.active_ingredients, ["布洛芬"])
+
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 13,
+                "patch": {"spec": "身份已变化的新规格"},
+            }
+        )
+
+        updated = repository.get_by_hardware_slot(13)
+        self.assertFalse(updated.package_verified)
+        self.assertEqual(updated.guidance_source, "pending")
+        self.assertEqual(updated.indications, "")
+        self.assertEqual(updated.dosage, "")
+        self.assertEqual(updated.contraindications, [])
+        self.assertEqual(updated.aliases, [])
+        self.assertEqual(updated.active_ingredients, [])
+        self.assertEqual(updated.structured_contraindications, [])
+        self.assertEqual(updated.safety_review_status, "draft")
+        self.assertEqual(updated.safety_reviewed_by, "")
+        self.assertEqual(updated.safety_reviewed_at, "")
+
+    def test_remote_medicine_patch_cannot_mark_safety_facts_as_reviewed(self) -> None:
+        with self.assertRaisesRegex(CloudSyncError, "不能远程标记为已审核"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "hardware_slot": 13,
+                    "patch": {
+                        "quantity": 1,
+                        "safety_review_status": "reviewed",
+                        "safety_reviewed_by": "远程自称药师",
+                        "safety_reviewed_at": "2026-08-08 14:00:00",
+                    },
+                }
+            )
+
+    def test_remote_safety_facts_are_persisted_only_as_an_unreviewed_draft(self) -> None:
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 13,
+                "patch": {
+                    "aliases": ["远程草稿别名"],
+                    "active_ingredients": ["远程草稿成分"],
+                    "structured_contraindications": [
+                        {
+                            "concept_code": "ingredient_allergy",
+                            "display_text": "远程草稿辅料过敏者禁用",
+                        }
+                    ],
+                    "safety_review_status": "draft",
+                },
+            }
+        )
+
+        repository = MedicineRepository()
+        updated = repository.get_by_hardware_slot(13)
+        self.assertEqual(updated.aliases, ["远程草稿别名"])
+        self.assertEqual(updated.active_ingredients, ["远程草稿成分"])
+        self.assertEqual(
+            updated.structured_contraindications,
+            [
+                {
+                    "concept_code": "ingredient_allergy",
+                    "display_text": "远程草稿辅料过敏者禁用",
+                }
+            ],
+        )
+        self.assertEqual(updated.safety_review_status, "draft")
+        self.assertEqual(updated.safety_reviewed_by, "")
+        self.assertEqual(updated.safety_reviewed_at, "")
+        self.assertNotIn(
+            updated.id,
+            {item.id for item in MedicineKnowledgeRepository(repository).safe_candidate_pool("")},
+        )
+
+    def test_identity_patch_keeps_explicit_new_draft_facts_and_clears_omitted_old_facts(self) -> None:
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 13,
+                "patch": {
+                    "spec": "新身份规格",
+                    "aliases": ["新身份草稿别名"],
+                    "active_ingredients": ["新身份草稿成分"],
+                    "structured_contraindications": [
+                        {
+                            "concept_code": "ingredient_allergy",
+                            "display_text": "新身份草稿辅料过敏者禁用",
+                        }
+                    ],
+                    "safety_review_status": "draft",
+                },
+            }
+        )
+
+        updated = MedicineRepository().get_by_hardware_slot(13)
+        self.assertEqual(updated.spec, "新身份规格")
+        self.assertEqual(updated.aliases, ["新身份草稿别名"])
+        self.assertEqual(updated.active_ingredients, ["新身份草稿成分"])
+        self.assertEqual(
+            updated.structured_contraindications,
+            [
+                {
+                    "concept_code": "ingredient_allergy",
+                    "display_text": "新身份草稿辅料过敏者禁用",
+                }
+            ],
+        )
+        self.assertEqual(updated.indications, "")
+        self.assertEqual(updated.dosage, "")
+        self.assertEqual(updated.contraindications, [])
+        self.assertEqual(updated.safety_review_status, "draft")
+        self.assertFalse(updated.package_verified)
+
+    def test_empty_slot_create_persists_draft_safety_facts_from_the_same_payload(self) -> None:
+        MedicineRepository().list_all()
+        with db.connect() as conn:
+            conn.execute("DELETE FROM medicines WHERE hardware_slot=23")
+
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "upsert",
+                "hardware_slot": 23,
+                "name": "云端新建草稿药品",
+                "manufacturer": "草稿厂家",
+                "barcode": "draft-create-barcode",
+                "spec": "草稿规格",
+                "expireDate": "2030-12",
+                "aliases": ["新建草稿别名"],
+                "active_ingredients": ["新建草稿成分"],
+                "structured_contraindications": [
+                    {
+                        "concept_code": "ingredient_allergy",
+                        "display_text": "新建草稿辅料过敏者禁用",
+                    }
+                ],
+                "safety_review_status": "draft",
+            }
+        )
+
+        created = MedicineRepository().get_by_hardware_slot(23)
+        self.assertEqual(created.name, "云端新建草稿药品")
+        self.assertEqual(created.aliases, ["新建草稿别名"])
+        self.assertEqual(created.active_ingredients, ["新建草稿成分"])
+        self.assertEqual(
+            created.structured_contraindications,
+            [
+                {
+                    "concept_code": "ingredient_allergy",
+                    "display_text": "新建草稿辅料过敏者禁用",
+                }
+            ],
+        )
+        self.assertEqual(created.safety_review_status, "draft")
+        self.assertFalse(created.package_verified)
 
     def test_medicine_patch_rejects_an_unknown_operation(self) -> None:
         with self.assertRaisesRegex(CloudSyncError, "不支持的药品操作"):

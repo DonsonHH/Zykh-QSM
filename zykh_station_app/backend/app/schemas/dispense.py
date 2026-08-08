@@ -16,6 +16,7 @@ class DispenseConfirmRequest(BaseModel):
     verification_score: float | None = None
     today_plan_id: str = ""
     archive_identity_snapshot: bool = False
+    expected_review_fingerprint: str = ""
 
 
 class DispenseOpenRequest(BaseModel):

@@ -6,18 +6,18 @@ from ..config import settings
 
 
 def local_inquiry_status(model_status: dict[str, Any]) -> dict[str, Any]:
-    """Describe the usable offline inquiry path without hiding model health."""
+    """Report QSM model health separately from the deterministic fallback."""
     status = dict(model_status)
-    if settings.offline_inquiry_mode != "rules":
-        return status
-
-    runtime_ready = bool(status.get("ready"))
+    model_ready = bool(status.get("ready"))
+    primary = "rules" if settings.offline_inquiry_mode == "rules" else "model"
     return {
         **status,
-        "ready": True,
-        "status": "ready",
-        "mode": "offline_rules",
-        "model": "本地离线问询",
-        "runtime_ready": runtime_ready,
+        "ready": model_ready,
+        "model_ready": model_ready,
+        "rules_fallback_ready": True,
+        "primary": primary,
+        "fallback": "" if primary == "rules" else "rules",
+        "mode": "offline_rules" if primary == "rules" else "local_llm",
+        "runtime_ready": model_ready,
         "runtime_status": str(status.get("status") or "unavailable"),
     }

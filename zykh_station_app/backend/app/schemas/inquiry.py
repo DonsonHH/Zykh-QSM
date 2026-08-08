@@ -31,6 +31,7 @@ class CandidateMedicine(BaseModel):
     contraindications: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
     active_ingredients: list[str] = Field(default_factory=list)
+    review_fingerprint: str = ""
     match_reason: str = ""
     requires_existing_direction: bool = False
 
@@ -48,6 +49,11 @@ class TreatmentOption(BaseModel):
     medicines: list[TreatmentMedicine] = Field(default_factory=list)
 
 
+class MedicineSafetyNotice(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=160)
+
+
 class InquiryResult(BaseModel):
     inquiry_id: str
     risk_level: RiskLevel
@@ -56,6 +62,7 @@ class InquiryResult(BaseModel):
     suggested_categories: list[str]
     candidate_medicines: list[CandidateMedicine]
     contraindication_warnings: list[str]
+    medication_safety_notices: list[MedicineSafetyNotice] = Field(default_factory=list)
     safety_notice: str
     next_steps: list[str]
     can_proceed_to_dispense: bool
@@ -236,6 +243,7 @@ class InquirySessionResponse(BaseModel):
     vitals: dict[str, Any] | None = None
     risk_level: RiskLevel | None = None
     risk_reasons: list[str] = Field(default_factory=list)
+    medication_safety_notices: list[MedicineSafetyNotice] = Field(default_factory=list)
     next_action: InquiryNextAction
     primary_candidate: CandidateMedicine | None = None
     alternative_candidate: CandidateMedicine | None = None

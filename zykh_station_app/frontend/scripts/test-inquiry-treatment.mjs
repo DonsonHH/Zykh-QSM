@@ -19,6 +19,10 @@ const speech = await import(pathToFileURL(path.join(root, "src/utils/inquirySpee
 const recommendationSpeech = speech.buildRecommendationSpeech(
   {
     risk_level: "low",
+    medication_safety_notices: [
+      { code: "used_medicine_duplicate", message: "因本次已经使用同成分药品，复方感冒灵颗粒未纳入候选。" },
+      { code: "allergy_conflict", message: "第二条提示不应进入语音播报。" }
+    ],
     treatment_options: [{ option_id: "A" }, { option_id: "B" }],
     extracted_information: {
       dimension_evidence: { "恶心暑湿": "头重胸闷" },
@@ -37,6 +41,18 @@ const recommendationSpeech = speech.buildRecommendationSpeech(
       recommended_usage: "本次口服，一次1丸，一日2次"
     }]
   }
+);
+const safetyOnlySpeech = speech.buildRecommendationSpeech(
+  {
+    risk_level: "low",
+    reply: "目前没有其他通过核验的候选药品。",
+    medication_safety_notices: [
+      { code: "allergy_conflict", message: "布洛芬缓释胶囊与已记录过敏信息冲突。" },
+      { code: "history_contraindication", message: "第二条提示不应进入语音播报。" }
+    ],
+    treatment_options: []
+  },
+  null
 );
 const reviewSpeech = speech.buildInformationReviewSpeech({ user_name: "张三" });
 
@@ -71,6 +87,9 @@ const checks = [
   [recommendationSpeech.includes("藿香正气丸") && recommendationSpeech.includes("一次1丸"), "recommendation speech omits medicine or dosage"],
   [recommendationSpeech.includes("更贴近本次暑湿不适"), "recommendation speech omits the selected option reason"],
   [recommendationSpeech.includes("暑热相关不适") && recommendationSpeech.includes("持续高热或意识异常"), "recommendation speech omits possible cause or care trigger"],
+  [recommendationSpeech.includes("复方感冒灵颗粒未纳入候选") && !recommendationSpeech.includes("第二条提示不应进入语音播报"), "recommendation speech must announce at most the first deterministic safety notice"],
+  [safetyOnlySpeech.includes("布洛芬缓释胶囊") && !safetyOnlySpeech.includes("第二条提示不应进入语音播报"), "safety-only speech must announce at most the first deterministic safety notice"],
+  [safetyOnlySpeech.includes("不构成诊断或处方") && safetyOnlySpeech.endsWith("并请听医嘱。"), "safety-only speech must retain the complete medical disclaimer"],
   [reviewSpeech.includes("张三") && reviewSpeech.includes("请核对"), "information review speech is incomplete"],
   [reviewSpeech.length <= 30, "information review speech must fit comfortably within the review window"],
   [review.includes("buildInformationReviewSpeech") && review.includes("speakText("), "information review does not trigger TTS"],
@@ -87,6 +106,7 @@ const checks = [
   [result.indexOf("treatment-option-grid") < result.indexOf("<ClinicalAssessmentCard"), "treatment options must appear before the cause analysis"],
   [result.includes("compactActionSummary") && !result.includes("assessment.summary"), "next-step summary must stay concise and avoid repeating the condition analysis"],
   [result.includes("medicine.match_reason") && result.includes("适合点：") && result.includes("用法："), "personalized medicine reason and usage are not separated"],
+  [result.includes("medication_safety_notices") && result.includes("medication-safety-notices"), "deterministic medication safety notices are not independently visible on the active result page"],
   [result.includes("不构成诊断或处方") && result.includes("请听医嘱"), "result page omits the user-facing medical disclaimer"],
   [page.includes("主要不适") && page.includes("持续时间") && page.includes("体征信息"), "live inquiry summary wording is incomplete"],
   [page.includes("chiefComplaint({"), "live complaint must use the concise chief complaint formatter"],

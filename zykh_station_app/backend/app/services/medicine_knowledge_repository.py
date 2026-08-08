@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
+import hashlib
+import json
 import re
 
 from ..repositories.medicine_repository import MedicineRepository
@@ -8,67 +11,59 @@ from ..schemas.inquiry import CandidateMedicine, TreatmentMedicine, TreatmentOpt
 from ..schemas.medicine import Medicine
 
 
-# Inquiry safety facts are deliberately keyed by the fixed cabinet identity.
-# They complement, but never replace, the live stock/package/label rows read
-# from MedicineRepository on every decision.
-MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
-    "slot-01-fufang-ganmaoling": {
-        "aliases": ("复方感冒灵", "999感冒灵"),
-        "active_ingredients": ("对乙酰氨基酚",),
-    },
-    "slot-02-centrum": {"aliases": ("善存", "多维元素"), "active_ingredients": ()},
-    "slot-03-diosmectite": {
-        "aliases": ("思密达", "蒙脱石"),
-        "active_ingredients": ("蒙脱石",),
-    },
-    "slot-04-amoxicillin": {"aliases": ("阿莫西林",), "active_ingredients": ("阿莫西林",)},
-    "slot-05-nin-jiom-pei-pa-koa": {
-        "aliases": ("京都念慈庵", "川贝枇杷膏", "枇杷膏"),
-        "active_ingredients": (),
-    },
-    "slot-06-lactulose": {"aliases": ("乳果糖",), "active_ingredients": ("乳果糖",)},
-    "slot-07-yinhuang": {"aliases": ("银黄", "银黄颗粒"), "active_ingredients": ()},
-    "slot-08-huoxiang-zhengqi": {"aliases": ("藿香正气",), "active_ingredients": ()},
-    "slot-09-bifid-triple": {"aliases": ("贝飞达", "双歧杆菌三联活菌"), "active_ingredients": ()},
-    "slot-10-gauze": {"aliases": ("医用纱布", "纱布"), "active_ingredients": ()},
-    "slot-11-guilin-xiguashuang": {"aliases": ("桂林西瓜霜", "西瓜霜"), "active_ingredients": ()},
-    "slot-12-hydrotalcite": {"aliases": ("铝碳酸镁",), "active_ingredients": ("铝碳酸镁",)},
-    "slot-13-ibuprofen": {
-        "aliases": ("芬必得", "布洛芬"),
-        "active_ingredients": ("布洛芬",),
-    },
-    "slot-14-oseltamivir": {
-        "aliases": ("奥司他韦", "磷酸奥司他韦"),
-        "active_ingredients": ("奥司他韦",),
-    },
-    "slot-15-mupirocin": {"aliases": ("莫匹罗星",), "active_ingredients": ("莫匹罗星",)},
-    "slot-16-ketoconazole": {"aliases": ("酮康唑",), "active_ingredients": ("酮康唑",)},
-    "slot-17-iodophor": {"aliases": ("碘伏", "聚维酮碘"), "active_ingredients": ("聚维酮碘",)},
-    "slot-18-budesonide-nasal": {"aliases": ("雷诺考特", "布地奈德"), "active_ingredients": ("布地奈德",)},
-    "slot-19-ketoprofen-gel": {"aliases": ("法斯通", "酮洛芬"), "active_ingredients": ("酮洛芬",)},
-    "slot-20-bandage": {"aliases": ("创口贴",), "active_ingredients": ()},
-    "slot-21-amlodipine": {"aliases": ("氨氯地平",), "active_ingredients": ("氨氯地平",)},
-    "slot-22-cotton-swab": {"aliases": ("医用棉签", "棉签"), "active_ingredients": ()},
-    "slot-23-desloratadine": {"aliases": ("枸地氯雷他定",), "active_ingredients": ("枸地氯雷他定",)},
+CHRONIC_CONDITION_TERMS_BY_CODE: dict[str, tuple[str, ...]] = {
+    "diabetes": ("糖尿病", "高血糖", "血糖异常"),
+    "renal_impairment": ("肾功能不全", "肾功能衰竭", "肾损害", "肾衰", "肾病"),
+    "liver_impairment": ("肝功能不全", "肝功能受损", "肝损害", "肝病"),
+    "hypercalcemia": ("高钙血症",),
+    "hyperphosphatemia": ("高磷血症",),
+    "hypophosphatemia": ("低磷血症",),
+    "myasthenia_gravis": ("重症肌无力",),
+    "galactose_intolerance": ("半乳糖不耐受",),
+    "intestinal_obstruction": ("肠梗阻",),
+    "peptic_ulcer": ("消化道溃疡", "胃溃疡"),
+    "hypotension": ("低血压",),
+    "pregnancy": ("孕妇", "怀孕", "妊娠"),
+    "breastfeeding": ("哺乳",),
+    "asthma": ("哮喘",),
 }
-
-
-CHRONIC_CONDITION_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("糖尿病", "高血糖", "血糖异常"),
-    ("肾功能不全", "肾功能衰竭", "肾损害", "肾衰", "肾病"),
-    ("肝功能不全", "肝功能受损", "肝损害", "肝病"),
-    ("高钙血症",),
-    ("高磷血症",),
-    ("低磷血症",),
-    ("重症肌无力",),
-    ("半乳糖不耐受",),
-    ("肠梗阻",),
-    ("消化道溃疡", "胃溃疡"),
-    ("低血压",),
-    ("孕妇", "怀孕", "妊娠"),
-    ("哺乳",),
-    ("哮喘",),
+CHRONIC_CONDITION_GROUPS: tuple[tuple[str, ...], ...] = tuple(
+    CHRONIC_CONDITION_TERMS_BY_CODE.values()
 )
+
+
+@dataclass(frozen=True)
+class MedicineSafetyContext:
+    # ``context_text`` remains as a compatibility input for older callers.
+    # New inquiry paths keep each source separate so a chronic condition cannot
+    # be misreported as an allergy (or vice versa).
+    context_text: str = ""
+    history_text: str = ""
+    allergy_text: str = ""
+    used_medicines_text: str = ""
+    relevance_text: str = ""
+    existing_direction_ids: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class MedicineSafetyNotice:
+    code: str
+    message: str
+    medicine_id: str = ""
+    medicine_name: str = ""
+    trigger: str = ""
+
+
+@dataclass(frozen=True)
+class CandidatePoolAssessment:
+    candidates: list[CandidateMedicine]
+    notices: list[MedicineSafetyNotice]
+
+
+@dataclass(frozen=True)
+class MedicineSelectionAssessment:
+    options: list[TreatmentOption]
+    notices: list[MedicineSafetyNotice]
 
 
 class MedicineKnowledgeRepository:
@@ -83,43 +78,287 @@ class MedicineKnowledgeRepository:
         *,
         existing_direction_ids: set[str] | None = None,
     ) -> list[CandidateMedicine]:
-        directed_ids = existing_direction_ids or set()
-        candidates: list[CandidateMedicine] = []
-        for medicine in self.medicine_repository.list_all():
-            if not self._eligible(medicine, context_text, directed_ids):
-                continue
-            if not medicine.indications.strip() or not medicine.dosage.strip():
-                continue
-            if medicine.guidance_source == "pending":
-                continue
-            facts = self._safety_facts(medicine)
-            candidates.append(
-                CandidateMedicine(
-                    id=medicine.id,
-                    name=medicine.name,
-                    category=medicine.category,
-                    slot=str(medicine.hardware_slot or medicine.slot),
-                    stock=medicine.stock,
-                    unit=medicine.unit,
-                    safety_note=medicine.safety_note,
-                    indications=medicine.indications,
-                    dosage=medicine.dosage,
-                    tags=medicine.tags,
-                    contraindications=medicine.contraindications,
-                    aliases=list(facts["aliases"]),
-                    active_ingredients=list(facts["active_ingredients"]),
-                    match_reason="",
-                    requires_existing_direction=not medicine.is_otc,
-                )
+        assessment = self.assess_candidates(
+            MedicineSafetyContext(
+                context_text=context_text,
+                existing_direction_ids=frozenset(existing_direction_ids or set()),
+            ),
+            limit=1000,
+        )
+        return assessment.candidates
+
+    def assess_candidates(
+        self,
+        context: MedicineSafetyContext,
+        *,
+        limit: int = 8,
+    ) -> CandidatePoolAssessment:
+        if limit <= 0:
+            return CandidatePoolAssessment(candidates=[], notices=[])
+        medicines = self.medicine_repository.list_all()
+        by_id = {medicine.id: medicine for medicine in medicines}
+        available = [
+            self._candidate_from_medicine(medicine)
+            for medicine in medicines
+            if self._available(medicine, set(context.existing_direction_ids))
+        ]
+        if context.relevance_text.strip():
+            related = self.focus_candidate_pool(
+                context.relevance_text,
+                available,
+                limit=len(available),
             )
-        return candidates
+        else:
+            related = available
+
+        candidates: list[CandidateMedicine] = []
+        notices: list[MedicineSafetyNotice] = []
+        legacy_context = context.context_text
+        used_context = context.used_medicines_text or legacy_context
+        allergy_context = context.allergy_text or legacy_context
+        history_context = context.history_text or legacy_context
+        if context.used_medicines_text and not re.search(
+            r"(?:本次)?已用药\s*[：:]", used_context, flags=re.IGNORECASE
+        ):
+            used_context = f"已用药：{used_context}"
+        for candidate in related:
+            medicine = by_id[candidate.id]
+            used_reference = self._used_medicine_conflict_reference(
+                medicine,
+                used_context,
+            )
+            if used_reference:
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="used_medicine_duplicate",
+                        message=(
+                            f"你已说明本次用过“{used_reference}”；为避免重复用药，"
+                            f"本次未推荐“{medicine.name}”。"
+                        ),
+                        medicine_id=medicine.id,
+                        medicine_name=medicine.name,
+                        trigger=used_reference,
+                    )
+                )
+                continue
+            if self.has_allergy_conflict(medicine, allergy_context):
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="allergy_conflict",
+                        message=f"根据已记录的过敏或禁忌信息，本次未推荐“{medicine.name}”。",
+                        medicine_id=medicine.id,
+                        medicine_name=medicine.name,
+                    )
+                )
+                continue
+            if self.has_chronic_condition_conflict(medicine, history_context):
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="history_contraindication",
+                        message=f"根据已记录的病史与药品禁忌，本次未推荐“{medicine.name}”。",
+                        medicine_id=medicine.id,
+                        medicine_name=medicine.name,
+                    )
+                )
+                continue
+            if len(candidates) < limit:
+                candidates.append(candidate)
+        return CandidatePoolAssessment(candidates=candidates, notices=notices)
+
+    @classmethod
+    def _candidate_from_medicine(cls, medicine: Medicine) -> CandidateMedicine:
+        facts = cls._safety_facts(medicine)
+        return CandidateMedicine(
+            id=medicine.id,
+            name=medicine.name,
+            category=medicine.category,
+            slot=str(medicine.hardware_slot or medicine.slot),
+            stock=medicine.stock,
+            unit=medicine.unit,
+            safety_note=medicine.safety_note,
+            indications=medicine.indications,
+            dosage=medicine.dosage,
+            tags=medicine.tags,
+            contraindications=medicine.contraindications,
+            aliases=list(facts["aliases"]),
+            active_ingredients=list(facts["active_ingredients"]),
+            review_fingerprint=cls.review_fingerprint(medicine),
+            match_reason="",
+            requires_existing_direction=not medicine.is_otc,
+        )
 
     def options_from_ai_selection(
         self,
         payload: dict,
         safe_pool: list[CandidateMedicine],
     ) -> list[TreatmentOption]:
-        """Accept at most two model options and reject every ID outside the safe pool."""
+        """Compatibility wrapper for callers that only consume accepted options."""
+        return self.validate_ai_selection(payload, safe_pool).options
+
+    def validate_ai_selection(
+        self,
+        payload: dict,
+        safe_pool: list[CandidateMedicine],
+    ) -> MedicineSelectionAssessment:
+        """Validate model selections without silently shortening unsafe combinations."""
+        raw_options = payload.get("options") if isinstance(payload, dict) else []
+        if not isinstance(raw_options, list):
+            return MedicineSelectionAssessment(options=[], notices=[])
+        allowed = {candidate.id: candidate for candidate in safe_pool}
+        accepted_payloads: list[dict] = []
+        notices: list[MedicineSafetyNotice] = []
+        for raw in raw_options[:2]:
+            if not isinstance(raw, dict):
+                continue
+            raw_ids = raw.get("medicine_ids")
+            if not isinstance(raw_ids, list):
+                continue
+            if len(raw_ids) > 4:
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="combination_too_large",
+                        message="一次组合最多包含 4 种药品，本次组合未被采用。",
+                    )
+                )
+                continue
+            normalized_ids = [str(raw_id or "").strip() for raw_id in raw_ids]
+            if not normalized_ids or any(not medicine_id for medicine_id in normalized_ids):
+                continue
+            selected = [allowed[medicine_id] for medicine_id in normalized_ids if medicine_id in allowed]
+            conflict_notice = self._ingredient_conflict_notice(selected)
+            if len(normalized_ids) > 1 and conflict_notice is not None:
+                notices.append(conflict_notice)
+                continue
+            if len(normalized_ids) > 1 and any(
+                not candidate.active_ingredients
+                and not self._is_controlled_non_drug_supply(candidate.id)
+                for candidate in selected
+            ):
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="combination_not_approved",
+                        message="组合中存在有效成分资料不完整的药品，本次未被采用。",
+                    )
+                )
+                continue
+            if len(normalized_ids) > 1 and (
+                len(set(normalized_ids)) != len(normalized_ids)
+                or any(medicine_id not in allowed for medicine_id in normalized_ids)
+                or not self._combination_is_approved(normalized_ids)
+            ):
+                notices.append(
+                    MedicineSafetyNotice(
+                        code="combination_not_approved",
+                        message="该多药方案未命中药师审核的精确组合，本次未被采用。",
+                    )
+                )
+                continue
+            accepted_payloads.append(raw)
+        return MedicineSelectionAssessment(
+            options=self._options_from_model_payload(
+                {"options": accepted_payloads},
+                safe_pool,
+            ),
+            notices=notices,
+        )
+
+    def _is_controlled_non_drug_supply(self, medicine_id: str) -> bool:
+        checker = getattr(
+            self.medicine_repository,
+            "is_controlled_non_drug_supply",
+            None,
+        )
+        return bool(callable(checker) and checker(medicine_id))
+
+    def _ingredient_conflict_notice(
+        self,
+        selected: list[CandidateMedicine],
+    ) -> MedicineSafetyNotice | None:
+        list_conflicts = getattr(
+            self.medicine_repository,
+            "list_reviewed_ingredient_conflicts",
+            None,
+        )
+        matrix = {}
+        if callable(list_conflicts):
+            matrix = {
+                tuple(
+                    sorted(
+                        (
+                            self._compact(rule.left_ingredient),
+                            self._compact(rule.right_ingredient),
+                        )
+                    )
+                ): rule
+                for rule in list_conflicts()
+                if rule.disposition == "block"
+            }
+        for index, current in enumerate(selected):
+            current_ingredients = {
+                self._compact(ingredient): ingredient.strip()
+                for ingredient in current.active_ingredients
+                if self._compact(ingredient)
+            }
+            for other in selected[index + 1:]:
+                other_ingredients = {
+                    self._compact(ingredient): ingredient.strip()
+                    for ingredient in other.active_ingredients
+                    if self._compact(ingredient)
+                }
+                duplicate_keys = sorted(current_ingredients.keys() & other_ingredients.keys())
+                if duplicate_keys:
+                    ingredient = current_ingredients[duplicate_keys[0]]
+                    return MedicineSafetyNotice(
+                        code="ingredient_conflict",
+                        message=f"组合中存在重复有效成分“{ingredient}”，本次未被采用。",
+                        trigger=ingredient,
+                    )
+                for left_key, left_display in current_ingredients.items():
+                    for right_key, right_display in other_ingredients.items():
+                        rule = matrix.get(tuple(sorted((left_key, right_key))))
+                        if rule is None:
+                            continue
+                        detail = rule.message.strip() or "药师审核的成分冲突矩阵禁止该组合"
+                        return MedicineSafetyNotice(
+                            code="ingredient_conflict",
+                            message=(
+                                f"“{left_display}”与“{right_display}”存在成分冲突："
+                                f"{detail}，本次未被采用。"
+                            ),
+                            trigger=f"{left_display}+{right_display}",
+                        )
+        return None
+
+    def _combination_is_approved(self, medicine_ids: list[str]) -> bool:
+        list_combinations = getattr(
+            self.medicine_repository,
+            "list_reviewed_combinations",
+            None,
+        )
+        if not callable(list_combinations):
+            return False
+        get_fingerprints = getattr(
+            self.medicine_repository,
+            "get_identity_fingerprints",
+            None,
+        )
+        if not callable(get_fingerprints):
+            return False
+        current_fingerprints = get_fingerprints(medicine_ids)
+        if set(current_fingerprints) != set(medicine_ids):
+            return False
+        expected = tuple(medicine_ids)
+        return any(
+            tuple(combination.medicine_ids) == expected
+            and combination.member_identity_fingerprints == current_fingerprints
+            for combination in list_combinations()
+        )
+
+    def _options_from_model_payload(
+        self,
+        payload: dict,
+        safe_pool: list[CandidateMedicine],
+    ) -> list[TreatmentOption]:
         allowed = {candidate.id: candidate for candidate in safe_pool}
         options: list[TreatmentOption] = []
         used_signatures: set[tuple[str, ...]] = set()
@@ -300,20 +539,36 @@ class MedicineKnowledgeRepository:
 
     @staticmethod
     def _eligible(medicine: Medicine, context_text: str, directed_ids: set[str] | None = None) -> bool:
-        has_existing_direction = medicine.id in (directed_ids or set())
-        if medicine.stock <= 0:
-            return False
-        if not medicine.package_verified:
-            return False
-        if (not medicine.is_otc or medicine.category == "慢病常用") and not has_existing_direction:
-            return False
-        if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
+        if not MedicineKnowledgeRepository._available(medicine, directed_ids):
             return False
         if MedicineKnowledgeRepository._used_medicine_conflict(medicine, context_text):
             return False
         if MedicineKnowledgeRepository.has_chronic_condition_conflict(medicine, context_text):
             return False
         return not MedicineKnowledgeRepository.has_allergy_conflict(medicine, context_text)
+
+    @staticmethod
+    def _available(medicine: Medicine, directed_ids: set[str] | None = None) -> bool:
+        has_existing_direction = medicine.id in (directed_ids or set())
+        if medicine.stock <= 0:
+            return False
+        if not medicine.package_verified:
+            return False
+        if (
+            medicine.safety_review_status != "reviewed"
+            or not medicine.safety_reviewed_by.strip()
+            or not medicine.safety_reviewed_at.strip()
+        ):
+            return False
+        if (not medicine.is_otc or medicine.category == "慢病常用") and not has_existing_direction:
+            return False
+        if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
+            return False
+        if not medicine.indications.strip() or not medicine.dosage.strip():
+            return False
+        if medicine.guidance_source == "pending":
+            return False
+        return True
 
     @classmethod
     def has_allergy_conflict(cls, medicine: Medicine, context_text: str) -> bool:
@@ -325,6 +580,10 @@ class MedicineKnowledgeRepository:
                     *facts["aliases"],
                     *facts["active_ingredients"],
                     *medicine.contraindications,
+                    *(
+                        str(item.get("display_text") or "")
+                        for item in medicine.structured_contraindications
+                    ),
                 ]
             )
         )
@@ -338,6 +597,16 @@ class MedicineKnowledgeRepository:
 
     @classmethod
     def has_chronic_condition_conflict(cls, medicine: Medicine, context_text: str) -> bool:
+        structured_codes = {
+            str(item.get("concept_code") or "").strip()
+            for item in medicine.structured_contraindications
+        }
+        if any(
+            concept_code in structured_codes
+            and any(cls._has_unnegated_term(context_text, term) for term in terms)
+            for concept_code, terms in CHRONIC_CONDITION_TERMS_BY_CODE.items()
+        ):
+            return True
         warnings = cls._compact(" ".join(medicine.contraindications))
         return any(
             any(cls._has_unnegated_term(context_text, term) for term in group)
@@ -347,38 +616,89 @@ class MedicineKnowledgeRepository:
 
     @classmethod
     def _used_medicine_conflict(cls, medicine: Medicine, context_text: str) -> bool:
+        return bool(cls._used_medicine_conflict_reference(medicine, context_text))
+
+    @classmethod
+    def _used_medicine_conflict_reference(
+        cls,
+        medicine: Medicine,
+        context_text: str,
+    ) -> str:
         matches = re.findall(
             r"(?:本次)?已用药\s*[：:]\s*([^；;\n]+)",
             str(context_text or ""),
             flags=re.IGNORECASE,
         )
         if not matches:
-            return False
+            return ""
         used_text = cls._compact(" ".join(matches))
         if not used_text or used_text in {"无", "没有", "未使用", "还没有"}:
-            return False
+            return ""
         facts = cls._safety_facts(medicine)
-        references = (medicine.name, *facts["aliases"], *facts["active_ingredients"])
-        return any(
-            len(compact) >= 2 and compact in used_text
-            for value in references
-            if (compact := cls._compact(value))
+        references = (*facts["active_ingredients"], *facts["aliases"], medicine.name)
+        return next(
+            (
+                value
+                for value in references
+                if len(cls._compact(value)) >= 2
+                and cls._compact(value) in used_text
+            ),
+            "",
         )
 
     @staticmethod
     def _safety_facts(medicine: Medicine) -> dict[str, tuple[str, ...]]:
-        facts = MEDICINE_SAFETY_FACTS.get(medicine.id, {})
         aliases = tuple(
             dict.fromkeys(
                 value.strip()
-                for value in (medicine.name, *facts.get("aliases", ()))
+                for value in (medicine.name, *medicine.aliases)
                 if value and value.strip()
             )
         )
         return {
             "aliases": aliases,
-            "active_ingredients": tuple(facts.get("active_ingredients", ())),
+            "active_ingredients": tuple(
+                value.strip()
+                for value in medicine.active_ingredients
+                if value and value.strip()
+            ),
         }
+
+    @staticmethod
+    def review_fingerprint(medicine: Medicine) -> str:
+        """Bind a displayed option to the exact reviewed package and safety facts."""
+        snapshot = {
+            field: getattr(medicine, field)
+            for field in (
+                "name",
+                "manufacturer",
+                "barcode",
+                "spec",
+                "category",
+                "expire_date",
+                "package_verified",
+                "guidance_source",
+                "tags",
+                "aliases",
+                "active_ingredients",
+                "indications",
+                "dosage",
+                "contraindications",
+                "structured_contraindications",
+                "safety_note",
+                "is_otc",
+                "safety_review_status",
+                "safety_reviewed_by",
+                "safety_reviewed_at",
+            )
+        }
+        encoded = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def _compact(value: object) -> str:

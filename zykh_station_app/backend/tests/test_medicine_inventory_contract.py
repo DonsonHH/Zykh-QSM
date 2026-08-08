@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -14,9 +15,14 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.routers.medicines import list_medicines  # noqa: E402
-from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
+from app.repositories.medicine_repository import (  # noqa: E402
+    MEDICINE_SAFETY_FACTS_VERSION,
+    MedicineRepository,
+)
+from app.schemas.medicine import MedicineUpdateRequest  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
+from app.services.medicine_service import MedicineService  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
 
@@ -99,8 +105,548 @@ class MedicineInventoryContractTest(unittest.TestCase):
             item.id
             for item in MedicineKnowledgeRepository().safe_candidate_pool("")
         }
-        self.assertIn("slot-03-diosmectite", safe_ids)
-        self.assertIn("slot-13-ibuprofen", safe_ids)
+        self.assertNotIn("slot-03-diosmectite", safe_ids)
+        self.assertNotIn("slot-13-ibuprofen", safe_ids)
+
+    def test_reviewed_safety_facts_are_read_from_the_medicine_record(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(13)
+        self.assertIsNotNone(medicine)
+
+        updated = repository.update(
+            medicine.id,
+            {
+                "aliases": ["芬必得", "测试审核别名"],
+                "active_ingredients": ["布洛芬"],
+                "structured_contraindications": [
+                    {
+                        "concept_code": "nsaid_allergy",
+                        "display_text": "非甾体抗炎药过敏者禁用",
+                    }
+                ],
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 10:00:00",
+            },
+        )
+
+        self.assertEqual(updated.aliases, ["芬必得", "测试审核别名"])
+        self.assertEqual(updated.active_ingredients, ["布洛芬"])
+        self.assertEqual(
+            updated.structured_contraindications,
+            [
+                {
+                    "concept_code": "nsaid_allergy",
+                    "display_text": "非甾体抗炎药过敏者禁用",
+                }
+            ],
+        )
+        self.assertEqual(updated.safety_review_status, "reviewed")
+        self.assertEqual(updated.safety_reviewed_by, "测试药师")
+
+    def test_local_safety_content_edit_revokes_review_until_explicit_reapproval(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(13)
+        repository.update(
+            medicine.id,
+            {
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 09:50:00",
+            },
+        )
+        medicine = repository.get_by_id(medicine.id)
+        self.assertEqual(medicine.safety_review_status, "reviewed")
+
+        result = MedicineService(repository=repository).update_medicine(
+            medicine.id,
+            MedicineUpdateRequest(
+                aliases=[*medicine.aliases, "新补充别名"],
+                active_ingredients=[*medicine.active_ingredients, "新补充成分"],
+                structured_contraindications=[
+                    *medicine.structured_contraindications,
+                    {
+                        "concept_code": "new_review_required",
+                        "display_text": "新增禁忌资料待药师核验",
+                    },
+                ],
+            ),
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.medicine.guidance_source, "manual")
+        self.assertTrue(result.medicine.guidance_review_required)
+        self.assertEqual(result.medicine.safety_review_status, "draft")
+        self.assertEqual(result.medicine.safety_reviewed_by, "")
+        self.assertEqual(result.medicine.safety_reviewed_at, "")
+        self.assertNotIn(
+            medicine.id,
+            {
+                item.id
+                for item in MedicineKnowledgeRepository(repository).safe_candidate_pool("")
+            },
+        )
+
+    def test_default_safety_facts_are_backfilled_as_traceable_unreviewed_drafts(self) -> None:
+        medicine = MedicineRepository().get_by_hardware_slot(13)
+
+        self.assertEqual(medicine.aliases, ["布洛芬缓释胶囊", "芬必得", "布洛芬"])
+        self.assertEqual(medicine.active_ingredients, ["布洛芬"])
+        self.assertIn(
+            {
+                "concept_code": "pregnancy",
+                "display_text": "孕妇及哺乳期妇女禁用",
+            },
+            medicine.structured_contraindications,
+        )
+        self.assertEqual(medicine.safety_review_status, "draft")
+        self.assertEqual(medicine.safety_reviewed_by, "")
+        self.assertEqual(medicine.safety_reviewed_at, "")
+
+    def test_v2_safety_migration_revokes_legacy_machine_review_without_overwriting_label_edits(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET dosage='现场修改后尚未受控审核', safety_review_status='reviewed',
+                    safety_reviewed_by='fixed-inventory-safety-migration',
+                    safety_reviewed_at='2026-08-01 08:00:00'
+                WHERE id='slot-13-ibuprofen'
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('medicine_safety_facts_version', 'database-safety-facts-v1', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (db.now_text(),),
+            )
+
+        corrected = repository.get_by_id("slot-13-ibuprofen")
+
+        self.assertEqual(
+            MEDICINE_SAFETY_FACTS_VERSION,
+            "database-safety-facts-v3-controlled-ingredients",
+        )
+        self.assertEqual(corrected.dosage, "现场修改后尚未受控审核")
+        self.assertEqual(corrected.safety_review_status, "draft")
+        self.assertEqual(corrected.safety_reviewed_by, "")
+        self.assertEqual(corrected.safety_reviewed_at, "")
+
+    def test_controlled_bundled_baseline_uses_the_exact_14_item_allowlist(self) -> None:
+        medicines = MedicineRepository().list_all()
+        by_slot = {medicine.hardware_slot: medicine for medicine in medicines}
+        bundled = [
+            medicine
+            for medicine in medicines
+            if medicine.safety_reviewed_by == "bundled-label-reference-v2"
+        ]
+
+        self.assertEqual(
+            {item.hardware_slot for item in bundled},
+            {4, 6, 10, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
+        )
+        self.assertTrue(all(item.safety_review_status == "reviewed" for item in bundled))
+        for slot in (1, 2, 3, 5, 7, 8, 9, 11, 13):
+            self.assertEqual(by_slot[slot].safety_review_status, "draft")
+            self.assertEqual(by_slot[slot].safety_reviewed_by, "")
+            self.assertEqual(by_slot[slot].safety_reviewed_at, "")
+
+    def test_v3_migration_revokes_v2_reviews_with_incomplete_ingredients(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-label-reference-v2',
+                    safety_reviewed_at='2026-08-08 10:00:00'
+                WHERE id='slot-08-huoxiang-zhengqi'
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('medicine_safety_facts_version',
+                        'database-safety-facts-v2-controlled-label', ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (db.now_text(),),
+            )
+
+        corrected = repository.get_by_id("slot-08-huoxiang-zhengqi")
+        still_controlled = repository.get_by_id("slot-06-lactulose")
+
+        self.assertEqual(corrected.safety_review_status, "draft")
+        self.assertEqual(corrected.safety_reviewed_by, "")
+        self.assertEqual(corrected.safety_reviewed_at, "")
+        self.assertEqual(still_controlled.safety_review_status, "reviewed")
+        self.assertEqual(
+            still_controlled.safety_reviewed_by,
+            "bundled-label-reference-v2",
+        )
+
+    def test_safety_migration_does_not_approve_modified_label_content(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(13)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET contraindications_json=?, safety_review_status='draft',
+                    safety_reviewed_by='', safety_reviewed_at=''
+                WHERE id=?
+                """,
+                (json.dumps(["管理员修改的禁忌资料待审核"], ensure_ascii=False), medicine.id),
+            )
+            conn.execute(
+                "DELETE FROM app_settings WHERE key='medicine_safety_facts_version'"
+            )
+
+        migrated = repository.get_by_id(medicine.id)
+
+        self.assertEqual(migrated.contraindications, ["管理员修改的禁忌资料待审核"])
+        self.assertEqual(migrated.safety_review_status, "draft")
+        self.assertEqual(migrated.safety_reviewed_by, "")
+
+    def test_reviewed_combination_requires_auditable_review_metadata(self) -> None:
+        repository = MedicineRepository()
+
+        with self.assertRaisesRegex(ValueError, "审核人和审核时间"):
+            repository.save_approved_combination(
+                combination_id="test-combination",
+                label="测试组合",
+                medicine_ids=["test-a", "test-b"],
+                review_status="reviewed",
+                reviewed_by="",
+                reviewed_at="",
+            )
+
+    def test_reviewed_drug_combination_rejects_members_without_active_ingredients(self) -> None:
+        repository = MedicineRepository()
+        unknown_ingredients = repository.get_by_hardware_slot(8)
+        known_ingredients = repository.get_by_hardware_slot(6)
+        repository.update(
+            unknown_ingredients.id,
+            {
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 12:05:00",
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "有效成分"):
+            repository.save_approved_combination(
+                combination_id="unknown-ingredient-pair",
+                label="未知成分组合",
+                medicine_ids=[unknown_ingredients.id, known_ingredients.id],
+                review_status="reviewed",
+                reviewed_by="测试药师",
+                reviewed_at="2026-08-08 12:10:00",
+            )
+
+    def test_non_drug_exception_is_bound_to_the_current_product_identity(self) -> None:
+        repository = MedicineRepository()
+        supply = repository.get_by_hardware_slot(10)
+        known_drug = repository.get_by_hardware_slot(6)
+        repository.save_approved_combination(
+            combination_id="supply-baseline-pair",
+            label="受控护理用品组合",
+            medicine_ids=[supply.id, known_drug.id],
+            review_status="reviewed",
+            reviewed_by="测试药师",
+            reviewed_at="2026-08-08 12:12:00",
+        )
+
+        repository.update(
+            supply.id,
+            {
+                "name": "同仓位空成分药品",
+                "category": "家庭常用",
+                "spec": "新药规格",
+            },
+        )
+        repository.update(
+            supply.id,
+            {
+                "aliases": ["同仓位空成分药品"],
+                "active_ingredients": [],
+                "indications": "用于测试症状",
+                "dosage": "按说明书使用",
+                "contraindications": ["对本品过敏者禁用"],
+                "structured_contraindications": [
+                    {
+                        "concept_code": "ingredient_allergy",
+                        "display_text": "对本品过敏者禁用",
+                    }
+                ],
+                "is_otc": True,
+                "guidance_source": "verified_label",
+                "guidance_review_required": False,
+                "package_verified": True,
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 12:14:00",
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "有效成分"):
+            repository.save_approved_combination(
+                combination_id="reused-row-pair",
+                label="换药后组合",
+                medicine_ids=[supply.id, known_drug.id],
+                review_status="reviewed",
+                reviewed_by="测试药师",
+                reviewed_at="2026-08-08 12:15:00",
+            )
+
+    def test_combination_larger_than_four_is_rejected_instead_of_truncated(self) -> None:
+        repository = MedicineRepository()
+
+        with self.assertRaisesRegex(ValueError, "2 至 4"):
+            repository.save_approved_combination(
+                combination_id="too-large",
+                label="过大组合",
+                medicine_ids=["test-a", "test-b", "test-c", "test-d", "test-e"],
+            )
+
+        with db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS count FROM approved_medicine_combinations"
+            ).fetchone()["count"]
+        self.assertEqual(count, 0)
+
+    def test_only_auditable_reviewed_combinations_are_available(self) -> None:
+        repository = MedicineRepository()
+        reviewed_ids = [
+            repository.get_by_hardware_slot(4).id,
+            repository.get_by_hardware_slot(6).id,
+        ]
+        repository.save_approved_combination(
+            combination_id="reviewed-pair",
+            label="药师审核组合",
+            medicine_ids=reviewed_ids,
+            review_status="reviewed",
+            reviewed_by="测试药师",
+            reviewed_at="2026-08-08 12:00:00",
+        )
+        repository.save_approved_combination(
+            combination_id="draft-pair",
+            label="待审核组合",
+            medicine_ids=["test-a", "test-c"],
+        )
+
+        combinations = repository.list_reviewed_combinations()
+
+        self.assertEqual([item.combination_id for item in combinations], ["reviewed-pair"])
+        self.assertEqual(combinations[0].medicine_ids, reviewed_ids)
+        self.assertEqual(set(combinations[0].member_identity_fingerprints), set(reviewed_ids))
+        self.assertEqual(combinations[0].reviewed_by, "测试药师")
+
+    def test_combination_member_snapshot_and_insert_share_one_write_transaction(self) -> None:
+        repository = MedicineRepository()
+        reviewed_ids = [
+            repository.get_by_hardware_slot(4).id,
+            repository.get_by_hardware_slot(6).id,
+        ]
+        real_connect = db.connect
+        connection_calls: list[object] = []
+
+        def tracked_connect(*args, **kwargs):
+            connection_calls.append(object())
+            return real_connect(*args, **kwargs)
+
+        with patch.object(repository, "_ensure_seeded", return_value=None), patch(
+            "app.repositories.medicine_repository.db.connect",
+            side_effect=tracked_connect,
+        ):
+            repository.save_approved_combination(
+                combination_id="single-transaction-pair",
+                label="同事务组合",
+                medicine_ids=reviewed_ids,
+                review_status="reviewed",
+                reviewed_by="测试药师",
+                reviewed_at="2026-08-08 12:02:00",
+            )
+
+        self.assertEqual(len(connection_calls), 1)
+
+    def test_reviewed_ingredient_conflict_requires_metadata_and_is_order_independent(self) -> None:
+        repository = MedicineRepository()
+
+        with self.assertRaisesRegex(ValueError, "只允许 block"):
+            repository.save_ingredient_conflict(
+                left_ingredient="布洛芬",
+                right_ingredient="对乙酰氨基酚",
+                disposition="blocked",
+            )
+
+        with self.assertRaisesRegex(ValueError, "审核人和审核时间"):
+            repository.save_ingredient_conflict(
+                left_ingredient="布洛芬",
+                right_ingredient="对乙酰氨基酚",
+                review_status="reviewed",
+            )
+
+        repository.save_ingredient_conflict(
+            left_ingredient=" 对乙酰氨基酚 ",
+            right_ingredient="布洛芬",
+            message="药师标记为不可同用",
+            review_status="reviewed",
+            reviewed_by="测试药师",
+            reviewed_at="2026-08-08 12:30:00",
+        )
+
+        rules = repository.list_reviewed_ingredient_conflicts()
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(
+            {rules[0].left_ingredient, rules[0].right_ingredient},
+            {"布洛芬", "对乙酰氨基酚"},
+        )
+        self.assertEqual(rules[0].message, "药师标记为不可同用")
+
+    def test_reviewed_combination_is_bound_to_each_members_identity_fingerprint(self) -> None:
+        repository = MedicineRepository()
+        first = repository.get_by_hardware_slot(3)
+        second = repository.get_by_hardware_slot(6)
+        repository.update(
+            first.id,
+            {
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 13:25:00",
+            },
+        )
+        first = repository.get_by_id(first.id)
+        repository.save_approved_combination(
+            combination_id="identity-bound-pair",
+            label="身份绑定测试组合",
+            medicine_ids=[first.id, second.id],
+            review_status="reviewed",
+            reviewed_by="测试药师",
+            reviewed_at="2026-08-08 13:30:00",
+        )
+        knowledge = MedicineKnowledgeRepository(repository)
+        initial_pool = knowledge.safe_candidate_pool("")
+        initial = knowledge.validate_ai_selection(
+            {"options": [{"medicine_ids": [first.id, second.id]}]},
+            initial_pool,
+        )
+        self.assertEqual(len(initial.options), 1)
+
+        repository.update(first.id, {"spec": "身份已更换的新规格"})
+        with db.connect() as conn:
+            invalidated = conn.execute(
+                "SELECT review_status FROM approved_medicine_combinations WHERE combination_id=?",
+                ("identity-bound-pair",),
+            ).fetchone()
+        self.assertEqual(invalidated["review_status"], "invalidated")
+        repository.update(
+            first.id,
+            {
+                "aliases": [first.name],
+                "active_ingredients": first.active_ingredients,
+                "indications": first.indications,
+                "dosage": first.dosage,
+                "contraindications": first.contraindications,
+                "structured_contraindications": first.structured_contraindications,
+                "is_otc": first.is_otc,
+                "is_emergency": first.is_emergency,
+                "guidance_source": "verified_label",
+                "guidance_review_required": False,
+                "package_verified": True,
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 13:35:00",
+            },
+        )
+        fresh_pool = knowledge.safe_candidate_pool("")
+        self.assertTrue({first.id, second.id}.issubset({item.id for item in fresh_pool}))
+
+        after_identity_change = knowledge.validate_ai_selection(
+            {"options": [{"medicine_ids": [first.id, second.id]}]},
+            fresh_pool,
+        )
+
+        self.assertEqual(after_identity_change.options, [])
+        self.assertEqual(
+            [notice.code for notice in after_identity_change.notices],
+            ["combination_not_approved"],
+        )
+
+    def test_identity_change_invalidates_linked_today_plans_in_the_same_transaction(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(13)
+        plan = RecordsService().create_today_plan(
+            TodayPlanCreateRequest(
+                time="09:15",
+                medicine_id=medicine.id,
+                service_user_id="zhangsan",
+            )
+        )
+
+        repository.update(medicine.id, {"spec": "计划不应沿用的新规格"})
+
+        with db.connect() as conn:
+            stored_plan = conn.execute(
+                "SELECT id FROM today_plans WHERE id=?",
+                (plan.id,),
+            ).fetchone()
+            stored_medicine = conn.execute(
+                "SELECT spec FROM medicines WHERE id=?",
+                (medicine.id,),
+            ).fetchone()
+        self.assertIsNone(stored_plan)
+        self.assertEqual(stored_medicine["spec"], "计划不应沿用的新规格")
+
+    def test_safety_content_change_permanently_invalidates_reviewed_combinations(self) -> None:
+        repository = MedicineRepository()
+        first = repository.get_by_hardware_slot(3)
+        second = repository.get_by_hardware_slot(6)
+        repository.update(
+            first.id,
+            {
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 14:05:00",
+            },
+        )
+        first = repository.get_by_id(first.id)
+        repository.save_approved_combination(
+            combination_id="safety-bound-pair",
+            label="安全资料绑定测试组合",
+            medicine_ids=[first.id, second.id],
+            review_status="reviewed",
+            reviewed_by="测试药师",
+            reviewed_at="2026-08-08 14:10:00",
+        )
+
+        repository.update(first.id, {"aliases": [*first.aliases, "新草稿别名"]})
+        repository.update(
+            first.id,
+            {
+                "aliases": first.aliases,
+                "safety_review_status": "reviewed",
+                "safety_reviewed_by": "测试药师",
+                "safety_reviewed_at": "2026-08-08 14:15:00",
+            },
+        )
+
+        self.assertEqual(repository.list_reviewed_combinations(), [])
+        with db.connect() as conn:
+            stored = conn.execute(
+                "SELECT review_status, reviewed_by, reviewed_at "
+                "FROM approved_medicine_combinations WHERE combination_id=?",
+                ("safety-bound-pair",),
+            ).fetchone()
+        self.assertEqual(stored["review_status"], "invalidated")
+        self.assertEqual(stored["reviewed_by"], "")
+        self.assertEqual(stored["reviewed_at"], "")
 
     def test_inventory_upgrade_replaces_only_the_two_changed_slots(self) -> None:
         repository = MedicineRepository()

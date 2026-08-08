@@ -86,6 +86,39 @@
   background: transparent;
 }
 
+.medication-safety-notices {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid #fed7aa;
+  border-radius: 15px;
+  background: #fff8ed;
+  padding: 9px 12px;
+  color: #7c3f0c;
+}
+
+.medication-safety-notices header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 16px;
+}
+
+.medication-safety-notices ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 23px;
+}
+
+.medication-safety-notices li {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 750;
+}
+
 .clinical-assessment-card {
   flex: 0 0 auto;
   min-width: 0;

@@ -184,11 +184,13 @@ class NetworkSignalTest(unittest.TestCase):
         ):
             status = service.status()
 
-        self.assertEqual(status["ai_mode"], "offline_rules")
+        self.assertEqual(status["ai_mode"], "local_unavailable")
         self.assertEqual(status["label"], "本地模式")
         self.assertEqual(status["display_mode"], "local")
         self.assertFalse(status["realtime_sync_enabled"])
-        self.assertTrue(status["local_ai"]["ready"])
+        self.assertFalse(status["local_ai"]["ready"])
+        self.assertFalse(status["local_ai"]["model_ready"])
+        self.assertTrue(status["local_ai"]["rules_fallback_ready"])
         self.assertFalse(status["local_ai"]["runtime_ready"])
 
     def test_local_display_mode_keeps_physical_wifi_status(self) -> None:

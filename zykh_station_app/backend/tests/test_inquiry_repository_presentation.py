@@ -85,6 +85,73 @@ class InquiryRepositoryPresentationTest(unittest.TestCase):
         self.assertEqual(restored.reply, guidance)
         self.assertEqual(restored.source, "safety_rules")
 
+    def test_medication_safety_notices_round_trip_with_the_inquiry_session(self) -> None:
+        repository = InquiryRepository()
+        now = db.now_text()
+        repository.save_session(
+            InquirySessionResponse(
+                session_id="medication-safety-session",
+                user_name="访客",
+                stage="result",
+                reply="当前仍有一个通过安全核验的候选方案。",
+                source="cloud",
+                next_action="show_recommendation",
+                medication_safety_notices=[
+                    {
+                        "code": "duplicate_current_medication",
+                        "message": (
+                            "因你本次已使用含对乙酰氨基酚的药品，为避免重复成分，"
+                            "复方感冒灵颗粒未纳入本次候选。"
+                        ),
+                    }
+                ],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        restored = repository.get_session("medication-safety-session")
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(
+            [notice.model_dump() for notice in restored.medication_safety_notices],
+            [
+                {
+                    "code": "duplicate_current_medication",
+                    "message": (
+                        "因你本次已使用含对乙酰氨基酚的药品，为避免重复成分，"
+                        "复方感冒灵颗粒未纳入本次候选。"
+                    ),
+                }
+            ],
+        )
+
+    def test_legacy_session_without_medication_notices_defaults_to_empty(self) -> None:
+        repository = InquiryRepository()
+        now = db.now_text()
+        repository.save_session(
+            InquirySessionResponse(
+                session_id="legacy-without-medication-notices",
+                user_name="访客",
+                stage="symptoms",
+                reply="请描述最明显的不适。",
+                source="assistant",
+                next_action="ask",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE inquiry_sessions SET extracted_json='{}' WHERE session_id=?",
+                ("legacy-without-medication-notices",),
+            )
+
+        restored = repository.get_session("legacy-without-medication-notices")
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.medication_safety_notices, [])
+
 
 if __name__ == "__main__":
     unittest.main()

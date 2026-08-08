@@ -12,8 +12,8 @@
 - 首页、药品页、问询页、记录页；
 - 药品页取药确认，默认调用真实外设网关并保留本地记录；
 - AI应急问询、风险提示、药品信息匹配、禁忌核验；
-- QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，支持云端失败自动切换；
-- QSM 上运行 sherpa-onnx Paraformer 中文离线语音识别；离线 TTS 在主机生成 PCM，再通过低延迟流发送到 QSM 喇叭。语音默认优先使用云端、失败后自动回退，本地问询模型按需显式启动；
+- QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，随终端默认启动并支持云端失败自动切换；
+- QSM 上运行 sherpa-onnx Paraformer 中文离线语音识别；离线 TTS 在主机生成 PCM，再通过低延迟流发送到 QSM 喇叭。语音默认优先使用云端、失败后自动回退；
 - 联网时使用 Qwen3 实时 TTS 增量 PCM，边生成边送入 QSM 喇叭；
 - 本地记录聚合和待同步队列；
 - QSM real/mock 接入验证接口。
@@ -32,7 +32,7 @@
 
 ## 安全边界
 
-系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。低风险和中风险可展示通过库存、有效期与禁忌核验的 OTC 药品；处方药只有在该服务对象当天已有待执行用药计划时才进入候选，并在开柜时再次核验同一计划。每次最多展示一个优先方案和一个备选方案；高风险和紧急风险不展示方案，并提示联系医生或救援人员。模型只整理证据和提出下一步动作意图，风险、方案和开柜权限由本地确定性规则控制。用户选择一个互斥方案、确认安全提示并完成 3 秒可取消倒计时后，后端会再次核验当前状态，再通过既有开柜服务执行所选方案。该流程不替代诊断或处方。
+系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。低风险和中风险可展示通过库存、有效期与禁忌核验的 OTC 药品；处方药只有在该服务对象当天已有待执行用药计划时才进入候选，并在开柜时再次核验同一计划。每次最多展示一个优先方案和一个备选方案；高风险和紧急风险不展示方案，并提示联系医生或救援人员。模型负责整理证据、提出下一步动作并在已通过硬性安全过滤的候选内生成分析与排序；危险信号拦截、候选准入、禁忌复核和开柜权限仍由本地确定性规则控制。用户选择一个互斥方案、确认安全提示并完成 3 秒可取消倒计时后，后端会再次核验当前状态，再通过既有开柜服务执行所选方案。该流程不替代诊断或处方。
 
 ## 运行方式
 
@@ -150,7 +150,7 @@ AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
 AI_MODEL=deepseek-v4-flash
 AI_ENABLE_THINKING=true
-AI_INQUIRY_ENABLE_THINKING=false
+AI_INQUIRY_REASONING_EFFORT=high
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 INQUIRY_SPO2_EMERGENCY_BELOW=90
 INQUIRY_SPO2_HIGH_MAX=93
@@ -158,7 +158,7 @@ INQUIRY_TEMPERATURE_HIGH_AT=39
 INQUIRY_MEDIUM_CONFIDENCE_BELOW=0.65
 LOCAL_AI_BASE_URL=http://127.0.0.1:18083
 LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
-OFFLINE_INQUIRY_MODE=rules
+OFFLINE_INQUIRY_MODE=model
 NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
 VITALS_DEMO_SPO2_FALLBACK=true
 CLOUD_SYNC_ENABLED=true
@@ -203,13 +203,13 @@ sh scripts/deploy_qsm_vitals.sh
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
-AI 云通道使用 DeepSeek Chat Completions 完成低延迟逐轮语义抽取，最终病因分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到官方 Chat Completions JSON 契约。快速抽取默认关闭 thinking；最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
+AI 云通道使用 DeepSeek Chat Completions 完成逐轮语义抽取，最终分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到 Chat Completions JSON 契约。`AI_INQUIRY_REASONING_EFFORT` 统一控制逐轮抽取、Responses 最终分析和 Chat 回退，支持 `off`、`low`、`high`、`max`，默认 `high`。旧配置 `AI_INQUIRY_ENABLE_THINKING=true/false` 仅在新配置缺失时兼容映射为 `high/off`。QSM 小模型保持独立的非 reasoning 运行参数，不会伪装成云端 thinking。最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
-`AI_MODE=auto` 默认调用 DeepSeek，并在云请求确实失败时由 `OFFLINE_INQUIRY_MODE` 指定的能力安全收尾。设置页的“本地模式”只是显示与小程序同步偏好，不参与 AI、ASR、TTS 或物理网络路由。管理员调试台中的 Wi-Fi 和数据网络开关直接控制真实接口；关闭 Wi-Fi 前仍会先验证 SIM 备用通道，避免终端失联。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+`AI_MODE=auto` 和 `AI_MODE=cloud` 均先使用 DeepSeek；云端缺少密钥、不可达、请求失败或结构无效时，先转到真实 QSM 模型，再由确定性规则维持追问和危险信号拦截。`AI_MODE=local` 直接走 QSM 模型，再使用同一规则兜底。默认 `OFFLINE_INQUIRY_MODE=model`；显式设为 `rules` 时可保留纯规则路径。模型最终排序失败时不会用规则生成或伪装 assessment，也不会返回药品候选。设置页的“本地模式”只是显示与小程序同步偏好，不参与 AI、ASR、TTS 或物理网络路由。管理员调试台中的 Wi-Fi 和数据网络开关直接控制真实接口；关闭 Wi-Fi 前仍会先验证 SIM 备用通道，避免终端失联。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
 
 演示测量默认启用 `VITALS_DEMO_SPO2_FALLBACK=true`。只有心率、额温和手指接触均已由真实设备确认、且完整测量窗口内仅血氧未稳定时，系统才补入 `95-99` 的演示整数；会话会标记 `spo2_source=demo_fallback`，且不会保存或同步为真实测量，真实血氧一旦可用始终优先使用。
 
@@ -256,7 +256,7 @@ sh scripts/deploy_local_asr.sh
 sh scripts/start_4g.sh
 ```
 
-该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询按 `OFFLINE_INQUIRY_MODE` 使用本地安全收尾能力；QSM 离线问询模型只有在显式设置 `KIOSK_OFFLINE_AI=1` 时启动。模型不可用时仍保留紧急危险信号拦截，并提示用户重新说明或联系现场人员，不在普通界面展示技术通道名称。
+该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询按 `OFFLINE_INQUIRY_MODE` 使用本地安全收尾能力。`launch_kiosk.sh` 默认检查并启动 QSM 离线问询模型；资源调试时可显式设置 `KIOSK_OFFLINE_AI=0` 跳过。模型不可用时仍保留紧急危险信号拦截，并提示用户重新说明或联系现场人员，不在普通界面展示技术通道名称。
 
 主机通过 QSM 的 USB RNDIS 接口使用该数据链路：QSM `usb0` 连接 EC200A，QSM `usb1` 连接主机，主机侧接口名为 `usb0`。首次启动终端时，`launch_kiosk.sh` 会请求一次管理员授权并安装受限路由助手。之后关闭 Wi-Fi 前，后端会先完成 QSM NAT、主机 `192.168.77.2/24` 地址和 metric 700 备用路由验证；任一步失败都会保留 Wi-Fi，避免终端失联。也可提前手动安装：
 

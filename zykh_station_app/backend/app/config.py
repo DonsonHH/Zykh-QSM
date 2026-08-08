@@ -33,6 +33,35 @@ def _env(name: str, default: str = "") -> str:
     return os.getenv(name) or _local_env().get(name, default)
 
 
+def _optional_env(name: str) -> str | None:
+    if name in os.environ:
+        return os.environ[name]
+    return _local_env().get(name)
+
+
+def _resolve_inquiry_reasoning_effort(
+    configured: str | None,
+    legacy_enable_thinking: str | None,
+) -> str:
+    normalized = str(configured or "").strip().lower()
+    if normalized in {"off", "low", "high", "max"}:
+        return normalized
+    if legacy_enable_thinking is None:
+        return "high"
+    legacy_enabled = str(legacy_enable_thinking).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return "high" if legacy_enabled else "off"
+
+
+def _resolve_offline_inquiry_mode(configured: str | None) -> str:
+    normalized = str(configured or "").strip().lower()
+    return normalized if normalized in {"model", "rules"} else "model"
+
+
 DATA_DIR = Path(_env("ZYKH_STATION_DATA_DIR", str(APP_ROOT / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -193,12 +222,11 @@ class Settings:
         "yes",
         "on",
     }
-    ai_inquiry_enable_thinking: bool = _env("AI_INQUIRY_ENABLE_THINKING", "false").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    ai_inquiry_reasoning_effort: str = _resolve_inquiry_reasoning_effort(
+        _optional_env("AI_INQUIRY_REASONING_EFFORT"),
+        _optional_env("AI_INQUIRY_ENABLE_THINKING"),
+    )
+    ai_inquiry_enable_thinking: bool = ai_inquiry_reasoning_effort != "off"
     ai_chat_timeout_seconds: float = float(_env("AI_CHAT_TIMEOUT_SECONDS", "35"))
     ai_inquiry_timeout_seconds: float = float(_env("AI_INQUIRY_TIMEOUT_SECONDS", "45"))
     ai_inquiry_attempt_timeout_seconds: float = float(
@@ -225,7 +253,9 @@ class Settings:
     local_ai_model: str = _env("LOCAL_AI_MODEL", "Qwen3.5-0.8B-Q4_K_M")
     local_ai_timeout_seconds: float = float(_env("LOCAL_AI_TIMEOUT_SECONDS", "45"))
     local_ai_health_timeout_seconds: float = float(_env("LOCAL_AI_HEALTH_TIMEOUT_SECONDS", "2"))
-    offline_inquiry_mode: str = _env("OFFLINE_INQUIRY_MODE", "rules").strip().lower()
+    offline_inquiry_mode: str = _resolve_offline_inquiry_mode(
+        _optional_env("OFFLINE_INQUIRY_MODE")
+    )
     vitals_demo_spo2_fallback: bool = _env(
         "VITALS_DEMO_SPO2_FALLBACK", "true"
     ).strip().lower() in {

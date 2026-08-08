@@ -64,7 +64,7 @@ const cloudFunction = require(path.resolve(__dirname, "index.js"));
 
 async function run() {
   const source = fs.readFileSync(path.resolve(__dirname, "index.js"), "utf8");
-  assert.match(source, /2\.3-medicine-sync-contract/, "medicine sync schema revision was not advanced");
+  assert.match(source, /2\.4-medicine-safety-contract/, "medicine safety schema revision was not advanced");
   assert.match(
     source,
     /normalized\.createdAt = firstPresent\(\s*row\.measured_at/,
@@ -149,6 +149,46 @@ async function run() {
   assert.deepEqual(insertedRows[1].payload, medicinePatch);
   assert.equal(insertedRows[1].payload.patch.quantity, 0);
   assert.equal(inserted, 2);
+
+  const remoteReviewedMedicine = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "zykh-qsm-001",
+      type: "UPSERT_MEDICINE",
+      payload: {
+        operation: "patch",
+        hardware_slot: 1,
+        patch: { safety_review_status: "reviewed", safety_reviewed_by: "远程自称药师" },
+      },
+    },
+  });
+  assert.equal(remoteReviewedMedicine.ok, false);
+  assert.match(remoteReviewedMedicine.error, /unsupported medicine patch field/);
+  assert.equal(inserted, 2);
+
+  const draftSafetyPatch = {
+    operation: "patch",
+    hardware_slot: 1,
+    patch: {
+      aliases: ["云端草稿别名"],
+      active_ingredients: ["云端草稿成分"],
+      structured_contraindications: [
+        { concept_code: "ingredient_allergy", display_text: "云端草稿辅料过敏者禁用" },
+      ],
+      safety_review_status: "draft",
+    },
+  };
+  const draftSafetyMedicine = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "zykh-qsm-001",
+      type: "UPSERT_MEDICINE",
+      payload: draftSafetyPatch,
+    },
+  });
+  assert.equal(draftSafetyMedicine.status, "pending");
+  assert.deepEqual(insertedRows[2].payload, draftSafetyPatch);
+  assert.equal(inserted, 3);
 
   const medicineSnapshotRow = {
     slot: 1,
