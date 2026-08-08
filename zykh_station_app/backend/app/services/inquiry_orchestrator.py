@@ -277,6 +277,15 @@ class InquiryOrchestrator:
         session.model_action_intent = interpretation.action_intent
         session.action_reason = interpretation.action_reason or "用户已核对本次信息"
         self._clear_decision(session)
+        self.repository.append_message(
+            session_id,
+            "user",
+            (
+                f"病历核对确认：主要不适 {complaint}；持续时间 {duration}；"
+                f"本次用药 {used_medicines}；过敏或禁忌 {allergy}"
+            ),
+            "information_review",
+        )
 
         if not request.finalize:
             return self._advance_from_interpretation(session, extracted, interpretation)
@@ -309,6 +318,7 @@ class InquiryOrchestrator:
                 session.vitals,
                 ai_risk_level=session.extracted_information.ai_risk_level,
                 ai_risk_reasons=session.extracted_information.ai_risk_reasons,
+                trusted_evidence_texts=self._recorded_user_evidence(session.session_id),
             )
             if guard.risk_level not in {"low", "medium"}:
                 self._replace_with_guard_failure(session, guard)
@@ -343,6 +353,7 @@ class InquiryOrchestrator:
                     session.extracted_information.observations,
                     risk_level=guard.risk_level,
                     age_years=session.user_age or None,
+                    user_evidence_texts=self._recorded_user_evidence(session.session_id),
                 ),
                 full_assessment.candidates,
             )
@@ -560,6 +571,7 @@ class InquiryOrchestrator:
             session.vitals,
             ai_risk_level=interpretation.ai_risk_level,
             ai_risk_reasons=interpretation.risk_signals,
+            trusted_evidence_texts=self._recorded_user_evidence(session.session_id),
         )
         if guard.risk_level in {"high", "emergency"}:
             extracted.pending_clarification = ""
@@ -771,6 +783,7 @@ class InquiryOrchestrator:
             session.vitals,
             ai_risk_level=extracted.ai_risk_level,
             ai_risk_reasons=extracted.ai_risk_reasons,
+            trusted_evidence_texts=self._recorded_user_evidence(session.session_id),
         )
         options = []
         rank_source = source
@@ -807,6 +820,7 @@ class InquiryOrchestrator:
                 extracted.observations,
                 risk_level=guard.risk_level,
                 age_years=session.user_age or None,
+                user_evidence_texts=self._recorded_user_evidence(session.session_id),
             )
             combination_authorization = self.combination_policy.authorize(
                 combination_context,
@@ -1236,6 +1250,17 @@ class InquiryOrchestrator:
             }
         )
         return context
+
+    def _recorded_user_evidence(self, session_id: str) -> tuple[str, ...]:
+        """Return immutable user turns used by deterministic safety policies."""
+        stored = self.repository.get_session(session_id)
+        if stored is None:
+            return ()
+        return tuple(
+            message.content
+            for message in stored.messages
+            if message.role == "user" and message.content.strip()
+        )
 
     def _advance_after_symptom_collection(
         self,

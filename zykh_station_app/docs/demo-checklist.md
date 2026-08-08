@@ -73,8 +73,11 @@ curl http://127.0.0.1:8000/api/device/check
 1. Verify the homepage loads with today medication and emergency inquiry cards.
 2. Verify the medicines page loads inventory.
 3. Open the medicines page and inspect the 取药确认 modal. Submit physical cabinet open only when the selected slot is safe to test.
-4. Verify the inquiry page returns `source=cloud` while the cloud route is healthy.
-5. Select local mode and verify inquiry still returns `source=cloud`, the top bar shows local state, mini-program realtime sync pauses, and speech uses QSM offline TTS.
+4. Verify the inquiry page returns `source=cloud_responses` or
+   `source=cloud_chat_fallback` while the cloud route is healthy.
+5. Select local mode and verify inquiry still returns one of those cloud sources,
+   the top bar shows local state, mini-program realtime sync pauses, and speech
+   uses QSM offline TTS.
 6. Verify all 23 fixed rows have the v5 controlled safety metadata; an expired, empty, unverified or prescription-only row may still be excluded after evaluation.
 7. In a controlled test session, verify a qualifying shallow-wound or adult watery-diarrhea case exposes only the exact authorized combination; revoking that combination before confirmation must return HTTP 409 without opening another cabinet.
 8. Verify the Scan page can show the QSM-camera capture state.

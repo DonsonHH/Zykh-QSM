@@ -323,6 +323,8 @@ class AiService:
             "已用药、过敏禁忌、体征测量和药品筛选由后续本地业务链单独完成，本轮不要提前询问或给药。"
             "next_action 只能是 ask、measure_vitals、analyze、escalate、end。先形成明确主诉；"
             "出现明显危险信号时选择 escalate。risk_level 只能是 low、medium、high、emergency。"
+            "risk_signals 必须逐项引用 current_utterance 或 conversation 中的用户原话片段；"
+            "risk_level 为 high 或 emergency 时至少提供一条，禁止只给抽象判断。"
             "只有用户明确表示不再继续、要求结束本次问询时才选择 end。"
             "assistant_reply 是直接给用户的一句自然回应；ask 时只包含一个聚焦问题；"
             "analyze、escalate 或 end 时 next_question 和 question_topic 必须为空或 none。"
@@ -2305,6 +2307,14 @@ class AiService:
             and isinstance(payload.get("risk_level"), str)
         ):
             return False
+        risk_level = str(payload.get("risk_level") or "").strip()
+        if risk_level in {"high", "emergency"}:
+            risk_signals = payload.get("risk_signals")
+            if not isinstance(risk_signals, list) or not any(
+                isinstance(signal, str) and signal.strip()
+                for signal in risk_signals
+            ):
+                return False
         return all(
             field not in payload or type(payload[field]) is bool
             for field in (

@@ -152,6 +152,12 @@ def low_risk_watery_diarrhea_interpretation() -> SymptomInterpretation:
     return interpretation
 
 
+GROUNDED_DIARRHEA_TRANSCRIPT = (
+    "今天开始拉水样便，目前能喝水，没有便血、没有黑便、没有持续高热、"
+    "没有剧烈腹痛、没有明显脱水、没有持续呕吐，没用药也没有过敏"
+)
+
+
 def echo_authorized_diarrhea_combination(_context, _candidates, allowed):
     selected = next(
         item
@@ -1188,7 +1194,13 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.process_turn(
             session.session_id,
-            InquiryTurnRequest(transcript="手部刀伤不深，出血已经止住，没有用药也没有过敏"),
+            InquiryTurnRequest(
+                transcript=(
+                    "手部刀伤不深，出血已经止住，需要纱布覆盖，没有深部伤口、"
+                    "没有动物咬伤、没有持续出血、没有伤口感染、没有异物残留，"
+                    "没有用药也没有过敏"
+                )
+            ),
         )
 
         self.assertEqual(result.next_action, "show_recommendation")
@@ -1212,7 +1224,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
-                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏",
+                transcript=GROUNDED_DIARRHEA_TRANSCRIPT,
             ),
         )
 
@@ -1268,6 +1280,28 @@ class InquiryOrchestratorTest(unittest.TestCase):
             )
         self.assertEqual(revoked.exception.status_code, 409)
         self.assertEqual(len(dispense.requests), 1)
+
+    def test_fabricated_red_flag_absences_do_not_authorize_a_real_combination(
+        self,
+    ) -> None:
+        service, interpreter = self.service(
+            [low_risk_watery_diarrhea_interpretation()],
+            ranking={"ok": True, "source": "cloud", "options": []},
+        )
+        session = self.create(service)
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏",
+            ),
+        )
+
+        self.assertFalse(result.can_view_medicines)
+        self.assertEqual(
+            interpreter.rank_candidates_seen[0]["allowed_combinations"],
+            [],
+        )
 
     def test_low_risk_without_a_matching_candidate_returns_neutral_care_advice(self) -> None:
         service, _ = self.service(
@@ -2169,7 +2203,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
-                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏"
+                transcript=GROUNDED_DIARRHEA_TRANSCRIPT
             ),
         )
         option = result.treatment_options[0]
@@ -2218,7 +2252,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
-                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏"
+                transcript=GROUNDED_DIARRHEA_TRANSCRIPT
             ),
         )
         option = result.treatment_options[0]

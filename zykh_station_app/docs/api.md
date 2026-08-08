@@ -191,9 +191,12 @@ The current no-candidate and risk boundary is deterministic around the model:
 - `emergency` blocks candidates for unnegated chest pain together with breathing
   difficulty, configured emergency phrases, or SpO₂ below 90%;
 - `high` blocks candidates for configured persistent/severe danger phrases,
-  stable SpO₂ from 90% through 93%, or temperature at or above 39℃;
+  SpO₂ from 90% through 93% in a completed stability-gated live measurement, or
+  temperature at or above 39℃;
 - semantic model risk may raise the level to `high|emergency`, but cannot lower a
-  deterministic decision;
+  deterministic decision. Every semantic reason must quote a recorded user-turn
+  fragment; an ungrounded raise fails closed with an explicit “依据未核对” reason
+  and never falls through to a candidate;
 - `low|medium` permits candidate evaluation but does not guarantee an option. A
   row is excluded when stock is empty, package identity or reviewed safety facts
   are unavailable, the expiry date is invalid/past, guidance is incomplete, or a
@@ -233,8 +236,12 @@ risk, contraindications, expiry, stock and current eligibility. If the displayed
 option changed, the request is rejected with `409` and no cabinet is opened. A
 multi-medicine option also re-authorizes the grounded case facts, explicit
 absence of every required red flag, member review fingerprints, ingredient
-matrix and combination status before every item. Revoking a combination between
-two cabinet actions prevents the remaining cabinet from opening. A
+matrix and combination status before every item. A case fact is admitted only
+when its observation evidence is an exact normalized fragment of an immutable
+user message and its positive/negative polarity agrees with that message; model
+summaries and fabricated absences cannot authorize a combination. Revoking a
+combination between two cabinet actions prevents the remaining cabinet from
+opening. A
 successful confirmation executes the selected option through the existing
 `DispenseService`, records each action and rejects stale or duplicate submissions.
 

@@ -47,6 +47,33 @@ class MedicineSafetyEngineVitalsTruthTest(unittest.TestCase):
         self.assertEqual(decision.risk_level, "low")
         self.assertEqual(decision.risk_reasons, ["未触发硬性危险信号"])
 
+    def test_ungrounded_model_risk_raise_fails_closed_with_an_auditable_reason(self) -> None:
+        decision = MedicineSafetyEngine().assess_guardrails(
+            InquiryExtractedInformation(symptoms_text="轻微鼻塞"),
+            None,
+            ai_risk_level="high",
+            ai_risk_reasons=[],
+            trusted_evidence_texts=["只是有点轻微鼻塞"],
+        )
+
+        self.assertEqual(decision.risk_level, "high")
+        self.assertEqual(
+            decision.risk_reasons,
+            ["风险判断提示高风险，但未提供可与本次用户原话核对的依据；本次停止自动取药"],
+        )
+
+    def test_grounded_model_risk_raise_keeps_the_matching_user_reason(self) -> None:
+        decision = MedicineSafetyEngine().assess_guardrails(
+            InquiryExtractedInformation(symptoms_text="口干、尿量明显减少"),
+            None,
+            ai_risk_level="high",
+            ai_risk_reasons=["明显脱水"],
+            trusted_evidence_texts=["我感觉有明显脱水"],
+        )
+
+        self.assertEqual(decision.risk_level, "high")
+        self.assertIn("明显脱水", decision.risk_reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

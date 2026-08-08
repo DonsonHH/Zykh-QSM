@@ -113,6 +113,20 @@ def empty_local_ranking_reply(summary: str) -> str:
 
 
 class AiServiceTest(unittest.TestCase):
+    def test_high_risk_extract_contract_requires_a_nonempty_risk_signal(self) -> None:
+        payload = {
+            "case_summary": "用户描述明显不适。",
+            "observations": [],
+            "next_action": "escalate",
+            "assistant_reply": "请尽快联系医生。",
+            "risk_level": "high",
+            "risk_signals": [],
+        }
+
+        self.assertFalse(AiService._valid_inquiry_extract_payload(payload))
+        payload["risk_signals"] = ["用户原话中的危险表现"]
+        self.assertTrue(AiService._valid_inquiry_extract_payload(payload))
+
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
     def test_medicine_guidance_requires_dynamic_safety_metadata_contract(

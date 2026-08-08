@@ -65,6 +65,12 @@ class InquiryService:
             None,
             ai_risk_level=interpretation.ai_risk_level,
             ai_risk_reasons=interpretation.risk_signals,
+            trusted_evidence_texts=[
+                request.symptoms_text,
+                request.duration,
+                request.used_medicines,
+                request.allergy_or_contraindication,
+            ],
         )
         options = []
         medication_safety_notices: list[InquiryMedicineSafetyNotice] = []

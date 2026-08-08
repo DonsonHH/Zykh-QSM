@@ -459,31 +459,45 @@ def combination_context_from_observations(
     *,
     risk_level: str,
     age_years: int | None,
+    user_evidence_texts: Sequence[str],
 ) -> CombinationClinicalContext:
-    """Translate only grounded present/absent observations into policy facts.
+    """Translate only transcript-grounded observations into policy facts.
 
     The model's case summary and possible diagnosis are intentionally excluded.
-    An uncertain or missing red flag never becomes an explicit negative.
+    Evidence must be an exact normalized fragment of a recorded user turn, and
+    its polarity must agree with the model status. An uncertain, fabricated or
+    polarity-inverted red flag never becomes an explicit negative.
     """
 
+    recorded_evidence = tuple(
+        compact
+        for value in user_evidence_texts
+        if (compact := _compact_evidence(value))
+    )
     present: set[str] = set()
     absent: set[str] = set()
     for observation in observations:
         if isinstance(observation, dict):
             status = str(observation.get("status") or "").strip().lower()
-            concept = str(observation.get("concept") or "")
             evidence = str(observation.get("evidence") or "")
         else:
             status = str(getattr(observation, "status", "") or "").strip().lower()
-            concept = str(getattr(observation, "concept", "") or "")
             evidence = str(getattr(observation, "evidence", "") or "")
         if status not in {"present", "absent"}:
             continue
-        grounded_text = re.sub(r"\s+", "", f"{concept}；{evidence}").lower()
+        grounded_text = _compact_evidence(evidence)
+        if not grounded_text or not any(
+            _recorded_evidence_supports_status(recorded, grounded_text, status)
+            for recorded in recorded_evidence
+        ):
+            continue
         matched = {
             fact
             for fact, patterns in GROUNDING_PATTERNS.items()
-            if any(re.sub(r"\s+", "", pattern).lower() in grounded_text for pattern in patterns)
+            if any(
+                _grounding_pattern_supports_status(grounded_text, pattern, status)
+                for pattern in patterns
+            )
         }
         if status == "present":
             present.update(matched)
@@ -494,4 +508,53 @@ def combination_context_from_observations(
         absent_facts=frozenset(absent),
         risk_level=risk_level,
         age_years=age_years,
+    )
+
+
+def _compact_evidence(value: object) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value or "").lower())
+
+
+def _grounding_pattern_supports_status(
+    compact_evidence: str,
+    pattern: str,
+    status: str,
+) -> bool:
+    compact_pattern = _compact_evidence(pattern)
+    if not compact_pattern:
+        return False
+    start = compact_evidence.find(compact_pattern)
+    while start >= 0:
+        prefix = compact_evidence[max(0, start - 10):start]
+        explicitly_negated = _ends_with_explicit_negation(prefix)
+        if status == "absent" and explicitly_negated:
+            return True
+        if status == "present" and not explicitly_negated:
+            return True
+        start = compact_evidence.find(compact_pattern, start + len(compact_pattern))
+    return False
+
+
+def _recorded_evidence_supports_status(
+    compact_recorded: str,
+    compact_evidence: str,
+    status: str,
+) -> bool:
+    start = compact_recorded.find(compact_evidence)
+    while start >= 0:
+        if status == "absent" or not _ends_with_explicit_negation(
+            compact_recorded[max(0, start - 10):start]
+        ):
+            return True
+        start = compact_recorded.find(compact_evidence, start + len(compact_evidence))
+    return False
+
+
+def _ends_with_explicit_negation(prefix: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:没有|没|无|否认|未见|不伴|并无|不是|并非)"
+            r"(?:什么|明显|持续|大量|严重|出现|发生|看到|发现)?$",
+            prefix,
+        )
     )

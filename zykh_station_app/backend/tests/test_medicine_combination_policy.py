@@ -248,6 +248,9 @@ class MedicineCombinationPolicyTest(unittest.TestCase):
             ],
             risk_level="low",
             age_years=35,
+            user_evidence_texts=[
+                "今天开始拉水样便，目前能喝水，没有便血，腹痛程度还不确定"
+            ],
         )
 
         self.assertEqual(
@@ -256,6 +259,52 @@ class MedicineCombinationPolicyTest(unittest.TestCase):
         )
         self.assertEqual(context.absent_facts, frozenset({"bloody_stool"}))
         self.assertNotIn("severe_abdominal_pain", context.absent_facts)
+
+    def test_model_observation_without_matching_user_evidence_cannot_authorize_absence(
+        self,
+    ) -> None:
+        context = combination_context_from_observations(
+            [
+                {
+                    "concept": "水样腹泻",
+                    "status": "present",
+                    "evidence": "今天开始拉水样便",
+                },
+                {
+                    "concept": "饮水情况",
+                    "status": "present",
+                    "evidence": "目前能喝水",
+                },
+                {
+                    "concept": "黑便",
+                    "status": "absent",
+                    "evidence": "没有黑便",
+                },
+            ],
+            risk_level="low",
+            age_years=35,
+            user_evidence_texts=["今天开始拉水样便，目前能喝水"],
+        )
+
+        self.assertEqual(
+            context.present_facts,
+            frozenset({"acute_watery_diarrhea", "oral_intake_tolerated"}),
+        )
+        self.assertEqual(context.absent_facts, frozenset())
+
+        polarity_inverted = combination_context_from_observations(
+            [
+                {
+                    "concept": "水样腹泻",
+                    "status": "present",
+                    "evidence": "水样腹泻",
+                }
+            ],
+            risk_level="low",
+            age_years=35,
+            user_evidence_texts=["我没有水样腹泻"],
+        )
+        self.assertEqual(polarity_inverted.present_facts, frozenset())
 
     def test_selection_requires_exact_authorized_id_members_and_fingerprint(self) -> None:
         repository = FakeCombinationRepository([self.combination])

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Sequence
 
 from ..config import settings
 from ..schemas.inquiry import InquiryExtractedInformation, RiskLevel
@@ -45,6 +45,7 @@ class MedicineSafetyEngine:
         *,
         ai_risk_level: RiskLevel | None = None,
         ai_risk_reasons: list[str] | None = None,
+        trusted_evidence_texts: Sequence[str] = (),
     ) -> HardSafetyDecision:
         """Apply only non-negotiable safety rules; semantic judgment remains with AI."""
         text = "；".join(
@@ -93,14 +94,61 @@ class MedicineSafetyEngine:
         order = {"low": 0, "medium": 1, "high": 2, "emergency": 3}
         if ai_risk_level in order and order[ai_risk_level] > order[level]:
             level = ai_risk_level
-            reasons.extend(
-                reason.strip()
-                for reason in (ai_risk_reasons or [])
-                if reason and reason.strip()
+            grounded_reasons = self._grounded_ai_risk_reasons(
+                ai_risk_reasons or [],
+                trusted_evidence_texts,
             )
+            if grounded_reasons:
+                reasons.extend(grounded_reasons)
+            else:
+                risk_label = "紧急风险" if ai_risk_level == "emergency" else "高风险"
+                reasons.append(
+                    f"风险判断提示{risk_label}，但未提供可与本次用户原话核对的依据；"
+                    "本次停止自动取药"
+                )
         if not reasons:
             reasons.append("未触发硬性危险信号")
         return HardSafetyDecision(level, list(dict.fromkeys(reasons)))
+
+    @staticmethod
+    def _grounded_ai_risk_reasons(
+        reasons: Sequence[str],
+        trusted_evidence_texts: Sequence[str],
+    ) -> list[str]:
+        corpus = [
+            compact
+            for value in trusted_evidence_texts
+            if (compact := re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value).lower()))
+        ]
+        grounded: list[str] = []
+        for value in reasons:
+            reason = str(value or "").strip()
+            compact = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", reason.lower())
+            if len(compact) < 2 or re.match(
+                r"^(?:没有|没|无|否认|未见|不伴|并无|不是|并非)",
+                compact,
+            ):
+                continue
+            if any(
+                MedicineSafetyEngine._unnegated_fragment_in_text(compact, text)
+                for text in corpus
+            ):
+                grounded.append(reason[:100])
+        return list(dict.fromkeys(grounded))
+
+    @staticmethod
+    def _unnegated_fragment_in_text(fragment: str, text: str) -> bool:
+        start = text.find(fragment)
+        while start >= 0:
+            prefix = text[max(0, start - 10):start]
+            if not re.search(
+                r"(?:没有|没|无|否认|未见|不伴|并无|不是|并非)"
+                r"(?:什么|明显|持续|大量|严重|出现|发生|看到|发现)?$",
+                prefix,
+            ):
+                return True
+            start = text.find(fragment, start + len(fragment))
+        return False
 
     @staticmethod
     def _vital_number(vitals: dict[str, Any] | None, key: str) -> float | None:
