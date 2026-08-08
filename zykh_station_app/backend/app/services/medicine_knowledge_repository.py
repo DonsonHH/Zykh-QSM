@@ -2,26 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-import hashlib
-import json
 import re
 
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.inquiry import CandidateMedicine, TreatmentMedicine, TreatmentOption
 from ..schemas.medicine import Medicine
+from .medicine_combination_policy import CombinationAuthorization
 
 
 CHRONIC_CONDITION_TERMS_BY_CODE: dict[str, tuple[str, ...]] = {
     "diabetes": ("糖尿病", "高血糖", "血糖异常"),
     "renal_impairment": ("肾功能不全", "肾功能衰竭", "肾损害", "肾衰", "肾病"),
     "liver_impairment": ("肝功能不全", "肝功能受损", "肝损害", "肝病"),
+    "cardiac_disease": ("严重心脏疾病", "严重心脏病", "严重心力衰竭"),
     "hypercalcemia": ("高钙血症",),
     "hyperphosphatemia": ("高磷血症",),
     "hypophosphatemia": ("低磷血症",),
     "myasthenia_gravis": ("重症肌无力",),
     "galactose_intolerance": ("半乳糖不耐受",),
     "intestinal_obstruction": ("肠梗阻",),
-    "peptic_ulcer": ("消化道溃疡", "胃溃疡"),
+    "peptic_ulcer": ("消化道溃疡", "消化性溃疡", "胃溃疡"),
+    "gastrointestinal_bleeding": ("胃肠道出血", "消化道出血", "胃出血"),
+    "gastrointestinal_perforation": ("胃肠道穿孔", "消化道穿孔"),
     "hypotension": ("低血压",),
     "pregnancy": ("孕妇", "怀孕", "妊娠"),
     "breastfeeding": ("哺乳",),
@@ -29,6 +31,22 @@ CHRONIC_CONDITION_TERMS_BY_CODE: dict[str, tuple[str, ...]] = {
 }
 CHRONIC_CONDITION_GROUPS: tuple[tuple[str, ...], ...] = tuple(
     CHRONIC_CONDITION_TERMS_BY_CODE.values()
+)
+SINGLE_CHARACTER_NUTRIENT_TERMS = frozenset(
+    {"钙", "磷", "钾", "氯", "镁", "铁", "铜", "锌", "锰", "碘", "铬", "钼", "硒", "镍", "硅", "锡", "钒"}
+)
+IBUPROFEN_CONCURRENT_ANALGESIC_TERMS = (
+    "布洛芬",
+    "芬必得",
+    "阿司匹林",
+    "萘普生",
+    "双氯芬酸",
+    "塞来昔布",
+    "依托考昔",
+    "吲哚美辛",
+    "洛索洛芬",
+    "酮洛芬",
+    "对乙酰氨基酚",
 )
 
 
@@ -199,6 +217,8 @@ class MedicineKnowledgeRepository:
         self,
         payload: dict,
         safe_pool: list[CandidateMedicine],
+        *,
+        combination_authorization: CombinationAuthorization | None = None,
     ) -> MedicineSelectionAssessment:
         """Validate model selections without silently shortening unsafe combinations."""
         raw_options = payload.get("options") if isinstance(payload, dict) else []
@@ -229,29 +249,55 @@ class MedicineKnowledgeRepository:
             if len(normalized_ids) > 1 and conflict_notice is not None:
                 notices.append(conflict_notice)
                 continue
-            if len(normalized_ids) > 1 and any(
-                not candidate.active_ingredients
-                and not self._is_controlled_non_drug_supply(candidate.id)
-                for candidate in selected
-            ):
-                notices.append(
-                    MedicineSafetyNotice(
-                        code="combination_not_approved",
-                        message="组合中存在有效成分资料不完整的药品，本次未被采用。",
+            if len(normalized_ids) > 1:
+                combination_id = str(raw.get("combination_id") or "").strip()
+                authorization_fingerprint = str(
+                    raw.get("authorization_fingerprint") or ""
+                ).strip()
+                decision = (
+                    combination_authorization.validate_and_expand(combination_id)
+                    if combination_authorization is not None and combination_id
+                    else None
+                )
+                expected_ids = (
+                    [medicine.id for medicine in decision.medicines]
+                    if decision is not None and decision.allowed
+                    else []
+                )
+                if (
+                    len(set(normalized_ids)) != len(normalized_ids)
+                    or any(medicine_id not in allowed for medicine_id in normalized_ids)
+                    or decision is None
+                    or not decision.allowed
+                    or normalized_ids != expected_ids
+                    or not authorization_fingerprint
+                    or authorization_fingerprint != decision.authorization_fingerprint
+                ):
+                    notices.append(
+                        MedicineSafetyNotice(
+                            code="combination_not_approved",
+                            message="该多药方案未命中当前病例的受控组合，本次未被采用。",
+                        )
                     )
+                    continue
+                accepted_payloads.append(
+                    {
+                        **raw,
+                        "combination_id": decision.combination_id,
+                        "authorization_fingerprint": decision.authorization_fingerprint,
+                        "medicine_ids": expected_ids,
+                        "usage_by_medicine": dict(
+                            decision.reviewed_usage_by_medicine
+                        ),
+                    }
                 )
                 continue
-            if len(normalized_ids) > 1 and (
-                len(set(normalized_ids)) != len(normalized_ids)
-                or any(medicine_id not in allowed for medicine_id in normalized_ids)
-                or not self._combination_is_approved(normalized_ids)
+
+            if (
+                normalized_ids[0] not in allowed
+                or str(raw.get("combination_id") or "").strip()
+                or str(raw.get("authorization_fingerprint") or "").strip()
             ):
-                notices.append(
-                    MedicineSafetyNotice(
-                        code="combination_not_approved",
-                        message="该多药方案未命中药师审核的精确组合，本次未被采用。",
-                    )
-                )
                 continue
             accepted_payloads.append(raw)
         return MedicineSelectionAssessment(
@@ -261,14 +307,6 @@ class MedicineKnowledgeRepository:
             ),
             notices=notices,
         )
-
-    def _is_controlled_non_drug_supply(self, medicine_id: str) -> bool:
-        checker = getattr(
-            self.medicine_repository,
-            "is_controlled_non_drug_supply",
-            None,
-        )
-        return bool(callable(checker) and checker(medicine_id))
 
     def _ingredient_conflict_notice(
         self,
@@ -329,31 +367,6 @@ class MedicineKnowledgeRepository:
                         )
         return None
 
-    def _combination_is_approved(self, medicine_ids: list[str]) -> bool:
-        list_combinations = getattr(
-            self.medicine_repository,
-            "list_reviewed_combinations",
-            None,
-        )
-        if not callable(list_combinations):
-            return False
-        get_fingerprints = getattr(
-            self.medicine_repository,
-            "get_identity_fingerprints",
-            None,
-        )
-        if not callable(get_fingerprints):
-            return False
-        current_fingerprints = get_fingerprints(medicine_ids)
-        if set(current_fingerprints) != set(medicine_ids):
-            return False
-        expected = tuple(medicine_ids)
-        return any(
-            tuple(combination.medicine_ids) == expected
-            and combination.member_identity_fingerprints == current_fingerprints
-            for combination in list_combinations()
-        )
-
     def _options_from_model_payload(
         self,
         payload: dict,
@@ -404,6 +417,10 @@ class MedicineKnowledgeRepository:
                     option_id=option_id,
                     label=label,
                     when=reason,
+                    combination_id=str(raw.get("combination_id") or "").strip(),
+                    combination_authorization_fingerprint=str(
+                        raw.get("authorization_fingerprint") or ""
+                    ).strip(),
                     medicines=[
                         TreatmentMedicine(
                             **{
@@ -416,9 +433,17 @@ class MedicineKnowledgeRepository:
                             },
                             role="主要选择" if index == 0 else "按顺序配合",
                             covered_symptoms=[],
-                            recommended_usage=self._safe_recommended_usage(
-                                usage_by_medicine.get(candidate.id),
-                                candidate.dosage,
+                            recommended_usage=(
+                                self._clean_option_text(
+                                    usage_by_medicine.get(candidate.id),
+                                    candidate.dosage,
+                                    120,
+                                )
+                                if str(raw.get("combination_id") or "").strip()
+                                else self._safe_recommended_usage(
+                                    usage_by_medicine.get(candidate.id),
+                                    candidate.dosage,
+                                )
                             ),
                         )
                         for index, candidate in enumerate(selected)
@@ -635,12 +660,26 @@ class MedicineKnowledgeRepository:
         if not used_text or used_text in {"无", "没有", "未使用", "还没有"}:
             return ""
         facts = cls._safety_facts(medicine)
+        if "布洛芬" in facts["active_ingredients"]:
+            concurrent = next(
+                (
+                    term
+                    for term in IBUPROFEN_CONCURRENT_ANALGESIC_TERMS
+                    if cls._compact(term) in used_text
+                ),
+                "",
+            )
+            if concurrent:
+                return concurrent
         references = (*facts["active_ingredients"], *facts["aliases"], medicine.name)
         return next(
             (
                 value
                 for value in references
-                if len(cls._compact(value)) >= 2
+                if (
+                    len(cls._compact(value)) >= 2
+                    or cls._compact(value) in SINGLE_CHARACTER_NUTRIENT_TERMS
+                )
                 and cls._compact(value) in used_text
             ),
             "",
@@ -667,38 +706,7 @@ class MedicineKnowledgeRepository:
     @staticmethod
     def review_fingerprint(medicine: Medicine) -> str:
         """Bind a displayed option to the exact reviewed package and safety facts."""
-        snapshot = {
-            field: getattr(medicine, field)
-            for field in (
-                "name",
-                "manufacturer",
-                "barcode",
-                "spec",
-                "category",
-                "expire_date",
-                "package_verified",
-                "guidance_source",
-                "tags",
-                "aliases",
-                "active_ingredients",
-                "indications",
-                "dosage",
-                "contraindications",
-                "structured_contraindications",
-                "safety_note",
-                "is_otc",
-                "safety_review_status",
-                "safety_reviewed_by",
-                "safety_reviewed_at",
-            )
-        }
-        encoded = json.dumps(
-            snapshot,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return MedicineRepository.review_fingerprint(medicine)
 
     @staticmethod
     def _compact(value: object) -> str:

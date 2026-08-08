@@ -721,16 +721,22 @@ class QsmClient:
         tts_mode: str = "auto",
     ) -> dict[str, Any]:
         normalized_mode = (tts_mode or "auto").strip().lower()
-        # TTS generation was moved to the host. Keep this method as an explicit
-        # compatibility guard so background callers cannot accidentally load a
-        # second TTS model on the QSM board.
-        return {
-            "ok": False,
-            "mode": "host-offline-tts-required",
-            "offline": normalized_mode == "offline",
-            "error_message": "QSM 端语音合成已停用，请由主机离线语音服务生成并播放。",
-            "requested_mode": normalized_mode if normalized_mode in {"auto", "cloud", "offline"} else "auto",
-        }
+        payload: dict[str, Any] = {"text": text}
+        if volume is not None:
+            payload["volume"] = max(0, min(int(volume), 255))
+        if speed is not None:
+            payload["speed"] = max(0.75, min(float(speed), 1.45))
+        payload["tts_mode"] = (
+            normalized_mode
+            if normalized_mode in {"auto", "cloud", "offline"}
+            else "auto"
+        )
+        return self._qsm_action(
+            settings.qsm_audio_speak_path,
+            payload,
+            "语音播报",
+            timeout=settings.qsm_audio_timeout_seconds,
+        )
 
     def audio_beep(self, volume: int | None = None) -> dict[str, Any]:
         if volume is not None and int(volume) <= 0:

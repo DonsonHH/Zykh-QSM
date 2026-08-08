@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 from .. import db
 from ..config import settings
+from ..modules.presentation_mode import PresentationModePolicy
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.medicine_repository import MedicineRepository
@@ -28,7 +29,7 @@ from ..schemas.sync import SyncStatus
 from .ai_service import AiService
 from .dispense_service import DispenseService
 from .qsm_client import QsmClient
-from .host_offline_tts import get_host_offline_tts
+from .speech_service import SpeechService
 
 
 class CloudSyncError(RuntimeError):
@@ -90,17 +91,18 @@ class CloudSyncWorker:
             return 0, "同步正在进行。"
         try:
             self._flush_unacked_commands()
-            commands = self._call("PULL_COMMANDS", {"limit": 10, "agentVersion": 2})
+            commands = self._request("PULL_COMMANDS", {"limit": 10, "agentVersion": 2})
             if not isinstance(commands, list):
                 commands = commands.get("commands", []) if isinstance(commands, dict) else []
             for command in commands:
+                self._ensure_realtime_enabled()
                 self._handle_command(command)
 
             snapshot = self._build_snapshot()
             from .network_service import NetworkService
 
             network_status = NetworkService().status()
-            self._call(
+            self._request(
                 "REPORT_DEVICE",
                 {
                     "online": True,
@@ -175,7 +177,7 @@ class CloudSyncWorker:
     @staticmethod
     def _realtime_enabled() -> bool:
         mode = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower()
-        return mode not in {"local", "offline"}
+        return PresentationModePolicy.resolve(mode).realtime_sync_enabled
 
     def _call(self, action: str, data: dict[str, object]) -> Any:
         payload_data = dict(data)
@@ -206,6 +208,14 @@ class CloudSyncWorker:
         if isinstance(result, dict) and result.get("ok") is False:
             raise CloudSyncError(str(result.get("error") or "云端接口拒绝请求。"))
         return result
+
+    def _request(self, action: str, data: dict[str, object]) -> Any:
+        self._ensure_realtime_enabled()
+        return self._call(action, data)
+
+    def _ensure_realtime_enabled(self) -> None:
+        if not self._realtime_enabled():
+            raise CloudSyncError("本地模式已暂停微信小程序实时连接。")
 
     @staticmethod
     def _device_secret() -> str:
@@ -325,11 +335,11 @@ class CloudSyncWorker:
         for key in ("medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"):
             ids: list[str] = []
             for rows in self._snapshot_batches(snapshot.get(key, [])):
-                result = self._call("UPSERT_SNAPSHOT_BATCH", {"kind": key, "rows": rows})
+                result = self._request("UPSERT_SNAPSHOT_BATCH", {"kind": key, "rows": rows})
                 if isinstance(result, dict):
                     ids.extend(str(value) for value in result.get("ids", []))
                     synced += int(result.get("count") or 0)
-            self._call("FINALIZE_SNAPSHOT", {"kind": key, "ids": ids})
+            self._request("FINALIZE_SNAPSHOT", {"kind": key, "ids": ids})
         return synced
 
     @staticmethod
@@ -352,7 +362,7 @@ class CloudSyncWorker:
     def _detect_schema_version(self) -> int:
         now = time.monotonic()
         if self._cloud_schema_version is None or now - self._cloud_schema_checked_at >= 30:
-            ping = self._call("PING", {})
+            ping = self._request("PING", {})
             self._cloud_schema_version = int(ping.get("schemaVersion") or 1) if isinstance(ping, dict) else 1
             self._cloud_schema_revision = str(ping.get("schemaRevision") or "") if isinstance(ping, dict) else ""
             self._cloud_schema_checked_at = now
@@ -360,7 +370,7 @@ class CloudSyncWorker:
 
     def _sync_snapshot_v1(self, snapshot: dict[str, list[dict[str, object]]]) -> int:
         synced = 0
-        self._call("UPLOAD_MEDICINES", {"medicines": snapshot.get("medicines", [])})
+        self._request("UPLOAD_MEDICINES", {"medicines": snapshot.get("medicines", [])})
         synced += len(snapshot.get("medicines", []))
 
         for vital in snapshot.get("vitals", [])[:10]:
@@ -423,7 +433,7 @@ class CloudSyncWorker:
         marker = f"cloud_v1_{kind}_{row_id}"
         if db.get_setting(marker, "") == content_hash:
             return 0
-        self._call(action, payload)
+        self._request(action, payload)
         db.set_setting(marker, content_hash)
         return 1
 
@@ -565,10 +575,7 @@ class CloudSyncWorker:
             speed = float(raw_speed) if raw_speed not in (None, "") else None
         except (TypeError, ValueError):
             speed = None
-        # Audio generation belongs to the host now. The QSM board only receives
-        # the resulting PCM stream for speaker playback and keeps its ASR/local
-        # inquiry resources available.
-        return get_host_offline_tts().speak_sync(
+        return SpeechService().speak_sync(
             text[:240],
             volume=CloudSyncWorker._int(payload.get("volume")),
             speed=speed,
@@ -836,7 +843,7 @@ class CloudSyncWorker:
         return False
 
     def _ack(self, command_id: str, status: str, result: dict[str, object]) -> None:
-        self._call("ACK_COMMAND", {"commandId": command_id, "status": status, "result": result})
+        self._request("ACK_COMMAND", {"commandId": command_id, "status": status, "result": result})
 
     @staticmethod
     def _command_history(command_id: str):

@@ -466,7 +466,7 @@ class InquiryAiContractTest(unittest.TestCase):
         )
 
     @patch("app.services.ai_service.settings")
-    def test_candidate_ranking_prompt_treats_first_aid_supplies_as_valid_options(
+    def test_candidate_ranking_prompt_treats_a_first_aid_supply_as_a_valid_option(
         self,
         mocked_settings,
     ) -> None:
@@ -477,8 +477,8 @@ class InquiryAiContractTest(unittest.TestCase):
                     {
                         "option_id": "primary",
                         "label": "主方案",
-                        "reason": "这组护理用品更贴近浅表伤口的清洁和覆盖。",
-                        "medicine_ids": ["slot-17-iodophor", "slot-10-gauze"],
+                        "reason": "该护理用品更贴近浅表伤口的清洁消毒。",
+                        "medicine_ids": ["slot-17-iodophor"],
                         "usage_by_medicine": {},
                     }
                 ],
@@ -637,7 +637,7 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertEqual(result["options"], [])
 
     @patch("app.services.ai_service.settings")
-    def test_local_candidate_ranking_keeps_four_items_in_a_care_sequence(
+    def test_local_candidate_ranking_rejects_a_free_form_four_item_sequence(
         self,
         mocked_settings,
     ) -> None:
@@ -669,10 +669,8 @@ class InquiryAiContractTest(unittest.TestCase):
             candidates,
         )
 
-        self.assertEqual(
-            result["options"][0]["medicine_ids"],
-            ["medicine-17", "medicine-22", "medicine-20", "medicine-19"],
-        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["options"], [])
 
     @patch("app.services.ai_service.settings")
     def test_large_local_inventory_is_narrowed_by_the_model_before_ranking(
@@ -689,7 +687,7 @@ class InquiryAiContractTest(unittest.TestCase):
                             "option_id": "primary",
                             "label": "主方案",
                             "reason": "先清洁消毒再覆盖",
-                            "medicine_ids": ["iodophor", "bandage"],
+                            "medicine_ids": ["iodophor"],
                         }
                     ]
                 ),
@@ -729,7 +727,7 @@ class InquiryAiContractTest(unittest.TestCase):
         self.assertEqual(client.calls, 2)
         self.assertEqual(
             result["options"][0]["medicine_ids"],
-            ["iodophor", "bandage"],
+            ["iodophor"],
         )
         ranking_prompt = client.messages_history[1][1]["content"]
         self.assertIn("碘伏消毒液", ranking_prompt)

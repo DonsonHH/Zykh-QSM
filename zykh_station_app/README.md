@@ -1,6 +1,6 @@
 # zykh_station_app
 
-`zykh_station_app` 是“智药康护”本机主应用。本机负责现代化界面、业务编排、本地数据、安全规则和取药确认；QSM368ZP-WF 作为外设采集、执行控制及离线模型网关，通过本机转发端口接入。
+`zykh_station_app` 是“智药康护”本机主应用。本机负责现代化界面、业务编排、本地数据、安全规则和取药确认；QSM368ZP-WF 作为外设采集、执行控制及离线语音网关，通过本机转发端口接入。
 
 已废弃的 `jetson_app/` 已从仓库移除。`zykh_app/` 仅保留板端历史网关与硬件调试实现；主应用不 import 或依赖其源码。
 
@@ -12,8 +12,8 @@
 - 首页、药品页、问询页、记录页；
 - 药品页取药确认，默认调用真实外设网关并保留本地记录；
 - AI应急问询、风险提示、药品信息匹配、禁忌核验；
-- QSM 上运行的 llama.cpp + Qwen3.5 离线问询模型，随终端默认启动并支持云端失败自动切换；
-- QSM 上运行 sherpa-onnx Paraformer 中文离线语音识别；离线 TTS 在主机生成 PCM，再通过低延迟流发送到 QSM 喇叭。语音默认优先使用云端、失败后自动回退；
+- 联网和本地演示模式共用 DeepSeek 云端问询链路；本地确定性规则负责危险信号和失败时的安全连续性，不生成伪模型结论；
+- QSM 上运行 sherpa-onnx Paraformer 中文离线语音识别与 Sherpa-ONNX 中文离线 TTS；联网模式使用云端实时 TTS，本地模式使用板端离线 TTS；
 - 联网时使用 Qwen3 实时 TTS 增量 PCM，边生成边送入 QSM 喇叭；
 - 本地记录聚合和待同步队列；
 - QSM real/mock 接入验证接口。
@@ -144,8 +144,7 @@ QSM_LOCAL_ASR_URL=ws://127.0.0.1:18084
 QSM_VITALS_PREFER_FULL=false
 DISPENSE_DRY_RUN=false
 ENABLE_REAL_DISPENSE=1
-AI_MODE=auto
-AI_CLOUD_IN_LOCAL_DISPLAY=true
+AI_MODE=cloud
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
 AI_MODEL=deepseek-v4-flash
@@ -156,9 +155,7 @@ INQUIRY_SPO2_EMERGENCY_BELOW=90
 INQUIRY_SPO2_HIGH_MAX=93
 INQUIRY_TEMPERATURE_HIGH_AT=39
 INQUIRY_MEDIUM_CONFIDENCE_BELOW=0.65
-LOCAL_AI_BASE_URL=http://127.0.0.1:18083
-LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
-OFFLINE_INQUIRY_MODE=model
+OFFLINE_INQUIRY_MODE=rules
 NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
 VITALS_DEMO_SPO2_FALLBACK=true
 CLOUD_SYNC_ENABLED=true
@@ -170,7 +167,7 @@ ADMIN_SESSION_MINUTES=30
 
 ## 终端设置与管理员调试
 
-终端右上角设置页用于调整联网/本地显示与同步模式、外放和麦克风音量、显示亮度及自动息屏时间。联网/本地按钮只改变顶栏图标和微信小程序实时连接，不改变真实网络、AI 问询或语音路径。外放音量以 0–100% 展示：0% 为静音，1–100% 通过 `20*log10` 分贝曲线映射到当前校准的 128–255 原始增益区间，并以同一百分比控制主机音频转发；旧版 1–127 增益会按原滑块位置一次性迁移，音频转发重启后会恢复已保存音量。操作停止 900ms 后自动串行保存，连续拖动滑块不会并发调用硬件。
+终端右上角设置页用于调整联网/本地模式、外放和麦克风音量、显示亮度及自动息屏时间。联网模式保持微信小程序实时同步并使用云端语音，本地模式暂停实时同步并使用 QSM 离线语音；两种模式都保留实际联网能力并使用同一云端问询模型。普通界面不展示内部模型或语音提供方。外放音量以 0–100% 展示：0% 为静音，1–100% 通过 `20*log10` 分贝曲线映射到当前校准的 128–255 原始增益区间，并以同一百分比控制主机音频转发；旧版 1–127 增益会按原滑块位置一次性迁移，音频转发重启后会恢复已保存音量。操作停止 900ms 后自动串行保存，连续拖动滑块不会并发调用硬件。
 
 设置页中的“管理员调试”进入独立鼠标操作界面。管理员口令验证后可查看运行概览、真实开关 Wi-Fi 和 QSM 数据网络、维护服务对象及人脸/指纹绑定、编辑今日用药计划和 23 个药仓、现场开柜、检查设备、控制屏幕、重启应用以及查看实时脱敏日志。管理员令牌只保存在浏览器 `sessionStorage`，默认 30 分钟失效；开柜、删除、息屏和重启使用普通二次确认，并写入 `admin_audit_records`。人脸录入提供实时取景预览，指纹录入显示准备、采集与结果状态。
 
@@ -203,44 +200,38 @@ sh scripts/deploy_qsm_vitals.sh
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
-AI 云通道使用 DeepSeek Chat Completions 完成逐轮语义抽取，最终分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到 Chat Completions JSON 契约。`AI_INQUIRY_REASONING_EFFORT` 统一控制逐轮抽取、Responses 最终分析和 Chat 回退，支持 `off`、`low`、`high`、`max`，默认 `high`。旧配置 `AI_INQUIRY_ENABLE_THINKING=true/false` 仅在新配置缺失时兼容映射为 `high/off`。QSM 小模型保持独立的非 reasoning 运行参数，不会伪装成云端 thinking。最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
+AI 云通道使用 DeepSeek Chat Completions 完成逐轮语义抽取，最终分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到同一云端模型的 Chat Completions JSON 契约。`AI_INQUIRY_REASONING_EFFORT` 统一控制逐轮抽取、Responses 最终分析和 Chat 回退，支持 `off`、`low`、`high`、`max`，默认 `high`。旧配置 `AI_INQUIRY_ENABLE_THINKING=true/false` 仅在新配置缺失时兼容映射为 `high/off`。最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"
 ```
 
-`AI_MODE=auto` 和 `AI_MODE=cloud` 均先使用 DeepSeek；云端缺少密钥、不可达、请求失败或结构无效时，先转到真实 QSM 模型，再由确定性规则维持追问和危险信号拦截。`AI_MODE=local` 直接走 QSM 模型，再使用同一规则兜底。默认 `OFFLINE_INQUIRY_MODE=model`；显式设为 `rules` 时可保留纯规则路径。模型最终排序失败时不会用规则生成或伪装 assessment，也不会返回药品候选。设置页的“本地模式”只是显示与小程序同步偏好，不参与 AI、ASR、TTS 或物理网络路由。管理员调试台中的 Wi-Fi 和数据网络开关直接控制真实接口；关闭 Wi-Fi 前仍会先验证 SIM 备用通道，避免终端失联。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+生产配置固定使用云端模型；历史 `AI_MODE=auto|local` 与 `OFFLINE_INQUIRY_MODE=model` 会被解析为 `cloud + rules`，不会重新启用板端语言模型。云端缺少密钥、不可达、请求失败或结构无效时，确定性规则只维持追问和危险信号拦截；最终排序失败不会用规则生成或伪装 assessment，也不会返回药品候选。联网/本地模式的路由由后端统一处理，普通终端界面不暴露技术通道。管理员调试台中的 Wi-Fi 和数据网络开关直接控制真实接口；关闭 Wi-Fi 前仍会先验证 SIM 备用通道，避免终端失联。真实密钥只放在环境变量或 `backend/.env.local` 等本机私有文件，不能写入 Git、Markdown 或前端代码。
+
+固定 23 仓使用 `database-safety-facts-v5-detailed-fixed-catalog` 受控资料版本，全部进入问询安全评估；实际候选仍会逐项检查实时库存、有效期、包装身份、说明资料以及处方/既往计划资格，过期或不满足资格的药品只会被评估后排除。动态扫码或云端换药仍从 `draft` 开始，不能继承固定仓身份的审核状态。
+
+多药结果不能由模型自由拼接。后端只把当前病例精确命中的受控组合 ID、成员顺序和一次性授权指纹发给模型；当前内置方案限于浅表伤口的消毒覆盖流程，以及成人无危险信号水样腹泻的分时方案。模型返回后、结果展示前和每次开柜前都会重新核对病例条件、成员安全资料、成分冲突矩阵、库存与授权指纹；任一条件变化即停止原方案。
 
 演示测量默认启用 `VITALS_DEMO_SPO2_FALLBACK=true`。只有心率、额温和手指接触均已由真实设备确认、且完整测量窗口内仅血氧未稳定时，系统才补入 `95-99` 的演示整数；会话会标记 `spo2_source=demo_fallback`，且不会保存或同步为真实测量，真实血氧一旦可用始终优先使用。
 
 服务地点默认预设为成都。用户提到中暑、暴晒或高温不适时，云端问询会读取成都当前气温、体感温度和湿度作为环境背景；天气不能单独用于判断病因，也不能替代本次体征测量。相关配置为 `INQUIRY_LOCATION_NAME`、`INQUIRY_LOCATION_LATITUDE`、`INQUIRY_LOCATION_LONGITUDE` 和 `WEATHER_API_BASE`。
 
-首次下载和部署离线模型：
+问询模型路由、规则回退和旧 QSM llama.cpp 资产边界见 [`docs/offline-ai.md`](docs/offline-ai.md)。首次部署 QSM 离线中文语音模型：
 
 ```bash
 cd zykh_station_app
-sh scripts/download_offline_model.sh
-sh scripts/deploy_offline_ai.sh
+sh scripts/deploy_offline_tts.sh
 ```
 
-完整模型来源、哈希、资源占用、安全边界和断网验收见 [`docs/offline-ai.md`](docs/offline-ai.md)。
-
-首次部署主机离线中文语音模型：
-
-```bash
-cd zykh_station_app
-sh scripts/deploy_host_offline_tts.sh
-```
-
-旧的 `deploy_offline_tts.sh` 和 `deploy_local_tts_server.sh` 仍保留为兼容入口，但现在只转向主机部署，不会再把 TTS 模型安装到 QSM。继续部署本地 Paraformer 语音识别服务：
+`deploy_local_tts_server.sh` 保留为兼容入口并委托同一 QSM 部署。继续部署本地 Paraformer 语音识别服务：
 
 ```bash
 sh scripts/deploy_local_asr.sh
 ```
 
-`deploy_local_asr.sh` 从仓库根目录的 `QSM368ZP-offline-asr-migration*.zip` 校验并部署 Paraformer int8 模型，删除旧 Zipformer 目录，并预热板端 `6006` 常驻服务。云端识别不可用时会自动回退到本地 Paraformer；设置页的联网/本地按钮不改变语音路径。前端只有在识别服务与 QSM 麦克风都就绪后才显示“正在听”。离线识别部署和验收见 [`docs/offline-asr.md`](docs/offline-asr.md)。
+`deploy_local_asr.sh` 从仓库根目录的 `QSM368ZP-offline-asr-migration*.zip` 校验并部署 Paraformer int8 模型，删除旧 Zipformer 目录，并预热板端 `6006` 常驻服务。云端识别不可用时会自动回退到本地 Paraformer。前端只有在识别服务与 QSM 麦克风都就绪后才显示“正在听”。离线识别部署和验收见 [`docs/offline-asr.md`](docs/offline-asr.md)。
 
-语音播报默认使用适中语速 `1.32`：联网时使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流，按 24kHz PCM 时长等待未播放尾音进入 DAC 后才停止流；失败时回退到主机已加载的离线 Sherpa-ONNX 模型。离线语音在主机生成 22.05kHz PCM，再通过 `19001` 播放流发送到 QSM，QSM 不再启动 TTS 模型。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
+语音播报默认使用适中语速 `1.32`：联网模式使用 `qwen3-tts-instruct-flash-realtime-2026-01-22` 并将音频增量写入 QSM PCM 播放流；本地模式直接调用 QSM 板端 Sherpa-ONNX VITS。云端合成失败也会安全回退到板端离线语音。模型包不会提交到 Git。部署、接口和许可边界见 [`docs/offline-tts.md`](docs/offline-tts.md)。
 
 ## QSM 4G 联网
 
@@ -256,7 +247,7 @@ sh scripts/deploy_local_asr.sh
 sh scripts/start_4g.sh
 ```
 
-该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询按 `OFFLINE_INQUIRY_MODE` 使用本地安全收尾能力。`launch_kiosk.sh` 默认检查并启动 QSM 离线问询模型；资源调试时可显式设置 `KIOSK_OFFLINE_AI=0` 跳过。模型不可用时仍保留紧急危险信号拦截，并提示用户重新说明或联系现场人员，不在普通界面展示技术通道名称。
+该脚本会检查 Quectel USB 设备、`/dev/ttyUSB*`、`usb0`、DHCP、默认路由、DNS、IP/DNS/HTTP 连通性。Wi-Fi 与 SIM 链路均不可用时，问询保留本地危险信号拦截和安全失败提示，但不会伪装云端模型结论。`launch_kiosk.sh` 默认不启动旧 QSM 语言模型，并会幂等清退其已知进程，为板端离线语音和外设服务释放资源。普通界面不展示技术通道名称。
 
 主机通过 QSM 的 USB RNDIS 接口使用该数据链路：QSM `usb0` 连接 EC200A，QSM `usb1` 连接主机，主机侧接口名为 `usb0`。首次启动终端时，`launch_kiosk.sh` 会请求一次管理员授权并安装受限路由助手。之后关闭 Wi-Fi 前，后端会先完成 QSM NAT、主机 `192.168.77.2/24` 地址和 metric 700 备用路由验证；任一步失败都会保留 Wi-Fi，避免终端失联。也可提前手动安装：
 
@@ -268,7 +259,7 @@ Wi-Fi 默认路由优先级高于 SIM；Wi-Fi 关闭或失效后才自动使用 
 
 ## QSM real 模式验证
 
-主外设网关、人脸识别网关、麦克风采集网关、离线语言模型、离线 Paraformer 语音识别和指纹网关分别转发到 `18080`、`18081`、`18082`、`18083`、`18084` 与 `18086`；其中主机 `18084` 对应板端 `6006`，实时 PCM 外放使用 `19001`：
+主外设网关、人脸识别网关、麦克风采集网关、离线 Paraformer 语音识别和指纹网关分别转发到 `18080`、`18081`、`18082`、`18084` 与 `18086`；其中主机 `18084` 对应板端 `6006`，实时 PCM 外放使用 `19001`。旧 `18083` 仅保留诊断兼容，不参与应用问询：
 
 ```bash
 cd zykh_station_app

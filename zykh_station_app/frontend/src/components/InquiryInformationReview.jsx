@@ -22,8 +22,7 @@ export function InquiryInformationReview({
   ready,
   saving = false,
   onConfirm,
-  onContinue,
-  networkStatus
+  onContinue
 }) {
   const [remainingMs, setRemainingMs] = useState(ready ? AUTO_CONFIRM_SECONDS * 1000 : null);
   const [interacted, setInteracted] = useState(false);
@@ -31,11 +30,9 @@ export function InquiryInformationReview({
   const confirmRef = useRef(onConfirm);
   const draftRef = useRef(draft);
   const initialRef = useRef(draft);
-  const networkStatusRef = useRef(networkStatus);
   const playbackGenerationRef = useRef(0);
   confirmRef.current = onConfirm;
   draftRef.current = draft;
-  networkStatusRef.current = networkStatus;
   const extracted = session?.extracted_information || {};
   const vitals = session?.vitals || {};
   const autoActive = ready && !interacted && !saving;
@@ -53,7 +50,6 @@ export function InquiryInformationReview({
     const timer = window.setTimeout(() => {
       playReviewSpeech(
         buildInformationReviewSpeech(session),
-        networkStatusRef.current,
         playbackGenerationRef
       );
     }, 180);
@@ -62,7 +58,6 @@ export function InquiryInformationReview({
 
   useEffect(() => () => {
     playbackGenerationRef.current += 1;
-    window.speechSynthesis?.cancel();
     stopAudioPlayback().catch(() => null);
   }, []);
 
@@ -145,26 +140,13 @@ export function InquiryInformationReview({
   }
 }
 
-async function playReviewSpeech(text, networkStatus, playbackGenerationRef) {
+async function playReviewSpeech(text, playbackGenerationRef) {
   if (!text) return;
   const generation = playbackGenerationRef.current + 1;
   playbackGenerationRef.current = generation;
-  window.speechSynthesis?.cancel();
   await stopAudioPlayback().catch(() => null);
   if (generation !== playbackGenerationRef.current) return;
-  try {
-    await speakText(text, undefined, 1.12, "auto");
-  } catch {
-    if (
-      !window.speechSynthesis
-      || typeof SpeechSynthesisUtterance === "undefined"
-      || generation !== playbackGenerationRef.current
-    ) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "zh-CN";
-    utterance.rate = 1.08;
-    window.speechSynthesis.speak(utterance);
-  }
+  await speakText(text, undefined, 1.12, "auto").catch(() => null);
 }
 
 function ReviewFact({ icon: Icon, label, field, value, multiline = false, onChange, onEdit }) {

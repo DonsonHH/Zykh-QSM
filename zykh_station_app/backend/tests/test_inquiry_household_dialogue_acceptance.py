@@ -365,12 +365,17 @@ class HouseholdDialogueAcceptanceTest(unittest.TestCase):
 
         self.assertGreaterEqual(len(session_ids), 10)
 
-    def test_ten_household_dialogues_complete_through_the_real_offline_stack(self) -> None:
-        offline_settings = SimpleNamespace(ai_mode="local", offline_inquiry_mode="rules")
+    def test_ten_household_dialogues_never_use_rules_to_select_medicines(self) -> None:
+        cloud_required_settings = SimpleNamespace(
+            ai_mode="cloud",
+            offline_inquiry_mode="rules",
+            ai_api_key="",
+            ai_api_key_file=Path("/nonexistent"),
+        )
         prior_first_turns: list[str] = []
         session_ids: set[str] = set()
 
-        with patch("app.services.ai_service.settings", offline_settings):
+        with patch("app.services.ai_service.settings", cloud_required_settings):
             service = InquiryOrchestrator(
                 interpreter=SymptomInterpreter(ai_service=AiService()),
                 dispense_service=NoHardwareDispense(),
@@ -393,7 +398,7 @@ class HouseholdDialogueAcceptanceTest(unittest.TestCase):
                             session.session_id,
                             InquiryTurnRequest(transcript=transcript),
                         )
-                        if session.stage in {"result", "escalated"}:
+                        if "重新匹配" in session.reply:
                             break
                         if session.next_action == "measure_vitals":
                             session = service.attach_vitals(
@@ -403,11 +408,13 @@ class HouseholdDialogueAcceptanceTest(unittest.TestCase):
                                     error_message="隔离验收不读取硬件",
                                 ),
                             )
-                            if session.stage in {"result", "escalated"}:
-                                break
                         transcript = self._offline_answer(session.reply)
 
-                    self.assertIn(session.stage, {"result", "escalated"})
+                    self.assertEqual(session.stage, "clarification")
+                    self.assertEqual(session.next_action, "ask")
+                    self.assertIn("重新匹配", session.reply)
+                    self.assertFalse(session.can_view_medicines)
+                    self.assertEqual(session.treatment_options, [])
                     current_user_messages = [
                         message.content
                         for message in session.messages

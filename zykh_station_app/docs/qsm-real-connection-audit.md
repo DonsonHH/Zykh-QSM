@@ -1,6 +1,6 @@
 # QSM Real Connection Audit
 
-> This file records the earlier main-gateway audit. The current offline inquiry model is a separate llama.cpp service on QSM port `8083`, forwarded to host port `18083`; see `offline-ai.md`.
+> This file records the earlier main-gateway audit. Port `8083`/`18083` now belongs only to legacy llama.cpp diagnostics; the production inquiry path uses the cloud model in both presentation modes and stops the old board model during normal launch. See `offline-ai.md`.
 
 > Historical audit snapshot. It records the previous dry-run safety baseline at the time of that check. Current runtime defaults are real-device first: `QSM_MODE=real`, `LOCAL_CAMERA_MODE=real`, `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`.
 

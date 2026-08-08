@@ -8,13 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class LocalAiGatewaySourceTest(unittest.TestCase):
-    def test_kiosk_starts_the_offline_model_by_default_without_enabling_qsm_reasoning(self) -> None:
+    def test_kiosk_leaves_the_board_language_model_disabled_by_default(self) -> None:
         launch_source = (ROOT / "scripts" / "launch_kiosk.sh").read_text(encoding="utf-8")
         runtime_source = (ROOT / "qsm_gateway" / "start_local_ai.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"', launch_source)
+        self.assertIn('sh "$ROOT_DIR/scripts/stop_qsm_offline_ai.sh"', launch_source)
+        self.assertNotIn("KIOSK_OFFLINE_AI", launch_source)
+        self.assertNotIn("ensure_qsm_offline_ai.sh", launch_source)
+        self.assertNotIn("/api/ai/warm-local", launch_source)
         self.assertIn("--reasoning off", runtime_source)
         self.assertIn("--reasoning-budget 0", runtime_source)
         self.assertNotIn("AI_INQUIRY_REASONING_EFFORT", runtime_source)
@@ -36,6 +39,26 @@ class LocalAiGatewaySourceTest(unittest.TestCase):
         self.assertIn('--cache-prompt', source)
         self.assertIn('--offline', source)
         self.assertIn('--no-webui', source)
+
+    def test_cloud_profile_stops_only_the_managed_board_model(self) -> None:
+        host_stop = (ROOT / "scripts" / "stop_qsm_offline_ai.sh").read_text(
+            encoding="utf-8"
+        )
+        board_stop = (ROOT / "qsm_gateway" / "stop_local_ai.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("qsm_gateway/stop_local_ai.sh", host_stop)
+        self.assertIn("/userdata/zykh_station_app/local-ai", host_stop)
+        self.assertIn("adb_run push", host_stop)
+        self.assertIn("QSM_LOCAL_AI_ASSET_DIR", host_stop)
+        self.assertIn("LOCAL_AI_MODEL_FILE='$MODEL'", host_stop)
+        self.assertNotIn("pkill", host_stop)
+        self.assertNotIn("killall", host_stop)
+        self.assertIn("/proc/$PID/cmdline", board_stop)
+        self.assertIn("LOCAL_AI_SERVER", board_stop)
+        self.assertNotIn("pkill", board_stop)
+        self.assertNotIn("killall", board_stop)
 
 
 if __name__ == "__main__":

@@ -77,7 +77,7 @@ export function AdminOverview({ data, loading, onRefresh }) {
             <div><dt>当前链路</dt><dd>{network.transport || network.mode || "--"}</dd></div>
             <div><dt>Wi-Fi</dt><dd>{network.wifi_connected ? network.wifi_ssid || "已连接" : "未连接"}</dd></div>
             <div><dt>SIM</dt><dd>{network.sim_connected ? "已连接" : network.sim_present ? "已检测" : "未连接"}</dd></div>
-            <div><dt>问询模式</dt><dd>{network.ai_mode === "cloud" ? "云端" : "本地"}</dd></div>
+            <div><dt>智能问询</dt><dd>已启用</dd></div>
           </dl>
         </article>
       </section>

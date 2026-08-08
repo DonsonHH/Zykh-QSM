@@ -27,7 +27,9 @@ assert.doesNotMatch(
 assert.doesNotMatch(inquiry, /preparedVitalsRequestRef/, "AI inquiry still owns duplicate vitals prewarm state");
 assert.doesNotMatch(sessionUtils, /INQUIRY_VITALS_AWAITING_KEY/, "legacy vitals transfer state remains");
 
-assert.match(chat, /utterance\.onend\s*=\s*\(\)\s*=>\s*resolve\(true\)/, "browser TTS does not expose actual playback completion");
+assert.match(chat, /await speakText\(/, "spoken guidance does not await the managed playback request");
+assert.match(chat, /if \(!result\?\.ok\)/, "spoken guidance ignores managed playback failure");
+assert.doesNotMatch(chat, /speechSynthesis|SpeechSynthesisUtterance/, "chat bypasses the managed TTS route");
 assert.match(chat, /onReplyPlaybackStart\?\.\(\)/, "chat does not report spoken guidance start");
 assert.match(chat, /preservePlaybackOnExitRef/, "entering vitals interrupts the active spoken guidance");
 

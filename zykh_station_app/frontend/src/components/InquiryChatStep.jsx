@@ -23,23 +23,6 @@ import { normalizeVoiceTranscript } from "../utils/voiceTranscript.js";
 import { inquiryReplyStreamProfile } from "../utils/inquiryStreaming.js";
 import { WxVoiceRecorderOverlay } from "./WxVoiceRecorderOverlay.jsx";
 
-function speakLocally(text) {
-  return new Promise((resolve) => {
-    if (!text || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
-      resolve(false);
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "zh-CN";
-    utterance.rate = 1.08;
-    utterance.pitch = 1;
-    utterance.onend = () => resolve(true);
-    utterance.onerror = () => resolve(false);
-    window.speechSynthesis.speak(utterance);
-  });
-}
-
 export function InquiryChatStep({
   session,
   sending,
@@ -47,8 +30,7 @@ export function InquiryChatStep({
   onSend,
   onReset,
   onReview,
-  onReplyPlaybackStart,
-  networkStatus
+  onReplyPlaybackStart
 }) {
   const [voicePhase, setVoicePhase] = useState(VoicePhase.IDLE);
   const [voiceMessage, setVoiceMessage] = useState("请在右侧按住说话。");
@@ -140,7 +122,6 @@ export function InquiryChatStep({
     const generation = playbackGenerationRef.current + 1;
     playbackGenerationRef.current = generation;
     preservePlaybackOnExitRef.current = false;
-    window.speechSynthesis?.cancel();
     await stopAudioPlayback().catch(() => null);
     if (generation !== playbackGenerationRef.current) return;
     if (announceVitals && session.next_action === "measure_vitals") {
@@ -150,15 +131,16 @@ export function InquiryChatStep({
     try {
       const result = await speakText(text, undefined, 1.12, "auto");
       if (!result?.ok) throw new Error(result?.message || "语音播报未完成");
-    } catch {
-      if (generation === playbackGenerationRef.current) await speakLocally(text);
+    } catch (error) {
+      if (generation === playbackGenerationRef.current) {
+        notify?.(error?.message || "语音播报暂不可用。");
+      }
     }
   }
 
   function interruptPlayback() {
     preservePlaybackOnExitRef.current = false;
     playbackGenerationRef.current += 1;
-    window.speechSynthesis?.cancel();
     stopAudioPlayback().catch(() => null);
   }
 
@@ -223,7 +205,7 @@ export function InquiryChatStep({
         return;
       }
       moveVoice(VoiceEvent.READY);
-      setVoiceMessage(data.offline ? "本地识别正在听，请自然说话。" : "正在听，请自然说话。");
+      setVoiceMessage("正在听，请自然说话。");
       return;
     }
     if (data.type === "error") {

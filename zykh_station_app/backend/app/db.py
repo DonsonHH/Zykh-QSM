@@ -99,6 +99,13 @@ def init_db() -> None:
               label TEXT NOT NULL,
               medicine_ids_json TEXT NOT NULL,
               member_identity_fingerprints_json TEXT NOT NULL DEFAULT '{}',
+              clinical_policy_version TEXT NOT NULL DEFAULT '',
+              applicability_json TEXT NOT NULL DEFAULT '{}',
+              member_review_fingerprints_json TEXT NOT NULL DEFAULT '{}',
+              reviewed_usage_json TEXT NOT NULL DEFAULT '{}',
+              evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+              provenance TEXT NOT NULL DEFAULT '',
+              review_note TEXT NOT NULL DEFAULT '',
               review_status TEXT NOT NULL DEFAULT 'draft',
               reviewed_by TEXT NOT NULL DEFAULT '',
               reviewed_at TEXT NOT NULL DEFAULT '',
@@ -111,6 +118,48 @@ def init_db() -> None:
             "approved_medicine_combinations",
             "member_identity_fingerprints_json",
             "TEXT NOT NULL DEFAULT '{}'",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "clinical_policy_version",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "applicability_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "member_review_fingerprints_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "reviewed_usage_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "evidence_refs_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "provenance",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        _ensure_column(
+            conn,
+            "approved_medicine_combinations",
+            "review_note",
+            "TEXT NOT NULL DEFAULT ''",
         )
         conn.execute(
             """

@@ -7,9 +7,13 @@ import { getNetworkIndicators, isLocalNetworkMode } from "../src/utils/network.j
 const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
 const adminDevices = await readFile(`${root}src/components/admin/AdminDevices.jsx`, "utf8");
+const adminOverview = await readFile(`${root}src/components/admin/AdminOverview.jsx`, "utf8");
 const inquiryChat = await readFile(`${root}src/components/InquiryChatStep.jsx`, "utf8");
 const inquiryReview = await readFile(`${root}src/components/InquiryInformationReview.jsx`, "utf8");
 const inquiryResult = await readFile(`${root}src/components/InquiryResultStep.jsx`, "utf8");
+const syncStatusCard = await readFile(`${root}src/components/SyncStatusCard.jsx`, "utf8");
+const systemCheck = await readFile(`${root}src/components/SystemCheckModal.jsx`, "utf8");
+const aiPresentation = await readFile(`${root}src/utils/ai.js`, "utf8");
 
 const hiddenNetwork = {
   mode: "sim",
@@ -76,6 +80,11 @@ assert.doesNotMatch(
 );
 assert.match(adminDevices, /updateAdminNetwork/, "device console is missing real network controls");
 assert.doesNotMatch(
+  adminOverview,
+  /问询模式|云端问询|本地问询/,
+  "admin overview exposes the hidden model route"
+);
+assert.doesNotMatch(
   inquiryChat,
   /isLocalNetworkMode/,
   "display mode still changes inquiry audio or presentation behavior"
@@ -89,6 +98,29 @@ assert.doesNotMatch(
   inquiryResult,
   /isLocalNetworkMode|\?\s*["']offline["']\s*:\s*["']auto["']/,
   "display mode still changes result audio behavior"
+);
+for (const [name, source] of [
+  ["chat", inquiryChat],
+  ["review", inquiryReview],
+  ["result", inquiryResult]
+]) {
+  assert.doesNotMatch(
+    source,
+    /speechSynthesis|SpeechSynthesisUtterance/,
+    `${name} still bypasses the managed speech route with browser TTS`
+  );
+}
+assert.doesNotMatch(
+  syncStatusCard,
+  /实时同步已暂停|切换到联网模式后/,
+  "records UI exposes the hidden synchronization route"
+);
+assert.match(systemCheck, /isLocalNetworkMode/, "system check does not mask physical links in local display mode");
+assert.match(systemCheck, /断网模式/, "system check is missing the local presentation label");
+assert.doesNotMatch(
+  aiPresentation,
+  /本地智能回复|云端智能回复/,
+  "inquiry source badges expose the hidden model route"
 );
 
 console.log("network display mode contract: ok");

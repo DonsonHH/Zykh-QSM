@@ -74,7 +74,18 @@ class AiService:
 
     def status(self) -> dict[str, Any]:
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        local = local_inquiry_status(self.local_client.status())
+        local = (
+            local_inquiry_status(self.local_client.status())
+            if self._use_local_ai_runtime()
+            else {
+                "ok": False,
+                "ready": False,
+                "status": "disabled",
+                "model": "",
+                "model_ready": False,
+                "rules_fallback_ready": True,
+            }
+        )
         model_ready = bool(local.get("model_ready"))
         rules_fallback_ready = bool(local.get("rules_fallback_ready"))
         return {
@@ -89,6 +100,13 @@ class AiService:
         }
 
     def warm_local(self) -> dict[str, Any]:
+        if not self._use_local_ai_runtime():
+            return {
+                "ok": False,
+                "ready": False,
+                "mode": "disabled",
+                "message": "板端问询模型未启用。",
+            }
         if (
             self._use_local_ai_runtime()
             and self._use_offline_inquiry_rules()
@@ -142,9 +160,9 @@ class AiService:
         if self._use_local_ai_runtime():
             return self._local_model_reply(message, "当前为离线模式。")
         if not key:
-            return self._local_model_reply(message, "未配置云端密钥。")
+            return self._rules_reply(message, "未配置云端密钥。")
         if not self._should_attempt_cloud():
-            return self._local_model_reply(message, "当前未检测到可用云端网络。")
+            return self._rules_reply(message, "当前未检测到可用云端网络。")
 
         payload = {
             "model": settings.ai_model,
@@ -172,13 +190,13 @@ class AiService:
             with urlopen(request, timeout=settings.ai_chat_timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            return self._local_model_reply(message, f"云端通道 HTTP {exc.code}。")
+            return self._rules_reply(message, f"云端通道 HTTP {exc.code}。")
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            return self._local_model_reply(message, f"云端通道暂不可用：{exc}。")
+            return self._rules_reply(message, f"云端通道暂不可用：{exc}。")
 
         reply = self._extract_message_text(data)
         if not reply:
-            return self._local_model_reply(message, "云端通道未返回有效内容。")
+            return self._rules_reply(message, "云端通道未返回有效内容。")
         return {
             "ok": True,
             "source": "cloud",
@@ -197,15 +215,14 @@ class AiService:
             return
 
         key = self._read_key(settings.ai_api_key, settings.ai_api_key_file)
-        local_reason = ""
         if self._use_local_ai_runtime():
-            local_reason = "当前为离线模式。"
-        elif not key:
-            local_reason = "未配置云端密钥。"
-        elif not self._should_attempt_cloud():
-            local_reason = "当前未检测到可用云端网络。"
-        if local_reason:
-            yield from self._stream_local(message, context, local_reason)
+            yield from self._stream_local(message, context, "显式本地模型模式。")
+            return
+        if not key:
+            yield from self._stream_rules(message, "未配置云端密钥。")
+            return
+        if not self._should_attempt_cloud():
+            yield from self._stream_rules(message, "当前未检测到可用云端网络。")
             return
 
         payload: dict[str, Any] = {
@@ -233,10 +250,10 @@ class AiService:
         try:
             response = urlopen(request, timeout=settings.ai_chat_timeout_seconds)
         except HTTPError as exc:
-            yield from self._stream_local(message, context, f"云端通道 HTTP {exc.code}。")
+            yield from self._stream_rules(message, f"云端通道 HTTP {exc.code}。")
             return
         except (URLError, TimeoutError, OSError) as exc:
-            yield from self._stream_local(message, context, f"云端通道暂不可用：{exc}。")
+            yield from self._stream_rules(message, f"云端通道暂不可用：{exc}。")
             return
 
         yield {"type": "meta", "source": "cloud", "model": settings.ai_model}
@@ -438,6 +455,8 @@ class AiService:
         self,
         context: dict[str, Any],
         candidates: list[dict[str, Any]],
+        *,
+        allowed_combinations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Let AI rank only IDs already admitted by the deterministic safety pool."""
         system_prompt = (
@@ -455,7 +474,10 @@ class AiService:
             "最多输出一个主方案和一个备选方案，两个方案均必须完整、可单独选择，备选不是联合服用。"
             "如果候选中存在用途侧重不同、同样符合当前情况的第二种安全选择，应输出备选方案；"
             "只有确实没有合理第二选择时才只给主方案，不要把同一护理流程强行拆成两个方案。"
-            "每个方案最多四个药品，只有确需按顺序完成的护理组合才可包含多个药品。"
+            "单药方案的 medicine_ids 必须恰好一个，combination_id 和 authorization_fingerprint 必须为空。"
+            "不能自由拼接多个药品。多药方案只能从 allowed_combinations 中精确选择一条，必须原样返回其"
+            "combination_id、medicine_ids 和 authorization_fingerprint；不得改顺序、增删成员或合并两条组合。"
+            "如果 allowed_combinations 为空，就绝对不能返回多药方案。"
             "assessment 必须结合全部主诉、伴随症状、起病经过、体征、病史和已用药生成，不得只围绕第一个症状。"
             "possible_conditions 最多三项，name 写常见的可能病因或可能疾病名称，likelihood 只能是 more_likely、possible、"
             "needs_exclusion；只能表达可能性，不得下确定诊断。supporting_evidence_ids 和 non_supporting_evidence_ids"
@@ -473,11 +495,16 @@ class AiService:
             "\"likelihood\":\"possible\",\"supporting_evidence_ids\":[\"obs-1\"],"
             "\"non_supporting_evidence_ids\":[\"vital-temperature\"]}],\"next_steps\":[\"\"],"
             "\"seek_care_if\":[\"\"]},\"options\":[{\"option_id\":\"primary\",\"label\":\"主方案\","
-            "\"reason\":\"\",\"medicine_ids\":[\"\"],\"reason_by_medicine\":{\"medicine-id\":\"个性化理由\"},"
+            "\"reason\":\"\",\"combination_id\":\"\",\"authorization_fingerprint\":\"\","
+            "\"medicine_ids\":[\"\"],\"reason_by_medicine\":{\"medicine-id\":\"个性化理由\"},"
             "\"usage_by_medicine\":{\"medicine-id\":\"本次建议用法\"}}]}。"
         )
         user_prompt = json.dumps(
-            {"case": context, "candidates": candidates},
+            {
+                "case": context,
+                "candidates": candidates,
+                "allowed_combinations": allowed_combinations or [],
+            },
             ensure_ascii=False,
         )
         if self._use_local_ai_runtime():
@@ -549,8 +576,8 @@ class AiService:
 
     @staticmethod
     def _use_offline_inquiry_rules() -> bool:
-        # Model-first is the default; explicit rules mode remains available for
-        # controlled legacy deployments and deterministic acceptance tests.
+        # Rules may preserve dialogue continuity after a cloud failure, but
+        # they are never an alternative medicine-ranking provider.
         return str(getattr(settings, "offline_inquiry_mode", "model")).lower() == "rules"
 
     def _offline_inquiry_extract(
@@ -560,7 +587,7 @@ class AiService:
         profile: dict[str, Any],
         reason: str,
     ) -> dict[str, Any]:
-        if self._use_offline_inquiry_rules():
+        if not self._use_local_ai_runtime() or self._use_offline_inquiry_rules():
             return self.offline_inquiry.extract(transcript, existing, profile)
         result = self._extract_inquiry_local(transcript, existing, profile, reason)
         if result.get("ok"):
@@ -584,8 +611,14 @@ class AiService:
         candidates: list[dict[str, Any]],
         reason: str,
     ) -> dict[str, Any]:
-        if self._use_offline_inquiry_rules():
-            return self.offline_inquiry.rank(context, candidates)
+        if not self._use_local_ai_runtime() or self._use_offline_inquiry_rules():
+            return {
+                "ok": False,
+                "source": "rules_fallback",
+                "message": "药品匹配暂未完成。",
+                "diagnostic_note": reason or "云端模型当前不可用。",
+                "options": [],
+            }
         result = self._rank_inquiry_candidates_local(system_prompt, user_prompt, reason)
         if not result.get("ok") or not self._valid_inquiry_ranking_payload(result):
             return {
@@ -612,7 +645,7 @@ class AiService:
         context: dict[str, Any],
         reason: str,
     ) -> dict[str, Any]:
-        if self._use_offline_inquiry_rules():
+        if not self._use_local_ai_runtime() or self._use_offline_inquiry_rules():
             return self.offline_inquiry.recommendation(context)
         return self._generate_recommendation_local(system_prompt, user_prompt, option_ids, reason)
 
@@ -2031,6 +2064,12 @@ class AiService:
             yield {"type": "replace", "source": "local_llm", "text": guarded}
         yield {"type": "done", "source": "local_llm", "reply": guarded}
 
+    def _stream_rules(self, message: str, reason: str) -> Iterator[dict[str, Any]]:
+        rules = self._rules_reply(message, reason)
+        yield {"type": "meta", "source": rules["source"], "model": rules["model"]}
+        yield {"type": "delta", "source": rules["source"], "text": rules["reply"]}
+        yield {"type": "done", "source": rules["source"], "reply": rules["reply"]}
+
     def _local_model_reply(self, message: str, reason: str) -> dict[str, Any]:
         result = self.local_client.chat(
             [
@@ -2330,6 +2369,29 @@ class AiService:
                 isinstance(option.get("medicine_ids"), list)
                 and all(isinstance(item, str) for item in option["medicine_ids"])
             ):
+                return False
+            medicine_ids = option["medicine_ids"]
+            if (
+                not medicine_ids
+                or len(medicine_ids) > 4
+                or len(set(medicine_ids)) != len(medicine_ids)
+                or any(not item.strip() for item in medicine_ids)
+            ):
+                return False
+            combination_id = option.get("combination_id", "")
+            authorization_fingerprint = option.get(
+                "authorization_fingerprint",
+                "",
+            )
+            if not isinstance(combination_id, str) or not isinstance(
+                authorization_fingerprint,
+                str,
+            ):
+                return False
+            if len(medicine_ids) > 1:
+                if not combination_id.strip() or not authorization_fingerprint.strip():
+                    return False
+            elif combination_id.strip() or authorization_fingerprint.strip():
                 return False
         return True
 

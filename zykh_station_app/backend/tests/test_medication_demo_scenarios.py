@@ -124,9 +124,9 @@ class MedicationDemoScenariosTest(unittest.TestCase):
             item.id
             for item in MedicineKnowledgeRepository(self.repository).safe_candidate_pool("")
         }
-        # Slot 13 has the new online identity but remains outside the AI pool
-        # until its dynamic safety metadata receives controlled review.
-        self.assertNotIn("slot-13-ibuprofen", safe_ids)
+        # The fixed cabinet catalog is reviewed as one bundled reference set;
+        # prescription medicines still require an existing direction plan.
+        self.assertIn("slot-13-ibuprofen", safe_ids)
         self.assertNotIn("slot-14-oseltamivir", safe_ids)
         self.assertNotIn("slot-04-amoxicillin", safe_ids)
 

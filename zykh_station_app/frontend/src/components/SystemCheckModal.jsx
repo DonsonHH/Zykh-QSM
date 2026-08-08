@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
   Activity,
-  BrainCircuit,
   Camera,
   CheckCircle2,
   Fingerprint,
@@ -19,6 +18,7 @@ import { loadHostAudioStatus, playBeep } from "../api/audio.js";
 import { loadDeviceCheck } from "../api/device.js";
 import { loadNetworkStatus } from "../api/network.js";
 import { useExitPresence } from "../hooks/useExitPresence.js";
+import { isLocalNetworkMode } from "../utils/network.js";
 import { speakerGainToPercent, speakerPercentToGain } from "../utils/volume.js";
 
 const fallbackCheck = {
@@ -33,9 +33,10 @@ const fallbackCheck = {
   fingerprint_status: "unavailable",
   fingerprint_bound_users: 0,
   dispense_dry_run: true,
-  local_ai_ok: false,
-  local_ai_model: "",
-  local_ai_status: "unavailable",
+  offline_tts_ok: false,
+  offline_tts_engine: "",
+  offline_tts_model: "",
+  offline_tts_status: "unavailable",
   errors: [],
   warnings: ["系统检查暂不可用。"],
   recommendations: ["请稍后重新检查。"]
@@ -100,21 +101,24 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
   const alertItems = [...(check.errors || []), ...(check.warnings || [])];
   const modeLabel = check.qsm_mode === "real" ? "真实模式" : "本地模式";
   const currentNetwork = network || networkStatus || {};
+  const localDisplayMode = isLocalNetworkMode(currentNetwork);
   const networkOffline = !currentNetwork.wifi_connected && !currentNetwork.sim_connected;
   const networkGood = currentNetwork.signal === "good";
-  const NetworkIcon = networkOffline ? WifiOff : Signal;
+  const NetworkIcon = localDisplayMode || networkOffline ? WifiOff : Signal;
   const rows = [
     {
       icon: NetworkIcon,
-      label: "网络状态",
-      value: currentNetwork.label || (networkOffline ? "暂无可用链路" : "已连接"),
-      ok: networkGood || currentNetwork.simulated
+      label: "连接状态",
+      value: localDisplayMode
+        ? "断网模式"
+        : currentNetwork.label || (networkOffline ? "暂无可用链路" : "已连接"),
+      ok: localDisplayMode || networkGood || currentNetwork.simulated
     },
     {
-      icon: BrainCircuit,
-      label: "离线问询模型",
-      value: check.local_ai_ok ? "可用" : "未就绪",
-      ok: check.local_ai_ok
+      icon: Volume2,
+      label: "语音服务",
+      value: check.offline_tts_ok ? "可用" : "未就绪",
+      ok: check.offline_tts_ok
     },
     {
       icon: Activity,
@@ -216,7 +220,7 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
             <p>摄像头：{check.local_camera_ok ? "可用，扫码页自动识别" : "不可用，请检查外设连接"}</p>
             <p>
               声音：
-              外放由外设执行，本机生成的语音和提示音会发送到外设喇叭。
+              语音和提示音会通过外设喇叭播放。
             </p>
           </div>
           <div className="settings-control-panel">

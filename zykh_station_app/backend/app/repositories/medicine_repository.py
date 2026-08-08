@@ -7,23 +7,42 @@ from uuid import uuid4
 
 from .. import db
 from ..schemas.medicine import (
+    MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION,
     ApprovedMedicineCombination,
     Medicine,
+    MedicineCombinationApplicability,
+    MedicineCombinationEvidenceRef,
     MedicineIngredientConflictRule,
 )
 
 
-MEDICINE_SEED_VERSION = "home-real-cabinet-v7-slot-03-13-online-identity"
+MEDICINE_SEED_VERSION = "home-real-cabinet-v8-fixed-catalog"
 MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v6-slot-03-13-online"
 PACKAGE_VERIFICATION_VERSION = "fixed-inventory-identity-v1"
-MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v3-controlled-ingredients"
-BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-label-reference-v2"
+MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v5-detailed-fixed-catalog"
+BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-cabinet-reference-v5"
+BUNDLED_LABEL_SAFETY_REVIEWERS = frozenset(
+    {
+        "bundled-label-reference-v2",
+        "bundled-cabinet-reference-v4",
+        BUNDLED_LABEL_SAFETY_REVIEWER,
+    }
+)
 BUNDLED_LABEL_SAFETY_IDS = frozenset(
     {
+        "slot-01-fufang-ganmaoling",
+        "slot-02-centrum",
+        "slot-03-diosmectite",
         "slot-04-amoxicillin",
+        "slot-05-nin-jiom-pei-pa-koa",
         "slot-06-lactulose",
+        "slot-07-yinhuang",
+        "slot-08-huoxiang-zhengqi",
+        "slot-09-bifid-triple",
         "slot-10-gauze",
+        "slot-11-guilin-xiguashuang",
         "slot-12-hydrotalcite",
+        "slot-13-ibuprofen",
         "slot-14-oseltamivir",
         "slot-15-mupirocin",
         "slot-16-ketoconazole",
@@ -43,7 +62,7 @@ NON_DRUG_COMBINATION_BASELINE_IDS = frozenset(
 
 # Compatibility seed only. Inquiry decisions read these facts from SQLite via
 # Medicine entities; this mapping is never consulted by the runtime safety path.
-DEFAULT_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
+LEGACY_V3_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
     "slot-01-fufang-ganmaoling": {
         "aliases": ("复方感冒灵", "999感冒灵"),
         "active_ingredients": ("对乙酰氨基酚",),
@@ -79,21 +98,164 @@ DEFAULT_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 
+DEFAULT_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
+    **LEGACY_V3_MEDICINE_SAFETY_FACTS,
+    "slot-01-fufang-ganmaoling": {
+        "aliases": ("复方感冒灵", "999感冒灵"),
+        "active_ingredients": (
+            "山银花",
+            "五指柑",
+            "野菊花",
+            "三叉苦",
+            "南板蓝根",
+            "岗梅",
+            "对乙酰氨基酚",
+            "马来酸氯苯那敏",
+            "咖啡因",
+        ),
+    },
+    "slot-02-centrum": {
+        "aliases": ("善存", "多维元素", "复合维生素矿物质"),
+        # The cabinet record does not distinguish (29) from (29-II). Keep the
+        # union of label-listed micronutrients so duplicate-use checks fail
+        # conservatively instead of treating one aggregate phrase as a fact.
+        "active_ingredients": (
+            "维生素A",
+            "β-胡萝卜素",
+            "维生素D",
+            "维生素E",
+            "维生素B1",
+            "维生素B2",
+            "维生素B6",
+            "维生素C",
+            "维生素B12",
+            "维生素K1",
+            "生物素",
+            "叶酸",
+            "烟酰胺",
+            "泛酸",
+            "钙",
+            "磷",
+            "钾",
+            "氯",
+            "镁",
+            "铁",
+            "铜",
+            "锌",
+            "锰",
+            "碘",
+            "铬",
+            "钼",
+            "硒",
+            "镍",
+            "硅",
+            "锡",
+            "钒",
+        ),
+    },
+    "slot-05-nin-jiom-pei-pa-koa": {
+        "aliases": ("京都念慈庵", "京都念慈菴", "川贝枇杷膏", "枇杷膏"),
+        "active_ingredients": ("川贝母", "枇杷叶", "化橘红", "桔梗", "法半夏", "蜂蜜"),
+    },
+    "slot-07-yinhuang": {
+        "aliases": ("银黄", "银黄颗粒", "希臣"),
+        "active_ingredients": ("金银花提取物", "黄芩提取物"),
+    },
+    "slot-08-huoxiang-zhengqi": {
+        "aliases": ("藿香正气", "恒心堂", "利君"),
+        "active_ingredients": (
+            "广藿香",
+            "苍术（炒）",
+            "白芷",
+            "陈皮",
+            "茯苓",
+            "厚朴（姜制）",
+            "紫苏叶",
+            "大腹皮",
+            "半夏（姜制）",
+            "甘草",
+        ),
+    },
+    "slot-09-bifid-triple": {
+        "aliases": ("贝飞达", "双歧杆菌三联活菌"),
+        "active_ingredients": ("长型双歧杆菌", "嗜酸乳杆菌", "粪肠球菌"),
+    },
+    "slot-11-guilin-xiguashuang": {
+        "aliases": ("桂林西瓜霜", "西瓜霜", "三金桂林西瓜霜", "三金"),
+        "active_ingredients": (
+            "西瓜霜",
+            "煅硼砂",
+            "黄柏",
+            "黄连",
+            "山豆根",
+            "射干",
+            "浙贝母",
+            "青黛",
+            "冰片",
+            "无患子果（炭）",
+            "大黄",
+            "黄芩",
+            "甘草",
+            "薄荷脑",
+        ),
+    },
+}
+
+
+LEGACY_V4_MEDICINE_SAFETY_FACTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "slot-02-centrum": {
+        "aliases": ("善存", "多维元素", "复合维生素矿物质"),
+        "active_ingredients": ("复合维生素和矿物质",),
+    },
+    "slot-08-huoxiang-zhengqi": {
+        "aliases": ("藿香正气", "恒心堂"),
+        "active_ingredients": DEFAULT_MEDICINE_SAFETY_FACTS[
+            "slot-08-huoxiang-zhengqi"
+        ]["active_ingredients"],
+    },
+    "slot-11-guilin-xiguashuang": {
+        "aliases": ("桂林西瓜霜", "西瓜霜", "三金桂林西瓜霜"),
+        "active_ingredients": DEFAULT_MEDICINE_SAFETY_FACTS[
+            "slot-11-guilin-xiguashuang"
+        ]["active_ingredients"],
+    },
+}
+
+
+LEGACY_V4_MEDICINE_LABEL_SAFETY: dict[str, dict[str, object]] = {
+    "slot-13-ibuprofen": {
+        "contraindications": (
+            "非甾体抗炎药过敏者禁用",
+            "孕妇及哺乳期妇女禁用",
+            "阿司匹林过敏的哮喘患者禁用",
+        ),
+        "safety_note": (
+            "联网条码身份：芬必得，0.3g×24粒，国药准字H10900089；"
+            "整粒吞服，避免与其他解热镇痛药重复使用。"
+        ),
+    }
+}
+
+
 CONTRAINDICATION_CONCEPT_TERMS: dict[str, tuple[str, ...]] = {
     "diabetes": ("糖尿病", "糖代谢异常"),
     "renal_impairment": ("肾功能", "肾损害", "肾衰", "肾病"),
     "liver_impairment": ("肝功能", "肝损害", "肝病"),
+    "cardiac_disease": ("严重心脏疾病", "严重心脏病", "严重心力衰竭"),
     "hypercalcemia": ("高钙血症",),
     "hyperphosphatemia": ("高磷血症",),
     "hypophosphatemia": ("低磷血症",),
     "myasthenia_gravis": ("重症肌无力",),
     "galactose_intolerance": ("半乳糖不耐受",),
     "intestinal_obstruction": ("肠梗阻",),
-    "peptic_ulcer": ("消化道溃疡", "胃溃疡"),
+    "peptic_ulcer": ("消化道溃疡", "消化性溃疡", "胃溃疡"),
+    "gastrointestinal_bleeding": ("胃肠道出血", "消化道出血", "胃出血"),
+    "gastrointestinal_perforation": ("胃肠道穿孔", "消化道穿孔", "穿孔"),
     "hypotension": ("低血压",),
     "pregnancy": ("孕妇", "怀孕", "妊娠"),
     "breastfeeding": ("哺乳",),
     "asthma": ("哮喘",),
+    "nsaid_allergy": ("非甾体抗炎药过敏", "阿司匹林或其他非甾体抗炎药过敏"),
 }
 
 DEFAULT_MEDICINES = [
@@ -322,14 +484,22 @@ DEFAULT_MEDICINES = [
         "name": "布洛芬缓释胶囊",
         "category": "解热镇痛",
         "tags": ["芬必得", "退热", "头痛", "痛经", "0.3g×24粒", "国药准字H10900089"],
-        "contraindications": ["非甾体抗炎药过敏者禁用", "孕妇及哺乳期妇女禁用", "阿司匹林过敏的哮喘患者禁用"],
+        "contraindications": [
+            "对布洛芬、辅料、阿司匹林或其他非甾体抗炎药过敏者禁用",
+            "孕妇及哺乳期妇女禁用",
+            "阿司匹林或其他非甾体抗炎药诱发哮喘者禁用",
+            "严重肝功能不全、肾功能不全或严重心脏疾病患者禁用",
+            "活动性消化性溃疡、胃肠道出血或穿孔患者禁用",
+            "既往使用非甾体抗炎药后发生胃肠道出血或穿孔者禁用",
+            "除医嘱外不得同时使用其他布洛芬、非甾体抗炎药或解热镇痛药",
+        ],
         "stock": 1,
         "unit": "盒",
         "expire_date": "2029-01",
         "image_hint": "芬必得 布洛芬缓释胶囊",
         "is_otc": True,
         "is_emergency": False,
-        "safety_note": "联网条码身份：芬必得，0.3g×24粒，国药准字H10900089；整粒吞服，避免与其他解热镇痛药重复使用。",
+        "safety_note": "联网条码身份：芬必得，0.3g×24粒，国药准字H10900089；整粒吞服，使用前核对消化道、肝肾、心脏风险及其他解热镇痛药。",
     },
     {
         "id": "slot-14-oseltamivir",
@@ -619,6 +789,164 @@ for _medicine in DEFAULT_MEDICINES:
     )
 
 
+MEDICINE_COMBINATION_POLICY_VERSION = "official-evidence-enabled-v1"
+MEDICINE_COMBINATION_POLICY_PROVENANCE = "official-health-guidance-bundled-v1"
+MEDICINE_COMBINATION_POLICY_REVIEWER = "bundled-clinical-policy-v1"
+DEFAULT_MEDICINE_COMBINATIONS: tuple[dict[str, object], ...] = (
+    {
+        "combination_id": "candidate-superficial-wound-bandage-v1",
+        "label": "浅表小伤口消毒与创口贴覆盖",
+        "medicine_ids": (
+            "slot-17-iodophor",
+            "slot-22-cotton-swab",
+            "slot-20-bandage",
+        ),
+        "applicability": {
+            "required_all_facts": (
+                "superficial_wound",
+                "bleeding_controlled",
+                "small_dry_wound",
+            ),
+            "must_be_absent_facts": (
+                "deep_wound",
+                "animal_bite",
+                "continued_bleeding",
+                "wound_infection",
+                "embedded_foreign_body",
+            ),
+            "member_required_any_facts": {
+                "slot-17-iodophor": ("superficial_wound",),
+                "slot-22-cotton-swab": ("superficial_wound",),
+                "slot-20-bandage": ("small_dry_wound",),
+            },
+            "allowed_risk_levels": ("low",),
+        },
+        "reviewed_usage_by_medicine": {
+            "slot-17-iodophor": "伤口清洁后，按瓶身说明对浅表创面或周围皮肤消毒。",
+            "slot-22-cotton-swab": "一次性蘸取消毒液并涂抹，接触伤口后不得重复蘸取。",
+            "slot-20-bandage": "待伤口干燥后，按产品说明覆盖小而浅的伤口。",
+        },
+        "evidence_refs": (
+            {
+                "source_title": "北京市卫生健康委员会伤口护理常识",
+                "source_url": (
+                    "https://wjw.beijing.gov.cn/bmfw_20143/jkzs/jksh/"
+                    "202602/t20260210_4505416.html"
+                ),
+                "supports": "浅表伤口清洁消毒后可按伤口情况使用创可贴覆盖。",
+            },
+            {
+                "source_title": "国家药监局一次性使用棉签产品使用说明书",
+                "source_url": "https://qxzc.nmpa.gov.cn/upload/ba/1478673311662.pdf",
+                "supports": "医用棉签可用于机械创伤部位的局部涂抹消毒。",
+            },
+        ),
+        "review_note": "受控内置方案；仅限出血已控制、无感染或深部损伤信号的小而浅伤口。",
+    },
+    {
+        "combination_id": "candidate-superficial-wound-gauze-v1",
+        "label": "浅表伤口消毒与无菌纱布覆盖",
+        "medicine_ids": (
+            "slot-17-iodophor",
+            "slot-22-cotton-swab",
+            "slot-10-gauze",
+        ),
+        "applicability": {
+            "required_all_facts": (
+                "superficial_wound",
+                "bleeding_controlled",
+                "needs_gauze_cover",
+            ),
+            "must_be_absent_facts": (
+                "deep_wound",
+                "animal_bite",
+                "continued_bleeding",
+                "wound_infection",
+                "embedded_foreign_body",
+            ),
+            "member_required_any_facts": {
+                "slot-17-iodophor": ("superficial_wound",),
+                "slot-22-cotton-swab": ("superficial_wound",),
+                "slot-10-gauze": ("needs_gauze_cover",),
+            },
+            "allowed_risk_levels": ("low",),
+        },
+        "reviewed_usage_by_medicine": {
+            "slot-17-iodophor": "伤口清洁后，按瓶身说明对浅表创面或周围皮肤消毒。",
+            "slot-22-cotton-swab": "一次性蘸取消毒液并涂抹，接触伤口后不得重复蘸取。",
+            "slot-10-gauze": "按产品说明覆盖清洁后的浅表伤口，受潮或污染后更换。",
+        },
+        "evidence_refs": (
+            {
+                "source_title": "北京市卫生健康委员会伤口护理常识",
+                "source_url": (
+                    "https://wjw.beijing.gov.cn/bmfw_20143/jkzs/jksh/"
+                    "202602/t20260210_4505416.html"
+                ),
+                "supports": "浅表伤口清洁消毒后可按伤口情况使用无菌纱布覆盖。",
+            },
+            {
+                "source_title": "国家药监局一次性使用棉签产品使用说明书",
+                "source_url": "https://qxzc.nmpa.gov.cn/upload/ba/1478673311662.pdf",
+                "supports": "医用棉签可用于机械创伤部位的局部涂抹消毒。",
+            },
+        ),
+        "review_note": "受控内置方案；仅限出血已控制、无感染或深部损伤信号且需敷料覆盖的浅表伤口。",
+    },
+    {
+        "combination_id": "candidate-adult-watery-diarrhea-separated-v1",
+        "label": "成人无危险信号水样腹泻分时用药",
+        "medicine_ids": (
+            "slot-03-diosmectite",
+            "slot-09-bifid-triple",
+        ),
+        "applicability": {
+            "required_all_facts": (
+                "acute_watery_diarrhea",
+                "oral_intake_tolerated",
+            ),
+            "must_be_absent_facts": (
+                "bloody_stool",
+                "black_stool",
+                "persistent_high_fever",
+                "severe_abdominal_pain",
+                "significant_dehydration",
+                "persistent_vomiting",
+            ),
+            "member_required_any_facts": {
+                "slot-03-diosmectite": ("acute_watery_diarrhea",),
+                "slot-09-bifid-triple": ("acute_watery_diarrhea",),
+            },
+            "allowed_risk_levels": ("low",),
+            "min_age_years": 18,
+        },
+        "reviewed_usage_by_medicine": {
+            "slot-03-diosmectite": "补液优先；如需使用，先按药品说明书单独服用蒙脱石散。",
+            "slot-09-bifid-triple": "与蒙脱石散间隔至少 2 小时后，再按药品说明书服用。",
+        },
+        "evidence_refs": (
+            {
+                "source_title": "湖北省卫生健康委员会腹泻用药科普",
+                "source_url": (
+                    "https://wjw.hubei.gov.cn/bmdt/mtjj/mtgz/"
+                    "202301/t20230109_4481080.shtml"
+                ),
+                "supports": "蒙脱石散应与其他药物错开，益生菌可用于支持肠道菌群恢复。",
+            },
+            {
+                "source_title": "海南省药物警戒中心蒙脱石散用药提醒",
+                "source_url": (
+                    "https://amr.hainan.gov.cn/himpa/adr/kpxc/"
+                    "202408/t20240813_3714421.html"
+                ),
+                "supports": "蒙脱石散与其他药物应间隔，并需排除高热、剧烈腹痛和脱水等就医信号。",
+            },
+        ),
+        "review_note": "受控内置方案；仅限成人低风险急性水样腹泻，先补液并排除全部危险信号。",
+    },
+)
+
+
 class MedicineRepository:
     COMBINATION_SENSITIVE_FIELDS = frozenset(
         {
@@ -654,11 +982,21 @@ class MedicineRepository:
         combination_id: str,
         label: str,
         medicine_ids: list[str],
+        clinical_policy_version: str = "",
+        applicability: MedicineCombinationApplicability | dict[str, object] | None = None,
+        reviewed_usage_by_medicine: dict[str, str] | None = None,
+        evidence_refs: list[MedicineCombinationEvidenceRef | dict[str, str]] | None = None,
+        provenance: str = "",
+        review_note: str = "",
         review_status: str = "draft",
         reviewed_by: str = "",
         reviewed_at: str = "",
     ) -> ApprovedMedicineCombination:
         self._ensure_seeded()
+        normalized_combination_id = combination_id.strip()
+        normalized_label = label.strip()
+        if not normalized_combination_id or not normalized_label:
+            raise ValueError("药师核验组合必须填写稳定 ID 和展示名称。")
         normalized_status = review_status.strip().lower() or "draft"
         if normalized_status not in {"draft", "reviewed"}:
             raise ValueError("组合审核状态只能是 draft 或 reviewed。")
@@ -671,6 +1009,45 @@ class MedicineRepository:
         normalized_ids = [str(item).strip() for item in medicine_ids if str(item).strip()]
         if not 2 <= len(normalized_ids) <= 4 or len(set(normalized_ids)) != len(normalized_ids):
             raise ValueError("药师核验组合必须包含 2 至 4 种互不重复的药品。")
+        normalized_policy_version = clinical_policy_version.strip()
+        normalized_applicability = self._normalize_combination_applicability(
+            applicability,
+        )
+        normalized_usage = {
+            str(medicine_id).strip(): str(usage).strip()
+            for medicine_id, usage in (reviewed_usage_by_medicine or {}).items()
+            if str(medicine_id).strip()
+        }
+        normalized_evidence = [
+            MedicineCombinationEvidenceRef.model_validate(item)
+            for item in (evidence_refs or [])
+        ]
+        normalized_provenance = provenance.strip()
+        normalized_review_note = review_note.strip()
+        has_case_contract = any(
+            (
+                normalized_policy_version,
+                normalized_applicability.required_all_facts,
+                normalized_applicability.required_any_facts,
+                normalized_applicability.must_be_absent_facts,
+                normalized_applicability.member_required_any_facts,
+                normalized_applicability.allowed_risk_levels,
+                normalized_usage,
+                normalized_evidence,
+                normalized_provenance,
+                normalized_review_note,
+            )
+        )
+        if has_case_contract:
+            self._validate_case_review_contract(
+                medicine_ids=normalized_ids,
+                clinical_policy_version=normalized_policy_version,
+                applicability=normalized_applicability,
+                reviewed_usage_by_medicine=normalized_usage,
+                evidence_refs=normalized_evidence,
+                provenance=normalized_provenance,
+                review_note=normalized_review_note,
+            )
         updated_at = db.now_text()
         with db.connect() as conn:
             # Acquire the SQLite writer lock before reading member rows. The
@@ -678,7 +1055,8 @@ class MedicineRepository:
             # interleaved with a medicine identity or safety update.
             conn.execute("BEGIN IMMEDIATE")
             member_identity_fingerprints: dict[str, str] = {}
-            if normalized_status == "reviewed":
+            member_review_fingerprints: dict[str, str] = {}
+            if normalized_status == "reviewed" or has_case_contract:
                 placeholders = ",".join("?" for _ in normalized_ids)
                 rows = conn.execute(
                     f"SELECT * FROM medicines WHERE id IN ({placeholders})",
@@ -717,27 +1095,61 @@ class MedicineRepository:
                     for member in members
                     if member is not None
                 }
+                member_review_fingerprints = {
+                    member.id: self.review_fingerprint(member)
+                    for member in members
+                    if member is not None
+                }
             conn.execute(
                 """
                 INSERT INTO approved_medicine_combinations(
-                  combination_id, label, medicine_ids_json, member_identity_fingerprints_json, review_status,
-                  reviewed_by, reviewed_at, updated_at
+                  combination_id, label, medicine_ids_json,
+                  member_identity_fingerprints_json, clinical_policy_version,
+                  applicability_json, member_review_fingerprints_json,
+                  reviewed_usage_json, evidence_refs_json, provenance, review_note,
+                  review_status, reviewed_by, reviewed_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(combination_id) DO UPDATE SET
                   label=excluded.label,
                   medicine_ids_json=excluded.medicine_ids_json,
                   member_identity_fingerprints_json=excluded.member_identity_fingerprints_json,
+                  clinical_policy_version=excluded.clinical_policy_version,
+                  applicability_json=excluded.applicability_json,
+                  member_review_fingerprints_json=excluded.member_review_fingerprints_json,
+                  reviewed_usage_json=excluded.reviewed_usage_json,
+                  evidence_refs_json=excluded.evidence_refs_json,
+                  provenance=excluded.provenance,
+                  review_note=excluded.review_note,
                   review_status=excluded.review_status,
                   reviewed_by=excluded.reviewed_by,
                   reviewed_at=excluded.reviewed_at,
                   updated_at=excluded.updated_at
                 """,
                 (
-                    combination_id.strip(),
-                    label.strip(),
+                    normalized_combination_id,
+                    normalized_label,
                     json.dumps(normalized_ids, ensure_ascii=False),
                     json.dumps(member_identity_fingerprints, ensure_ascii=False, sort_keys=True),
+                    normalized_policy_version,
+                    json.dumps(
+                        normalized_applicability.model_dump(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        member_review_fingerprints,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(normalized_usage, ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        [item.model_dump() for item in normalized_evidence],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    normalized_provenance,
+                    normalized_review_note,
                     normalized_status,
                     normalized_reviewer,
                     normalized_reviewed_at,
@@ -745,15 +1157,96 @@ class MedicineRepository:
                 ),
             )
         return ApprovedMedicineCombination(
-            combination_id=combination_id.strip(),
-            label=label.strip(),
+            combination_id=normalized_combination_id,
+            label=normalized_label,
             medicine_ids=normalized_ids,
             member_identity_fingerprints=member_identity_fingerprints,
+            clinical_policy_version=normalized_policy_version,
+            applicability=normalized_applicability,
+            member_review_fingerprints=member_review_fingerprints,
+            reviewed_usage_by_medicine=normalized_usage,
+            evidence_refs=normalized_evidence,
+            provenance=normalized_provenance,
+            review_note=normalized_review_note,
             review_status=normalized_status,
             reviewed_by=normalized_reviewer,
             reviewed_at=normalized_reviewed_at,
             updated_at=updated_at,
         )
+
+    @staticmethod
+    def _normalize_combination_applicability(
+        applicability: MedicineCombinationApplicability | dict[str, object] | None,
+    ) -> MedicineCombinationApplicability:
+        parsed = MedicineCombinationApplicability.model_validate(applicability or {})
+
+        def normalized_codes(values: list[str]) -> list[str]:
+            return list(
+                dict.fromkeys(
+                    str(value).strip().lower()
+                    for value in values
+                    if str(value).strip()
+                )
+            )
+
+        return MedicineCombinationApplicability(
+            required_all_facts=normalized_codes(parsed.required_all_facts),
+            required_any_facts=normalized_codes(parsed.required_any_facts),
+            must_be_absent_facts=normalized_codes(parsed.must_be_absent_facts),
+            member_required_any_facts={
+                str(medicine_id).strip(): normalized_codes(facts)
+                for medicine_id, facts in parsed.member_required_any_facts.items()
+                if str(medicine_id).strip()
+            },
+            allowed_risk_levels=normalized_codes(parsed.allowed_risk_levels),
+            min_age_years=parsed.min_age_years,
+            max_age_years=parsed.max_age_years,
+        )
+
+    @staticmethod
+    def _validate_case_review_contract(
+        *,
+        medicine_ids: list[str],
+        clinical_policy_version: str,
+        applicability: MedicineCombinationApplicability,
+        reviewed_usage_by_medicine: dict[str, str],
+        evidence_refs: list[MedicineCombinationEvidenceRef],
+        provenance: str,
+        review_note: str,
+    ) -> None:
+        member_ids = set(medicine_ids)
+        member_required = applicability.member_required_any_facts
+        allowed_risk_levels = set(applicability.allowed_risk_levels)
+        if clinical_policy_version != MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION:
+            raise ValueError("病例适用规则版本不受支持。")
+        if not applicability.required_all_facts and not applicability.required_any_facts:
+            raise ValueError("病例适用规则必须包含明确的阳性适用条件。")
+        if set(member_required) != member_ids or any(
+            not member_required[medicine_id] for medicine_id in medicine_ids
+        ):
+            raise ValueError("病例适用规则必须逐一说明每个组合成员的适用症状。")
+        if not allowed_risk_levels or not allowed_risk_levels <= {"low", "medium"}:
+            raise ValueError("组合仅能配置明确的低或中风险病例等级。")
+        if (
+            applicability.min_age_years is not None
+            and applicability.max_age_years is not None
+            and applicability.min_age_years > applicability.max_age_years
+        ):
+            raise ValueError("组合适用年龄范围无效。")
+        if set(reviewed_usage_by_medicine) != member_ids or any(
+            not reviewed_usage_by_medicine[medicine_id]
+            for medicine_id in medicine_ids
+        ):
+            raise ValueError("审核用法必须完整覆盖每个组合成员。")
+        if not evidence_refs or any(
+            not evidence.source_title.strip()
+            or not evidence.source_url.strip()
+            or not evidence.supports.strip()
+            for evidence in evidence_refs
+        ):
+            raise ValueError("病例组合必须记录完整的审核证据。")
+        if not provenance or not review_note:
+            raise ValueError("病例组合必须记录来源和审核说明。")
 
     @classmethod
     def _is_controlled_non_drug_supply(cls, medicine: Medicine) -> bool:
@@ -793,6 +1286,7 @@ class MedicineRepository:
                 WHERE review_status='reviewed'
                   AND TRIM(reviewed_by) <> ''
                   AND TRIM(reviewed_at) <> ''
+                  AND TRIM(clinical_policy_version) = ''
                 ORDER BY updated_at, combination_id
                 """
             ).fetchall()
@@ -826,6 +1320,58 @@ class MedicineRepository:
                     updated_at=row["updated_at"],
                 )
             )
+        return combinations
+
+    def list_case_reviewed_combinations(self) -> list[ApprovedMedicineCombination]:
+        """Return only complete, case-scoped combination review records."""
+        self._ensure_seeded()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT combination_id, label, medicine_ids_json,
+                       member_identity_fingerprints_json,
+                       clinical_policy_version, applicability_json,
+                       member_review_fingerprints_json, reviewed_usage_json,
+                       evidence_refs_json, provenance, review_note,
+                       review_status, reviewed_by, reviewed_at, updated_at
+                FROM approved_medicine_combinations
+                WHERE review_status='reviewed'
+                  AND TRIM(reviewed_by) <> ''
+                  AND TRIM(reviewed_at) <> ''
+                  AND clinical_policy_version=?
+                ORDER BY updated_at, combination_id
+                """,
+                (MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION,),
+            ).fetchall()
+        combinations: list[ApprovedMedicineCombination] = []
+        for row in rows:
+            try:
+                combination = ApprovedMedicineCombination(
+                    combination_id=row["combination_id"],
+                    label=row["label"],
+                    medicine_ids=json.loads(row["medicine_ids_json"] or "[]"),
+                    member_identity_fingerprints=json.loads(
+                        row["member_identity_fingerprints_json"] or "{}"
+                    ),
+                    clinical_policy_version=row["clinical_policy_version"] or "",
+                    applicability=json.loads(row["applicability_json"] or "{}"),
+                    member_review_fingerprints=json.loads(
+                        row["member_review_fingerprints_json"] or "{}"
+                    ),
+                    reviewed_usage_by_medicine=json.loads(
+                        row["reviewed_usage_json"] or "{}"
+                    ),
+                    evidence_refs=json.loads(row["evidence_refs_json"] or "[]"),
+                    provenance=row["provenance"] or "",
+                    review_note=row["review_note"] or "",
+                    review_status=row["review_status"],
+                    reviewed_by=row["reviewed_by"],
+                    reviewed_at=row["reviewed_at"],
+                    updated_at=row["updated_at"],
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            combinations.append(combination)
         return combinations
 
     def get_identity_fingerprints(self, medicine_ids: list[str]) -> dict[str, str]:
@@ -880,6 +1426,42 @@ class MedicineRepository:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    @staticmethod
+    def review_fingerprint(medicine: Medicine) -> str:
+        """Bind combination review to the exact package and safety revision."""
+        snapshot = {
+            field: getattr(medicine, field)
+            for field in (
+                "name",
+                "manufacturer",
+                "barcode",
+                "spec",
+                "category",
+                "expire_date",
+                "package_verified",
+                "guidance_source",
+                "tags",
+                "aliases",
+                "active_ingredients",
+                "indications",
+                "dosage",
+                "contraindications",
+                "structured_contraindications",
+                "safety_note",
+                "is_otc",
+                "safety_review_status",
+                "safety_reviewed_by",
+                "safety_reviewed_at",
+            )
+        }
+        encoded = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
     def save_ingredient_conflict(
         self,
         *,
@@ -898,6 +1480,8 @@ class MedicineRepository:
             raise ValueError("成分冲突矩阵必须包含两种不同的有效成分。")
         left, right = sorted((left, right))
         normalized_status = review_status.strip().lower() or "draft"
+        if normalized_status not in {"draft", "reviewed"}:
+            raise ValueError("成分冲突审核状态只能是 draft 或 reviewed。")
         normalized_reviewer = reviewed_by.strip()
         normalized_reviewed_at = reviewed_at.strip()
         if normalized_status == "reviewed" and (
@@ -1457,9 +2041,11 @@ class MedicineRepository:
                 self._sync_default_guidance(conn)
                 self._sync_default_package_verification(conn)
                 self._sync_default_safety_facts(conn)
+                self._sync_default_combinations(conn)
                 return
             self._insert_default_inventory(conn)
             self._sync_default_safety_facts(conn)
+            self._sync_default_combinations(conn)
 
     @staticmethod
     def _sync_default_inventory(conn) -> None:
@@ -1519,7 +2105,11 @@ class MedicineRepository:
                 MedicineRepository._row_matches(new_row, expected)
                 for expected in replacement_defaults
             ):
-                MedicineRepository._upsert_replacement(conn, item, preserve_stock=True)
+                MedicineRepository._migrate_verified_replacement_identity(
+                    conn,
+                    new_row,
+                    item,
+                )
         MedicineRepository._write_seed_version(conn, "medicine_seed_version", MEDICINE_SEED_VERSION)
 
     @staticmethod
@@ -1592,6 +2182,41 @@ class MedicineRepository:
                 db.now_text(),
                 db.now_text(),
                 1 if preserve_stock else 0,
+            ),
+        )
+
+    @staticmethod
+    def _migrate_verified_replacement_identity(
+        conn,
+        row: object,
+        item: dict[str, object],
+    ) -> None:
+        """Correct a known barcode identity without overwriting edited label facts."""
+        medicine_id = str(item["id"])
+        MedicineRepository._invalidate_combinations_for_medicine(conn, medicine_id)
+        conn.execute("DELETE FROM today_plans WHERE medicine_id=?", (medicine_id,))
+        conn.execute(
+            """
+            UPDATE medicines
+            SET slot=?, hardware_slot=?, barcode=?, manufacturer=?, name=?, category=?,
+                spec=?, expire_date=?, image_hint=?, unit=?, package_verified=1,
+                safety_review_status='draft', safety_reviewed_by='',
+                safety_reviewed_at='', updated_at=?
+            WHERE id=?
+            """,
+            (
+                item["slot"],
+                int(item["hardware_slot"]),
+                item["barcode"],
+                item.get("manufacturer", ""),
+                item["name"],
+                item["category"],
+                item.get("spec", ""),
+                item["expire_date"],
+                item["image_hint"],
+                item["unit"],
+                db.now_text(),
+                medicine_id,
             ),
         )
 
@@ -1706,7 +2331,9 @@ class MedicineRepository:
             reviewer = str(row["safety_reviewed_by"] or "").strip()
             reviewed_status = str(row["safety_review_status"] or "") == "reviewed"
             legacy_machine_review = reviewed_status and reviewer == "fixed-inventory-safety-migration"
-            existing_bundled_review = reviewed_status and reviewer == BUNDLED_LABEL_SAFETY_REVIEWER
+            existing_bundled_review = (
+                reviewed_status and reviewer in BUNDLED_LABEL_SAFETY_REVIEWERS
+            )
             controlled_local_review = (
                 reviewed_status
                 and bool(reviewer)
@@ -1731,6 +2358,46 @@ class MedicineRepository:
                 str(row[field] or "") != str(item.get(field, "") or "")
                 for field in ("name", "barcode", "manufacturer", "spec", "category")
             )
+            current_safety_note = str(row["safety_note"] or "")
+            legacy_label = LEGACY_V4_MEDICINE_LABEL_SAFETY.get(str(item["id"]))
+            legacy_contraindications = list(
+                (legacy_label or {}).get("contraindications", ())
+            )
+            legacy_structured = MedicineRepository._default_structured_contraindications(
+                legacy_contraindications
+            )
+            legacy_label_content_matches = bool(
+                legacy_label
+                and identity_matches
+                and current_tags == list(item.get("tags", []))
+                and str(row["indications"] or "") == str(item.get("indications", "") or "")
+                and str(row["dosage"] or "") == str(item.get("dosage", "") or "")
+                and current_contraindications == legacy_contraindications
+                and current_structured in ([], legacy_structured)
+                and bool(row["is_otc"]) == bool(item.get("is_otc"))
+                and bool(row["is_emergency"]) == bool(item.get("is_emergency"))
+                and current_safety_note == str(legacy_label.get("safety_note") or "")
+                and str(row["guidance_source"] or "")
+                == str(item.get("guidance_source", "") or "")
+            )
+            if legacy_label_content_matches:
+                current_contraindications = list(item.get("contraindications", []))
+                current_safety_note = str(item.get("safety_note", "") or "")
+                conn.execute(
+                    """
+                    UPDATE medicines
+                    SET contraindications_json=?, safety_note=?,
+                        guidance_updated_at=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        json.dumps(current_contraindications, ensure_ascii=False),
+                        current_safety_note,
+                        reviewed_at,
+                        reviewed_at,
+                        item["id"],
+                    ),
+                )
             label_content_matches = (
                 identity_matches
                 and current_tags == list(item.get("tags", []))
@@ -1739,7 +2406,7 @@ class MedicineRepository:
                 and current_contraindications == list(item.get("contraindications", []))
                 and bool(row["is_otc"]) == bool(item.get("is_otc"))
                 and bool(row["is_emergency"]) == bool(item.get("is_emergency"))
-                and str(row["safety_note"] or "") == str(item.get("safety_note", "") or "")
+                and current_safety_note == str(item.get("safety_note", "") or "")
                 and str(row["guidance_source"] or "")
                 == str(item.get("guidance_source", "") or "")
             )
@@ -1764,10 +2431,38 @@ class MedicineRepository:
                 and current_ingredients == ingredients
                 and current_structured == structured
             )
+            legacy_facts = LEGACY_V4_MEDICINE_SAFETY_FACTS.get(
+                str(item["id"]),
+                LEGACY_V3_MEDICINE_SAFETY_FACTS.get(str(item["id"]), {}),
+            )
+            legacy_aliases = list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in (str(item["name"]), *legacy_facts.get("aliases", ()))
+                    if value and value.strip()
+                )
+            )
+            facts_match_legacy_baseline = (
+                current_aliases == legacy_aliases
+                and current_ingredients
+                == list(legacy_facts.get("active_ingredients", ()))
+                and (
+                    current_structured == structured
+                    or (
+                        legacy_label_content_matches
+                        and current_structured in ([], legacy_structured)
+                    )
+                )
+            )
+            facts_can_migrate = (
+                facts_are_empty
+                or facts_match_bundled_baseline
+                or facts_match_legacy_baseline
+            )
             bundled_baseline_eligible = (
                 str(item["id"]) in BUNDLED_LABEL_SAFETY_IDS
                 and label_content_matches
-                and (facts_are_empty or facts_match_bundled_baseline)
+                and facts_can_migrate
             )
 
             next_status = "reviewed" if bundled_baseline_eligible else "draft"
@@ -1783,7 +2478,7 @@ class MedicineRepository:
                     conn,
                     str(item["id"]),
                 )
-            if facts_are_empty and label_content_matches:
+            if bundled_baseline_eligible and not facts_match_bundled_baseline:
                 conn.execute(
                     """
                     UPDATE medicines
@@ -1811,6 +2506,152 @@ class MedicineRepository:
             conn,
             "medicine_safety_facts_version",
             MEDICINE_SAFETY_FACTS_VERSION,
+        )
+
+    @staticmethod
+    def _sync_default_combinations(conn) -> None:
+        version = conn.execute(
+            "SELECT value FROM app_settings WHERE key='medicine_combination_policy_version'"
+        ).fetchone()
+        if version and version["value"] == MEDICINE_COMBINATION_POLICY_VERSION:
+            return
+
+        reviewed_at = db.now_text()
+        for definition in DEFAULT_MEDICINE_COMBINATIONS:
+            combination_id = str(definition["combination_id"])
+            existing = conn.execute(
+                """
+                SELECT provenance, reviewed_by
+                FROM approved_medicine_combinations
+                WHERE combination_id=?
+                """,
+                (combination_id,),
+            ).fetchone()
+            if existing is not None and (
+                str(existing["provenance"] or "")
+                not in {
+                    "official-health-guidance-candidate-v1",
+                    MEDICINE_COMBINATION_POLICY_PROVENANCE,
+                }
+                or str(existing["reviewed_by"] or "")
+                not in {"", MEDICINE_COMBINATION_POLICY_REVIEWER}
+            ):
+                continue
+
+            medicine_ids = [str(value) for value in definition["medicine_ids"]]
+            placeholders = ",".join("?" for _ in medicine_ids)
+            rows = conn.execute(
+                f"SELECT * FROM medicines WHERE id IN ({placeholders})",
+                tuple(medicine_ids),
+            ).fetchall()
+            by_id = {
+                str(row["id"]): MedicineRepository._row_to_medicine(row)
+                for row in rows
+            }
+            if set(by_id) != set(medicine_ids):
+                continue
+            members = [by_id[medicine_id] for medicine_id in medicine_ids]
+            if any(
+                member.safety_review_status != "reviewed"
+                or not member.safety_reviewed_by.strip()
+                or not member.safety_reviewed_at.strip()
+                or not member.package_verified
+                or (
+                    not member.active_ingredients
+                    and not MedicineRepository._is_controlled_non_drug_supply(member)
+                )
+                for member in members
+            ):
+                continue
+
+            applicability = MedicineRepository._normalize_combination_applicability(
+                definition.get("applicability")
+            )
+            usages = {
+                str(medicine_id): str(usage)
+                for medicine_id, usage in dict(
+                    definition.get("reviewed_usage_by_medicine") or {}
+                ).items()
+            }
+            evidence = [
+                MedicineCombinationEvidenceRef.model_validate(item)
+                for item in definition.get("evidence_refs", ())
+            ]
+            review_note = str(definition.get("review_note") or "").strip()
+            MedicineRepository._validate_case_review_contract(
+                medicine_ids=medicine_ids,
+                clinical_policy_version=MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION,
+                applicability=applicability,
+                reviewed_usage_by_medicine=usages,
+                evidence_refs=evidence,
+                provenance=MEDICINE_COMBINATION_POLICY_PROVENANCE,
+                review_note=review_note,
+            )
+            identity_fingerprints = {
+                member.id: MedicineRepository._identity_fingerprint(
+                    name=member.name,
+                    manufacturer=member.manufacturer,
+                    barcode=member.barcode,
+                    spec=member.spec,
+                    category=member.category,
+                )
+                for member in members
+            }
+            review_fingerprints = {
+                member.id: MedicineRepository.review_fingerprint(member)
+                for member in members
+            }
+            conn.execute(
+                """
+                INSERT INTO approved_medicine_combinations(
+                  combination_id, label, medicine_ids_json,
+                  member_identity_fingerprints_json, clinical_policy_version,
+                  applicability_json, member_review_fingerprints_json,
+                  reviewed_usage_json, evidence_refs_json, provenance, review_note,
+                  review_status, reviewed_by, reviewed_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reviewed', ?, ?, ?)
+                ON CONFLICT(combination_id) DO UPDATE SET
+                  label=excluded.label,
+                  medicine_ids_json=excluded.medicine_ids_json,
+                  member_identity_fingerprints_json=excluded.member_identity_fingerprints_json,
+                  clinical_policy_version=excluded.clinical_policy_version,
+                  applicability_json=excluded.applicability_json,
+                  member_review_fingerprints_json=excluded.member_review_fingerprints_json,
+                  reviewed_usage_json=excluded.reviewed_usage_json,
+                  evidence_refs_json=excluded.evidence_refs_json,
+                  provenance=excluded.provenance,
+                  review_note=excluded.review_note,
+                  review_status='reviewed',
+                  reviewed_by=excluded.reviewed_by,
+                  reviewed_at=excluded.reviewed_at,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    combination_id,
+                    str(definition["label"]),
+                    json.dumps(medicine_ids, ensure_ascii=False),
+                    json.dumps(identity_fingerprints, ensure_ascii=False, sort_keys=True),
+                    MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION,
+                    json.dumps(applicability.model_dump(), ensure_ascii=False, sort_keys=True),
+                    json.dumps(review_fingerprints, ensure_ascii=False, sort_keys=True),
+                    json.dumps(usages, ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        [item.model_dump() for item in evidence],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    MEDICINE_COMBINATION_POLICY_PROVENANCE,
+                    review_note,
+                    MEDICINE_COMBINATION_POLICY_REVIEWER,
+                    reviewed_at,
+                    reviewed_at,
+                ),
+            )
+        MedicineRepository._write_seed_version(
+            conn,
+            "medicine_combination_policy_version",
+            MEDICINE_COMBINATION_POLICY_VERSION,
         )
 
     @staticmethod

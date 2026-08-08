@@ -136,9 +136,9 @@ Restores one inquiry session with messages, identity, vitals snapshot and result
 
 ### POST /api/inquiry/sessions/{session_id}/turn
 
-Adds one speech transcript. `AI_MODE=auto|cloud` uses the cloud model first and
-then QSM after an unavailable or invalid cloud result; `AI_MODE=local` starts
-with QSM. The selected model reads the full conversation, profile, vitals and
+Adds one speech transcript. Both terminal presentation modes use the configured
+cloud model. Historical `AI_MODE=auto|local` values are normalized to `cloud`;
+QSM llama.cpp is not a production fallback. The model reads the full conversation, profile, vitals and
 recent natural-language case summaries. It
 returns open evidence-backed observations, a natural response, semantic risk
 signals and one `ask|measure_vitals|analyze|escalate|end` action. There is no
@@ -159,18 +159,21 @@ tool inside the inquiry flow. It does not navigate away or transfer results
 through browser storage. Cloud turn extraction, Responses final analysis and
 the Chat Completions final fallback share `AI_INQUIRY_REASONING_EFFORT` (default
 `high`); legacy `AI_INQUIRY_ENABLE_THINKING` applies only when the new setting is
-absent. QSM reasoning remains independently disabled.
+absent.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool from the latest cabinet rows. It filters stock,
 expiry, verified package guidance, OTC or existing-plan eligibility, allergies,
 chronic contraindications, current-episode medicine aliases and duplicate active
-ingredients. The model receives a smaller symptom-focused subset and may choose
-at most one primary and one alternative from exactly that subset, or choose none.
-The cabinet is read again after ranking before anything is displayed. Cloud and
-QSM ranking outputs use the same complete `assessment + options` contract and
-validator; the QSM request may use a compact, category-narrowed adapter without
-changing those semantics. If the applicable model routes are unavailable or
+ingredients. The model receives a smaller symptom-focused subset plus members of
+any case-authorized combination and may choose at most one primary and one
+alternative, or choose none. A single-medicine option must contain exactly one
+candidate ID. A multi-medicine option is accepted only when it echoes one exact
+server-provided `combination_id`, ordered member list and
+`authorization_fingerprint`; free-form multiple IDs are invalid.
+The cabinet is read again after ranking before anything is displayed. Responses
+and Chat Completions ranking outputs use the same complete `assessment + options`
+contract and validator. If the cloud model routes are unavailable or
 return invalid structure, deterministic rules preserve bounded follow-up and
 danger-signal handling only. The session remains retryable, returns no final
 assessment or candidate and does not expose connection or fallback terminology
@@ -180,8 +183,8 @@ supporting context; it cannot replace measured vitals or establish a diagnosis.
 Final assessment first calls the configured Responses endpoint once, with its
 request timeout clamped to 12–15 seconds. If that provider contract times out,
 is unavailable or is invalid, the backend immediately retries the same
-constrained JSON task through Chat Completions before considering the offline
-fallback.
+constrained JSON task through Chat Completions. If both cloud contracts fail,
+the session remains retryable and exposes no candidate.
 
 ### POST /api/inquiry/sessions/{session_id}/vitals
 
@@ -200,6 +203,10 @@ only `option_id`, `confirmed_safety_notice` and the persisted
 the frontend. Immediately before each cabinet action, the backend recalculates
 risk, contraindications, expiry, stock and current eligibility. If the displayed
 option changed, the request is rejected with `409` and no cabinet is opened. A
+multi-medicine option also re-authorizes the grounded case facts, explicit
+absence of every required red flag, member review fingerprints, ingredient
+matrix and combination status before every item. Revoking a combination between
+two cabinet actions prevents the remaining cabinet from opening. A
 successful confirmation executes the selected option through the existing
 `DispenseService`, records each action and rejects stale or duplicate submissions.
 
@@ -394,11 +401,11 @@ Records 16 kHz mono audio on QSM and calls the resident offline Paraformer servi
 
 ### POST /api/audio/speak
 
-Speaks text through the QSM speaker. The persisted terminal display mode does not select the speech route: `auto` tries host-connected Qwen realtime TTS and falls back to the host-resident Sherpa-ONNX model only when needed. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms`. It never calls the QSM board-side TTS service.
+Speaks text through the QSM speaker. The persisted terminal presentation mode selects the backend route: online uses Qwen realtime TTS and falls back to QSM offline TTS; local uses QSM offline TTS directly. A client-supplied mode cannot override this policy. The response exposes `requested_mode`, `engine`, `offline`, `first_audio_ms` and `total_ms` for protected diagnostics; ordinary UI copy does not expose provider names.
 
 ### POST /api/audio/host/warmup
 
-Loads the host offline voice model in advance. This is used by the kiosk startup script to remove first-use model-loading delay.
+Legacy diagnostic endpoint for a host voice model. Kiosk startup no longer calls it; the active offline route is QSM `/api/audio/speak`.
 
 ### WebSocket /api/audio/asr/realtime
 
@@ -406,7 +413,7 @@ Streams real FF Camera microphone PCM into Qwen realtime ASR. The persisted term
 
 ### GET /api/audio/status
 
-Returns host offline TTS readiness, QSM playback status and resident Paraformer ASR status without exposing API keys to the terminal UI.
+Returns the resolved speech mode, QSM offline TTS readiness, QSM playback status and resident Paraformer ASR status without exposing API keys to the terminal UI.
 
 ### POST /api/audio/beep
 
@@ -414,24 +421,24 @@ Calls the QSM beep path.
 
 ### POST /api/ai/chat
 
-Uses the configured cloud endpoint first in `AI_MODE=auto`. A missing key,
-failed connectivity probe or cloud request error automatically routes the
-request to the QSM llama.cpp endpoint. Internal response sources distinguish the
-route for diagnostics, while the terminal-facing response never displays
-connection errors or fallback terminology. If both routes fail, the endpoint
-returns a short natural retry prompt and no medicine candidate.
+Uses the configured cloud endpoint in both terminal presentation modes. A
+missing key, failed connectivity probe, cloud request error or invalid provider
+payload routes only to deterministic dialogue continuity. The terminal-facing
+response never displays connection or fallback terminology, and the continuity
+path returns a short natural retry prompt with no medicine candidate.
 
 ### GET /api/ai/status
 
-Returns the selected AI mode and cloud configuration state without exposing API
-keys. `model_ready` and `local.ready` report actual QSM model health;
-`rules_fallback_ready` reports deterministic continuity availability;
-`offline_inquiry_ready` is their aggregate. The aggregate does not change a
-false model-health value to true.
+Returns the cloud model configuration state and deterministic continuity
+availability without exposing API keys. Legacy local-model fields remain only
+for response compatibility and are not used as product readiness gates.
 
 ### POST /api/ai/chat/stream
 
-Streams actual provider tokens as server-sent `meta`, `delta`, optional `replace`, and `done` events. Cloud DeepSeek reasoning remains hidden while final text is streamed. The QSM llama.cpp route uses the same true-streaming contract; `/api/ai/warm-local` primes its reusable prompt cache after startup.
+Streams actual cloud-provider tokens as server-sent `meta`, `delta`, optional
+`replace`, and `done` events. DeepSeek reasoning remains hidden while final text
+is streamed. On cloud failure the endpoint emits the deterministic continuity
+message; `/api/ai/warm-local` is retained as a disabled compatibility endpoint.
 
 ## Terminal settings
 
@@ -441,7 +448,7 @@ Returns the persisted user-adjustable settings together with current Wi-Fi, data
 
 ### `PATCH /api/settings/basic`
 
-Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mode`, `speaker_volume`, `microphone_volume`, `display_brightness` or `idle_timeout_seconds`. Only submitted fields are applied. The terminal UI exposes `network_mode` only: it changes the top-bar connection presentation and whether mini-program realtime sync runs, without changing physical Wi-Fi/SIM, AI, ASR or TTS routes. Physical network controls are reserved for the protected administrator API. Hardware failures are returned in `warnings` without discarding the saved preference.
+Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mode`, `speaker_volume`, `microphone_volume`, `display_brightness` or `idle_timeout_seconds`. Only submitted fields are applied. The terminal UI exposes `network_mode` only. Online mode shows online state, runs mini-program realtime sync and uses cloud TTS; local mode shows local state, pauses realtime sync and uses QSM offline TTS. Both keep physical Wi-Fi/SIM unchanged and use the same cloud inquiry model. Physical network controls are reserved for the protected administrator API. Hardware failures are returned in `warnings` without discarding the saved preference.
 
 ## Administrator debug API
 

@@ -47,6 +47,8 @@ class TreatmentOption(BaseModel):
     label: str
     when: str
     medicines: list[TreatmentMedicine] = Field(default_factory=list)
+    combination_id: str = ""
+    combination_authorization_fingerprint: str = ""
 
 
 class MedicineSafetyNotice(BaseModel):

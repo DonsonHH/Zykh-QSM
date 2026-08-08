@@ -35,8 +35,7 @@ export function InquiryResultStep({
   actionResult,
   onConfirmTreatment,
   onRestart,
-  onHome,
-  networkStatus
+  onHome
 }) {
   const options = result?.treatment_options || [];
   const [selectedOptionId, setSelectedOptionId] = useState(result?.selected_option_id || options[0]?.option_id || "");
@@ -68,17 +67,14 @@ export function InquiryResultStep({
     || assessment?.next_steps?.length
     || assessment?.seek_care_if?.length
   );
-  const networkStatusRef = useRef(networkStatus);
   const spokenActionKeysRef = useRef(new Set());
   const playbackGenerationRef = useRef(0);
-  networkStatusRef.current = networkStatus;
 
   useEffect(() => {
     if (!result?.session_id) return;
     const timer = window.setTimeout(() => {
       playResultSpeech(
         buildRecommendationSpeech(result, selectedOption),
-        networkStatusRef.current,
         playbackGenerationRef
       );
     }, 180);
@@ -92,14 +88,12 @@ export function InquiryResultStep({
     spokenActionKeysRef.current.add(key);
     playResultSpeech(
       buildActionSpeech(actionMessage),
-      networkStatusRef.current,
       playbackGenerationRef
     );
   }, [actionFinished, actionMessage, actionStatus, result?.session_id]);
 
   useEffect(() => () => {
     playbackGenerationRef.current += 1;
-    window.speechSynthesis?.cancel();
     stopAudioPlayback().catch(() => null);
   }, []);
 
@@ -125,7 +119,6 @@ export function InquiryResultStep({
     const cabinetText = selectedOption?.medicines?.map((medicine) => `${medicine.slot}号柜`).join("、") || "对应药柜";
     playResultSpeech(
       `方案已确认，三秒后将依次打开${cabinetText}，请准备取药。`,
-      networkStatusRef.current,
       playbackGenerationRef
     );
     setCountdown(3);
@@ -348,24 +341,11 @@ function optionDescription(option, index) {
     : `${medicine}的侧重点不同，如果更符合你最明显的不适，可对照这一方案。`;
 }
 
-async function playResultSpeech(text, networkStatus, playbackGenerationRef) {
+async function playResultSpeech(text, playbackGenerationRef) {
   if (!text) return;
   const generation = playbackGenerationRef.current + 1;
   playbackGenerationRef.current = generation;
-  window.speechSynthesis?.cancel();
   await stopAudioPlayback().catch(() => null);
   if (generation !== playbackGenerationRef.current) return;
-  try {
-    await speakText(text, undefined, 1.12, "auto");
-  } catch {
-    if (generation === playbackGenerationRef.current) speakResultLocally(text);
-  }
-}
-
-function speakResultLocally(text) {
-  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-CN";
-  utterance.rate = 1.08;
-  window.speechSynthesis.speak(utterance);
+  await speakText(text, undefined, 1.12, "auto").catch(() => null);
 }

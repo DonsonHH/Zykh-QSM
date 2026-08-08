@@ -8,7 +8,7 @@ export function aiSourcePresentation(source) {
     return { kind: "smart", label: "智能回复" };
   }
   if (["local_llm", "offline_rules"].includes(normalized)) {
-    return { kind: "local", label: "本地智能回复" };
+    return { kind: "smart", label: "智能回复" };
   }
   if (["safety_rules", "rules_fallback", "local_fallback"].includes(normalized)) {
     return { kind: "safety", label: "安全提示" };

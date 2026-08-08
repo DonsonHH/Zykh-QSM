@@ -1,79 +1,56 @@
-# 主机离线 TTS
+# QSM 离线 TTS
 
-离线语音合成现在由主机 FastAPI 进程负责。主机加载本地 Sherpa-ONNX 中文 VITS 模型，生成 PCM 后通过现有低延迟音频流发送到 QSM 喇叭。QSM 不再加载、启动或执行离线 TTS 模型，只保留本地 ASR、离线问询模型和 PCM 播放。
+语音播报由后端 `SpeechService` 统一串行调度，所有入口共享同一个播放锁，避免 HTTP 播报、小程序命令和后台任务同时抢占喇叭。
 
-## 运行边界
+路由规则：
 
-- 主机：模型加载、文本转 PCM、语音任务串行化、播放时长管理。
-- QSM：麦克风采集、离线 ASR、离线问询模型、PCM 播放和其他外设网关。
-- 在线网络：仍可使用主机上的 Qwen 实时 TTS；生成的 PCM 同样发送到 QSM 喇叭。
-- 设置页的本地显示模式不改变 TTS 路径；云端 TTS 不可用或调用方明确请求离线播报时，使用主机离线 TTS，且不调用 QSM `/api/audio/speak`。
+- 联网模式使用 Qwen 实时 TTS，将增量 PCM 送入 QSM 播放流；云端合成失败时安全回退到 QSM 离线 TTS；
+- 本地模式直接调用 QSM `/api/audio/speak`，在板端使用 Sherpa-ONNX VITS 合成并播放；
+- 模式只由持久化的终端演示状态解析，客户端提交的 `mode` 不能绕过该策略；
+- 普通终端界面只显示正常播报状态，不展示云端/板端引擎名称。
 
-旧的 QSM `local-tts-server` 部署已停用；新项目启动脚本不会再拉起或部署它。
+## 部署
 
-## 主机部署
-
-部署包只用于提取模型文件，不会上传到 QSM：
+离线模型和运行库只部署到 QSM。主应用使用仓库内的 `qsm_gateway/offline_tts.sh`，不依赖历史 `zykh_app` 源码。
 
 ```bash
 cd zykh_station_app
-sh scripts/deploy_host_offline_tts.sh
+sh scripts/deploy_offline_tts.sh
 ```
 
-默认模型目录为 `zykh_station_app/data/host_tts/`，该目录属于运行数据，不提交到 Git。也可以通过 `HOST_OFFLINE_TTS_MODEL_ROOT` 指定其他本机目录。
+部署脚本会：
 
-后端依赖包括：
+1. 校验部署包、板端 `aarch64` 架构和唯一 ADB 设备；
+2. 上传 Sherpa-ONNX 运行库、`zh_CN-xiao_ya-medium.onnx`、词典与规则 FST；
+3. 上传本应用拥有的离线合成脚本及网关补丁；
+4. 在板端执行一次不联网的 WAV 生成自检；
+5. 启用 `/api/audio/speak` 路由并重启 QSM 网关。
+
+默认目录：
 
 ```text
-sherpa-onnx==1.13.4
-numpy<2
+/userdata/zykh_voice/runtime
+/userdata/zykh_voice/models/tts
+/userdata/zykh_app/scripts/offline_tts.sh
 ```
 
-启动后可以先预热模型，避免首次播报承担加载延迟：
+`scripts/deploy_local_tts_server.sh` 作为兼容入口委托同一部署脚本。模型包和生成音频属于运行数据，不提交到 Git。
+
+## 运行契约
+
+板端每次请求调用受控的一次性合成脚本生成 WAV，由既有 QSM 音频路径播放。网关补丁会迁移旧的 `HOST_TTS_ONLY` 块，并保证重复执行幂等。后端状态接口从 QSM 返回离线模型可用性，不再把主机模型状态当作本地语音就绪条件。
+
+应用启动默认关闭旧 QSM llama.cpp 语言模型，为 TTS、ASR 和外设服务释放内存。停止脚本只会终止 PID 文件指向且命令行同时匹配预期 server 与模型的进程，不使用宽泛 `pkill`。
+
+## 验收
+
+部署后至少验证：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/audio/host/warmup
 curl http://127.0.0.1:8000/api/audio/status
+curl -X POST http://127.0.0.1:8000/api/audio/speak \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"智药康护语音测试。"}'
 ```
 
-## 配置
-
-```text
-HOST_OFFLINE_TTS_MODEL_ROOT=/path/to/zykh_station_app/data/host_tts
-HOST_OFFLINE_TTS_THREADS=4
-HOST_OFFLINE_TTS_TIMEOUT_SECONDS=45
-HOST_OFFLINE_TTS_OUTPUT=qsm
-```
-
-`HOST_OFFLINE_TTS_OUTPUT` 支持：
-
-- `qsm`：主机生成后发送到 QSM 喇叭；默认值。
-- `auto`：优先发送到 QSM，QSM 播放通道不可用时使用主机声卡。
-- `host`：只用主机声卡播放，适合没有 QSM 音频转发的开发机。
-
-## 接口
-
-`POST /api/audio/speak` 的 `mode=offline` 或本地网络模式会返回主机离线引擎，例如：
-
-```json
-{
-  "ok": true,
-  "requested_mode": "offline",
-  "engine": "host-offline-sherpa-onnx",
-  "offline": true,
-  "raw": {
-    "mode": "host-offline-sherpa-onnx-pcm",
-    "sample_rate": 22050
-  }
-}
-```
-
-`GET /api/audio/host/status` 和 `GET /api/audio/status` 会显示模型文件、Python 运行时和播放路线是否就绪。模型或播放设备不可用时返回结构化错误，不返回假成功。
-
-## 延迟说明
-
-模型在后端进程中只加载一次，所有播报请求复用同一个已加载模型。`launch_kiosk.sh` 会在打开浏览器前同步调用 `/api/audio/host/warmup`；预热失败只给出警告，不阻断终端启动。每次播报只执行文本生成和 PCM 播放，不再重复加载 TTS 模型，也不再让 TTS 与 QSM 本地问询模型争抢内存。
-
-当前主机实测中，预热约需 3.3 秒；预热后的短句首段音频生成约 0.8 秒。接口总耗时还包含实际语音播放时长，不能把正常播报时长误判为模型等待延迟。
-
-在线 TTS 和主机离线 TTS 共用 QSM 的 PCM 播放端口 `19001`。启动前仍需执行 `scripts/adb_forward.sh`，但该脚本只建立 ASR、离线模型和音频播放端口，不会启动 QSM 离线 TTS。
+自动测试必须 mock QSM 和云端 TTS；真实板端播放只在明确的人工 smoke 阶段执行。

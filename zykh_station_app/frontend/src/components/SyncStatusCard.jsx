@@ -16,12 +16,12 @@ export function SyncStatusCard({ syncStatus, syncing, networkStatus, onSync }) {
   const localMode = isLocalNetworkMode(networkStatus);
   const synced = !localMode && syncStatus?.sync_status === "已同步" && Number(syncStatus?.pending_count || 0) === 0;
   const title = localMode
-    ? "本地保存，实时同步已暂停"
+    ? "记录已安全保存"
     : synced
       ? "已实时同步"
       : `${syncStatus?.pending_count || 0} 条等待同步`;
   const detail = localMode
-    ? "切换到联网模式后自动同步至微信小程序"
+    ? "当前设备数据状态正常"
     : synced
       ? `最近同步 ${formatSyncTime(syncStatus?.last_sync_at)}`
       : "正在等待同步至微信小程序云端";
@@ -31,7 +31,7 @@ export function SyncStatusCard({ syncStatus, syncing, networkStatus, onSync }) {
       <div className="sync-cloud-heading">
         <span aria-hidden="true"><Cloud size={25} /></span>
         <div>
-          <p>微信小程序云端</p>
+          <p>{localMode ? "设备数据" : "微信小程序云端"}</p>
           <h2>{title}</h2>
         </div>
       </div>

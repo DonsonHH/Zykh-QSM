@@ -493,7 +493,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             saving={savingReview}
             onConfirm={confirmInformationReview}
             onContinue={continueInquiryFromReview}
-            networkStatus={networkStatus}
           />
         ) : showResult ? (
           <InquiryResultStep
@@ -503,7 +502,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onConfirmTreatment={handleTreatmentConfirm}
             onRestart={resetFlow}
             onHome={() => onNavigate("home")}
-            networkStatus={networkStatus}
           />
         ) : session ? (
           <InquiryChatStep
@@ -514,7 +512,6 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onReset={resetFlow}
             onReview={() => setManualReviewOpen(true)}
             onReplyPlaybackStart={handleReplyPlaybackStart}
-            networkStatus={networkStatus}
           />
         ) : (
           <div className="inquiry-session-loading" role="status">

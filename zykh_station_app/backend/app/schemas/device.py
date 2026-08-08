@@ -16,9 +16,14 @@ class DeviceCheckResponse(BaseModel):
     fingerprint_ok: bool
     fingerprint_status: str
     fingerprint_bound_users: int
-    local_ai_ok: bool
-    local_ai_model: str
-    local_ai_status: str
+    offline_tts_ok: bool = False
+    offline_tts_engine: str = ""
+    offline_tts_model: str = ""
+    offline_tts_status: str = "unavailable"
+    # Compatibility fields for older clients. The current UI does not expose a local LLM.
+    local_ai_ok: bool = False
+    local_ai_model: str = ""
+    local_ai_status: str = "disabled"
     dispense_dry_run: bool
     errors: list[str]
     warnings: list[str]

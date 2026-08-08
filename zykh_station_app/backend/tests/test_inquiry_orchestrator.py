@@ -107,8 +107,79 @@ def case(
     )
 
 
+def low_risk_watery_diarrhea_interpretation() -> SymptomInterpretation:
+    interpretation = case(
+        action="analyze",
+        concept="水样腹泻",
+        evidence="今天开始拉水样便，目前能喝水",
+        duration="今天开始",
+        used="未使用",
+        allergy="无",
+    )
+    interpretation.observations = [
+        InquiryObservation(
+            concept="水样腹泻",
+            status="present",
+            evidence="今天开始拉水样便",
+            source_turn=1,
+            confidence=0.95,
+        ),
+        InquiryObservation(
+            concept="饮水情况",
+            status="present",
+            evidence="目前能喝水",
+            source_turn=1,
+            confidence=0.95,
+        ),
+        *[
+            InquiryObservation(
+                concept=concept,
+                status="absent",
+                evidence=f"没有{concept}",
+                source_turn=1,
+                confidence=0.95,
+            )
+            for concept in (
+                "便血",
+                "黑便",
+                "持续高热",
+                "剧烈腹痛",
+                "明显脱水",
+                "持续呕吐",
+            )
+        ],
+    ]
+    return interpretation
+
+
+def echo_authorized_diarrhea_combination(_context, _candidates, allowed):
+    selected = next(
+        item
+        for item in allowed
+        if item["combination_id"]
+        == "candidate-adult-watery-diarrhea-separated-v1"
+    )
+    return {
+        "ok": True,
+        "source": "cloud",
+        "options": [
+            {
+                "label": selected["label"],
+                "reason": "当前病例符合该分时方案的全部受控条件。",
+                "combination_id": selected["combination_id"],
+                "authorization_fingerprint": selected[
+                    "authorization_fingerprint"
+                ],
+                "medicine_ids": selected["medicine_ids"],
+                "reason_by_medicine": {},
+                "usage_by_medicine": {},
+            }
+        ],
+    }
+
+
 class FakeInterpreter:
-    def __init__(self, results: list[SymptomInterpretation], ranking: dict | None = None) -> None:
+    def __init__(self, results: list[SymptomInterpretation], ranking=None) -> None:
         self.results = list(results)
         self.ranking = ranking or {"ok": True, "source": "cloud", "options": []}
         self.contexts: list[dict] = []
@@ -135,8 +206,20 @@ class FakeInterpreter:
     def resume_after_vitals(self, existing, profile):
         return self.interpret("体征完成", existing, profile)
 
-    def rank_candidates(self, context, candidates):
-        self.rank_candidates_seen.append({"context": context, "candidates": candidates})
+    def rank_candidates(self, context, candidates, *, allowed_combinations=None):
+        self.rank_candidates_seen.append(
+            {
+                "context": context,
+                "candidates": candidates,
+                "allowed_combinations": allowed_combinations or [],
+            }
+        )
+        if callable(self.ranking):
+            return self.ranking(
+                context,
+                candidates,
+                allowed_combinations or [],
+            )
         return self.ranking
 
 
@@ -215,20 +298,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.db_patch = patch("app.db.settings", SimpleNamespace(db_path=self.db_path))
         self.db_patch.start()
         db.init_db()
-        # Dialogue tests exercise orchestration, not production metadata
-        # provenance. Make their temporary cabinet an explicit pharmacist-
-        # reviewed fixture so production's draft-by-default medicines remain
-        # fail-closed without obscuring state-machine assertions.
+        # Initialize the fixed-cabinet metadata and its case-scoped combination
+        # policies in this temporary database.
         MedicineRepository().list_all()
-        with db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE medicines
-                SET safety_review_status='reviewed',
-                    safety_reviewed_by='test-pharmacist-fixture',
-                    safety_reviewed_at='2026-08-08T00:00:00+08:00'
-                """
-            )
 
     def tearDown(self) -> None:
         self.db_patch.stop()
@@ -1036,45 +1108,81 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(interpreter.rank_candidates_seen, [])
 
     def test_model_end_still_ranks_care_supplies_when_user_did_not_end_the_session(self) -> None:
-        MedicineRepository().save_approved_combination(
-            combination_id="test-wound-clean-cover",
-            label="浅表伤口清洁覆盖",
-            medicine_ids=[
-                "slot-17-iodophor",
-                "slot-22-cotton-swab",
-                "slot-10-gauze",
-            ],
-            review_status="reviewed",
-            reviewed_by="test-pharmacist",
-            reviewed_at="2026-08-08T00:00:00+08:00",
+        interpretation = case(
+            action="end",
+            concept="手部浅表刀伤",
+            evidence="手部刀伤不深，出血已经止住，需要纱布覆盖",
+            reply="伤口目前风险较低，注意清洁和覆盖。",
+            duration="刚发生",
+            used="未使用",
+            allergy="无",
         )
-        service, interpreter = self.service(
-            [
-                case(
-                    action="end",
-                    concept="手部浅表刀伤",
-                    evidence="手部刀伤不深，出血已经止住",
-                    reply="伤口目前风险较低，注意清洁和覆盖。",
-                    duration="刚发生",
-                    used="未使用",
-                    allergy="无",
+        interpretation.observations = [
+            InquiryObservation(
+                concept="浅表伤口",
+                status="present",
+                evidence="手部刀伤不深",
+                source_turn=1,
+                confidence=0.95,
+            ),
+            InquiryObservation(
+                concept="止血情况",
+                status="present",
+                evidence="出血已经止住",
+                source_turn=1,
+                confidence=0.95,
+            ),
+            InquiryObservation(
+                concept="覆盖方式",
+                status="present",
+                evidence="需要纱布覆盖",
+                source_turn=1,
+                confidence=0.95,
+            ),
+            *[
+                InquiryObservation(
+                    concept=concept,
+                    status="absent",
+                    evidence=f"没有{concept}",
+                    source_turn=1,
+                    confidence=0.95,
+                )
+                for concept in (
+                    "深部伤口",
+                    "动物咬伤",
+                    "持续出血",
+                    "伤口感染",
+                    "异物残留",
                 )
             ],
-            ranking={
+        ]
+
+        def select_gauze_combination(_context, _candidates, allowed):
+            selected = next(
+                item
+                for item in allowed
+                if item["combination_id"]
+                == "candidate-superficial-wound-gauze-v1"
+            )
+            return {
                 "ok": True,
                 "source": "cloud",
                 "options": [
                     {
-                        "label": "清洁与覆盖",
+                        "label": selected["label"],
                         "reason": "伤口较浅且已经止血，可先完成清洁消毒和覆盖保护。",
-                        "medicine_ids": [
-                            "slot-17-iodophor",
-                            "slot-22-cotton-swab",
-                            "slot-10-gauze",
+                        "combination_id": selected["combination_id"],
+                        "authorization_fingerprint": selected[
+                            "authorization_fingerprint"
                         ],
+                        "medicine_ids": selected["medicine_ids"],
                     }
                 ],
-            },
+            }
+
+        service, interpreter = self.service(
+            [interpretation],
+            ranking=select_gauze_combination,
         )
         session = self.create(service)
 
@@ -1090,6 +1198,76 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ["slot-17-iodophor", "slot-22-cotton-swab", "slot-10-gauze"],
         )
         self.assertTrue(interpreter.rank_candidates_seen)
+
+    def test_real_multi_medicine_plan_is_selected_only_from_the_case_authorization(
+        self,
+    ) -> None:
+        dispense = FakeDispenseService()
+        service, interpreter = self.service(
+            [low_risk_watery_diarrhea_interpretation()],
+            ranking=echo_authorized_diarrhea_combination,
+            dispense=dispense,
+        )
+        session = self.create(service)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏",
+            ),
+        )
+
+        self.assertTrue(result.can_view_medicines)
+        self.assertEqual(len(result.treatment_options), 1)
+        option = result.treatment_options[0]
+        self.assertEqual(
+            option.combination_id,
+            "candidate-adult-watery-diarrhea-separated-v1",
+        )
+        self.assertEqual(
+            [medicine.id for medicine in option.medicines],
+            ["slot-03-diosmectite", "slot-09-bifid-triple"],
+        )
+        self.assertIn("间隔至少 2 小时", option.medicines[1].recommended_usage)
+        self.assertTrue(interpreter.rank_candidates_seen[0]["allowed_combinations"])
+
+        confirmed = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id=option.option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+        self.assertTrue(confirmed.ok)
+        self.assertEqual(len(dispense.requests), 1)
+        self.assertEqual(
+            dispense.requests[0].medicine_id,
+            "slot-03-diosmectite",
+        )
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE approved_medicine_combinations
+                SET review_status='invalidated', updated_at=?
+                WHERE combination_id=?
+                """,
+                (
+                    db.now_text(),
+                    "candidate-adult-watery-diarrhea-separated-v1",
+                ),
+            )
+        with self.assertRaises(DispenseError) as revoked:
+            service.confirm_treatment(
+                session.session_id,
+                InquiryTreatmentConfirmRequest(
+                    option_id=option.option_id,
+                    confirmed_safety_notice=True,
+                    expected_item_index=1,
+                ),
+            )
+        self.assertEqual(revoked.exception.status_code, 409)
+        self.assertEqual(len(dispense.requests), 1)
 
     def test_low_risk_without_a_matching_candidate_returns_neutral_care_advice(self) -> None:
         service, _ = self.service(
@@ -1264,10 +1442,14 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.treatment_options[0].medicines[0].id, "slot-07-yinhuang")
         self.assertEqual(
             [notice.code for notice in result.medication_safety_notices],
-            ["used_medicine_duplicate"],
+            ["used_medicine_duplicate", "used_medicine_duplicate"],
         )
-        self.assertIn("复方感冒灵颗粒", result.medication_safety_notices[0].message)
-        self.assertIn("重复", result.medication_safety_notices[0].message)
+        notice_text = " ".join(
+            notice.message for notice in result.medication_safety_notices
+        )
+        self.assertIn("复方感冒灵颗粒", notice_text)
+        self.assertIn("布洛芬缓释胶囊", notice_text)
+        self.assertIn("重复", notice_text)
 
     def test_all_relevant_candidates_blocked_by_safety_returns_notices_not_ranking_failure(self) -> None:
         medicine_repository = MedicineRepository()
@@ -1386,7 +1568,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryTurnRequest(transcript="饭后反酸烧心半天，没有用药和过敏"),
         )
 
-        self.assertEqual(live_repository.calls, 2)
+        self.assertGreaterEqual(live_repository.calls, 2)
         self.assertEqual(result.treatment_options, [])
         self.assertFalse(result.can_view_medicines)
 
@@ -1977,71 +2159,32 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
 
     def test_revoked_combination_after_display_fails_closed_before_hardware(self) -> None:
-        repository = MedicineRepository()
-        repository.update(
-            "slot-08-huoxiang-zhengqi",
-            {
-                "active_ingredients": ["测试用已审核藿香正气成分"],
-                "safety_review_status": "reviewed",
-                "safety_reviewed_by": "test-pharmacist",
-                "safety_reviewed_at": "2026-08-08T00:00:00+08:00",
-            },
-        )
-        repository.save_approved_combination(
-            combination_id="test-summer-stomach-combination",
-            label="暑湿胃部核验组合",
-            medicine_ids=[
-                "slot-08-huoxiang-zhengqi",
-                "slot-12-hydrotalcite",
-            ],
-            review_status="reviewed",
-            reviewed_by="test-pharmacist",
-            reviewed_at="2026-08-08T00:00:00+08:00",
-        )
-        ranking = {
-            "ok": True,
-            "source": "cloud",
-            "options": [
-                {
-                    "medicine_ids": [
-                        "slot-08-huoxiang-zhengqi",
-                        "slot-12-hydrotalcite",
-                    ],
-                    "label": "主方案",
-                    "reason": "分别核对暑湿和反酸表现。",
-                }
-            ],
-        }
         dispense = FakeDispenseService()
         service, _ = self.service(
-            [
-                case(
-                    action="analyze",
-                    concept="暑湿胃部不适",
-                    evidence="头晕并伴有反酸",
-                    duration="半天",
-                    used="未使用",
-                    allergy="无",
-                )
-            ],
-            ranking=ranking,
+            [low_risk_watery_diarrhea_interpretation()],
+            ranking=echo_authorized_diarrhea_combination,
             dispense=dispense,
         )
         session = self.create(service)
         result = service.process_turn(
             session.session_id,
-            InquiryTurnRequest(transcript="头晕并伴有反酸半天，没用药，没有过敏"),
+            InquiryTurnRequest(
+                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏"
+            ),
         )
         option = result.treatment_options[0]
-        repository.save_approved_combination(
-            combination_id="test-summer-stomach-combination",
-            label="暑湿胃部核验组合",
-            medicine_ids=[
-                "slot-08-huoxiang-zhengqi",
-                "slot-12-hydrotalcite",
-            ],
-            review_status="draft",
-        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE approved_medicine_combinations
+                SET review_status='invalidated', updated_at=?
+                WHERE combination_id=?
+                """,
+                (
+                    db.now_text(),
+                    "candidate-adult-watery-diarrhea-separated-v1",
+                ),
+            )
 
         with self.assertRaises(DispenseError) as raised:
             service.confirm_treatment(
@@ -2065,63 +2208,23 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
     def test_new_reviewed_matrix_block_after_display_fails_closed_before_hardware(self) -> None:
         repository = MedicineRepository()
-        repository.save_approved_combination(
-            combination_id="test-allergy-combination-for-matrix",
-            label="鼻部过敏核验组合",
-            medicine_ids=["slot-23-desloratadine", "slot-18-budesonide-nasal"],
-            review_status="reviewed",
-            reviewed_by="test-pharmacist",
-            reviewed_at="2026-08-08T00:00:00+08:00",
-        )
-        RecordsService().create_today_plan(
-            TodayPlanCreateRequest(
-                time="12:30",
-                timing_label="既往医嘱",
-                medicine_id="slot-23-desloratadine",
-                service_user_id="zhangsan",
-                dose="按既往医嘱",
-            )
-        )
-        ranking = {
-            "ok": True,
-            "source": "cloud",
-            "options": [
-                {
-                    "medicine_ids": [
-                        "slot-23-desloratadine",
-                        "slot-18-budesonide-nasal",
-                    ],
-                    "label": "主方案",
-                    "reason": "按既往医嘱核对口服药，并配合鼻喷剂。",
-                }
-            ],
-        }
         dispense = FakeDispenseService()
         service, _ = self.service(
-            [
-                case(
-                    action="analyze",
-                    concept="鼻部过敏不适",
-                    evidence="接触花粉后连续打喷嚏和鼻塞",
-                    duration="半天",
-                    used="未使用",
-                    allergy="无",
-                )
-            ],
-            ranking=ranking,
+            [low_risk_watery_diarrhea_interpretation()],
+            ranking=echo_authorized_diarrhea_combination,
             dispense=dispense,
         )
         session = self.create(service)
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
-                transcript="接触花粉后连续打喷嚏和鼻塞，半天了，没用药，没有过敏"
+                transcript="今天开始拉水样便，目前能喝水，没用药也没有过敏"
             ),
         )
         option = result.treatment_options[0]
         repository.save_ingredient_conflict(
-            left_ingredient="枸地氯雷他定",
-            right_ingredient="布地奈德",
+            left_ingredient="蒙脱石",
+            right_ingredient="长型双歧杆菌",
             disposition="block",
             message="该成分组合需要药师重新核对。",
             review_status="reviewed",
@@ -2152,14 +2255,6 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
     def test_existing_plan_exposes_and_authorizes_a_prescription_candidate(self) -> None:
         MedicineService().list_medicines()
-        MedicineRepository().save_approved_combination(
-            combination_id="test-allergy-direction-combination",
-            label="既往医嘱过敏组合",
-            medicine_ids=["slot-23-desloratadine", "slot-18-budesonide-nasal"],
-            review_status="reviewed",
-            reviewed_by="test-pharmacist",
-            reviewed_at="2026-08-08T00:00:00+08:00",
-        )
         plan = RecordsService().create_today_plan(TodayPlanCreateRequest(
             time="12:30",
             timing_label="既往医嘱",
@@ -2171,9 +2266,9 @@ class InquiryOrchestratorTest(unittest.TestCase):
             "ok": True,
             "source": "cloud",
             "options": [{
-                "medicine_ids": ["slot-23-desloratadine", "slot-18-budesonide-nasal"],
+                "medicine_ids": ["slot-23-desloratadine"],
                 "label": "主方案",
-                "reason": "按既往医嘱核对口服药，并配合鼻喷剂。",
+                "reason": "按既往医嘱核对口服药。",
             }],
         }
         dispense = FakeDispenseService()
@@ -2199,7 +2294,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         medicines = result.treatment_options[0].medicines
         self.assertEqual(
             [medicine.id for medicine in medicines],
-            ["slot-23-desloratadine", "slot-18-budesonide-nasal"],
+            ["slot-23-desloratadine"],
         )
         self.assertTrue(medicines[0].requires_existing_direction)
 

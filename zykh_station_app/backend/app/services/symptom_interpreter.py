@@ -110,11 +110,21 @@ class SymptomInterpreter:
     ) -> SymptomInterpretation:
         return self.interpret("体征测量已经完成，请结合本次结果继续问询。", existing, profile)
 
-    def rank_candidates(self, context: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    def rank_candidates(
+        self,
+        context: dict[str, Any],
+        candidates: list[dict[str, Any]],
+        *,
+        allowed_combinations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         ranker = getattr(self.ai_service, "rank_inquiry_candidates", None)
         if not callable(ranker):
             return {"ok": False, "source": "ai_unavailable"}
-        return ranker(context, candidates)
+        return ranker(
+            context,
+            candidates,
+            allowed_combinations=allowed_combinations or [],
+        )
 
     def opening_question(self, profile: dict[str, Any], fallback: str) -> tuple[str, str]:
         generator = getattr(self.ai_service, "generate_inquiry_opening", None)

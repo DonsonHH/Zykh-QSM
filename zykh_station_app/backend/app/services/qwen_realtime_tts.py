@@ -43,8 +43,6 @@ def audio_delta(event: dict[str, Any]) -> bytes:
 
 
 class QwenRealtimeTts:
-    _speak_lock = asyncio.Lock()
-
     def __init__(self, qsm_client: QsmClient | None = None) -> None:
         self.qsm_client = qsm_client or QsmClient()
 
@@ -56,8 +54,9 @@ class QwenRealtimeTts:
         volume: int | None = None,
         speed: float | None = None,
     ) -> dict[str, Any]:
-        async with self._speak_lock:
-            return await self._speak_once(text, api_key, volume=volume, speed=speed)
+        # SpeechService owns the process-wide playback lock across async HTTP
+        # and synchronous cloud-command entry points.
+        return await self._speak_once(text, api_key, volume=volume, speed=speed)
 
     async def _speak_once(
         self,

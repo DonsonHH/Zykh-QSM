@@ -1,163 +1,43 @@
-# QSM Offline AI
+# 问询模型路由
 
-## Purpose
+终端的“联网”和“本地”是演示层模式，不是模型提供方选择器。两种模式都使用同一套云端大模型问询链路：逐轮信息抽取走 Chat Completions，最终分析和药品排序优先走 Responses，结构无效或端点不可用时回退到同一云端模型的 Chat Completions JSON 契约。
 
-The terminal uses a real offline language model for AI inquiry when the cloud
-route is unavailable or the operator selects local mode. The model runs on QSM;
-FastAPI calls it through an ADB-forwarded OpenAI-compatible endpoint. The model
-owns open case understanding, natural follow-up and semantic risk judgment.
-Deterministic code retains only non-negotiable danger interception and medicine
-safety constraints.
+普通终端界面不会展示提供方、端点或回退细节。模式差异只有：
 
-```text
-React inquiry UI
-  -> FastAPI AiService
-     -> cloud Chat Completions when reachable
-     -> QSM llama.cpp when cloud is unavailable
-     -> natural retry prompt with no candidate when both model routes fail
-```
+- 联网模式显示联网图标、运行微信小程序实时同步，并使用云端实时 TTS；
+- 本地模式显示本地图标、暂停微信小程序实时同步，并使用 QSM 板端离线 TTS；
+- 两种模式都保留物理 Wi-Fi/SIM 链路，问询都走云端模型；
+- 云端模型不可用时，确定性规则只负责危险信号拦截、继续追问或安全失败提示，不伪装模型分析，也不生成药品排序。
 
-## Runtime
+## 生产配置
 
-Verified deployment:
-
-- engine: `llama.cpp` `llama-server`, AArch64 build from the supplied example bundle;
-- model repository: [unsloth/Qwen3.5-0.8B-GGUF](https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF);
-- model file: `Qwen3.5-0.8B-Q4_K_M.gguf`;
-- model size: `532517120` bytes;
-- model SHA-256: `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`;
-- engine SHA-256: `683752e7bb06850a1ebed20d001203549dc588b234b89c5ba264da573d17a9d0`;
-- QSM endpoint: board `8083`, forwarded to host `127.0.0.1:18083`;
-- model assets: `/opt/zykh-local-ai`;
-- PID, logs and control scripts: `/userdata/zykh_station_app/local-ai`.
-
-The upstream base model is [Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B). Review the upstream model card and license before redistribution.
-
-## Download And Deploy
-
-Keep the supplied example ZIP at the repository root, or set `OFFLINE_AI_EXAMPLE_ARCHIVE`. The ZIP is used only to obtain the verified AArch64 `llama-server`; it is not imported into the application.
-
-```bash
-cd zykh_station_app
-sh scripts/download_offline_model.sh
-sh scripts/deploy_offline_ai.sh
-```
-
-The download is resumable and verifies both exact size and SHA-256. The deploy script:
-
-1. checks ADB and QSM architecture;
-2. validates engine and model hashes;
-3. temporarily remounts the QSM root filesystem read/write only when model assets must change;
-4. restores the root filesystem read-only through normal completion and signal traps;
-5. installs lifecycle scripts under `/userdata`;
-6. establishes `tcp:18083 -> tcp:8083`;
-7. starts the model and runs health plus real inference smoke checks.
-
-`launch_kiosk.sh` checks and starts the QSM offline inquiry model by default. To
-temporarily skip that startup during resource debugging, disable it explicitly:
-
-```bash
-KIOSK_OFFLINE_AI=0 sh scripts/launch_kiosk.sh
-```
-
-## Lifecycle
-
-Host-side check/start:
-
-```bash
-sh scripts/ensure_qsm_offline_ai.sh
-curl http://127.0.0.1:18083/health
-```
-
-Board-side lifecycle:
-
-```bash
-adb shell 'sh /userdata/zykh_station_app/local-ai/status_local_ai.sh'
-adb shell 'sh /userdata/zykh_station_app/local-ai/stop_local_ai.sh'
-adb shell 'sh /userdata/zykh_station_app/local-ai/start_local_ai.sh'
-```
-
-## Application Configuration
+生产解析器会把历史 `AI_MODE=auto|local` 统一收敛为 `cloud`，把历史 `OFFLINE_INQUIRY_MODE=model` 收敛为 `rules`。这些旧变量仅为部署兼容保留，不再允许普通设置页切换到板端语言模型。
 
 ```text
-AI_MODE=auto
-AI_CLOUD_IN_LOCAL_DISPLAY=true
+AI_MODE=cloud
+AI_API_BASE=https://api.deepseek.com/chat/completions
+AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
+AI_MODEL=deepseek-v4-flash
 AI_INQUIRY_REASONING_EFFORT=high
-NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true
-AI_CONNECTIVITY_TIMEOUT_SECONDS=2
-LOCAL_AI_BASE_URL=http://127.0.0.1:18083
-LOCAL_AI_CHAT_PATH=/v1/chat/completions
-LOCAL_AI_HEALTH_PATH=/health
-LOCAL_AI_MODEL=Qwen3.5-0.8B-Q4_K_M
-LOCAL_AI_TIMEOUT_SECONDS=45
-LOCAL_AI_HEALTH_TIMEOUT_SECONDS=2
-OFFLINE_INQUIRY_MODE=model
-LOCAL_AI_CTX_SIZE=1536
-LOCAL_AI_THREADS=4
-LOCAL_AI_BATCH_SIZE=256
-LOCAL_AI_UBATCH_SIZE=64
-LOCAL_AI_CACHE_RAM=64
+OFFLINE_INQUIRY_MODE=rules
 ```
 
-板端默认只保留最近 6 条有效对话，并以 `1536` 上下文、较小批次运行。这个配置用于控制
-2GB 内存设备上的峰值占用，避免体征、身份识别或离线语音合成同时工作时系统终止
-`llama-server`。如更换内存更大的板卡，可通过上述环境变量单独放大。
+密钥只从环境变量或本机私有文件读取，不写入 Git、Markdown 或前端资源。云端输出仍必须经过本地 schema 校验、危险信号规则、候选准入、禁忌/重复成分检查和开柜前实时复核。
 
-Modes:
+## QSM 语言模型资产
 
-- `AI_MODE=auto`: use cloud when reachable, then the QSM model, then deterministic dialogue continuity.
-- `AI_MODE=cloud`: attempt cloud without the reachability preflight, then the same QSM-model and continuity sequence after an actual request failure.
-- `AI_MODE=local`: use the QSM model directly, then deterministic dialogue continuity if it is unavailable or invalid.
-- `OFFLINE_INQUIRY_MODE=model`: default model-first offline path. Explicit `rules` remains available for controlled legacy deployments.
-- `AI_INQUIRY_REASONING_EFFORT=high`: one `off|low|high|max` setting for cloud turn extraction, Responses final analysis and its Chat Completions fallback. If this variable is absent, legacy `AI_INQUIRY_ENABLE_THINKING=true/false` maps to `high/off`.
-- `AI_CLOUD_IN_LOCAL_DISPLAY=true`: the terminal may visibly enter local mode while inquiry still uses DeepSeek through the retained SIM transport. ASR and TTS remain local.
-- `NETWORK_KEEP_SIM_TRANSPORT_WHEN_HIDDEN=true`: hiding the SIM switch does not stop QSM `usb0` or remove the host tether route.
+仓库仍保留旧 QSM llama.cpp 部署与诊断脚本，供历史设备排障使用，但应用运行链路不会调用它。正式 `launch_kiosk.sh` 不提供重新启用该模型的环境开关，并会通过受限停止脚本幂等清退已知的旧模型进程，避免它与板端离线 TTS、ASR 和外设服务争用 2 GB 内存。
 
-The QSM `llama-server` keeps its own `--reasoning off` setting. Cloud reasoning
-effort is not forwarded to the board and QSM output is never labelled as
-DeepSeek thinking.
+如需单独研究旧模型，必须脱离正式 kiosk 流程显式运行相关诊断脚本。该路径不属于当前产品问询契约，也不得被标记成联网或本地模式的正常结果来源。
 
-Inquiry-session source values remain internal diagnostics. The terminal UI uses
-accessible icons and natural retry guidance instead of exposing channel names,
-connection errors or “rules fallback” wording. Legacy stored sessions containing
-those technical phrases are normalized when read; the original SQLite history
-is not rewritten.
+## 验收
 
-## Safety Boundary
+隔离测试应验证：
 
-Before and after inference, the backend enforces only hard boundaries:
+1. 联网和本地模式的问询请求都进入云端 provider；
+2. 本地模式不会启动、探测或回退到 QSM llama.cpp；
+3. 云端缺失密钥、失败或返回无效结构时，只返回规则连续性/安全失败结果，候选为空；
+4. 模式切换不关闭实际 Wi-Fi/SIM；
+5. 前端普通文案不暴露 provider、QSM 模型或内部路由名称。
 
-- deterministic emergency keyword interception;
-- negation-aware handling such as “没有胸痛”;
-- no direct medication instruction or diagnostic claim;
-- program risk may raise but never lower the model risk;
-- stock, expiry, OTC eligibility and absolute-contraindication filtering before ranking;
-- model selection restricted to IDs in that filtered pool;
-- current-state revalidation before the existing dispense service runs;
-- deterministic fallback may continue one-question dialogue and danger-signal handling, but does not synthesize a final assessment;
-- zero candidates when the final ranking model is unavailable or returns an invalid contract;
-- emergency hard guards remain available even when neither model responds.
-
-## Verified Performance
-
-On the connected RK3568 QSM with 2 GB RAM, the deployed model passed real Chinese inquiry requests. The observed baseline was approximately 24.7 prompt tokens/s and 6.1 generated tokens/s, with a warm compact case turn around 10–15 seconds. Large medicine pools are narrowed before the model returns the full `assessment + options` contract, and the host accepts only IDs from the hard-safe pool. The complete structured ranking response is longer than the former terse selector, so its end-to-end latency and peak memory still require a physical-board smoke check after deployment. The board keeps reasoning disabled and TTS off-device to preserve memory and CPU headroom; the baseline timings are observations, not guarantees.
-
-## Offline Verification
-
-```bash
-curl http://127.0.0.1:8000/api/ai/status
-curl -X POST http://127.0.0.1:8000/api/network/mode \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"local"}'
-curl -X POST http://127.0.0.1:8000/api/ai/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"我有轻微头晕，请先问一个关键问题"}]}'
-```
-
-Expected session source is `local_llm`. To verify failure handling, stop the
-local model and repeat an `/api/inquiry/sessions/{id}/turn` request; the endpoint
-must stay available through `rules_fallback`, return a natural retry prompt, and
-return no final assessment or medicine candidate rather than HTTP 500 or
-terminal-facing transport details. `/api/ai/status` reports `model_ready` and
-`rules_fallback_ready` separately; aggregate availability must not make an
-unavailable model appear ready.
+测试必须使用 fake provider、临时数据库和 `QSM_MODE=mock`，不得访问真实密钥、QSM 或药柜。

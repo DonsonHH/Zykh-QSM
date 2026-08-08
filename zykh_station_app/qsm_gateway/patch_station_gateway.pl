@@ -99,15 +99,17 @@ PERL
     $changed = 1;
 }
 
-if ($source !~ /ZYKH_STATION_AUDIO_STOP_ALL/) {
+if ($source !~ /ZYKH_STATION_AUDIO_STOP_ALL_V2/) {
     my $pattern = qr{
         if\s*\(\s*\$method\s+eq\s+'POST'\s*&&\s*\$path\s+eq\s+'/api/audio/stream/stop'\s*\)\s*\{\s*
-        return\s+send_json\(\$client,\s*200,\s*stop_audio_pcm_stream\(\)\);\s*
+        (?:\#\s*ZYKH_STATION_AUDIO_STOP_ALL\s*)?
+        return\s+send_json\(\$client,\s*200,\s*(?:stop_audio_pcm_stream|release_audio_playback_device)\(\)\);\s*
         \}
     }x;
     my $replacement = <<'PERL';
 if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
         # ZYKH_STATION_AUDIO_STOP_ALL
+        # ZYKH_STATION_AUDIO_STOP_ALL_V2
         return send_json($client, 200, release_audio_playback_device());
     }
 PERL
@@ -117,10 +119,18 @@ PERL
     $changed = 1;
 }
 
-# Keep the legacy HTTP route harmless after TTS moved to the host. This avoids
-# accidentally starting the old board-side implementation if a stale client
-# still posts to the QSM gateway directly.
-if ($source !~ /ZYKH_STATION_HOST_TTS_ONLY/) {
+# The presentation mode now chooses between cloud TTS and the board's offline
+# Sherpa-ONNX voice. Restore the route on devices that previously received the
+# host-only guard, and mark an untouched route idempotently.
+if ($source !~ /ZYKH_STATION_QSM_TTS/) {
+    my $disabled_pattern = qr{
+        if\s*\(\s*\$method\s+eq\s+'POST'\s*&&\s*\$path\s+eq\s+'/api/audio/speak'\s*\)\s*\{\s*
+        \#\s*ZYKH_STATION_[A-Z_]+\s*
+        return\s+send_json\(\$client,\s*200,\s*\{.*?
+        mode\s*=>\s*'host-offline-tts-required'.*?
+        \}\);\s*
+        \}
+    }xs;
     my $pattern = qr{
         if\s*\(\s*\$method\s+eq\s+'POST'\s*&&\s*\$path\s+eq\s+'/api/audio/speak'\s*\)\s*\{\s*
         return\s+send_json\(\$client,\s*200,\s*speak_text\(\$req-\>\{params\}\)\);\s*
@@ -128,21 +138,186 @@ if ($source !~ /ZYKH_STATION_HOST_TTS_ONLY/) {
     }x;
     my $replacement = <<'PERL';
 if ($method eq 'POST' && $path eq '/api/audio/speak') {
-        # ZYKH_STATION_HOST_TTS_ONLY
-        return send_json($client, 200, {
-            ok => 0,
-            disabled => 1,
-            mode => 'host-offline-tts-required',
-            error => '语音合成由主机完成，请调用主应用音频接口。',
-        });
+        # ZYKH_STATION_QSM_TTS
+        return send_json($client, 200, speak_text($req->{params}));
     }
 PERL
-    my $matches = () = $source =~ /$pattern/g;
-    die "Expected at most one legacy TTS route, found $matches\n" if $matches > 1;
-    if ($matches == 1) {
+    my $disabled_matches = () = $source =~ /$disabled_pattern/g;
+    die "Expected at most one disabled TTS route, found $disabled_matches\n"
+        if $disabled_matches > 1;
+    if ($disabled_matches == 1) {
+        $source =~ s/$disabled_pattern/$replacement/;
+        $changed = 1;
+    } else {
+        my $matches = () = $source =~ /$pattern/g;
+        die "Expected exactly one board TTS route, found $matches\n" unless $matches == 1;
         $source =~ s/$pattern/$replacement/;
         $changed = 1;
     }
+}
+
+if ($source !~ /ZYKH_STATION_TTS_PROCESS_GROUP/) {
+    my $before = <<'PERL';
+sub run_tts_command {
+    my ($cmd, $log, $timeout) = @_;
+    my $rc;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $rc = system('timeout', int($timeout || 90), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        exit_code => $exit,
+        detail => substr(read_text_file($log) || '', 0, 500),
+    };
+}
+PERL
+    my $after = <<'PERL';
+sub run_tts_command {
+    my ($cmd, $log, $timeout) = @_;
+    my $pidfile = "$DATA_DIR/audio-tts.pid";
+    my $pid;
+    my $rc = -1;
+    {
+        local $SIG{CHLD} = 'DEFAULT';
+        $pid = fork();
+        if (defined($pid) && $pid == 0) {
+            # ZYKH_STATION_TTS_PROCESS_GROUP
+            eval { POSIX::setpgid(0, 0); };
+            exec('timeout', int($timeout || 90), 'sh', '-c', $cmd . ' >' . shell_quote($log) . ' 2>&1');
+            exit 127;
+        }
+        if (defined $pid) {
+            eval { POSIX::setpgid($pid, $pid); };
+            my $cancel_file = "$DATA_DIR/audio-tts-cancel-$pid";
+            unlink $cancel_file if -f $cancel_file;
+            write_text_file($pidfile, "$pid\n");
+            waitpid($pid, 0);
+            $rc = $?;
+        }
+    }
+    return {
+        ok => JSON::PP::false,
+        exit_code => -1,
+        detail => "Cannot fork managed TTS command: $!",
+    } unless defined $pid;
+
+    my $cancel_file = "$DATA_DIR/audio-tts-cancel-$pid";
+    my $cancelled = -f $cancel_file;
+    unlink $cancel_file if $cancelled;
+    if (-f $pidfile && read_file_trim($pidfile) eq "$pid") {
+        unlink $pidfile;
+    }
+    my $exit = $rc == -1 ? -1 : ($rc >> 8);
+    return {
+        ok => !$cancelled && $exit == 0 ? JSON::PP::true : JSON::PP::false,
+        cancelled => $cancelled ? JSON::PP::true : JSON::PP::false,
+        exit_code => $exit,
+        detail => substr(read_text_file($log) || '', 0, 500),
+    };
+}
+PERL
+    my $matches = () = $source =~ /\Q$before\E/g;
+    die "Expected exactly one legacy run_tts_command implementation, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/\Q$before\E/$after/;
+    $changed = 1;
+}
+
+if ($source !~ /ZYKH_STATION_TTS_CANCEL_HELPER/) {
+    my $anchor = "sub release_audio_playback_device {\n";
+    my $helper = <<'PERL';
+sub cancel_tts_command_process_group {
+    # ZYKH_STATION_TTS_CANCEL_HELPER
+    my $pidfile = "$DATA_DIR/audio-tts.pid";
+    my $pid = -f $pidfile ? read_file_trim($pidfile) : '';
+    if ($pid =~ /^\d+$/) {
+        my $cancel_file = "$DATA_DIR/audio-tts-cancel-$pid";
+        write_text_file($cancel_file, "cancelled\n");
+        kill 'TERM', -int($pid);
+        for (1..20) {
+            last unless kill(0, -int($pid));
+            select(undef, undef, undef, 0.05);
+        }
+        kill 'KILL', -int($pid) if kill(0, -int($pid));
+        if (-f $pidfile && read_file_trim($pidfile) eq "$pid") {
+            unlink $pidfile;
+        }
+        return {
+            ok => JSON::PP::true,
+            cancelled => JSON::PP::true,
+            pid => int($pid),
+        };
+    }
+    unlink $pidfile if -f $pidfile;
+    return {
+        ok => JSON::PP::true,
+        cancelled => JSON::PP::false,
+    };
+}
+
+PERL
+    my $matches = () = $source =~ /\Q$anchor\E/g;
+    die "Expected exactly one release_audio_playback_device anchor, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/\Q$anchor\E/$helper$anchor/;
+    $changed = 1;
+}
+
+if ($source !~ /ZYKH_STATION_RELEASE_CANCELS_TTS/) {
+    my $before = <<'PERL';
+sub release_audio_playback_device {
+    stop_audio_pcm_stream();
+    system('sh', '-c', 'killall aplay 2>/dev/null');
+    select(undef, undef, undef, 0.18);
+    return { ok => JSON::PP::true };
+}
+PERL
+    my $after = <<'PERL';
+sub release_audio_playback_device {
+    # ZYKH_STATION_RELEASE_CANCELS_TTS
+    my $tts = cancel_tts_command_process_group();
+    stop_audio_pcm_stream();
+    system('sh', '-c', 'killall aplay 2>/dev/null');
+    select(undef, undef, undef, 0.18);
+    return {
+        ok => JSON::PP::true,
+        tts_cancelled => $tts->{cancelled},
+    };
+}
+PERL
+    my $matches = () = $source =~ /\Q$before\E/g;
+    die "Expected exactly one legacy release_audio_playback_device implementation, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/\Q$before\E/$after/;
+    $changed = 1;
+}
+
+if ($source !~ /ZYKH_STATION_TTS_CANCEL_RESULT/) {
+    my $before = <<'PERL';
+        my $run = run_tts_command($attempt->{command}, $log, $attempt->{timeout});
+        if ($run->{ok}) {
+PERL
+    my $after = <<'PERL';
+        my $run = run_tts_command($attempt->{command}, $log, $attempt->{timeout});
+        # ZYKH_STATION_TTS_CANCEL_RESULT
+        if ($run->{cancelled}) {
+            return {
+                ok => JSON::PP::false,
+                cancelled => JSON::PP::true,
+                mode => 'cancelled',
+                requested_mode => $requested_mode,
+                error => '语音播报已取消',
+            };
+        }
+        if ($run->{ok}) {
+PERL
+    my $matches = () = $source =~ /\Q$before\E/g;
+    die "Expected exactly one speak_text command result block, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/\Q$before\E/$after/;
+    $changed = 1;
 }
 
 if (!$changed) {

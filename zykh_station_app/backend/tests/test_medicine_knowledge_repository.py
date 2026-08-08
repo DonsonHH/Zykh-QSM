@@ -402,7 +402,7 @@ class MedicineKnowledgeRepositoryTest(unittest.TestCase):
         self.assertEqual([notice.code for notice in assessment.notices], ["ingredient_conflict"])
         self.assertIn("药师审核为不可同用", assessment.notices[0].message)
 
-    def test_exact_identity_bound_reviewed_combination_is_accepted(self) -> None:
+    def test_legacy_identity_only_combination_is_rejected_without_case_authorization(self) -> None:
         first = candidate(
             "medicine-a",
             "药品甲",
@@ -441,8 +441,8 @@ class MedicineKnowledgeRepositoryTest(unittest.TestCase):
             [first, second],
         )
 
-        self.assertEqual(len(assessment.options), 1)
-        self.assertEqual(assessment.notices, [])
+        self.assertEqual(assessment.options, [])
+        self.assertEqual(assessment.notices[0].code, "combination_not_approved")
 
     def test_approved_combination_still_rejects_a_drug_with_unknown_ingredients(self) -> None:
         unknown = candidate(

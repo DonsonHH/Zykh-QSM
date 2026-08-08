@@ -21,7 +21,10 @@ from app.repositories.medicine_repository import (  # noqa: E402
 )
 from app.schemas.medicine import MedicineUpdateRequest  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
-from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
+from app.services.medicine_knowledge_repository import (  # noqa: E402
+    MedicineKnowledgeRepository,
+    MedicineSafetyContext,
+)
 from app.services.medicine_service import MedicineService  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
@@ -105,8 +108,8 @@ class MedicineInventoryContractTest(unittest.TestCase):
             item.id
             for item in MedicineKnowledgeRepository().safe_candidate_pool("")
         }
-        self.assertNotIn("slot-03-diosmectite", safe_ids)
-        self.assertNotIn("slot-13-ibuprofen", safe_ids)
+        self.assertIn("slot-03-diosmectite", safe_ids)
+        self.assertIn("slot-13-ibuprofen", safe_ids)
 
     def test_reviewed_safety_facts_are_read_from_the_medicine_record(self) -> None:
         repository = MedicineRepository()
@@ -187,7 +190,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
             },
         )
 
-    def test_default_safety_facts_are_backfilled_as_traceable_unreviewed_drafts(self) -> None:
+    def test_default_safety_facts_are_backfilled_as_traceable_catalog_reviews(self) -> None:
         medicine = MedicineRepository().get_by_hardware_slot(13)
 
         self.assertEqual(medicine.aliases, ["布洛芬缓释胶囊", "芬必得", "布洛芬"])
@@ -199,9 +202,81 @@ class MedicineInventoryContractTest(unittest.TestCase):
             },
             medicine.structured_contraindications,
         )
-        self.assertEqual(medicine.safety_review_status, "draft")
-        self.assertEqual(medicine.safety_reviewed_by, "")
-        self.assertEqual(medicine.safety_reviewed_at, "")
+        self.assertEqual(medicine.safety_review_status, "reviewed")
+        self.assertEqual(medicine.safety_reviewed_by, "bundled-cabinet-reference-v5")
+        self.assertTrue(medicine.safety_reviewed_at)
+
+    def test_ibuprofen_catalog_blocks_current_major_history_contraindications(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(13)
+        structured_codes = {
+            item.get("concept_code")
+            for item in medicine.structured_contraindications
+        }
+
+        self.assertTrue(
+            {
+                "nsaid_allergy",
+                "pregnancy",
+                "breastfeeding",
+                "asthma",
+                "liver_impairment",
+                "renal_impairment",
+                "cardiac_disease",
+                "peptic_ulcer",
+                "gastrointestinal_bleeding",
+                "gastrointestinal_perforation",
+            }
+            <= structured_codes
+        )
+
+        knowledge = MedicineKnowledgeRepository(repository)
+        for history in (
+            "严重心脏疾病",
+            "活动性消化性溃疡",
+            "胃肠道出血",
+            "胃肠道穿孔",
+        ):
+            with self.subTest(history=history):
+                assessment = knowledge.assess_candidates(
+                    MedicineSafetyContext(
+                        history_text=history,
+                        relevance_text="发热头痛",
+                    ),
+                    limit=8,
+                )
+                self.assertNotIn(
+                    medicine.id,
+                    {candidate.id for candidate in assessment.candidates},
+                )
+                self.assertIn(
+                    "history_contraindication",
+                    {
+                        notice.code
+                        for notice in assessment.notices
+                        if notice.medicine_id == medicine.id
+                    },
+                )
+
+        used_assessment = knowledge.assess_candidates(
+            MedicineSafetyContext(
+                used_medicines_text="已用药：萘普生",
+                relevance_text="发热头痛",
+            ),
+            limit=8,
+        )
+        self.assertNotIn(
+            medicine.id,
+            {candidate.id for candidate in used_assessment.candidates},
+        )
+        self.assertIn(
+            "used_medicine_duplicate",
+            {
+                notice.code
+                for notice in used_assessment.notices
+                if notice.medicine_id == medicine.id
+            },
+        )
 
     def test_v2_safety_migration_revokes_legacy_machine_review_without_overwriting_label_edits(self) -> None:
         repository = MedicineRepository()
@@ -229,50 +304,125 @@ class MedicineInventoryContractTest(unittest.TestCase):
 
         self.assertEqual(
             MEDICINE_SAFETY_FACTS_VERSION,
-            "database-safety-facts-v3-controlled-ingredients",
+            "database-safety-facts-v5-detailed-fixed-catalog",
         )
         self.assertEqual(corrected.dosage, "现场修改后尚未受控审核")
         self.assertEqual(corrected.safety_review_status, "draft")
         self.assertEqual(corrected.safety_reviewed_by, "")
         self.assertEqual(corrected.safety_reviewed_at, "")
 
-    def test_controlled_bundled_baseline_uses_the_exact_14_item_allowlist(self) -> None:
+    def test_controlled_bundled_baseline_covers_all_23_fixed_items(self) -> None:
         medicines = MedicineRepository().list_all()
         by_slot = {medicine.hardware_slot: medicine for medicine in medicines}
         bundled = [
             medicine
             for medicine in medicines
-            if medicine.safety_reviewed_by == "bundled-label-reference-v2"
+            if medicine.safety_reviewed_by == "bundled-cabinet-reference-v5"
         ]
 
         self.assertEqual(
             {item.hardware_slot for item in bundled},
-            {4, 6, 10, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23},
+            set(range(1, 24)),
         )
         self.assertTrue(all(item.safety_review_status == "reviewed" for item in bundled))
-        for slot in (1, 2, 3, 5, 7, 8, 9, 11, 13):
-            self.assertEqual(by_slot[slot].safety_review_status, "draft")
-            self.assertEqual(by_slot[slot].safety_reviewed_by, "")
-            self.assertEqual(by_slot[slot].safety_reviewed_at, "")
+        for slot, medicine in by_slot.items():
+            self.assertTrue(medicine.aliases, slot)
+            if slot not in {10, 20, 22}:
+                self.assertTrue(medicine.active_ingredients, slot)
 
-    def test_v3_migration_revokes_v2_reviews_with_incomplete_ingredients(self) -> None:
+    def test_v5_catalog_has_exact_safety_facts_for_the_nine_expanded_slots(self) -> None:
+        by_slot = {
+            medicine.hardware_slot: medicine
+            for medicine in MedicineRepository().list_all()
+        }
+        expected = {
+            1: (
+                {"复方感冒灵颗粒", "复方感冒灵", "999感冒灵"},
+                {"山银花", "五指柑", "野菊花", "三叉苦", "南板蓝根", "岗梅", "对乙酰氨基酚", "马来酸氯苯那敏", "咖啡因"},
+            ),
+            2: (
+                {"多维元素片", "善存", "多维元素", "复合维生素矿物质"},
+                {"维生素A", "β-胡萝卜素", "维生素D", "维生素E", "维生素B1", "维生素B2", "维生素B6", "维生素C", "维生素B12", "维生素K1", "生物素", "叶酸", "烟酰胺", "泛酸", "钙", "磷", "钾", "氯", "镁", "铁", "铜", "锌", "锰", "碘", "铬", "钼", "硒", "镍", "硅", "锡", "钒"},
+            ),
+            3: ({"蒙脱石散", "思密达", "蒙脱石"}, {"蒙脱石"}),
+            5: (
+                {"蜜炼川贝枇杷膏", "京都念慈庵", "京都念慈菴", "川贝枇杷膏", "枇杷膏"},
+                {"川贝母", "枇杷叶", "化橘红", "桔梗", "法半夏", "蜂蜜"},
+            ),
+            7: ({"银黄颗粒", "银黄", "希臣"}, {"金银花提取物", "黄芩提取物"}),
+            8: (
+                {"藿香正气丸", "藿香正气", "恒心堂", "利君"},
+                {"广藿香", "苍术（炒）", "白芷", "陈皮", "茯苓", "厚朴（姜制）", "紫苏叶", "大腹皮", "半夏（姜制）", "甘草"},
+            ),
+            9: (
+                {"双歧杆菌三联活菌肠溶胶囊", "贝飞达", "双歧杆菌三联活菌"},
+                {"长型双歧杆菌", "嗜酸乳杆菌", "粪肠球菌"},
+            ),
+            11: (
+                {"桂林西瓜霜", "西瓜霜", "三金桂林西瓜霜", "三金"},
+                {"西瓜霜", "煅硼砂", "黄柏", "黄连", "山豆根", "射干", "浙贝母", "青黛", "冰片", "无患子果（炭）", "大黄", "黄芩", "甘草", "薄荷脑"},
+            ),
+            13: ({"布洛芬缓释胶囊", "芬必得", "布洛芬"}, {"布洛芬"}),
+        }
+
+        for slot, (aliases, ingredients) in expected.items():
+            with self.subTest(slot=slot):
+                medicine = by_slot[slot]
+                self.assertEqual(set(medicine.aliases), aliases)
+                self.assertEqual(set(medicine.active_ingredients), ingredients)
+                self.assertEqual(medicine.safety_review_status, "reviewed")
+                self.assertEqual(
+                    medicine.safety_reviewed_by,
+                    "bundled-cabinet-reference-v5",
+                )
+                self.assertTrue(medicine.safety_reviewed_at)
+
+        safe_ids = {
+            item.id
+            for item in MedicineKnowledgeRepository().safe_candidate_pool("")
+        }
+        self.assertIn("slot-02-centrum", safe_ids)
+        for used in ("维生素D", "叶酸", "钙", "铁"):
+            with self.subTest(used=used):
+                self.assertNotIn(
+                    "slot-02-centrum",
+                    {
+                        item.id
+                        for item in MedicineKnowledgeRepository().safe_candidate_pool(
+                            f"已用药：{used}"
+                        )
+                    },
+                )
+
+    def test_v5_migration_completes_legacy_catalog_facts_and_keeps_them_eligible(self) -> None:
         repository = MedicineRepository()
         repository.list_all()
         with db.connect() as conn:
             conn.execute(
                 """
                 UPDATE medicines
-                SET safety_review_status='reviewed',
-                    safety_reviewed_by='bundled-label-reference-v2',
+                SET aliases_json=?, safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v4',
                     safety_reviewed_at='2026-08-08 10:00:00'
                 WHERE id='slot-08-huoxiang-zhengqi'
+                """,
+                (json.dumps(["藿香正气丸", "藿香正气", "恒心堂"], ensure_ascii=False),),
+            )
+            conn.execute(
                 """
+                UPDATE medicines
+                SET active_ingredients_json=?, safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v4',
+                    safety_reviewed_at='2026-08-08 10:00:00'
+                WHERE id='slot-02-centrum'
+                """,
+                (json.dumps(["复合维生素和矿物质"], ensure_ascii=False),),
             )
             conn.execute(
                 """
                 INSERT INTO app_settings(key, value, updated_at)
                 VALUES ('medicine_safety_facts_version',
-                        'database-safety-facts-v2-controlled-label', ?)
+                        'database-safety-facts-v4-all-fixed-catalog', ?)
                 ON CONFLICT(key) DO UPDATE SET
                   value=excluded.value, updated_at=excluded.updated_at
                 """,
@@ -280,15 +430,74 @@ class MedicineInventoryContractTest(unittest.TestCase):
             )
 
         corrected = repository.get_by_id("slot-08-huoxiang-zhengqi")
+        centrum = repository.get_by_id("slot-02-centrum")
         still_controlled = repository.get_by_id("slot-06-lactulose")
 
-        self.assertEqual(corrected.safety_review_status, "draft")
-        self.assertEqual(corrected.safety_reviewed_by, "")
-        self.assertEqual(corrected.safety_reviewed_at, "")
+        self.assertEqual(corrected.safety_review_status, "reviewed")
+        self.assertEqual(corrected.safety_reviewed_by, "bundled-cabinet-reference-v5")
+        self.assertIn("利君", corrected.aliases)
+        self.assertIn("维生素D", centrum.active_ingredients)
+        self.assertNotIn("复合维生素和矿物质", centrum.active_ingredients)
         self.assertEqual(still_controlled.safety_review_status, "reviewed")
         self.assertEqual(
             still_controlled.safety_reviewed_by,
-            "bundled-label-reference-v2",
+            "bundled-cabinet-reference-v5",
+        )
+
+    def test_v5_migration_upgrades_only_the_exact_legacy_ibuprofen_label(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        legacy_contraindications = [
+            "非甾体抗炎药过敏者禁用",
+            "孕妇及哺乳期妇女禁用",
+            "阿司匹林过敏的哮喘患者禁用",
+        ]
+        legacy_safety_note = (
+            "联网条码身份：芬必得，0.3g×24粒，国药准字H10900089；"
+            "整粒吞服，避免与其他解热镇痛药重复使用。"
+        )
+        legacy_structured = MedicineRepository._default_structured_contraindications(
+            legacy_contraindications
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET contraindications_json=?, safety_note=?,
+                    structured_contraindications_json=?,
+                    safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v4',
+                    safety_reviewed_at='2026-08-08 10:00:00'
+                WHERE id='slot-13-ibuprofen'
+                """,
+                (
+                    json.dumps(legacy_contraindications, ensure_ascii=False),
+                    legacy_safety_note,
+                    json.dumps(legacy_structured, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v4-all-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+
+        migrated = repository.get_by_id("slot-13-ibuprofen")
+        structured_codes = {
+            item.get("concept_code")
+            for item in migrated.structured_contraindications
+        }
+
+        self.assertIn("严重心脏疾病", " ".join(migrated.contraindications))
+        self.assertIn("胃肠道出血", " ".join(migrated.contraindications))
+        self.assertIn("cardiac_disease", structured_codes)
+        self.assertIn("gastrointestinal_bleeding", structured_codes)
+        self.assertEqual(migrated.safety_review_status, "reviewed")
+        self.assertEqual(
+            migrated.safety_reviewed_by,
+            "bundled-cabinet-reference-v5",
         )
 
     def test_safety_migration_does_not_approve_modified_label_content(self) -> None:
@@ -334,6 +543,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         repository.update(
             unknown_ingredients.id,
             {
+                "active_ingredients": [],
                 "safety_review_status": "reviewed",
                 "safety_reviewed_by": "测试药师",
                 "safety_reviewed_at": "2026-08-08 12:05:00",
@@ -417,7 +627,11 @@ class MedicineInventoryContractTest(unittest.TestCase):
 
         with db.connect() as conn:
             count = conn.execute(
-                "SELECT COUNT(*) AS count FROM approved_medicine_combinations"
+                """
+                SELECT COUNT(*) AS count
+                FROM approved_medicine_combinations
+                WHERE combination_id='too-large'
+                """
             ).fetchone()["count"]
         self.assertEqual(count, 0)
 
@@ -532,12 +746,15 @@ class MedicineInventoryContractTest(unittest.TestCase):
             reviewed_at="2026-08-08 13:30:00",
         )
         knowledge = MedicineKnowledgeRepository(repository)
-        initial_pool = knowledge.safe_candidate_pool("")
-        initial = knowledge.validate_ai_selection(
-            {"options": [{"medicine_ids": [first.id, second.id]}]},
-            initial_pool,
+        saved = next(
+            item
+            for item in repository.list_reviewed_combinations()
+            if item.combination_id == "identity-bound-pair"
         )
-        self.assertEqual(len(initial.options), 1)
+        self.assertEqual(
+            set(saved.member_identity_fingerprints),
+            {first.id, second.id},
+        )
 
         repository.update(first.id, {"spec": "身份已更换的新规格"})
         with db.connect() as conn:
@@ -568,15 +785,11 @@ class MedicineInventoryContractTest(unittest.TestCase):
         fresh_pool = knowledge.safe_candidate_pool("")
         self.assertTrue({first.id, second.id}.issubset({item.id for item in fresh_pool}))
 
-        after_identity_change = knowledge.validate_ai_selection(
-            {"options": [{"medicine_ids": [first.id, second.id]}]},
-            fresh_pool,
-        )
-
-        self.assertEqual(after_identity_change.options, [])
-        self.assertEqual(
-            [notice.code for notice in after_identity_change.notices],
-            ["combination_not_approved"],
+        self.assertFalse(
+            any(
+                item.combination_id == "identity-bound-pair"
+                for item in repository.list_reviewed_combinations()
+            )
         )
 
     def test_identity_change_invalidates_linked_today_plans_in_the_same_transaction(self) -> None:
@@ -782,6 +995,66 @@ class MedicineInventoryContractTest(unittest.TestCase):
         )
         self.assertTrue(medicines["slot-03-diosmectite"].package_verified)
         self.assertTrue(medicines["slot-13-ibuprofen"].package_verified)
+
+    def test_identity_upgrade_preserves_03_13_label_edits_and_revokes_stale_review(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET manufacturer='迈优力制药', dosage='管理员校订且未复核的用量',
+                    package_verified=0, safety_review_status='reviewed',
+                    safety_reviewed_by='现场药师',
+                    safety_reviewed_at='2026-08-08 09:00:00'
+                WHERE id='slot-03-diosmectite'
+                """
+            )
+            conn.execute(
+                """
+                UPDATE medicines
+                SET manufacturer='芬必得', contraindications_json=?,
+                    package_verified=0, safety_review_status='reviewed',
+                    safety_reviewed_by='现场药师',
+                    safety_reviewed_at='2026-08-08 09:00:00'
+                WHERE id='slot-13-ibuprofen'
+                """,
+                (json.dumps(["管理员校订且未复核的禁忌"], ensure_ascii=False),),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='home-real-cabinet-v7-slot-03-13-online-identity'
+                WHERE key='medicine_seed_version'
+                """
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v4-all-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+
+        medicines = {item.id: item for item in repository.list_all()}
+        diosmectite = medicines["slot-03-diosmectite"]
+        ibuprofen = medicines["slot-13-ibuprofen"]
+
+        self.assertEqual(
+            diosmectite.manufacturer,
+            "博福-益普生（天津）制药有限公司",
+        )
+        self.assertEqual(diosmectite.dosage, "管理员校订且未复核的用量")
+        self.assertEqual(
+            ibuprofen.manufacturer,
+            "中美天津史克制药有限公司",
+        )
+        self.assertEqual(ibuprofen.contraindications, ["管理员校订且未复核的禁忌"])
+        for medicine in (diosmectite, ibuprofen):
+            self.assertEqual(medicine.safety_review_status, "draft")
+            self.assertEqual(medicine.safety_reviewed_by, "")
+            self.assertEqual(medicine.safety_reviewed_at, "")
+            self.assertTrue(medicine.package_verified)
 
     def test_inventory_upgrade_does_not_replace_an_admin_modified_old_id(self) -> None:
         repository = MedicineRepository()

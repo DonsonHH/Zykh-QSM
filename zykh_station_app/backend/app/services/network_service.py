@@ -9,8 +9,7 @@ from pathlib import Path
 
 from .. import db
 from ..config import APP_ROOT, settings
-from .local_ai_client import LocalAiClient
-from .local_inquiry_status import local_inquiry_status
+from ..modules.presentation_mode import PresentationModePolicy
 from .qsm_client import QsmClient
 
 
@@ -54,18 +53,14 @@ class NetworkService:
         )
         sim_connected = bool(qsm_connected or sim_transport_ready)
         sim_present = bool(qsm_sim_present or sim_ip)
-        local_ai = local_inquiry_status(LocalAiClient().status())
-        local_ai_ready = bool(local_ai.get("ready"))
-        local_rule_mode = local_ai.get("mode") == "offline_rules"
         local_label = "本地模式"
-        local_ai_mode = "offline_rules" if local_rule_mode else "local_llm" if local_ai_ready else "local_unavailable"
-        local_warnings = [] if local_ai_ready else ["本地问询服务尚未就绪。"]
         sim_enabled = self._bool_setting("sim_enabled", True)
         sim_identity = self._sim_identity(qsm_network, qsm_at)
-        display_local = preferred in {"local", "offline"}
+        route = PresentationModePolicy.resolve(preferred)
         presentation = {
-            "display_mode": "local" if display_local else "online",
-            "realtime_sync_enabled": not display_local,
+            "display_mode": route.display_mode,
+            "realtime_sync_enabled": route.realtime_sync_enabled,
+            "ai_mode": route.ai_mode,
         }
 
         if wifi["wifi_connected"]:
@@ -76,8 +71,6 @@ class NetworkService:
                 "status": "good",
                 "signal": "good",
                 "label": "联网正常",
-                "ai_mode": "cloud",
-                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip or sim_ip,
                 "default_interface": default_iface,
@@ -112,8 +105,6 @@ class NetworkService:
                 "status": "good",
                 "signal": "good",
                 "label": "SIM网络",
-                "ai_mode": "cloud",
-                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
@@ -141,8 +132,6 @@ class NetworkService:
                 "status": "offline",
                 "signal": "none",
                 "label": local_label,
-                "ai_mode": local_ai_mode,
-                "local_ai": local_ai,
                 "sim_interface": str(qsm_network.get("interface") or interface),
                 "sim_ip": qsm_ip,
                 "default_interface": str(qsm_network.get("default_interface") or default_iface),
@@ -162,7 +151,6 @@ class NetworkService:
                     "数据网络已连接，但主机备用通道未就绪。"
                     if qsm_connected
                     else "外设已检测到 SIM 模块，但数据网络未连通。",
-                    *local_warnings,
                 ],
             }
 
@@ -174,8 +162,6 @@ class NetworkService:
                 "status": "good",
                 "signal": "good",
                 "label": "SIM网络",
-                "ai_mode": "cloud",
-                "local_ai": local_ai,
                 "sim_interface": interface,
                 "sim_ip": sim_ip,
                 "default_interface": default_iface,
@@ -200,8 +186,6 @@ class NetworkService:
             "status": "offline",
             "signal": "none",
             "label": local_label,
-            "ai_mode": local_ai_mode,
-            "local_ai": local_ai,
             "sim_interface": interface,
             "sim_ip": sim_ip,
             "default_interface": default_iface,
@@ -216,7 +200,7 @@ class NetworkService:
             **sim_signal_data,
             "simulated": False,
             **presentation,
-            "warnings": ["未检测到可用 SIM 出口。", *local_warnings],
+            "warnings": ["未检测到可用 SIM 出口。"],
         }
 
     def set_mode(self, mode: str) -> dict[str, object]:

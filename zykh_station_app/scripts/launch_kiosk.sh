@@ -13,7 +13,6 @@ KIOSK_SAFE_GRAPHICS="${KIOSK_SAFE_GRAPHICS:-1}"
 KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
-KIOSK_OFFLINE_AI="${KIOSK_OFFLINE_AI:-1}"
 KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
 KIOSK_TOUCH_KEYBOARD="${KIOSK_TOUCH_KEYBOARD:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
@@ -591,32 +590,12 @@ install_qsm_tether_helper_if_needed
 start_backend_if_needed
 sh "$ROOT_DIR/scripts/ensure_qsm_gateway.sh" || true
 prepare_sim_fallback
-if [ "$KIOSK_OFFLINE_AI" = "1" ]; then
-  if [ -x "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" ]; then
-    sh "$ROOT_DIR/scripts/ensure_qsm_offline_ai.sh" || warn "QSM 离线模型暂未就绪；云端和安全规则仍可继续使用。"
-  else
-    warn "未找到离线模型检查脚本。"
-  fi
-  log "预热离线问询缓存..."
-  if curl -sS --max-time 90 -X POST "$BACKEND_URL/api/ai/warm-local" \
-    >"$RUN_DIR/local-ai-warmup.log" 2>&1; then
-    log "离线问询缓存预热完成。"
-  else
-    warn "离线问询缓存预热未完成；应用仍会继续启动。"
-  fi
-fi
+sh "$ROOT_DIR/scripts/stop_qsm_offline_ai.sh" || warn "旧的板端问询模型进程未能安全清理。"
 start_frontend_if_needed
 prepare_kiosk_display
 start_audio_relay_if_needed
 prepare_chinese_input_method
 start_touch_keyboard_if_needed
-log "预热主机离线语音模型..."
-if curl -sS --max-time 60 -X POST "$BACKEND_URL/api/audio/host/warmup" \
-  >"$RUN_DIR/host-tts-warmup.log" 2>&1; then
-  log "主机离线语音模型预热完成。"
-else
-  warn "主机离线语音模型预热未完成；应用仍会继续启动。"
-fi
 
 BROWSER="$(find_browser || true)"
 if [ -z "$BROWSER" ]; then

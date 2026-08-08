@@ -105,15 +105,10 @@ function signalLabel(name, connected, bars, dbm, percent) {
 
 export function localNetworkCopy(networkStatus) {
   if (isLocalNetworkMode(networkStatus)) {
-    const localModelReady =
-      Boolean(networkStatus?.local_ai?.ready) ||
-      ["local_llm", "offline_rules"].includes(String(networkStatus?.ai_mode || "").toLowerCase());
     return {
       title: "本地模式",
-      status: "本地语音可用",
-      detail: localModelReady
-        ? "语音输入与播报由设备内能力完成。"
-        : "本地语音服务正在准备，请稍后重试。"
+      status: "设备运行正常",
+      detail: "当前数据已保存在设备中。"
     };
   }
 

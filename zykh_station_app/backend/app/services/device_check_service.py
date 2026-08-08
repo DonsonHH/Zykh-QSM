@@ -4,9 +4,8 @@ from ..config import real_dispense_enabled
 from ..schemas.device import DeviceCheckResponse
 from .qsm_camera_service import QsmCameraService
 from .qsm_client import QsmClient
-from .local_ai_client import LocalAiClient
-from .local_inquiry_status import local_inquiry_status
 from .fingerprint_service import FingerprintService
+from .speech_service import SpeechService
 
 
 class DeviceCheckService:
@@ -14,13 +13,13 @@ class DeviceCheckService:
         self,
         qsm_client: QsmClient | None = None,
         qsm_camera: QsmCameraService | None = None,
-        local_ai: LocalAiClient | None = None,
         fingerprint: FingerprintService | None = None,
+        speech: SpeechService | None = None,
     ) -> None:
         self.qsm_client = qsm_client or QsmClient()
         self.qsm_camera = qsm_camera or QsmCameraService()
-        self.local_ai = local_ai or LocalAiClient()
         self.fingerprint = fingerprint or FingerprintService()
+        self.speech = speech or SpeechService(self.qsm_client)
 
     def check(self) -> DeviceCheckResponse:
         errors: list[str] = []
@@ -30,13 +29,15 @@ class DeviceCheckService:
         qsm_status = self.qsm_client.get_qsm_status()
         vitals = self.qsm_client.read_vitals()
         camera_status = self.qsm_camera.capabilities()
-        local_ai_status = local_inquiry_status(self.local_ai.status())
+        speech_status = self.speech.status()
+        offline_voice = speech_status.get("offline")
+        offline_voice = offline_voice if isinstance(offline_voice, dict) else {}
         fingerprint_status = self.fingerprint.status()
 
         qsm_status_ok = qsm_status.connected if qsm_status.mode == "real" else True
         vitals_ok = True if qsm_status.mode != "real" else vitals.get("source") == "real"
         camera_ok = camera_status == "available"
-        local_ai_ok = bool(local_ai_status.get("ready"))
+        offline_tts_ok = bool(speech_status.get("offline_available"))
         fingerprint_ok = fingerprint_status.ok
 
         if qsm_status.mode == "real" and not qsm_status.connected:
@@ -51,9 +52,9 @@ class DeviceCheckService:
         if not camera_ok:
             warnings.append("外设摄像头暂不可用。")
             recommendations.append("请检查外设摄像头连接和摄像头网关服务。")
-        if not local_ai_ok:
-            warnings.append("离线问询暂未就绪。")
-            recommendations.append("请运行 scripts/deploy_offline_ai.sh 或检查 QSM 模型进程。")
+        if not offline_tts_ok:
+            warnings.append("本地语音暂未就绪。")
+            recommendations.append("请运行 scripts/deploy_offline_tts.sh 或检查外设语音资源。")
         if not fingerprint_ok:
             warnings.append("指纹模块暂不可用。")
             recommendations.append("请检查 AS608 USB 连接、指纹网关和 18086 端口转发；取药时可改用面部确认。")
@@ -77,9 +78,10 @@ class DeviceCheckService:
             fingerprint_ok=fingerprint_ok,
             fingerprint_status=fingerprint_status.status,
             fingerprint_bound_users=fingerprint_status.bound_users,
-            local_ai_ok=local_ai_ok,
-            local_ai_model=str(local_ai_status.get("model") or ""),
-            local_ai_status=str(local_ai_status.get("status") or "unavailable"),
+            offline_tts_ok=offline_tts_ok,
+            offline_tts_engine=str(offline_voice.get("engine") or ""),
+            offline_tts_model=str(offline_voice.get("model") or ""),
+            offline_tts_status="available" if offline_tts_ok else "unavailable",
             dispense_dry_run=not real_dispense_enabled(),
             errors=errors,
             warnings=warnings,

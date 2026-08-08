@@ -3,6 +3,9 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+MEDICINE_COMBINATION_CLINICAL_POLICY_VERSION = "case-applicability-v1"
+
+
 class Medicine(BaseModel):
     id: str
     slot: str
@@ -80,11 +83,36 @@ class MedicineUpdateResponse(BaseModel):
     medicine: Medicine
 
 
+class MedicineCombinationApplicability(BaseModel):
+    required_all_facts: list[str] = Field(default_factory=list)
+    required_any_facts: list[str] = Field(default_factory=list)
+    must_be_absent_facts: list[str] = Field(default_factory=list)
+    member_required_any_facts: dict[str, list[str]] = Field(default_factory=dict)
+    allowed_risk_levels: list[str] = Field(default_factory=list)
+    min_age_years: int | None = Field(default=None, ge=0, le=130)
+    max_age_years: int | None = Field(default=None, ge=0, le=130)
+
+
+class MedicineCombinationEvidenceRef(BaseModel):
+    source_title: str = ""
+    source_url: str = ""
+    supports: str = ""
+
+
 class ApprovedMedicineCombination(BaseModel):
     combination_id: str
     label: str
     medicine_ids: list[str] = Field(default_factory=list)
     member_identity_fingerprints: dict[str, str] = Field(default_factory=dict)
+    clinical_policy_version: str = ""
+    applicability: MedicineCombinationApplicability = Field(
+        default_factory=MedicineCombinationApplicability
+    )
+    member_review_fingerprints: dict[str, str] = Field(default_factory=dict)
+    reviewed_usage_by_medicine: dict[str, str] = Field(default_factory=dict)
+    evidence_refs: list[MedicineCombinationEvidenceRef] = Field(default_factory=list)
+    provenance: str = ""
+    review_note: str = ""
     review_status: str = "draft"
     reviewed_by: str = ""
     reviewed_at: str = ""

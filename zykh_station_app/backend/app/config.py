@@ -57,9 +57,16 @@ def _resolve_inquiry_reasoning_effort(
     return "high" if legacy_enabled else "off"
 
 
+def _resolve_ai_mode(_configured: str | None) -> str:
+    # Presentation mode never changes the model provider. The production
+    # runtime always uses the configured cloud endpoint; deterministic rules
+    # remain the only continuity fallback.
+    return "cloud"
+
+
 def _resolve_offline_inquiry_mode(configured: str | None) -> str:
-    normalized = str(configured or "").strip().lower()
-    return normalized if normalized in {"model", "rules"} else "model"
+    del configured
+    return "rules"
 
 
 DATA_DIR = Path(_env("ZYKH_STATION_DATA_DIR", str(APP_ROOT / "data")))
@@ -196,7 +203,7 @@ class Settings:
     local_camera_device: str = _env("LOCAL_CAMERA_DEVICE", "auto")
     local_camera_capture_cmd: str = _env("LOCAL_CAMERA_CAPTURE_CMD", "")
     medicine_scan_cmd: str = _env("MEDICINE_SCAN_CMD", "")
-    ai_mode: str = _env("AI_MODE", "auto").strip().lower()
+    ai_mode: str = _resolve_ai_mode(_optional_env("AI_MODE"))
     ai_cloud_in_local_display: bool = _env(
         "AI_CLOUD_IN_LOCAL_DISPLAY", "true"
     ).strip().lower() in {

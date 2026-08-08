@@ -12,6 +12,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.ai_service import AiService  # noqa: E402
 from app.config import (  # noqa: E402
+    _resolve_ai_mode,
     _resolve_offline_inquiry_mode,
     _resolve_inquiry_reasoning_effort,
 )
@@ -259,10 +260,14 @@ class AiServiceTest(unittest.TestCase):
         self.assertTrue(result["rules_fallback_ready"])
         self.assertTrue(result["offline_inquiry_ready"])
 
-    def test_offline_inquiry_defaults_to_the_qsm_model(self) -> None:
-        self.assertEqual(_resolve_offline_inquiry_mode(None), "model")
-        self.assertEqual(_resolve_offline_inquiry_mode(""), "model")
+    def test_cloud_first_inquiry_defaults_to_rules_only_as_failure_continuity(self) -> None:
+        self.assertEqual(_resolve_ai_mode(None), "cloud")
+        self.assertEqual(_resolve_ai_mode("local"), "cloud")
+        self.assertEqual(_resolve_ai_mode("auto"), "cloud")
+        self.assertEqual(_resolve_offline_inquiry_mode(None), "rules")
+        self.assertEqual(_resolve_offline_inquiry_mode(""), "rules")
         self.assertEqual(_resolve_offline_inquiry_mode("rules"), "rules")
+        self.assertEqual(_resolve_offline_inquiry_mode("model"), "rules")
 
     @patch("app.services.ai_service.settings")
     def test_local_model_failure_uses_rules_only_for_dialogue_continuity(
@@ -286,7 +291,7 @@ class AiServiceTest(unittest.TestCase):
 
     @patch("app.services.ai_service.urlopen", side_effect=TimeoutError("cloud timeout"))
     @patch("app.services.ai_service.settings")
-    def test_cloud_failure_tries_the_qsm_model_before_rules(
+    def test_cloud_failure_uses_rules_without_calling_the_qsm_model(
         self,
         mocked_settings,
         _mocked_urlopen,
@@ -325,13 +330,43 @@ class AiServiceTest(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["source"], "local_llm")
-        self.assertTrue(client.last_messages)
+        self.assertEqual(result["source"], "offline_rules")
+        self.assertEqual(client.last_messages, [])
+
+    @patch("app.services.ai_service.settings")
+    def test_cloud_unavailable_never_lets_rules_select_medicines(
+        self,
+        mocked_settings,
+    ) -> None:
+        mocked_settings.ai_mode = "cloud"
+        mocked_settings.offline_inquiry_mode = "rules"
+        mocked_settings.ai_api_key = ""
+        mocked_settings.ai_api_key_file = Path("/nonexistent")
+
+        result = AiService().rank_inquiry_candidates(
+            {"case_summary": "成人水样腹泻，能喝水，没有便血或持续高热"},
+            [
+                {
+                    "id": "slot-03-diosmectite",
+                    "name": "蒙脱石散",
+                    "category": "肠胃",
+                },
+                {
+                    "id": "slot-09-bifid-triple",
+                    "name": "双歧杆菌三联活菌肠溶胶囊",
+                    "category": "肠胃",
+                },
+            ],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["source"], "rules_fallback")
+        self.assertEqual(result["options"], [])
 
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.AiService._cloud_reachable", return_value=False)
     @patch("app.services.ai_service.settings")
-    def test_auto_mode_uses_qsm_when_cloud_is_unreachable(
+    def test_legacy_auto_mode_uses_rules_when_cloud_is_unreachable(
         self,
         mocked_settings,
         _mocked_cloud_reachable,
@@ -362,7 +397,8 @@ class AiServiceTest(unittest.TestCase):
             {"name": "现场应急对象"},
         )
 
-        self.assertEqual(result["source"], "local_llm")
+        self.assertEqual(result["source"], "offline_rules")
+        self.assertEqual(client.last_messages, [])
         mocked_urlopen.assert_not_called()
 
     @patch("app.services.ai_service.settings")
@@ -465,6 +501,112 @@ class AiServiceTest(unittest.TestCase):
         self.assertEqual(request_payload["reasoning"], {"effort": "high"})
         self.assertEqual(request_payload["max_output_tokens"], 8192)
         self.assertNotIn("messages", request_payload)
+
+    @patch("app.services.ai_service.urlopen")
+    @patch("app.services.ai_service.settings")
+    def test_final_ranking_sends_only_authorized_combinations_and_requires_their_token(
+        self,
+        mocked_settings,
+        mocked_urlopen,
+    ) -> None:
+        configure_cloud(mocked_settings)
+        authorized = {
+            "combination_id": "adult-watery-diarrhea-separated",
+            "label": "成人水样腹泻分时用药",
+            "medicine_ids": ["m1", "m2"],
+            "reviewed_usage_by_medicine": {
+                "m1": "先按说明书使用。",
+                "m2": "间隔至少 2 小时后按说明书使用。",
+            },
+            "authorization_fingerprint": "authorization-token",
+        }
+        mocked_urlopen.return_value = FakeHttpResponse(
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(
+                                    {
+                                        "assessment": {
+                                            "summary": "当前符合受控分时方案的适用条件。",
+                                            "possible_conditions": [],
+                                            "next_steps": ["优先补液"],
+                                            "seek_care_if": ["出现便血或持续高热"],
+                                        },
+                                        "options": [
+                                            {
+                                                "option_id": "primary",
+                                                "label": "分时方案",
+                                                "reason": "符合当前病例条件。",
+                                                "combination_id": authorized[
+                                                    "combination_id"
+                                                ],
+                                                "authorization_fingerprint": authorized[
+                                                    "authorization_fingerprint"
+                                                ],
+                                                "medicine_ids": authorized["medicine_ids"],
+                                                "reason_by_medicine": {},
+                                                "usage_by_medicine": {},
+                                            }
+                                        ],
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        result = AiService().rank_inquiry_candidates(
+            {"case_summary": "成人低风险水样腹泻"},
+            [{"id": "m1"}, {"id": "m2"}],
+            allowed_combinations=[authorized],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["options"][0]["combination_id"],
+            authorized["combination_id"],
+        )
+        request_payload = json.loads(
+            mocked_urlopen.call_args.args[0].data.decode("utf-8")
+        )
+        model_input = json.loads(request_payload["input"])
+        self.assertEqual(model_input["allowed_combinations"], [authorized])
+        self.assertIn("不能自由拼接多个药品", request_payload["instructions"])
+
+    def test_final_ranking_contract_rejects_free_form_multi_medicine_options(self) -> None:
+        base = {
+            "assessment": {
+                "summary": "仍需观察。",
+                "possible_conditions": [],
+                "next_steps": ["继续观察"],
+                "seek_care_if": ["症状加重"],
+            },
+            "options": [
+                {
+                    "option_id": "primary",
+                    "label": "模型自由拼药",
+                    "reason": "不应被接受",
+                    "medicine_ids": ["m1", "m2"],
+                }
+            ],
+        }
+
+        self.assertFalse(AiService._valid_inquiry_ranking_payload(base))
+        base["options"][0].update(
+            {
+                "combination_id": "approved-combination",
+                "authorization_fingerprint": "authorization-token",
+            }
+        )
+        self.assertTrue(AiService._valid_inquiry_ranking_payload(base))
 
     @patch("app.services.ai_service.urlopen")
     @patch("app.services.ai_service.settings")
