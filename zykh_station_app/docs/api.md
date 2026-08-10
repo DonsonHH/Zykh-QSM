@@ -251,9 +251,10 @@ finishes the spoken guidance, pauses for 3 seconds, then renders the vitals tool
 inside the inquiry flow. It does not navigate away or transfer results through
 browser storage. A completed tool result must carry the board-issued
 `vitals_session_id`; the server reloads that exact completed measurement and
-requires the same inquiry session, service user and `persona_generation` before
-accepting any value. Client-submitted metric values and provenance are replaced
-with the trusted persisted record. Returning from a completed measurement preserves the measured
+requires the same inquiry session plus either the same registered service user
+and `persona_generation`, or the same guest inquiry with both identity fields
+empty, before accepting any value. Client-submitted metric values and provenance
+are replaced with the trusted persisted record. Returning from a completed measurement preserves the measured
 values and immediately replaces the tool with a visible processing state while
 the final model analysis is pending; the information-review view appears when the
 response arrives. Cloud turn extraction, Responses final analysis and
@@ -265,15 +266,20 @@ Before recommendation, deterministic code can only raise risk for non-negotiable
 danger signals and builds a pool from the latest cabinet rows. It filters stock,
 expiry, verified package guidance, OTC or existing-plan eligibility, allergies,
 chronic contraindications, current-episode medicine aliases and duplicate active
-ingredients. The model receives a smaller symptom-focused subset plus members of
-any case-authorized combination and may choose at most one primary and one
+ingredients. Symptom focusing uses the persisted user wording together with the
+extracted observations, expands reviewed colloquial equivalents, and prefers the
+controlled catalog-use mappings; generic case words, dates and vital-sign digits
+cannot create incidental medicine matches. The model receives that smaller
+symptom-focused subset plus members of any case-authorized combination and may choose at most one primary and one
 alternative, or choose none. A single-medicine option must contain exactly one
 candidate ID. A multi-medicine option is accepted only when it echoes one exact
 server-provided `combination_id`, ordered member list and
 `authorization_fingerprint`; free-form multiple IDs are invalid.
 The cabinet is read again after ranking before anything is displayed. Responses
 and Chat Completions ranking outputs use the same complete `assessment + options`
-contract and validator. If the cloud model routes are unavailable or
+contract and validator. A non-empty model selection that is removed by the
+local validator is reported as a retryable matching failure, not mislabeled as
+proof that no suitable medicine exists. If the cloud model routes are unavailable or
 return invalid structure, deterministic rules preserve bounded follow-up and
 danger-signal handling only. The session remains retryable, returns no final
 assessment or candidate and does not expose connection or fallback terminology
@@ -409,10 +415,13 @@ start byte `0x24`.
 The request defaults to `source_route=HOME` and must not include an inquiry ID;
 those measurements are persisted as `attribution_source=UNREGISTERED`. Embedded
 inquiry measurement sends `source_route=INQUIRY` plus the current
-`inquiry_session_id`. The server resolves the active service user and
-`persona_generation` from that persisted inquiry; clients cannot submit a person
-ID or name. A missing, unregistered or archived inquiry identity returns HTTP
-422 before the gateway session starts.
+`inquiry_session_id`. For a registered person, the server resolves the active
+service user and `persona_generation` from that persisted inquiry; clients
+cannot submit a person ID or name. A guest inquiry is also accepted, but its
+measurement remains bound only to that exact inquiry session and guest-name
+snapshot, with empty person ID and generation, so it cannot be mistaken for a
+registered profile. A missing session, invalid stage, archived person or changed
+registered-person generation returns HTTP 422 before the gateway session starts.
 
 ### GET /api/vitals/session/{session_id}
 

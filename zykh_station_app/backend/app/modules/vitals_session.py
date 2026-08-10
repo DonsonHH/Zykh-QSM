@@ -92,10 +92,19 @@ class VitalsSessionModule:
         if route != "INQUIRY" or not inquiry_id:
             raise ValueError("问询体征测量缺少有效问询会话。")
         session = InquiryRepository().get_session(inquiry_id)
-        if session is None or not session.user_id.strip():
-            raise ValueError("问询会话没有可归属的已登记人物。")
+        if session is None:
+            raise ValueError("问询体征测量缺少有效问询会话。")
         if session.stage != "vitals" or session.next_action != "measure_vitals":
             raise ValueError("问询会话当前阶段不允许启动体征测量。")
+        if not session.user_id.strip():
+            return {
+                "source_route": "INQUIRY",
+                "inquiry_session_id": inquiry_id,
+                "attribution_source": "INQUIRY_SESSION",
+                "service_user_id": "",
+                "service_user_name_snapshot": session.user_name,
+                "persona_generation": "",
+            }
         session_generation = session.persona_generation.strip()
         if not session_generation:
             raise ValueError("问询会话缺少人物代次快照，不能启动体征测量。")

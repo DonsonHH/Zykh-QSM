@@ -356,6 +356,61 @@ class VitalsSessionModuleTest(unittest.TestCase):
         self.assertEqual(cloud["serviceUserId"], "wang-nainai")
         self.assertEqual(cloud["personaGeneration"], started.persona_generation)
 
+    def test_guest_inquiry_can_complete_vitals_without_binding_a_registered_person(self) -> None:
+        InquiryRepository().save_session(
+            InquirySessionResponse(
+                session_id="inquiry-guest-vitals",
+                user_id="",
+                user_name="现场访客",
+                persona_generation="",
+                stage="vitals",
+                reply="请测量体征",
+                next_action="measure_vitals",
+                created_at="2026-08-11 10:00:00",
+                updated_at="2026-08-11 10:00:00",
+            )
+        )
+        start_gateway = InMemoryVitalsGateway({"ok": True, "status": "starting"})
+
+        started = VitalsSessionModule(gateway=start_gateway).start(
+            source_route="INQUIRY",
+            inquiry_session_id="inquiry-guest-vitals",
+        )
+
+        self.assertEqual(started.source_route, "INQUIRY")
+        self.assertEqual(started.inquiry_session_id, "inquiry-guest-vitals")
+        self.assertEqual(started.attribution_source, "INQUIRY_SESSION")
+        self.assertEqual(started.service_user_id, "")
+        self.assertEqual(started.service_user_name_snapshot, "现场访客")
+        self.assertEqual(started.persona_generation, "")
+        complete_gateway = InMemoryVitalsGateway(
+            {
+                "ok": True,
+                "mode": "real",
+                "status": "complete",
+                "hardware_started": True,
+                "temperature": 36.6,
+                "heart_rate": 72,
+                "spo2": 98,
+                "temperature_source": "gy614_sensor",
+                "heart_rate_source": "uart8_sensor",
+                "spo2_source": "uart8_sensor",
+                "source": "UART8-vitals-24B+GY-614",
+                "measured_at": "2026-08-11T10:01:00+08:00",
+            }
+        )
+
+        completed = VitalsSessionModule(gateway=complete_gateway).get(started.session_id)
+        record = VitalsRepository().latest()
+        assert record is not None
+
+        self.assertEqual(completed.status, "complete")
+        self.assertEqual(record.inquiry_session_id, "inquiry-guest-vitals")
+        self.assertEqual(record.attribution_source, "INQUIRY_SESSION")
+        self.assertEqual(record.service_user_id, "")
+        self.assertEqual(record.service_user_name_snapshot, "现场访客")
+        self.assertEqual(record.persona_generation, "")
+
     def test_new_service_user_and_inquiry_snapshot_receive_a_server_generation(self) -> None:
         person = RecordsService().create_service_user(
             ServiceUserCreateRequest(name="体征归属测试人物")

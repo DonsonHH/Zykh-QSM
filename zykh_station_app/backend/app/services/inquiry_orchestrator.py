@@ -940,6 +940,19 @@ class InquiryOrchestrator:
                             ranking,
                             fresh_ranking_pool,
                         )
+                    raw_rank_options = ranking.get("options")
+                    if (
+                        isinstance(raw_rank_options, list)
+                        and raw_rank_options
+                        and not options
+                    ):
+                        # A model-selected ID that is outside the focused pool,
+                        # stale, or otherwise rejected by the deterministic
+                        # validator is a failed match, not evidence that the
+                        # cabinet has no suitable medicine. Keep the session
+                        # retryable so history and the UI do not mislabel it.
+                        rank_failed = True
+                        rank_message = "模型返回的药品方案未通过本地安全核验。"
                 else:
                     rank_failed = True
             elif ranking_pool:
@@ -1487,7 +1500,16 @@ class InquiryOrchestrator:
             history_text=session.user_profile,
             allergy_text=allergy_text,
             used_medicines_text=used_medicines,
-            relevance_text=self._candidate_retrieval_text(extracted),
+            relevance_text="；".join(
+                dict.fromkeys(
+                    value.strip()
+                    for value in (
+                        self._candidate_retrieval_text(extracted),
+                        *self._recorded_user_evidence(session.session_id),
+                    )
+                    if value and value.strip()
+                )
+            ),
             existing_direction_ids=existing_direction_ids,
         )
 

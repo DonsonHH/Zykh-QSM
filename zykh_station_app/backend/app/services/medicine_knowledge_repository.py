@@ -4,10 +4,14 @@ from dataclasses import dataclass
 from datetime import date
 import re
 
-from ..repositories.medicine_repository import MedicineRepository
+from ..repositories.medicine_repository import (
+    BUNDLED_LABEL_SAFETY_IDS,
+    MedicineRepository,
+)
 from ..schemas.inquiry import CandidateMedicine, TreatmentMedicine, TreatmentOption
 from ..schemas.medicine import Medicine
 from .medicine_combination_policy import CombinationAuthorization
+from .offline_inquiry_rules import OfflineInquiryRules, RULES
 
 
 CHRONIC_CONDITION_TERMS_BY_CODE: dict[str, tuple[str, ...]] = {
@@ -47,6 +51,83 @@ IBUPROFEN_CONCURRENT_ANALGESIC_TERMS = (
     "洛索洛芬",
     "酮洛芬",
     "对乙酰氨基酚",
+)
+
+# Retrieval-only equivalents bridge common spoken symptom wording to the
+# reviewed terminology already stored in the medicine label fields. They do
+# not make a treatment decision or bypass any availability/safety filter.
+RETRIEVAL_TERM_EQUIVALENTS: tuple[tuple[str, str], ...] = (
+    ("发烧", "发热"),
+    ("发热", "退热"),
+    ("头疼", "头痛"),
+    ("喉咙疼", "咽痛"),
+    ("喉咙痛", "咽痛"),
+    ("嗓子疼", "咽痛"),
+    ("嗓子痛", "咽痛"),
+    ("咽喉疼", "咽痛"),
+    ("咽喉痛", "咽痛"),
+    ("喉咙疼", "咽喉不适"),
+    ("喉咙痛", "咽喉不适"),
+    ("嗓子疼", "咽喉不适"),
+    ("嗓子痛", "咽喉不适"),
+    ("咽喉疼", "咽喉不适"),
+    ("咽喉痛", "咽喉不适"),
+    ("拉肚子", "腹泻"),
+    ("窜稀", "腹泻"),
+    ("暑湿", "暑热"),
+    ("清水样鼻涕", "清水鼻涕"),
+    ("鼻涕像清水", "清水鼻涕"),
+    ("流鼻水", "流涕"),
+    ("打喷嚏", "连续打喷嚏"),
+    ("肚子有点痛", "胃痛"),
+    ("肚子痛", "胃痛"),
+    ("肚子疼", "胃痛"),
+    ("腹痛", "胃痛"),
+    ("胃肠不适", "胃部不适"),
+    ("舌头上打了个泡", "口腔起泡"),
+    ("舌头上起泡", "口腔起泡"),
+    ("舌头起泡", "口腔起泡"),
+    ("脚扭了", "扭伤"),
+    ("扭脚", "扭伤"),
+    ("血压高", "血压管理"),
+    ("高血压", "血压管理"),
+    ("降压", "血压管理"),
+)
+RETRIEVAL_STOP_NGRAMS = frozenset(
+    {
+        "一般",
+        "不适",
+        "今天",
+        "使用",
+        "出现",
+        "开始",
+        "当前",
+        "患者",
+        "成人",
+        "本次",
+        "相关",
+        "目前",
+        "症状",
+        "用于",
+        "需要",
+    }
+)
+CLINICIAN_GATED_RULE_KEYS = frozenset(
+    {"influenza", "bacterial_respiratory", "bacterial_skin", "fungus"}
+)
+CLINICIAN_GATED_RETRIEVAL_IDS = frozenset(
+    {
+        medicine_id
+        for rule in RULES
+        if rule.key in CLINICIAN_GATED_RULE_KEYS
+        for medicine_id in (*rule.medicine_ids, *rule.alternative_ids)
+    }
+    - {
+        medicine_id
+        for rule in RULES
+        if rule.key not in CLINICIAN_GATED_RULE_KEYS
+        for medicine_id in (*rule.medicine_ids, *rule.alternative_ids)
+    }
 )
 
 
@@ -141,6 +222,7 @@ class MedicineKnowledgeRepository:
             used_context = f"已用药：{used_context}"
         for candidate in related:
             medicine = by_id[candidate.id]
+            blocked = False
             used_reference = self._used_medicine_conflict_reference(
                 medicine,
                 used_context,
@@ -158,8 +240,11 @@ class MedicineKnowledgeRepository:
                         trigger=used_reference,
                     )
                 )
-                continue
-            if self.has_allergy_conflict(medicine, allergy_context):
+                blocked = True
+            if (
+                (not used_reference or bool(context.allergy_text.strip()))
+                and self.has_allergy_conflict(medicine, allergy_context)
+            ):
                 notices.append(
                     MedicineSafetyNotice(
                         code="allergy_conflict",
@@ -168,8 +253,11 @@ class MedicineKnowledgeRepository:
                         medicine_name=medicine.name,
                     )
                 )
-                continue
-            if self.has_chronic_condition_conflict(medicine, history_context):
+                blocked = True
+            if (
+                (not used_reference or bool(context.history_text.strip()))
+                and self.has_chronic_condition_conflict(medicine, history_context)
+            ):
                 notices.append(
                     MedicineSafetyNotice(
                         code="history_contraindication",
@@ -178,6 +266,8 @@ class MedicineKnowledgeRepository:
                         medicine_name=medicine.name,
                     )
                 )
+                blocked = True
+            if blocked:
                 continue
             if len(candidates) < limit:
                 candidates.append(candidate)
@@ -463,39 +553,125 @@ class MedicineKnowledgeRepository:
         """Retrieve a small relevant subset without making the medicine decision."""
         if not candidates or limit <= 0:
             return []
-        query = re.sub(r"\s+", "", str(case_text or "").lower())
+        raw_query = str(case_text or "").lower()
+        expanded_terms = [
+            reviewed_term
+            for spoken_term, reviewed_term in RETRIEVAL_TERM_EQUIVALENTS
+            if cls._has_unnegated_retrieval_term(raw_query, spoken_term)
+        ]
+        query = "；".join((raw_query, *expanded_terms))
+        controlled_ids = cls._controlled_retrieval_ids(query)
         query_ngrams = cls._text_ngrams(query)
-        if not query_ngrams:
+        if not query_ngrams and not controlled_ids:
             return []
         scored: list[tuple[int, int, CandidateMedicine]] = []
         for index, candidate in enumerate(candidates):
+            if (
+                candidate.id in CLINICIAN_GATED_RETRIEVAL_IDS
+                and candidate.id not in controlled_ids
+            ):
+                continue
             fields = [
                 candidate.name,
                 candidate.category,
                 candidate.indications,
                 *candidate.tags,
+                *candidate.aliases,
             ]
-            document = re.sub(r"\s+", "", " ".join(fields).lower())
+            document = " ".join(fields).lower()
             overlap = len(query_ngrams & cls._text_ngrams(document))
             direct = sum(
                 4
-                for term in (candidate.category, *candidate.tags)
-                if len(term.strip()) >= 2 and term.strip().lower() in query
+                for term in (
+                    candidate.name,
+                    candidate.category,
+                    *candidate.tags,
+                    *candidate.aliases,
+                )
+                if (
+                    len(term.strip()) >= 2
+                    and cls._has_unnegated_retrieval_term(
+                        query,
+                        term.strip().lower(),
+                    )
+                )
             )
-            scored.append((overlap + direct, -index, candidate))
+            if (
+                candidate.id in BUNDLED_LABEL_SAFETY_IDS
+                and candidate.id not in controlled_ids
+                and not direct
+            ):
+                continue
+            controlled = 16 if candidate.id in controlled_ids else 0
+            if controlled or direct or overlap >= 2:
+                scored.append((overlap + direct + controlled, -index, candidate))
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        if not scored or scored[0][0] < 1:
+        if not scored:
             return []
-        reliable_matches = [item for item in scored if item[0] >= 1]
-        return [item[2] for item in reliable_matches[:limit]]
+        return [item[2] for item in scored[:limit]]
+
+    @classmethod
+    def _controlled_retrieval_ids(cls, query: str) -> set[str]:
+        """Map reviewed spoken symptom rules to retrieval IDs only.
+
+        ``_available`` and the later safety/ranking stages still decide whether
+        any mapped item can be shown or used.
+        """
+        matched_ids: set[str] = set()
+        for rule in RULES:
+            concept = rule.concept.strip().lower()
+            matched = bool(
+                concept
+                and cls._has_unnegated_retrieval_term(query, concept)
+            ) or any(
+                cls._has_unnegated_retrieval_term(query, term)
+                for term in rule.terms
+            )
+            if not matched:
+                continue
+            primary_ids, alternative_ids = OfflineInquiryRules._conditional_medicine_ids(
+                rule,
+                query,
+            )
+            matched_ids.update((*primary_ids, *alternative_ids))
+        return matched_ids
+
+    @staticmethod
+    def _has_unnegated_retrieval_term(text: str, term: str) -> bool:
+        matches = list(re.finditer(re.escape(term), str(text or ""), flags=re.IGNORECASE))
+        if not matches:
+            return False
+        for match in matches:
+            start = match.start()
+            clause_start = max(
+                str(text or "").rfind(separator, 0, start)
+                for separator in ("。", "；", ";", "！", "？")
+            )
+            prefix = str(text or "")[clause_start + 1:start]
+            direct = re.search(
+                r"(?:(?:没有|并没有|没|无|否认|不是|并不)"
+                r"(?:明显|什么|任何|一点|怎么)?[^。；;，,但是不过却]{0,14}|"
+                r"不(?:明显|怎么)?(?:是)?)$",
+                prefix,
+            )
+            if direct is None:
+                return True
+            negation_start = direct.start()
+            if re.search(r"(?:但是|但|不过|却|现在|目前)", prefix[negation_start:]):
+                return True
+        return False
 
     @staticmethod
     def _text_ngrams(value: str) -> set[str]:
-        compact = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value or "")
+        chunks = re.findall(r"[a-z]+|[\u4e00-\u9fff]+", str(value or "").lower())
         return {
-            compact[index:index + 2]
-            for index in range(max(0, len(compact) - 1))
-            if len(compact[index:index + 2]) == 2
+            chunk[index:index + 2]
+            for chunk in chunks
+            for index in range(max(0, len(chunk) - 1))
+            if (
+                len(chunk[index:index + 2]) == 2
+                and chunk[index:index + 2] not in RETRIEVAL_STOP_NGRAMS
+            )
         }
 
     @staticmethod

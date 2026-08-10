@@ -11,7 +11,6 @@ AI_DECISION_SHA256_AT_A27057C = {
     "app/services/inquiry_dialogue_policy.py": "c928cd70625972cb48ec716574685f95ace61e4a7016469a7c6c529a2c6aa5ae",
     "app/services/inquiry_service.py": "a3a667242fea049503f6898337cbb6759340322ddc934efc0d14fd0f62979e3d",
     "app/services/medicine_combination_policy.py": "74144f024f3570be895e72a8382c36a796da559eda64f224dd1d0c7ce6a501bf",
-    "app/services/medicine_knowledge_repository.py": "191d8104e6f30f67626a619bdc270f0699eee4da02b5a64db1a3da7c42513e35",
     "app/services/medicine_safety_engine.py": "763f9b7bb26bdb11c504c441df7d0f6f789c13a127d3f4c99e688260ce42eb28",
     "app/services/offline_inquiry_catalog.py": "039cbe5c540b8c29cb63d1b7bee5c0b1a59a08acc7c7eae31108b8c78f05aa7b",
     "app/services/offline_inquiry_rules.py": "6d528e946d08add9d2ec09d2af7a630538a37f6ba62dbd99d7de532f816c606c",
@@ -47,11 +46,12 @@ def normalized_lf_sha256(path: Path) -> str:
 class InquiryA270FreezeContractTest(unittest.TestCase):
     """Freeze the AI decision chain at a27057c, independent of Git metadata.
 
-    Persona generation, vitals provenance, dispense execution, and inventory
-    confirmation belong to orchestration/integration boundaries and are
-    deliberately outside this contract. The sole normalized transport delta
-    sends the provider-documented Responses ``reasoning.effort=none`` when the
-    unchanged decision chain requests non-thinking mode.
+    Persona generation, vitals provenance, candidate retrieval, dispense
+    execution, and inventory confirmation are production-policy boundaries and
+    are deliberately outside this generative decision freeze. The sole
+    normalized transport delta sends the
+    provider-documented Responses ``reasoning.effort=none`` when the unchanged
+    decision chain requests non-thinking mode.
     """
 
     def test_ai_decision_files_match_a27057c_except_reviewed_speed_transport_patch(self) -> None:

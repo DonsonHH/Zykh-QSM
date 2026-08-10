@@ -22,6 +22,7 @@ from app.schemas.inquiry import (  # noqa: E402
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
+from app.repositories.inquiry_repository import InquiryRepository  # noqa: E402
 from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.dispense_service import DispenseError  # noqa: E402
@@ -402,6 +403,28 @@ class InquiryOrchestratorTest(unittest.TestCase):
             heart_rate_source="uart8_sensor",
             spo2_source="uart8_sensor",
         )
+
+    def test_guest_inquiry_accepts_its_own_completed_live_vitals(self) -> None:
+        service, interpreter = self.service(
+            [case(action="ask", reply="请描述症状持续了多久。")]
+        )
+        session = self.create(service, service_user_id="")
+        session.stage = "vitals"
+        session.next_action = "measure_vitals"
+        InquiryRepository().save_session(session)
+        request = self.trusted_vitals_request(session)
+
+        updated = service.attach_vitals(session.session_id, request)
+
+        self.assertEqual(updated.vitals["temperature"], 36.5)
+        self.assertEqual(updated.vitals["heart_rate"], 76)
+        self.assertEqual(updated.vitals["spo2"], 98)
+        self.assertEqual(len(interpreter.contexts), 1)
+        measurement = VitalsRepository().latest()
+        assert measurement is not None
+        self.assertEqual(measurement.inquiry_session_id, session.session_id)
+        self.assertEqual(measurement.service_user_id, "")
+        self.assertEqual(measurement.persona_generation, "")
 
     def test_orchestrator_rejects_bypassed_failed_demo_without_side_effects(self) -> None:
         service, interpreter = self.service([case(action="analyze")])
@@ -1625,6 +1648,38 @@ class InquiryOrchestratorTest(unittest.TestCase):
         }
         self.assertNotIn("slot-12-hydrotalcite", shown_ids)
         self.assertFalse(result.can_view_medicines)
+        self.assertEqual(result.stage, "clarification")
+        self.assertEqual(result.next_action, "ask")
+        self.assertIn("药品匹配服务", result.reply)
+
+    def test_candidate_retrieval_keeps_grounded_user_symptoms_dropped_by_extraction(self) -> None:
+        service, interpreter = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="腹痛",
+                    evidence="肚子有点痛",
+                    duration="半天",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking={"ok": True, "source": "cloud", "options": []},
+        )
+
+        service.process_turn(
+            self.create(service).session_id,
+            InquiryTurnRequest(
+                transcript="肚子有点痛，还有一点窜稀，半天了，没有用药也没有过敏"
+            ),
+        )
+
+        seen_ids = {
+            candidate["id"]
+            for candidate in interpreter.rank_candidates_seen[0]["candidates"]
+        }
+        self.assertIn("slot-03-diosmectite", seen_ids)
+        self.assertIn("slot-09-bifid-triple", seen_ids)
 
     def test_used_ingredient_conflict_is_visible_while_another_safe_option_remains(self) -> None:
         service, _ = self.service(

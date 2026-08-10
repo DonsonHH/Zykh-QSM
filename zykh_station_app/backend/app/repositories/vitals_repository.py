@@ -127,32 +127,56 @@ class VitalsRepository:
         inquiry_id = str(inquiry_session_id or "").strip()
         user_id = str(service_user_id or "").strip()
         generation = str(persona_generation or "").strip()
-        if not all((measurement_id != "vitals-session-", inquiry_id, user_id, generation)):
+        if measurement_id == "vitals-session-" or not inquiry_id:
+            return None
+        if bool(user_id) != bool(generation):
             return None
         db.init_db()
         with db.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT r.*
-                FROM vitals_records AS r
-                JOIN service_users AS u ON u.id=r.service_user_id
-                WHERE r.id=? AND r.status='available'
-                  AND r.source_route='INQUIRY'
-                  AND r.attribution_source='INQUIRY_SESSION'
-                  AND r.inquiry_session_id=?
-                  AND r.service_user_id=?
-                  AND r.persona_generation=?
-                  AND r.temperature_source='gy614_sensor'
-                  AND r.heart_rate_source='uart8_sensor'
-                  AND r.spo2_source='uart8_sensor'
-                  AND r.temperature IS NOT NULL AND r.temperature > 0
-                  AND r.heart_rate IS NOT NULL AND r.heart_rate > 0
-                  AND r.spo2 IS NOT NULL AND r.spo2 > 0
-                  AND u.archived=0 AND u.persona_generation=?
-                LIMIT 1
-                """,
-                (measurement_id, inquiry_id, user_id, generation, generation),
-            ).fetchone()
+            if user_id:
+                row = conn.execute(
+                    """
+                    SELECT r.*
+                    FROM vitals_records AS r
+                    JOIN service_users AS u ON u.id=r.service_user_id
+                    WHERE r.id=? AND r.status='available'
+                      AND r.source_route='INQUIRY'
+                      AND r.attribution_source='INQUIRY_SESSION'
+                      AND r.inquiry_session_id=?
+                      AND r.service_user_id=?
+                      AND r.persona_generation=?
+                      AND r.temperature_source='gy614_sensor'
+                      AND r.heart_rate_source='uart8_sensor'
+                      AND r.spo2_source='uart8_sensor'
+                      AND r.temperature IS NOT NULL AND r.temperature > 0
+                      AND r.heart_rate IS NOT NULL AND r.heart_rate > 0
+                      AND r.spo2 IS NOT NULL AND r.spo2 > 0
+                      AND u.archived=0 AND u.persona_generation=?
+                    LIMIT 1
+                    """,
+                    (measurement_id, inquiry_id, user_id, generation, generation),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT r.*
+                    FROM vitals_records AS r
+                    WHERE r.id=? AND r.status='available'
+                      AND r.source_route='INQUIRY'
+                      AND r.attribution_source='INQUIRY_SESSION'
+                      AND r.inquiry_session_id=?
+                      AND TRIM(r.service_user_id)=''
+                      AND TRIM(r.persona_generation)=''
+                      AND r.temperature_source='gy614_sensor'
+                      AND r.heart_rate_source='uart8_sensor'
+                      AND r.spo2_source='uart8_sensor'
+                      AND r.temperature IS NOT NULL AND r.temperature > 0
+                      AND r.heart_rate IS NOT NULL AND r.heart_rate > 0
+                      AND r.spo2 IS NOT NULL AND r.spo2 > 0
+                    LIMIT 1
+                    """,
+                    (measurement_id, inquiry_id),
+                ).fetchone()
         return VitalsRecord(**dict(row)) if row else None
 
     def latest_for_context(self) -> VitalsRecord | None:

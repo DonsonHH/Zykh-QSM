@@ -94,7 +94,11 @@ select a second language model or a second clinical schema.
 Deterministic code is deliberately narrower: it intercepts non-negotiable danger
 signals, may raise but never lower model risk, excludes expired, unavailable,
 non-OTC or contraindicated medicines, and revalidates the selected option before
-the existing dispense service runs. Extracted observations keep open, user-led
+the existing dispense service runs. Candidate retrieval also uses reviewed
+spoken-term equivalents and catalog-use mappings to bridge colloquial wording to
+the fixed 23-cabinet labels; this only narrows what the model sees and never
+bypasses availability, prescription-plan, contraindication or expiry checks.
+Extracted observations keep open, user-led
 symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
 layer classifies the model's proposed question into decision topics so it can
 enforce one question per turn, the four-question budget and no-repeat rules; it
