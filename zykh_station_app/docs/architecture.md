@@ -98,6 +98,13 @@ the existing dispense service runs. Candidate retrieval also uses reviewed
 spoken-term equivalents and catalog-use mappings to bridge colloquial wording to
 the fixed 23-cabinet labels; this only narrows what the model sees and never
 bypasses availability, prescription-plan, contraindication or expiry checks.
+After a completed low-risk analysis, a focused eligible OTC pool can also supply
+one or two observation-labelled alternatives when the model returns no option or
+only one option. This deterministic fallback is presentation and selection
+continuity, not a second diagnosis engine: it uses only the already-focused pool,
+prefers a different category for the second option, and remains disabled for
+provider failure, cases needing exclusion, prescription-plan items and every hard
+safety block.
 Extracted observations keep open, user-led
 symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
 layer classifies the model's proposed question into decision topics so it can

@@ -1512,13 +1512,227 @@ class InquiryOrchestratorTest(unittest.TestCase):
             [],
         )
 
+    def test_low_risk_with_safe_matches_gets_two_observation_options_when_model_returns_none(
+        self,
+    ) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "assessment": {
+                "summary": "目前表现较轻，可以先观察变化。",
+                "possible_conditions": [],
+                "next_steps": ["先休息并观察症状变化"],
+                "seek_care_if": ["持续发热或明显加重"],
+            },
+            "options": [],
+        }
+        dispense = FakeDispenseService()
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微感冒发热头痛",
+                    evidence="有一点发热和头痛",
+                    duration="刚开始",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+            dispense=dispense,
+        )
+        session = self.create(service, service_user_id="")
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="刚开始有一点发热和头痛，没有用药也没有过敏"
+            ),
+        )
+
+        self.assertEqual(result.risk_level, "low")
+        self.assertEqual(result.stage, "result")
+        self.assertEqual(result.next_action, "show_recommendation")
+        self.assertTrue(result.can_view_medicines)
+        self.assertEqual(len(result.treatment_options), 2)
+        option_ids = {
+            medicine.id
+            for option in result.treatment_options
+            for medicine in option.medicines
+        }
+        self.assertEqual(
+            option_ids,
+            {"slot-01-fufang-ganmaoling", "slot-13-ibuprofen"},
+        )
+        for option in result.treatment_options:
+            self.assertIn("观察", option.label)
+            self.assertIn("先观察", option.when)
+        self.assertIn("先观察", result.reply)
+
+        selected = result.treatment_options[1]
+        confirmed = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id=selected.option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+
+        self.assertTrue(confirmed.ok)
+        self.assertEqual(
+            dispense.requests[0].medicine_id,
+            selected.medicines[0].id,
+        )
+
+    def test_single_model_choice_gets_a_distinct_observation_alternative(self) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "assessment": {
+                "summary": "轻微发热和头痛可以先观察。",
+                "possible_conditions": [],
+                "next_steps": ["休息并补充水分"],
+                "seek_care_if": ["体温升高或疼痛加重"],
+            },
+            "options": [
+                {
+                    "medicine_ids": ["slot-01-fufang-ganmaoling"],
+                    "label": "主方案",
+                    "reason": "更贴近轻微感冒表现。",
+                }
+            ],
+        }
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微感冒发热头痛",
+                    evidence="有一点发热和头痛",
+                    duration="刚开始",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+        )
+        session = self.create(service, service_user_id="")
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="刚开始有一点发热和头痛，没有用药也没有过敏"
+            ),
+        )
+
+        self.assertEqual(len(result.treatment_options), 2)
+        self.assertEqual(
+            [option.medicines[0].id for option in result.treatment_options],
+            ["slot-01-fufang-ganmaoling", "slot-13-ibuprofen"],
+        )
+        self.assertEqual(result.treatment_options[1].option_id, "B")
+        self.assertIn("主方案", result.treatment_options[1].label)
+        self.assertIn("观察后备选", result.treatment_options[1].label)
+        self.assertIn("观察后备选", result.reply)
+
+    def test_observation_fallback_does_not_override_a_condition_needing_exclusion(
+        self,
+    ) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "assessment": {
+                "summary": "仍需排除需要专业处理的情况。",
+                "possible_conditions": [
+                    {
+                        "name": "需要进一步排查的感染",
+                        "likelihood": "needs_exclusion",
+                        "supporting_evidence_ids": [],
+                        "non_supporting_evidence_ids": [],
+                    }
+                ],
+                "next_steps": ["继续观察并联系专业人员"],
+                "seek_care_if": ["发热或疼痛加重"],
+            },
+            "options": [],
+        }
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微感冒发热头痛",
+                    evidence="有一点发热和头痛",
+                    duration="刚开始",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+        )
+        session = self.create(service, service_user_id="")
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="刚开始有一点发热和头痛，没有用药也没有过敏"
+            ),
+        )
+
+        self.assertFalse(result.can_view_medicines)
+        self.assertEqual(result.treatment_options, [])
+        self.assertEqual(result.next_action, "complete")
+
+    def test_observation_fallback_never_auto_selects_a_prescription_plan_item(
+        self,
+    ) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "assessment": {
+                "summary": "鼻部表现较轻，可以先观察。",
+                "possible_conditions": [],
+                "next_steps": ["先观察鼻部症状"],
+                "seek_care_if": ["症状持续加重"],
+            },
+            "options": [],
+        }
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微过敏性鼻炎",
+                    evidence="打喷嚏并流清水样鼻涕",
+                    duration="刚开始",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+        )
+        session = self.create(service, service_user_id="li-yeye")
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="刚开始打喷嚏并流清水样鼻涕，没有用药也没有过敏"
+            ),
+        )
+
+        fallback_ids = {
+            medicine.id
+            for option in result.treatment_options
+            for medicine in option.medicines
+        }
+        self.assertEqual(fallback_ids, {"slot-18-budesonide-nasal"})
+        self.assertNotIn("slot-23-desloratadine", fallback_ids)
+
     def test_low_risk_without_a_matching_candidate_returns_neutral_care_advice(self) -> None:
         service, _ = self.service(
             [
                 case(
                     action="analyze",
-                    concept="轻微擦伤",
-                    evidence="膝盖表皮轻微擦伤",
+                    concept="轻微困倦",
+                    evidence="只是有一点困",
                     duration="刚发生",
                     used="未使用",
                     allergy="无",
@@ -1530,7 +1744,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.process_turn(
             session.session_id,
-            InquiryTurnRequest(transcript="膝盖表皮轻微擦伤，没有用药也没有过敏"),
+            InquiryTurnRequest(transcript="只是有一点困，没有其他不适，没有用药也没有过敏"),
         )
 
         self.assertEqual(result.risk_level, "low")

@@ -807,6 +807,8 @@ class InquiryOrchestrator:
         rank_summary = ""
         rank_assessment = InquiryClinicalAssessment()
         rank_failed = False
+        observation_fallback_used = False
+        observation_fallback_only = False
         medication_safety_notices: list[InquiryMedicineSafetyNotice] = []
         all_relevant_candidates_blocked = False
         if (
@@ -953,6 +955,55 @@ class InquiryOrchestrator:
                         # retryable so history and the UI do not mislabel it.
                         rank_failed = True
                         rank_message = "模型返回的药品方案未通过本地安全核验。"
+                    elif self._observation_fallback_allowed(
+                        guard.risk_level,
+                        ranking,
+                        rank_assessment,
+                    ):
+                        selected_ids = {
+                            medicine.id
+                            for option in options
+                            for medicine in option.medicines
+                        }
+                        needed = max(0, 2 - len(options))
+                        fallback_payload = self._observation_fallback_payload(
+                            fresh_assessment.candidates,
+                            excluded_ids=selected_ids,
+                            limit=needed,
+                        )
+                        if fallback_payload["options"]:
+                            if callable(selection_validator):
+                                fallback_assessment = selection_validator(
+                                    fallback_payload,
+                                    fresh_ranking_pool,
+                                    combination_authorization=(
+                                        fresh_combination_authorization
+                                    ),
+                                )
+                                fallback_options = fallback_assessment.options
+                            else:
+                                fallback_options = (
+                                    self.safety_engine.knowledge.options_from_ai_selection(
+                                        fallback_payload,
+                                        fresh_ranking_pool,
+                                    )
+                                )
+                            if options and fallback_options:
+                                primary_label = options[0].label.strip()[:12]
+                                fallback_options[0] = fallback_options[0].model_copy(
+                                    update={
+                                        "option_id": "B",
+                                        "label": (
+                                            f"{primary_label}·观察后备选"
+                                            if primary_label
+                                            else "观察后备选"
+                                        ),
+                                    }
+                                )
+                            if fallback_options:
+                                observation_fallback_only = not options
+                                observation_fallback_used = True
+                                options = [*options, *fallback_options][:2]
                 else:
                     rank_failed = True
             elif ranking_pool:
@@ -1051,14 +1102,113 @@ class InquiryOrchestrator:
             session.stage = "result"
             session.next_action = "show_recommendation"
             option_count = len(options)
-            option_text = (
-                "我整理了一个主方案和一个备选，你只需要选择其中一项。"
-                if option_count > 1
-                else "结合这些信息，我整理了一个更贴近当前情况的选择。"
-            )
+            if observation_fallback_only:
+                option_text = (
+                    "目前表现较轻，可以先观察；我保留了一个主方案和一个备选，"
+                    "如果对应症状加深，再按说明书选择其中一项。"
+                    if option_count > 1
+                    else (
+                        "目前表现较轻，可以先观察；我保留了一个相关选择，"
+                        "如果对应症状加深，再按说明书核对使用。"
+                    )
+                )
+            elif observation_fallback_used and option_count > 1:
+                option_text = (
+                    "我整理了一个主方案，并保留了一个观察后备选；"
+                    "你只需要按当前表现选择其中一项。"
+                )
+            else:
+                option_text = (
+                    "我整理了一个主方案和一个备选，你只需要选择其中一项。"
+                    if option_count > 1
+                    else "结合这些信息，我整理了一个更贴近当前情况的选择。"
+                )
             natural_summary = self._natural_summary(session.reasoning_summary)
             session.reply = f"{natural_summary}{option_text}"
         return self._commit(session)
+
+    @staticmethod
+    def _observation_fallback_allowed(
+        risk_level: str,
+        ranking: dict,
+        assessment: InquiryClinicalAssessment,
+    ) -> bool:
+        raw_assessment = ranking.get("assessment") if isinstance(ranking, dict) else None
+        if risk_level != "low" or not isinstance(raw_assessment, dict):
+            return False
+        if not str(raw_assessment.get("summary") or "").strip():
+            return False
+        return not any(
+            condition.likelihood == "needs_exclusion"
+            for condition in assessment.possible_conditions
+        )
+
+    @staticmethod
+    def _observation_fallback_payload(
+        candidates,
+        *,
+        excluded_ids: set[str],
+        limit: int,
+    ) -> dict:
+        if limit <= 0:
+            return {"options": []}
+        available = [
+            candidate
+            for candidate in candidates
+            if (
+                candidate.id not in excluded_ids
+                and not candidate.requires_existing_direction
+            )
+        ]
+        selected = []
+        if available:
+            selected.append(available[0])
+        while len(selected) < limit:
+            selected_ids = {candidate.id for candidate in selected}
+            selected_categories = {candidate.category for candidate in selected}
+            candidate = next(
+                (
+                    item
+                    for item in available
+                    if item.id not in selected_ids
+                    and item.category not in selected_categories
+                ),
+                None,
+            )
+            if candidate is None:
+                candidate = next(
+                    (item for item in available if item.id not in selected_ids),
+                    None,
+                )
+            if candidate is None:
+                break
+            selected.append(candidate)
+
+        options = []
+        for index, candidate in enumerate(selected):
+            indication = re.sub(
+                r"^(?:用于|适用于|可用于)",
+                "",
+                str(candidate.indications or "").strip(),
+            ).strip(" ，。；;")
+            indication = indication[:48] or (
+                candidate.tags[0] if candidate.tags else "说明书所列适用表现"
+            )
+            reason = (
+                f"当前表现较轻时可先观察；如果后续出现或加重为“{indication}”，"
+                "再按说明书核对使用。"
+            )
+            options.append(
+                {
+                    "option_id": "primary" if index == 0 else "alternative",
+                    "label": "观察后主方案" if index == 0 else "观察后备选",
+                    "reason": reason,
+                    "medicine_ids": [candidate.id],
+                    "reason_by_medicine": {candidate.id: reason},
+                    "usage_by_medicine": {candidate.id: candidate.dosage},
+                }
+            )
+        return {"options": options}
 
     @staticmethod
     def _assessment_from_ranking(
