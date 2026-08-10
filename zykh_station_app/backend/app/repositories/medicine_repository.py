@@ -19,12 +19,13 @@ from ..schemas.medicine import (
 MEDICINE_SEED_VERSION = "home-real-cabinet-v8-fixed-catalog"
 MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v6-slot-03-13-online"
 PACKAGE_VERIFICATION_VERSION = "fixed-inventory-identity-v1"
-MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v5-detailed-fixed-catalog"
-BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-cabinet-reference-v5"
+MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v6-repaired-fixed-catalog"
+BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-cabinet-reference-v6"
 BUNDLED_LABEL_SAFETY_REVIEWERS = frozenset(
     {
         "bundled-label-reference-v2",
         "bundled-cabinet-reference-v4",
+        "bundled-cabinet-reference-v5",
         BUNDLED_LABEL_SAFETY_REVIEWER,
     }
 )
@@ -234,6 +235,20 @@ LEGACY_V4_MEDICINE_LABEL_SAFETY: dict[str, dict[str, object]] = {
             "整粒吞服，避免与其他解热镇痛药重复使用。"
         ),
     }
+}
+
+
+LEGACY_V5_STRUCTURED_SAFETY_FACTS: dict[str, list[dict[str, str]]] = {
+    "slot-19-ketoprofen-gel": [
+        {
+            "concept_code": "label_warning",
+            "display_text": "非甾体抗炎药过敏禁用",
+        },
+        {
+            "concept_code": "peptic_ulcer",
+            "display_text": "活动性消化道溃疡禁用",
+        },
+    ]
 }
 
 
@@ -2391,6 +2406,17 @@ class MedicineRepository:
             legacy_structured = MedicineRepository._default_structured_contraindications(
                 legacy_contraindications
             )
+            legacy_label_warning_structured = [
+                {
+                    "concept_code": "label_warning",
+                    "display_text": "非甾体抗炎药过敏者禁用",
+                },
+                *legacy_structured[1:],
+            ]
+            known_legacy_ibuprofen_structured_snapshots = (
+                legacy_structured,
+                legacy_label_warning_structured,
+            )
             legacy_label_content_matches = bool(
                 legacy_label
                 and identity_matches
@@ -2405,7 +2431,24 @@ class MedicineRepository:
                 and str(row["guidance_source"] or "")
                 == str(item.get("guidance_source", "") or "")
             )
-            if legacy_label_content_matches:
+            # A deployed v5 database could already carry the v5 marker and
+            # reviewer while S13 still retained the exact three-warning v4
+            # contraindication baseline.  Match only that controlled snapshot;
+            # local reviews and edited contraindications remain untouched.
+            v5_marker_with_legacy_ibuprofen_facts = bool(
+                str(item["id"]) == "slot-13-ibuprofen"
+                and reviewed_status
+                and reviewer == "bundled-cabinet-reference-v5"
+                and identity_matches
+                and current_contraindications == legacy_contraindications
+                and current_structured
+                in known_legacy_ibuprofen_structured_snapshots
+            )
+            controlled_legacy_label_content_matches = (
+                legacy_label_content_matches
+                or v5_marker_with_legacy_ibuprofen_facts
+            )
+            if controlled_legacy_label_content_matches:
                 current_contraindications = list(item.get("contraindications", []))
                 current_safety_note = str(item.get("safety_note", "") or "")
                 conn.execute(
@@ -2456,6 +2499,14 @@ class MedicineRepository:
                 and current_ingredients == ingredients
                 and current_structured == structured
             )
+            facts_match_v5_structured_baseline = (
+                existing_bundled_review
+                and reviewer == "bundled-cabinet-reference-v5"
+                and current_aliases == aliases
+                and current_ingredients == ingredients
+                and current_structured
+                == LEGACY_V5_STRUCTURED_SAFETY_FACTS.get(str(item["id"]))
+            )
             legacy_facts = LEGACY_V4_MEDICINE_SAFETY_FACTS.get(
                 str(item["id"]),
                 LEGACY_V3_MEDICINE_SAFETY_FACTS.get(str(item["id"]), {}),
@@ -2474,10 +2525,12 @@ class MedicineRepository:
                 and (
                     current_structured == structured
                     or (
-                        legacy_label_content_matches
-                        and current_structured in ([], legacy_structured)
+                        controlled_legacy_label_content_matches
+                        and current_structured
+                        in ([], *known_legacy_ibuprofen_structured_snapshots)
                     )
                 )
+                or facts_match_v5_structured_baseline
             )
             facts_can_migrate = (
                 facts_are_empty
@@ -2491,8 +2544,27 @@ class MedicineRepository:
             )
 
             next_status = "reviewed" if bundled_baseline_eligible else "draft"
-            next_reviewer = BUNDLED_LABEL_SAFETY_REVIEWER if bundled_baseline_eligible else ""
-            next_reviewed_at = reviewed_at if bundled_baseline_eligible else ""
+            preserve_existing_bundled_review = (
+                bundled_baseline_eligible
+                and existing_bundled_review
+                and facts_match_bundled_baseline
+                and not controlled_legacy_label_content_matches
+                and not facts_match_v5_structured_baseline
+            )
+            next_reviewer = (
+                reviewer
+                if preserve_existing_bundled_review
+                else BUNDLED_LABEL_SAFETY_REVIEWER
+                if bundled_baseline_eligible
+                else ""
+            )
+            next_reviewed_at = (
+                str(row["safety_reviewed_at"] or "")
+                if preserve_existing_bundled_review
+                else reviewed_at
+                if bundled_baseline_eligible
+                else ""
+            )
             status_changed = (
                 str(row["safety_review_status"] or "") != next_status
                 or reviewer != next_reviewer

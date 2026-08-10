@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from .config import settings
 from .services.cloud_sync_service import cloud_sync_worker
+from .services.records_service import RecordsService
 from .services.speaker_volume import get_persisted_speaker_gain
 from .routers import admin, ai, audio, camera, dashboard, device, dispense, fingerprint, health, identity, inquiry, manual_medication_access, medicines, network, qsm, records, settings as settings_router, site, status, sync, vitals
 
@@ -55,6 +56,7 @@ app = create_app()
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    RecordsService.ensure_default_today_plans()
     get_persisted_speaker_gain()
     cloud_sync_worker.start()
 

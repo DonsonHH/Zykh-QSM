@@ -14,6 +14,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest, TodayPlanUpdateRequest  # noqa: E402
+from app.services.medicine_service import MedicineService  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
 
@@ -29,6 +30,306 @@ class TodayPlanServiceTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.db_patch.stop()
         self.temp_dir.cleanup()
+
+    def _insert_production_v6_legacy_family(
+        self,
+        *,
+        zhang_id: str = "legacy-person-zhang-dynamic",
+        li_id: str = "legacy-person-li-dynamic",
+    ) -> tuple[str, str]:
+        MedicineService().list_medicines()
+        legacy_plans = (
+            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", zhang_id, "1片（按既往处方）", "待执行", ""),
+            ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", zhang_id, "1片", "已执行", "2026-08-09"),
+            ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", zhang_id, "每侧鼻孔1喷", "待执行", ""),
+            ("plan-demo-lisi-lactulose", "07:30", "早餐时", "slot-06-lactulose", li_id, "10毫升（维持量）", "待执行", ""),
+            ("plan-demo-lisi-budesonide-morning", "08:00", "早晨", "slot-18-budesonide-nasal", li_id, "每侧鼻孔1喷（监护人协助）", "已跳过", "2026-08-08"),
+            ("plan-demo-lisi-budesonide-evening", "20:30", "睡前", "slot-18-budesonide-nasal", li_id, "每侧鼻孔1喷（监护人协助）", "待执行", ""),
+        )
+        with db.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, safety_profile_revision,
+                  safety_profile_updated_at, persona_generation, archived
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', '[]', 1, '', '', 0)
+                """,
+                [
+                    (
+                        zhang_id,
+                        "张三",
+                        70,
+                        "高血压；常年性过敏性鼻炎；李四的爷爷和主要照护人",
+                        "头孢类药物禁忌",
+                        "父母外出工作时负责照护李四；本人降压药和鼻喷剂按既往医嘱使用",
+                        "家庭监护人",
+                    ),
+                    (
+                        li_id,
+                        "李四",
+                        8,
+                        "8岁儿童；体重约25公斤；季节性过敏性鼻炎；功能性便秘",
+                        "无已知药物过敏",
+                        "张三的孙子；父母工作日外出，由张三照护；儿童用药需由监护人核验",
+                        "儿童家庭成员",
+                    ),
+                ],
+            )
+            conn.executemany(
+                """
+                INSERT INTO today_plans(
+                  id, time, timing_label, medicine_id, service_user_id, dose,
+                  status, medicine, target_user, updated_at, schedule_type,
+                  interval_days, weekdays_json, start_date, last_action_date,
+                  archived
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, 'daily', 1, '[]',
+                          '2026-08-01', ?, 0)
+                """,
+                [(*plan[:7], "2026-08-09 10:00:00", plan[7]) for plan in legacy_plans],
+            )
+            conn.execute(
+                """
+                INSERT INTO inquiry_sessions(
+                  session_id, user_id, user_name, user_age, user_profile,
+                  user_allergies, stage, reply, next_action, created_at, updated_at
+                ) VALUES ('legacy-inquiry-dynamic', ?, '张三', 70, '', '',
+                          'complete', '已完成', 'done', ?, ?)
+                """,
+                (zhang_id, db.now_text(), db.now_text()),
+            )
+            conn.execute(
+                """
+                INSERT INTO face_identities(
+                  subject, service_user_id, confidence, match_count,
+                  enrolled_at, last_seen_at
+                ) VALUES ('legacy-face-dynamic', ?, 0.98, 3, ?, ?)
+                """,
+                (zhang_id, db.now_text(), db.now_text()),
+            )
+            conn.execute(
+                """
+                INSERT INTO fingerprint_identities(
+                  template_id, service_user_id, score, match_count,
+                  enrolled_at, last_seen_at
+                ) VALUES (1145, ?, 93, 5, ?, ?)
+                """,
+                (li_id, db.now_text(), db.now_text()),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='family-safety-personas-v1', updated_at=?
+                WHERE key='service_user_seed_version'
+                """,
+                (db.now_text(),),
+            )
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('today_plan_seed_version', 'family-demo-v6-grandparent-child', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+                                                  updated_at=excluded.updated_at
+                """,
+                (db.now_text(),),
+            )
+        return zhang_id, li_id
+
+    def test_startup_migration_archives_exact_dynamic_v6_people_without_rebinding_history(self) -> None:
+        zhang_id, li_id = self._insert_production_v6_legacy_family()
+
+        db.init_db()
+
+        with db.connect() as conn:
+            archived = {
+                str(row["id"]): int(row["archived"])
+                for row in conn.execute(
+                    "SELECT id, archived FROM service_users WHERE id IN (?, ?)",
+                    (zhang_id, li_id),
+                ).fetchall()
+            }
+            inquiry_owner = conn.execute(
+                "SELECT user_id FROM inquiry_sessions WHERE session_id='legacy-inquiry-dynamic'"
+            ).fetchone()["user_id"]
+            face_owner = conn.execute(
+                "SELECT service_user_id FROM face_identities WHERE subject='legacy-face-dynamic'"
+            ).fetchone()["service_user_id"]
+            fingerprint_owner = conn.execute(
+                "SELECT service_user_id FROM fingerprint_identities WHERE template_id=1145"
+            ).fetchone()["service_user_id"]
+
+        self.assertEqual(archived, {zhang_id: 1, li_id: 1})
+        self.assertEqual(inquiry_owner, zhang_id)
+        self.assertEqual(face_owner, zhang_id)
+        self.assertEqual(fingerprint_owner, li_id)
+
+    def test_startup_migration_archives_exact_v6_people_after_legacy_plans_were_deleted(self) -> None:
+        zhang_id, li_id = self._insert_production_v6_legacy_family()
+        with db.connect() as conn:
+            conn.execute(
+                "DELETE FROM today_plans WHERE service_user_id IN (?, ?)",
+                (zhang_id, li_id),
+            )
+
+        db.init_db()
+
+        with db.connect() as conn:
+            archived = {
+                str(row["id"]): int(row["archived"])
+                for row in conn.execute(
+                    "SELECT id, archived FROM service_users WHERE id IN (?, ?)",
+                    (zhang_id, li_id),
+                ).fetchall()
+            }
+        self.assertEqual(archived, {zhang_id: 1, li_id: 1})
+
+    def test_startup_migration_archives_the_exact_legacy_wangwu_persona(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, safety_profile_revision,
+                  safety_profile_updated_at, persona_generation, archived
+                ) VALUES (
+                  'wangwu', '王五', 58, '长期胃病', '', '近期有问询', '观察',
+                  '[]', '[]', '[]', 1, '', '', 0
+                )
+                """
+            )
+
+        db.init_db()
+
+        with db.connect() as conn:
+            archived = conn.execute(
+                "SELECT archived FROM service_users WHERE id='wangwu'"
+            ).fetchone()["archived"]
+        self.assertEqual(archived, 1)
+
+    def test_application_startup_finishes_persona_and_plan_migration(self) -> None:
+        self._insert_production_v6_legacy_family()
+        from app import main
+
+        with (
+            patch.object(main, "get_persisted_speaker_gain"),
+            patch.object(main.cloud_sync_worker, "start"),
+        ):
+            main.startup()
+
+        with db.connect() as conn:
+            active_users = {
+                str(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM service_users WHERE archived=0"
+                ).fetchall()
+            }
+            active_plans = {
+                str(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM today_plans WHERE archived=0"
+                ).fetchall()
+            }
+            plan_version = conn.execute(
+                "SELECT value FROM app_settings WHERE key='today_plan_seed_version'"
+            ).fetchone()
+
+        self.assertEqual(active_users, {"wang-nainai", "li-yeye"})
+        self.assertEqual(
+            active_plans,
+            {
+                "plan-demo-wang-amlodipine",
+                "plan-demo-wang-budesonide",
+                "plan-demo-li-lactulose",
+                "plan-demo-li-desloratadine",
+            },
+        )
+        self.assertEqual(
+            plan_version["value"],
+            "family-demo-v8-senior-safety-archive",
+        )
+
+    def test_startup_migration_does_not_archive_an_admin_edited_v6_person(self) -> None:
+        zhang_id, _ = self._insert_production_v6_legacy_family(
+            zhang_id="zhangsan",
+            li_id="lisi",
+        )
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE service_users SET note='管理员已确认的新照护备注' WHERE id=?",
+                (zhang_id,),
+            )
+
+        from app import main
+
+        with (
+            patch.object(main, "get_persisted_speaker_gain"),
+            patch.object(main.cloud_sync_worker, "start"),
+        ):
+            main.startup()
+
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT archived, note FROM service_users WHERE id=?",
+                (zhang_id,),
+            ).fetchone()
+            plan_states = [
+                int(plan["archived"])
+                for plan in conn.execute(
+                    """
+                    SELECT archived FROM today_plans
+                    WHERE service_user_id=? AND id LIKE 'plan-demo-zhangsan-%'
+                    ORDER BY id
+                    """,
+                    (zhang_id,),
+                ).fetchall()
+            ]
+        self.assertEqual(row["archived"], 0)
+        self.assertEqual(row["note"], "管理员已确认的新照护备注")
+        self.assertEqual(plan_states, [0, 0, 0])
+
+    def test_v6_plans_are_archived_without_losing_status_or_history(self) -> None:
+        self._insert_production_v6_legacy_family()
+
+        plans = self.service.list_today_plans()
+
+        with db.connect() as conn:
+            legacy_rows = conn.execute(
+                """
+                SELECT id, status, last_action_date, archived
+                FROM today_plans
+                WHERE id LIKE 'plan-demo-zhangsan-%'
+                   OR id LIKE 'plan-demo-lisi-%'
+                ORDER BY id
+                """
+            ).fetchall()
+            version = conn.execute(
+                "SELECT value FROM app_settings WHERE key='today_plan_seed_version'"
+            ).fetchone()["value"]
+
+        self.assertEqual(len(legacy_rows), 6)
+        self.assertTrue(all(int(row["archived"]) == 1 for row in legacy_rows))
+        completed = next(
+            row for row in legacy_rows
+            if row["id"] == "plan-demo-zhangsan-centrum"
+        )
+        skipped = next(
+            row for row in legacy_rows
+            if row["id"] == "plan-demo-lisi-budesonide-morning"
+        )
+        self.assertEqual((completed["status"], completed["last_action_date"]), ("已执行", "2026-08-09"))
+        self.assertEqual((skipped["status"], skipped["last_action_date"]), ("已跳过", "2026-08-08"))
+        self.assertEqual(
+            {plan.id for plan in plans},
+            {
+                "plan-demo-wang-amlodipine",
+                "plan-demo-wang-budesonide",
+                "plan-demo-li-lactulose",
+                "plan-demo-li-desloratadine",
+            },
+        )
+        self.assertEqual(version, "family-demo-v8-senior-safety-archive")
 
     def test_default_plans_seed_exact_2026_08_10_senior_contract(self) -> None:
         plans = {plan.id: plan for plan in self.service.list_today_plans()}

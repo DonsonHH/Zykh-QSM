@@ -343,7 +343,7 @@ class RecordsService:
 
     def list_today_plans(self, *, due_only: bool = False, reference_date: date | None = None) -> list[TodayPlan]:
         db.init_db()
-        self._ensure_default_today_plan()
+        self.ensure_default_today_plans()
         current_date = reference_date or date.today()
         with db.connect() as conn:
             rows = conn.execute(
@@ -648,11 +648,11 @@ class RecordsService:
         )
 
     @staticmethod
-    def _ensure_default_today_plan() -> None:
+    def ensure_default_today_plans() -> None:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
-        seed_version = "family-demo-v7-senior-safety"
+        seed_version = "family-demo-v8-senior-safety-archive"
         demo_plans = (
             ("plan-demo-wang-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "wang-nainai", "1 片（按既往有效医嘱）"),
             ("plan-demo-wang-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "wang-nainai", "每侧鼻孔 1 喷（按既往有效医嘱）"),
@@ -673,13 +673,6 @@ class RecordsService:
                 return
             if not db.has_exact_senior_demo_personas(conn):
                 return
-            conn.execute(
-                """
-                DELETE FROM today_plans
-                WHERE id LIKE 'plan-demo-zhangsan-%'
-                   OR id LIKE 'plan-demo-lisi-%'
-                """
-            )
             for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
                 user = users.get(user_id)
                 medicine = conn.execute(
@@ -715,6 +708,31 @@ class RecordsService:
                         "",
                     ),
                 )
+            expected_links = {
+                (plan_id, medicine_id, user_id)
+                for plan_id, _, _, medicine_id, user_id, _ in demo_plans
+            }
+            actual_links = {
+                (str(row["id"]), str(row["medicine_id"]), str(row["service_user_id"]))
+                for row in conn.execute(
+                    """
+                    SELECT p.id, p.medicine_id, p.service_user_id
+                    FROM today_plans AS p
+                    JOIN medicines AS m ON m.id=p.medicine_id
+                    JOIN service_users AS u ON u.id=p.service_user_id
+                    WHERE p.id IN (
+                      'plan-demo-wang-amlodipine',
+                      'plan-demo-wang-budesonide',
+                      'plan-demo-li-lactulose',
+                      'plan-demo-li-desloratadine'
+                    )
+                      AND p.archived=0
+                      AND u.archived=0
+                    """
+                ).fetchall()
+            }
+            if actual_links != expected_links:
+                return
             conn.execute(
                 """
                 INSERT INTO app_settings(key, value, updated_at) VALUES ('today_plan_seed_version', ?, ?)

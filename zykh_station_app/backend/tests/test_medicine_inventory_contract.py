@@ -41,6 +41,53 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.db_patch.stop()
         self.temp_dir.cleanup()
 
+    def _install_v5_legacy_ibuprofen_snapshot(self) -> None:
+        legacy_contraindications = [
+            "非甾体抗炎药过敏者禁用",
+            "孕妇及哺乳期妇女禁用",
+            "阿司匹林过敏的哮喘患者禁用",
+        ]
+        legacy_structured = [
+            {
+                "concept_code": "label_warning",
+                "display_text": "非甾体抗炎药过敏者禁用",
+            },
+            {
+                "concept_code": "pregnancy",
+                "display_text": "孕妇及哺乳期妇女禁用",
+            },
+            {
+                "concept_code": "breastfeeding",
+                "display_text": "孕妇及哺乳期妇女禁用",
+            },
+            {
+                "concept_code": "asthma",
+                "display_text": "阿司匹林过敏的哮喘患者禁用",
+            },
+        ]
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET contraindications_json=?, structured_contraindications_json=?,
+                    safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v5',
+                    safety_reviewed_at='2026-08-08 10:00:00'
+                WHERE id='slot-13-ibuprofen'
+                """,
+                (
+                    json.dumps(legacy_contraindications, ensure_ascii=False),
+                    json.dumps(legacy_structured, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v5-detailed-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+
     def test_public_inventory_exposes_all_23_physical_slots_in_order(self) -> None:
         response = list_medicines()
 
@@ -203,7 +250,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
             medicine.structured_contraindications,
         )
         self.assertEqual(medicine.safety_review_status, "reviewed")
-        self.assertEqual(medicine.safety_reviewed_by, "bundled-cabinet-reference-v5")
+        self.assertEqual(medicine.safety_reviewed_by, "bundled-cabinet-reference-v6")
         self.assertTrue(medicine.safety_reviewed_at)
 
     def test_ibuprofen_catalog_blocks_current_major_history_contraindications(self) -> None:
@@ -304,7 +351,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
 
         self.assertEqual(
             MEDICINE_SAFETY_FACTS_VERSION,
-            "database-safety-facts-v5-detailed-fixed-catalog",
+            "database-safety-facts-v6-repaired-fixed-catalog",
         )
         self.assertEqual(corrected.dosage, "现场修改后尚未受控审核")
         self.assertEqual(corrected.safety_review_status, "draft")
@@ -317,7 +364,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         bundled = [
             medicine
             for medicine in medicines
-            if medicine.safety_reviewed_by == "bundled-cabinet-reference-v5"
+            if medicine.safety_reviewed_by == "bundled-cabinet-reference-v6"
         ]
 
         self.assertEqual(
@@ -373,7 +420,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
                 self.assertEqual(medicine.safety_review_status, "reviewed")
                 self.assertEqual(
                     medicine.safety_reviewed_by,
-                    "bundled-cabinet-reference-v5",
+                    "bundled-cabinet-reference-v6",
                 )
                 self.assertTrue(medicine.safety_reviewed_at)
 
@@ -434,14 +481,14 @@ class MedicineInventoryContractTest(unittest.TestCase):
         still_controlled = repository.get_by_id("slot-06-lactulose")
 
         self.assertEqual(corrected.safety_review_status, "reviewed")
-        self.assertEqual(corrected.safety_reviewed_by, "bundled-cabinet-reference-v5")
+        self.assertEqual(corrected.safety_reviewed_by, "bundled-cabinet-reference-v6")
         self.assertIn("利君", corrected.aliases)
         self.assertIn("维生素D", centrum.active_ingredients)
         self.assertNotIn("复合维生素和矿物质", centrum.active_ingredients)
         self.assertEqual(still_controlled.safety_review_status, "reviewed")
         self.assertEqual(
             still_controlled.safety_reviewed_by,
-            "bundled-cabinet-reference-v5",
+            "bundled-cabinet-reference-v6",
         )
 
     def test_v5_migration_upgrades_only_the_exact_legacy_ibuprofen_label(self) -> None:
@@ -497,7 +544,256 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(migrated.safety_review_status, "reviewed")
         self.assertEqual(
             migrated.safety_reviewed_by,
-            "bundled-cabinet-reference-v5",
+            "bundled-cabinet-reference-v6",
+        )
+
+    def test_v6_migration_repairs_v5_marker_with_legacy_ibuprofen_safety_facts(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        self._install_v5_legacy_ibuprofen_snapshot()
+
+        migrated = repository.get_by_id("slot-13-ibuprofen")
+        structured_codes = {
+            item.get("concept_code")
+            for item in migrated.structured_contraindications
+        }
+
+        self.assertIn("严重心脏疾病", " ".join(migrated.contraindications))
+        self.assertIn("胃肠道出血", " ".join(migrated.contraindications))
+        self.assertTrue(
+            {
+                "liver_impairment",
+                "renal_impairment",
+                "cardiac_disease",
+                "peptic_ulcer",
+                "gastrointestinal_bleeding",
+                "gastrointestinal_perforation",
+            }
+            <= structured_codes
+        )
+        self.assertEqual(migrated.safety_review_status, "reviewed")
+        self.assertEqual(
+            migrated.safety_reviewed_by,
+            "bundled-cabinet-reference-v6",
+        )
+        with db.connect() as conn:
+            version = conn.execute(
+                "SELECT value FROM app_settings "
+                "WHERE key='medicine_safety_facts_version'"
+            ).fetchone()
+        self.assertEqual(
+            version["value"],
+            "database-safety-facts-v6-repaired-fixed-catalog",
+        )
+
+        assessment = MedicineKnowledgeRepository(repository).assess_candidates(
+            MedicineSafetyContext(
+                history_text="既往胃溃疡",
+                relevance_text="发热头痛",
+            ),
+            limit=23,
+        )
+        self.assertNotIn(
+            "slot-13-ibuprofen",
+            {candidate.id for candidate in assessment.candidates},
+        )
+        self.assertIn(
+            "history_contraindication",
+            {
+                notice.code
+                for notice in assessment.notices
+                if notice.medicine_id == "slot-13-ibuprofen"
+            },
+        )
+
+    def test_v6_repairs_known_safety_snapshots_without_disabling_unaffected_combinations(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v5',
+                    safety_reviewed_at='2026-08-08 20:14:13'
+                WHERE safety_review_status='reviewed'
+                """
+            )
+            conn.execute(
+                """
+                UPDATE medicines
+                SET structured_contraindications_json=?
+                WHERE id='slot-19-ketoprofen-gel'
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "label_warning",
+                                "display_text": "非甾体抗炎药过敏禁用",
+                            },
+                            {
+                                "concept_code": "peptic_ulcer",
+                                "display_text": "活动性消化道溃疡禁用",
+                            },
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        self._install_v5_legacy_ibuprofen_snapshot()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE app_settings SET value=?
+                WHERE key='medicine_safety_facts_version'
+                """,
+                (MEDICINE_SAFETY_FACTS_VERSION,),
+            )
+            combination_members = {
+                str(row["combination_id"]): json.loads(row["medicine_ids_json"])
+                for row in conn.execute(
+                    """
+                    SELECT combination_id, medicine_ids_json
+                    FROM approved_medicine_combinations
+                    WHERE review_status='reviewed'
+                    ORDER BY combination_id
+                    """
+                ).fetchall()
+            }
+        v5_medicines = {medicine.id: medicine for medicine in repository.list_all()}
+        with db.connect() as conn:
+            for combination_id, medicine_ids in combination_members.items():
+                conn.execute(
+                    """
+                    UPDATE approved_medicine_combinations
+                    SET member_review_fingerprints_json=?
+                    WHERE combination_id=?
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                medicine_id: repository.review_fingerprint(
+                                    v5_medicines[medicine_id]
+                                )
+                                for medicine_id in medicine_ids
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        combination_id,
+                    ),
+                )
+            before = {
+                str(row["combination_id"]): (
+                    str(row["member_identity_fingerprints_json"]),
+                    str(row["member_review_fingerprints_json"]),
+                )
+                for row in conn.execute(
+                    """
+                    SELECT combination_id, member_identity_fingerprints_json,
+                           member_review_fingerprints_json
+                    FROM approved_medicine_combinations
+                    WHERE review_status='reviewed'
+                    ORDER BY combination_id
+                    """
+                ).fetchall()
+            }
+        before_available = {
+            item.combination_id
+            for item in repository.list_case_reviewed_combinations()
+        }
+        self.assertEqual(before_available, set(before))
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v5-detailed-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+
+        repository.list_all()
+
+        with db.connect() as conn:
+            after = {
+                str(row["combination_id"]): (
+                    str(row["member_identity_fingerprints_json"]),
+                    str(row["member_review_fingerprints_json"]),
+                )
+                for row in conn.execute(
+                    """
+                    SELECT combination_id, member_identity_fingerprints_json,
+                           member_review_fingerprints_json
+                    FROM approved_medicine_combinations
+                    WHERE review_status='reviewed'
+                    ORDER BY combination_id
+                    """
+                ).fetchall()
+            }
+            unaffected_reviewers = {
+                str(row["safety_reviewed_by"])
+                for row in conn.execute(
+                    """
+                    SELECT safety_reviewed_by FROM medicines
+                    WHERE id!='slot-13-ibuprofen'
+                      AND safety_review_status='reviewed'
+                    """
+                ).fetchall()
+            }
+            reviewed_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM medicines "
+                "WHERE safety_review_status='reviewed'"
+            ).fetchone()["count"]
+            ketoprofen_structured = json.loads(
+                conn.execute(
+                    "SELECT structured_contraindications_json FROM medicines "
+                    "WHERE id='slot-19-ketoprofen-gel'"
+                ).fetchone()["structured_contraindications_json"]
+            )
+            first_state = (
+                conn.execute(
+                    "SELECT * FROM medicines ORDER BY hardware_slot"
+                ).fetchall(),
+                conn.execute(
+                    "SELECT * FROM approved_medicine_combinations "
+                    "ORDER BY combination_id"
+                ).fetchall(),
+                conn.execute(
+                    "SELECT value FROM app_settings "
+                    "WHERE key='medicine_safety_facts_version'"
+                ).fetchone()["value"],
+            )
+        after_available = {
+            item.combination_id
+            for item in repository.list_case_reviewed_combinations()
+        }
+        repository.list_all()
+        with db.connect() as conn:
+            second_state = (
+                conn.execute(
+                    "SELECT * FROM medicines ORDER BY hardware_slot"
+                ).fetchall(),
+                conn.execute(
+                    "SELECT * FROM approved_medicine_combinations "
+                    "ORDER BY combination_id"
+                ).fetchall(),
+                conn.execute(
+                    "SELECT value FROM app_settings "
+                    "WHERE key='medicine_safety_facts_version'"
+                ).fetchone()["value"],
+            )
+        self.assertEqual(after, before)
+        self.assertEqual(after_available, before_available)
+        self.assertEqual(second_state, first_state)
+        self.assertEqual(reviewed_count, 23)
+        self.assertEqual(
+            ketoprofen_structured[0]["concept_code"],
+            "nsaid_allergy",
+        )
+        self.assertEqual(
+            unaffected_reviewers,
+            {"bundled-cabinet-reference-v5", "bundled-cabinet-reference-v6"},
         )
 
     def test_safety_migration_does_not_approve_modified_label_content(self) -> None:

@@ -541,11 +541,10 @@ def init_db() -> None:
         _seed_service_data(conn)
         conn.execute(
             """
-            UPDATE today_plans SET archived=1, updated_at=?
+            UPDATE today_plans SET archived=1
             WHERE archived=0
               AND service_user_id IN (SELECT id FROM service_users WHERE archived=1)
             """,
-            (now_text(),),
         )
 
 
@@ -665,13 +664,14 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
             VALUES (1, '待同步', 0, '未同步', '本地记录')
             """
         )
-    seed_version = "family-safety-personas-v1"
+    seed_version = "family-safety-personas-v2-legacy-v6-archive"
     seed = conn.execute(
         "SELECT value FROM app_settings WHERE key='service_user_seed_version'"
     ).fetchone()
     fingerprint_seed = conn.execute(
         "SELECT value FROM app_settings WHERE key='service_user_seed_fingerprints'"
     ).fetchone()
+    _archive_exact_legacy_v6_personas(conn)
     if seed and str(seed["value"]) == seed_version and fingerprint_seed:
         return
 
@@ -766,16 +766,6 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
         (json.dumps(expected_fingerprints, ensure_ascii=False, sort_keys=True), now),
     )
 
-    # Archive only the exact historical demo identities. Never rename or reuse
-    # them: inquiry history and biometric bindings remain attached to the old ID.
-    conn.execute(
-        """
-        UPDATE service_users SET archived=1
-        WHERE (id='zhangsan' AND name='张三')
-           OR (id='lisi' AND name='李四')
-           OR (id='wangwu' AND name='王五')
-        """
-    )
     conn.execute(
         """
         INSERT INTO app_settings(key, value, updated_at)
@@ -784,6 +774,66 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
         """,
         (seed_version, now),
     )
+
+
+def _archive_exact_legacy_v6_personas(conn: sqlite3.Connection) -> None:
+    """Archive untouched v6 demo people while retaining their stable ownership IDs."""
+    expected_by_name = {
+        "张三": {
+            "age": 70,
+            "profile": "高血压；常年性过敏性鼻炎；李四的爷爷和主要照护人",
+            "allergies": "头孢类药物禁忌",
+            "note": "父母外出工作时负责照护李四；本人降压药和鼻喷剂按既往医嘱使用",
+            "status": "家庭监护人",
+        },
+        "李四": {
+            "age": 8,
+            "profile": "8岁儿童；体重约25公斤；季节性过敏性鼻炎；功能性便秘",
+            "allergies": "无已知药物过敏",
+            "note": "张三的孙子；父母工作日外出，由张三照护；儿童用药需由监护人核验",
+            "status": "儿童家庭成员",
+        },
+        "王五": {
+            "age": 58,
+            "profile": "长期胃病",
+            "allergies": "",
+            "note": "近期有问询",
+            "status": "观察",
+        },
+    }
+    rows = conn.execute(
+        """
+        SELECT id, name, age, profile, allergies, note, status,
+               medical_conditions_json, current_medications_json,
+               allergy_facts_json, safety_profile_revision,
+               safety_profile_updated_at, persona_generation, archived
+        FROM service_users
+        WHERE name IN ('张三', '李四', '王五') AND archived=0
+        """
+    ).fetchall()
+    for row in rows:
+        expected = expected_by_name[str(row["name"])]
+        unchanged = all(
+            (
+                int(row["age"] or 0) == expected["age"],
+                str(row["profile"] or "") == expected["profile"],
+                str(row["allergies"] or "") == expected["allergies"],
+                str(row["note"] or "") == expected["note"],
+                str(row["status"] or "") == expected["status"],
+                str(row["medical_conditions_json"] or "[]") == "[]",
+                str(row["current_medications_json"] or "[]") == "[]",
+                str(row["allergy_facts_json"] or "[]") == "[]",
+                int(row["safety_profile_revision"] or 1) == 1,
+                str(row["safety_profile_updated_at"] or "") == "",
+                str(row["persona_generation"] or "") == "",
+            )
+        )
+        if not unchanged:
+            continue
+        conn.execute(
+            "UPDATE service_users SET archived=1 WHERE id=? AND archived=0",
+            (row["id"],),
+        )
 
 
 def has_exact_senior_demo_personas(conn: sqlite3.Connection) -> bool:

@@ -9,8 +9,8 @@ medicines, dispense records, device actions, inquiry records, vitals records,
 service users, today plans, identity assertions, one-time medicine safety checks,
 an append-only safety-event outbox and sync state. `today_plans` stores
 service-user and medicine IDs, while display names remain snapshots; invalid
-legacy name-only rows are removed during migration instead of appearing as valid
-plans.
+legacy name-only rows and plans owned by archived people are quarantined with
+`archived=1` during migration instead of being deleted or appearing as valid plans.
 
 ## Backend layers
 
