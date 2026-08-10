@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { LoaderCircle, MonitorOff, MonitorUp, Power, RefreshCw, RotateCw, ServerCog, ShieldAlert, Signal, Wifi } from "lucide-react";
-import { loadAdminNetwork, runAdminSystemAction, updateAdminNetwork } from "../../api/admin.js";
+import { KeyRound, LoaderCircle, MonitorOff, MonitorUp, Power, RefreshCw, RotateCw, ServerCog, ShieldAlert, Signal, Timer, UserRound, Wifi } from "lucide-react";
+import { issueAdminPairingCode, loadAdminNetwork, loadAdminUsers, runAdminSystemAction, updateAdminNetwork } from "../../api/admin.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
 
 const actions = [
@@ -33,11 +33,25 @@ function NetworkSwitch({ checked, busy, label, onChange }) {
   );
 }
 
+function countdownLabel(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = String(seconds % 60).padStart(2, "0");
+  return `${minutes}:${remainder}`;
+}
+
 export function AdminDevices({ overview, loading, onRefresh, notify, onSessionExpired }) {
   const [pending, setPending] = useState(null);
   const [busy, setBusy] = useState(false);
   const [networkSettings, setNetworkSettings] = useState(null);
   const [networkBusy, setNetworkBusy] = useState("");
+  const [pairingUsers, setPairingUsers] = useState([]);
+  const [pairingUserId, setPairingUserId] = useState("");
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [issuedPairing, setIssuedPairing] = useState(null);
+  const [pairingRemaining, setPairingRemaining] = useState(0);
+  const issuedPairingScope = (issuedPairing?.service_user_ids || [])
+    .map((id) => pairingUsers.find((user) => user.id === id)?.name || id)
+    .join("、");
   const devices = overview?.devices || {};
   const network = overview?.network || {};
   const rows = [
@@ -56,6 +70,39 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
         notify(error.message || "网络设置读取失败");
       });
   }, [notify, onSessionExpired]);
+
+  useEffect(() => {
+    loadAdminUsers()
+      .then((result) => {
+        const users = Array.isArray(result.users) ? result.users : [];
+        setPairingUsers(users);
+        setPairingUserId((current) => (
+          users.some((user) => user.id === current) ? current : users[0]?.id || ""
+        ));
+      })
+      .catch((error) => {
+        if (/会话/.test(error.message || "")) onSessionExpired();
+        notify(error.message || "服务对象读取失败");
+      });
+  }, [notify, onSessionExpired]);
+
+  useEffect(() => {
+    if (!issuedPairing?.expires_at) {
+      setPairingRemaining(0);
+      return undefined;
+    }
+    const updateCountdown = () => {
+      const expiresAt = Date.parse(issuedPairing.expires_at);
+      const seconds = Number.isFinite(expiresAt)
+        ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+        : 0;
+      setPairingRemaining(seconds);
+      if (seconds === 0) setIssuedPairing(null);
+    };
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [issuedPairing]);
 
   function updatePhysicalNetwork(key, enabled) {
     const label = key === "wifi_enabled" ? "Wi-Fi" : "数据网络";
@@ -86,6 +133,22 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
         notify(error.message || "系统操作失败");
       })
       .finally(() => setBusy(false));
+  }
+
+  function issuePairingCode() {
+    if (!pairingUserId) return;
+    setPairingBusy(true);
+    setIssuedPairing(null);
+    issueAdminPairingCode([pairingUserId], 10)
+      .then((result) => {
+        setIssuedPairing(result);
+        notify("家属配对码已生成");
+      })
+      .catch((error) => {
+        if (/会话/.test(error.message || "")) onSessionExpired();
+        notify(error.message || "配对码生成失败");
+      })
+      .finally(() => setPairingBusy(false));
   }
 
   return (
@@ -120,16 +183,43 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
             </div>
           </section>
         </div>
-        <section className="admin-system-actions">
-          <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要二次确认并写入审计日志</p></div></header>
-          <div>
-            {actions.map(({ icon: Icon, ...action }) => (
-              <button key={action.id} type="button" className={`admin-system-action ${action.tone}`} onClick={() => setPending(action)}>
-                <span><Icon size={21} /></span><div><strong>{action.title}</strong><small>{action.description}</small></div>
+        <div className="admin-device-side-column">
+          <section className="admin-pairing-panel">
+            <header><KeyRound size={20} /><div><h3>家属配对</h3><p>选择服务对象后生成一次性配对码</p></div></header>
+            <div className="admin-pairing-controls">
+              <label>
+                <UserRound size={17} aria-hidden="true" />
+                <select value={pairingUserId} disabled={pairingBusy} onChange={(event) => { setPairingUserId(event.target.value); setIssuedPairing(null); }} aria-label="选择家属可查看的服务对象">
+                  {pairingUsers.length === 0 && <option value="">暂无可配对对象</option>}
+                  {pairingUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="admin-button primary compact" onClick={issuePairingCode} disabled={pairingBusy || !pairingUserId}>
+                {pairingBusy ? <LoaderCircle className="admin-spin" size={16} /> : <KeyRound size={16} />}
+                {pairingBusy ? "生成中" : "生成配对码"}
               </button>
-            ))}
-          </div>
-        </section>
+            </div>
+            {issuedPairing ? (
+              <div className="admin-pairing-code" role="status" aria-live="polite">
+                <code>{issuedPairing.pairing_code}</code>
+                <span><Timer size={15} />剩余 {countdownLabel(pairingRemaining)}</span>
+                <small>授权对象：{issuedPairingScope || "待核对"} · 请让家属现在输入；过期后需重新生成</small>
+              </div>
+            ) : (
+              <div className="admin-pairing-empty"><KeyRound size={21} /><span>配对码只会在这里显示一次</span></div>
+            )}
+          </section>
+          <section className="admin-system-actions">
+            <header><ShieldAlert size={20} /><div><h3>系统操作</h3><p>每次执行都需要二次确认并写入审计日志</p></div></header>
+            <div>
+              {actions.map(({ icon: Icon, ...action }) => (
+                <button key={action.id} type="button" className={`admin-system-action ${action.tone}`} onClick={() => setPending(action)}>
+                  <span><Icon size={21} /></span><div><strong>{action.title}</strong><small>{action.description}</small></div>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
       <AdminConfirmDialog open={Boolean(pending)} title={pending?.title} description={pending?.description} expected={pending?.expected || ""} confirmLabel="确认执行" tone={pending?.tone} busy={busy} onCancel={() => setPending(null)} onConfirm={execute} />
     </div>

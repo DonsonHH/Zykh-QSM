@@ -72,6 +72,16 @@ export function loadAdminUsers() {
   return adminRequest("/api/admin/users");
 }
 
+export function issueAdminPairingCode(serviceUserIds, ttlMinutes = 10) {
+  return adminRequest("/api/admin/pairing-codes", {
+    method: "POST",
+    payload: {
+      service_user_ids: serviceUserIds,
+      ttl_minutes: ttlMinutes
+    }
+  });
+}
+
 export function createAdminUser(payload) {
   return adminRequest("/api/admin/users", { method: "POST", payload });
 }

@@ -112,12 +112,39 @@ function projectDetail(event, read) {
   });
 }
 
+function requireDatabaseSuccess(result) {
+  const code = result && (result.errCode ?? result.code);
+  const failedCode = (
+    code !== undefined
+    && code !== null
+    && code !== 0
+    && code !== "0"
+    && String(code).toUpperCase() !== "OK"
+  );
+  const message = String((result && (result.errMsg || result.message)) || "");
+  if (failedCode || /:fail\b/i.test(message)) throw new Error("DATABASE_REQUEST_FAILED");
+  return result;
+}
+
+function documentNotFound(value) {
+  const code = String((value && (value.errCode ?? value.code)) || "").toUpperCase();
+  const message = String((value && (value.errMsg || value.message)) || value || "");
+  return (
+    code === "DATABASE_DOCUMENT_NOT_EXIST"
+    || code === "DOCUMENT_NOT_EXIST"
+    || /document(?:\s+with\s+_id\s+\S+)?\s+(?:does\s+)?not\s+exist|document\s+not\s+found|missing\s+document|文档不存在/i.test(message)
+  );
+}
+
 async function documentOrNull(collection, id) {
   try {
     const result = await collection.doc(id).get();
+    if (documentNotFound(result)) return null;
+    requireDatabaseSuccess(result);
     return result && result.data ? result.data : null;
   } catch (error) {
-    return null;
+    if (documentNotFound(error)) return null;
+    throw new Error("DATABASE_REQUEST_FAILED");
   }
 }
 
@@ -202,7 +229,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
             || textValue(existingReceipt.openid) !== recipient.openid
           ) throw new Error("IDEMPOTENCY_CONFLICT");
         } else {
-          await receiptCollection.doc(receiptId).set({
+          requireDatabaseSuccess(await receiptCollection.doc(receiptId).set({
             data: {
               receiptId,
               eventId,
@@ -215,7 +242,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
               createdAt: timestamp,
               updatedAt: timestamp,
             },
-          });
+          }));
         }
 
         const notificationCollection = database.collection(
@@ -233,7 +260,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
           ) throw new Error("IDEMPOTENCY_CONFLICT");
           return true;
         }
-        await notificationCollection.doc(notificationId).set({
+        requireDatabaseSuccess(await notificationCollection.doc(notificationId).set({
           data: {
             notificationId,
             type: "MEDICATION_SAFETY_EVENT",
@@ -248,7 +275,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
             createdAt: timestamp,
             updatedAt: timestamp,
           },
-        });
+        }));
         return true;
       };
       const delivered = await db.runTransaction(
@@ -310,7 +337,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
         createdAt: timestamp,
         updatedAt: timestamp,
       });
-      await collection.doc(documentId).set({ data: storedEvent });
+      requireDatabaseSuccess(await collection.doc(documentId).set({ data: storedEvent }));
       return { event: storedEvent, replay: false };
     });
     await ensureCaregiverDelivery(persisted.event, data.deviceId);
@@ -437,7 +464,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
         createdAt: textValue(existing && existing.createdAt, existing && existing.created_at) || timestamp,
         updatedAt: timestamp,
       });
-      await collection.doc(receiptId).set({ data: receipt });
+      requireDatabaseSuccess(await collection.doc(receiptId).set({ data: receipt }));
       return { ok: true, eventId, state: "READ", readAt: receipt.readAt, replay: false };
     };
 

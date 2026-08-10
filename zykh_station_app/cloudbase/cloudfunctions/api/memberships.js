@@ -10,6 +10,14 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
+function safeDocumentId(value) {
+  return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
+}
+
+function serviceUserDocumentId(deviceId, serviceUserId) {
+  return `${deviceId}-user-${safeDocumentId(serviceUserId)}`;
+}
+
 function expiryTime(value) {
   if (value instanceof Date) return value.getTime();
   if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
@@ -21,13 +29,52 @@ function expiryTime(value) {
   return Date.parse(normalized);
 }
 
-function createMembershipModule({ db, collections, nowText }) {
+function requireDatabaseSuccess(result, failureCode = "DATABASE_REQUEST_FAILED") {
+  const code = result && (result.errCode ?? result.code);
+  const failedCode = (
+    code !== undefined
+    && code !== null
+    && code !== 0
+    && code !== "0"
+    && String(code).toUpperCase() !== "OK"
+  );
+  const message = String((result && (result.errMsg || result.message)) || "");
+  if (failedCode || /:fail\b/i.test(message)) {
+    throw new Error(failureCode);
+  }
+  return result;
+}
+
+function documentNotFound(value) {
+  const code = String((value && (value.errCode ?? value.code)) || "").toUpperCase();
+  const message = String((value && (value.errMsg || value.message)) || value || "");
+  return (
+    code === "DATABASE_DOCUMENT_NOT_EXIST"
+    || code === "DOCUMENT_NOT_EXIST"
+    || /document(?:\s+with\s+_id\s+\S+)?\s+(?:does\s+)?not\s+exist|document\s+not\s+found|missing\s+document|文档不存在/i.test(message)
+  );
+}
+
+const CAREGIVER_READ_PERMISSIONS = Object.freeze([
+  "READ_SAFETY",
+  "READ_INQUIRY",
+  "READ_PLAN",
+  "READ_PROFILE",
+  "READ_RECORD",
+  "READ_VITALS",
+  "READ_MEDICINE",
+]);
+
+function createMembershipModule({ db, collections, nowText, nowEpochMs = () => Date.now() }) {
   async function documentOrNull(collection, id) {
     try {
       const result = await collection.doc(id).get();
+      if (documentNotFound(result)) return null;
+      requireDatabaseSuccess(result);
       return result && result.data ? result.data : null;
     } catch (error) {
-      return null;
+      if (documentNotFound(error)) return null;
+      throw new Error("DATABASE_REQUEST_FAILED");
     }
   }
 
@@ -36,11 +83,11 @@ function createMembershipModule({ db, collections, nowText }) {
     if (!normalizedOpenId) throw new Error("miniprogram identity required");
     const rows = [];
     for (let offset = 0; ; offset += 100) {
-      const result = await db.collection(collections.deviceMemberships)
+      const result = requireDatabaseSuccess(await db.collection(collections.deviceMemberships)
         .where({ openid: normalizedOpenId, status: "ACTIVE" })
         .skip(offset)
         .limit(100)
-        .get();
+        .get());
       const page = result.data || [];
       rows.push(...page);
       if (page.length < 100) break;
@@ -72,6 +119,90 @@ function createMembershipModule({ db, collections, nowText }) {
     return { ok: true, items };
   }
 
+  async function issuePairingCode(data = {}) {
+    const deviceId = String(data.deviceId || "").trim();
+    const codeHash = String(data.codeHash || "").trim();
+    const ttlSeconds = Number(data.ttlSeconds);
+    const serviceUserScopes = Array.from(new Set(textList(data.serviceUserScopes)));
+    const hasCallerSelectedCredentials = [
+      "role",
+      "permissions",
+      "pairingCode",
+      "code",
+      "expiresAt",
+    ].some(field => Object.prototype.hasOwnProperty.call(data, field));
+    if (
+      !deviceId
+      || !/^[a-f0-9]{64}$/.test(codeHash)
+      || !Number.isInteger(ttlSeconds)
+      || ttlSeconds < 300
+      || ttlSeconds > 900
+      || !serviceUserScopes.length
+      || serviceUserScopes.length > 8
+      || hasCallerSelectedCredentials
+    ) throw new Error("PAIRING_CODE_ISSUE_INVALID");
+
+    if (typeof db.runTransaction !== "function") {
+      throw new Error("PAIRING_CODE_ISSUE_INVALID");
+    }
+    const pairingDocumentId = `pairing-${codeHash}`;
+    return db.runTransaction(async transaction => {
+      const pairingCollection = transaction.collection(collections.devicePairingCodes);
+      if (await documentOrNull(pairingCollection, pairingDocumentId)) {
+        throw new Error("PAIRING_CODE_ISSUE_INVALID");
+      }
+
+      const serviceUserCollection = transaction.collection(collections.serviceUsers);
+      for (const scope of serviceUserScopes) {
+        const row = await documentOrNull(
+          serviceUserCollection,
+          serviceUserDocumentId(deviceId, scope),
+        );
+        const archived = Boolean(row) && (
+          row.archived === true
+          || Number(row.archived) === 1
+          || String(row.archived || "").toLowerCase() === "true"
+        );
+        if (
+          !row
+          || String(row.deviceId || "").trim() !== deviceId
+          || String(row.id || row.user_id || "").trim() !== scope
+          || archived
+        ) throw new Error("PAIRING_CODE_ISSUE_INVALID");
+      }
+
+      const timestamp = nowText();
+      const issuedAt = Number(nowEpochMs());
+      if (!Number.isFinite(issuedAt)) throw new Error("PAIRING_CODE_ISSUE_INVALID");
+      const expiresAt = new Date(issuedAt + ttlSeconds * 1000).toISOString();
+      requireDatabaseSuccess(
+        await pairingCollection.doc(pairingDocumentId).set({
+          data: {
+            codeHash,
+            deviceId,
+            role: "CAREGIVER",
+            permissions: [...CAREGIVER_READ_PERMISSIONS],
+            service_user_scopes: serviceUserScopes,
+            status: "UNUSED",
+            expiresAt,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        }),
+        "PAIRING_CODE_ISSUE_INVALID",
+      );
+      return {
+        ok: true,
+        deviceId,
+        role: "CAREGIVER",
+        permissions: [...CAREGIVER_READ_PERMISSIONS],
+        serviceUserScopes,
+        status: "UNUSED",
+        expiresAt,
+      };
+    });
+  }
+
   async function redeemPairingCode({ openId, pairingCode }) {
     const normalizedOpenId = String(openId || "").trim();
     if (!normalizedOpenId) throw new Error("miniprogram identity required");
@@ -83,6 +214,22 @@ function createMembershipModule({ db, collections, nowText }) {
 
     const codeHash = sha256(code);
     const pairingDocumentId = `pairing-${codeHash}`;
+    const pairingBeforeTransaction = await documentOrNull(
+      db.collection(collections.devicePairingCodes),
+      pairingDocumentId,
+    );
+    const initialDeviceId = String(
+      (pairingBeforeTransaction && (pairingBeforeTransaction.deviceId || pairingBeforeTransaction.device_id))
+      || "",
+    ).trim();
+    if (!initialDeviceId) throw new Error("PAIRING_CODE_INVALID");
+    const existingMemberships = requireDatabaseSuccess(await db
+      .collection(collections.deviceMemberships)
+      .where({ openid: normalizedOpenId, deviceId: initialDeviceId })
+      .limit(1)
+      .get());
+    if ((existingMemberships.data || []).length) throw new Error("PAIRING_CODE_INVALID");
+
     return db.runTransaction(async transaction => {
       const pairingCollection = transaction.collection(collections.devicePairingCodes);
       const pairing = await documentOrNull(pairingCollection, pairingDocumentId);
@@ -114,20 +261,19 @@ function createMembershipModule({ db, collections, nowText }) {
       ]);
       if (
         !deviceId
+        || deviceId !== initialDeviceId
         || !allowedRoles.has(role)
         || permissions.some(permission => !allowedPermissions.has(permission))
       ) throw new Error("PAIRING_CODE_INVALID");
 
       const membershipCollection = transaction.collection(collections.deviceMemberships);
-      const existingMemberships = await membershipCollection
-        .where({ openid: normalizedOpenId, deviceId })
-        .limit(1)
-        .get();
-      if ((existingMemberships.data || []).length) throw new Error("PAIRING_CODE_INVALID");
+      const membershipId = `membership-${sha256(`${deviceId}\u0000${normalizedOpenId}`)}`;
+      if (await documentOrNull(membershipCollection, membershipId)) {
+        throw new Error("PAIRING_CODE_INVALID");
+      }
 
       const timestamp = nowText();
-      const membershipId = `membership-${sha256(`${deviceId}\u0000${normalizedOpenId}`)}`;
-      await membershipCollection.doc(membershipId).set({
+      requireDatabaseSuccess(await membershipCollection.doc(membershipId).set({
         data: {
           membershipId,
           openid: normalizedOpenId,
@@ -139,7 +285,7 @@ function createMembershipModule({ db, collections, nowText }) {
           createdAt: timestamp,
           updatedAt: timestamp,
         },
-      });
+      }));
 
       const consumedPairing = Object.assign({}, pairing, {
         codeHash,
@@ -154,7 +300,9 @@ function createMembershipModule({ db, collections, nowText }) {
       delete consumedPairing._openid;
       delete consumedPairing.code;
       delete consumedPairing.pairingCode;
-      await pairingCollection.doc(pairingDocumentId).set({ data: consumedPairing });
+      requireDatabaseSuccess(
+        await pairingCollection.doc(pairingDocumentId).set({ data: consumedPairing }),
+      );
 
       return {
         ok: true,
@@ -169,11 +317,11 @@ function createMembershipModule({ db, collections, nowText }) {
   async function listActiveMemberships(deviceId) {
     const rows = [];
     for (let offset = 0; ; offset += 100) {
-      const result = await db.collection(collections.deviceMemberships)
+      const result = requireDatabaseSuccess(await db.collection(collections.deviceMemberships)
         .where({ deviceId, status: "ACTIVE" })
         .skip(offset)
         .limit(100)
-        .get();
+        .get());
       const page = result.data || [];
       rows.push(...page);
       if (page.length < 100) return rows;
@@ -229,10 +377,10 @@ function createMembershipModule({ db, collections, nowText }) {
   async function requireMembership({ openId, deviceId, personId = "" }) {
     const normalizedOpenId = String(openId || "").trim();
     if (!normalizedOpenId) throw new Error("miniprogram identity required");
-    const result = await db.collection(collections.deviceMemberships)
+    const result = requireDatabaseSuccess(await db.collection(collections.deviceMemberships)
       .where({ openid: normalizedOpenId, deviceId, status: "ACTIVE" })
       .limit(1)
-      .get();
+      .get());
     const membership = (result.data || [])[0];
     if (!membership) throw new Error("CAREGIVER_MEMBERSHIP_REQUIRED");
 
@@ -278,6 +426,7 @@ function createMembershipModule({ db, collections, nowText }) {
   }
 
   return {
+    issuePairingCode,
     isCurrentSafetyRecipient,
     listMyDevices,
     listSafetyRecipients,

@@ -845,6 +845,117 @@
   gap: 12px;
 }
 
+.admin-device-side-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-pairing-panel {
+  min-width: 0;
+  border: 1px solid #cddbef;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px 15px;
+}
+
+.admin-pairing-panel > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1e63d7;
+}
+
+.admin-pairing-panel h3,
+.admin-pairing-panel p { margin: 0; }
+.admin-pairing-panel h3 { color: #172033; font-size: 15px; }
+.admin-pairing-panel p { margin-top: 3px; color: #667085; font-size: 11px; }
+
+.admin-pairing-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.admin-pairing-controls label {
+  min-width: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #cfd9e5;
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #667085;
+}
+
+.admin-pairing-controls select {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-pairing-code,
+.admin-pairing-empty {
+  min-height: 70px;
+  margin-top: 9px;
+  border-radius: 9px;
+}
+
+.admin-pairing-code {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  border: 1px solid #a9c7f5;
+  background: #eef5ff;
+  padding: 9px 11px;
+}
+
+.admin-pairing-code code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #174ea6;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 0.025em;
+}
+
+.admin-pairing-code span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b54708;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-pairing-code small {
+  grid-column: 1 / -1;
+  color: #667085;
+  font-size: 10px;
+}
+
+.admin-pairing-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed #cbd7e6;
+  background: #f8fafc;
+  color: #667085;
+  font-size: 11px;
+}
+
 .admin-network-controls {
   padding: 14px 15px;
 }
@@ -978,7 +1089,7 @@
 }
 
 .admin-devices-layout .admin-system-actions > div {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
 }
 
 .admin-devices-layout .admin-system-action {

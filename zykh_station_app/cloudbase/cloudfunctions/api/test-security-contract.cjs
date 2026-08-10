@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const Module = require("node:module");
 const path = require("node:path");
@@ -8,6 +9,13 @@ const insertedRows = [];
 const stores = new Map();
 let currentOpenId = "wechat-openid";
 let transactionTail = Promise.resolve();
+let failPairingCodeSet = false;
+let failMembershipQuery = false;
+let failMembershipSet = false;
+let failSafetyEventGet = false;
+let failSafetyEventSet = false;
+let failSafetyReceiptSet = false;
+let failSafetyNotificationSet = false;
 function storeFor(name) {
   if (!stores.has(name)) stores.set(name, new Map());
   return stores.get(name);
@@ -20,6 +28,9 @@ function collection(name) {
     skip: nextOffset => makeQuery(filter, order, direction, nextOffset, maximum),
     limit: nextMaximum => makeQuery(filter, order, direction, offset, nextMaximum),
     get: async () => {
+      if (name === "device_memberships" && failMembershipQuery) {
+        return { errCode: -1, errMsg: "database query:fail injected" };
+      }
       let rows = Array.from(store.entries()).map(([id, row]) => Object.assign({ _id: id }, row));
       rows = rows.filter(row => Object.entries(filter).every(([key, value]) => row[key] === value));
       if (order) {
@@ -41,12 +52,42 @@ function collection(name) {
     },
     doc: id => ({
       get: async () => {
+        if (name === "medication_safety_events" && failSafetyEventGet) {
+          return { errCode: -1, errMsg: "document.get:fail transient database error" };
+        }
         if (!store.has(id)) throw new Error("missing document");
         return { data: Object.assign({ _id: id }, store.get(id)) };
       },
-      set: async ({ data }) => { store.set(id, data); },
+      set: async ({ data }) => {
+        if (name === "device_pairing_codes" && failPairingCodeSet) {
+          return { errCode: -1, errMsg: "document.set:fail injected" };
+        }
+        if (name === "device_memberships" && failMembershipSet) {
+          return { errCode: -1, errMsg: "document.set:fail injected" };
+        }
+        if (name === "medication_safety_events" && failSafetyEventSet) {
+          return { errCode: -1, errMsg: "document.set:fail injected" };
+        }
+        if (name === "caregiver_event_receipts" && failSafetyReceiptSet) {
+          return { errCode: -1, errMsg: "document.set:fail injected" };
+        }
+        if (name === "caregiver_notification_outbox" && failSafetyNotificationSet) {
+          return { errCode: -1, errMsg: "document.set:fail injected" };
+        }
+        store.set(id, data);
+        return { errCode: 0, errMsg: "document.set:ok" };
+      },
       remove: async () => { store.delete(id); },
     }),
+  });
+}
+
+function transactionCollection(name) {
+  const direct = collection(name);
+  return Object.assign({}, direct, {
+    where: () => {
+      throw new Error("TRANSACTION_QUERY_FORBIDDEN");
+    },
   });
 }
 const fakeCloud = {
@@ -56,7 +97,26 @@ const fakeCloud = {
   database: () => ({
     collection,
     runTransaction: handler => {
-      const result = transactionTail.then(() => handler({ collection }));
+      const result = transactionTail.then(async () => {
+        const snapshot = new Map(
+          Array.from(stores.entries()).map(([name, store]) => [
+            name,
+            new Map(
+              Array.from(store.entries()).map(([id, row]) => [
+                id,
+                JSON.parse(JSON.stringify(row)),
+              ]),
+            ),
+          ]),
+        );
+        try {
+          return await handler({ collection: transactionCollection });
+        } catch (error) {
+          stores.clear();
+          for (const [name, store] of snapshot.entries()) stores.set(name, store);
+          throw error;
+        }
+      });
       transactionTail = result.then(() => undefined, () => undefined);
       return result;
     },
@@ -70,6 +130,8 @@ Module._load = function load(request, parent, isMain) {
 };
 
 const cloudFunction = require(path.resolve(__dirname, "index.js"));
+const { createMembershipModule } = require(path.resolve(__dirname, "memberships.js"));
+const { canonicalPayloadDigest } = require(path.resolve(__dirname, "medicationSafetyEvents.js"));
 
 async function invokeHttp(action, data) {
   const response = await cloudFunction.main({
@@ -85,23 +147,40 @@ async function run() {
     path.resolve(__dirname, "../../../scripts/deploy_cloudbase_sync.py"),
     "utf8",
   );
-  assert.match(source, /2\.5-caregiver-safety-events/, "caregiver safety schema revision was not advanced");
+  assert.match(
+    source,
+    /2\.6-station-pairing-notification-worker/,
+    "station pairing issue schema revision was not advanced",
+  );
   for (const collectionName of [
     "medication_safety_events",
     "caregiver_event_receipts",
     "caregiver_notification_outbox",
+    "caregiver_notification_subscriptions",
     "device_memberships",
     "device_pairing_codes",
   ]) {
     assert.match(deploySource, new RegExp(`\\b${collectionName}\\b`), `${collectionName} is missing from deploy setup`);
   }
-  for (const moduleName of ["medicationSafetyEvents.js", "memberships.js"]) {
+  for (const moduleName of [
+    "medicationSafetyEvents.js",
+    "memberships.js",
+    "caregiverNotificationWorker",
+    "subscribeMessageSender.js",
+    "invocation.js",
+    "worker.js",
+  ]) {
     assert.match(deploySource, new RegExp(moduleName.replace(".", "\\.")), `${moduleName} is missing from the function archive`);
   }
   assert.match(
     deploySource,
-    /2\.5-caregiver-safety-events/,
+    /2\.6-station-pairing-notification-worker/,
     "deployment verification must not accept an older parallel schemaVersion=2 contract",
+  );
+  assert.doesNotMatch(
+    deploySource,
+    /TARGET_SCHEMA_REVISION\s*=\s*"2\.5-caregiver-safety-events"/,
+    "deployment verification still targets the obsolete 2.5 revision",
   );
   assert.match(
     deploySource,
@@ -114,23 +193,243 @@ async function run() {
     "deployment verification must wait for the notification outbox capability",
   );
   assert.match(
+    deploySource,
+    /capabilities\.get\("devicePairingIssue"\)\s*==\s*"v1"/,
+    "deployment verification must wait for the Station pairing issuer capability",
+  );
+  assert.match(
+    deploySource,
+    /capabilities\.get\("caregiverNotificationWorker"\)\s*==\s*"v1"/,
+    "deployment verification must wait for the notification worker capability",
+  );
+  assert.match(deploySource, /caregiver-notification-worker-timer/);
+  assert.match(deploySource, /desired\s*=\s*"OPEN"\s*if\s*enable\s*else\s*"CLOSE"/);
+  assert.match(
     source,
     /normalized\.createdAt = firstPresent\(\s*row\.measured_at/,
     "vitals history is sorted by synchronization time instead of measurement time",
   );
   const ping = await cloudFunction.main({ action: "PING", data: {} });
-  assert.equal(ping.schemaRevision, "2.5-caregiver-safety-events");
+  assert.equal(ping.schemaRevision, "2.6-station-pairing-notification-worker");
   assert.equal(ping.capabilities && ping.capabilities.medicationSafetyEvents, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverMembership, "v1");
   assert.equal(ping.capabilities && ping.capabilities.inquiryDetail, "v1");
   assert.equal(ping.capabilities && ping.capabilities.snapshotBatch, "v2");
   assert.equal(ping.capabilities && ping.capabilities.devicePairing, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.devicePairingIssue, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationOutbox, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationWorker, "v1");
   assert.equal(ping.collections && ping.collections.devicePairingCodes, "device_pairing_codes");
   assert.equal(
     ping.collections && ping.collections.caregiverNotificationOutbox,
     "caregiver_notification_outbox",
   );
+  assert.equal(
+    ping.collections && ping.collections.caregiverNotificationSubscriptions,
+    "caregiver_notification_subscriptions",
+  );
+
+  storeFor("service_users").set("clock-device-user-clock-wang", {
+    id: "clock-wang",
+    deviceId: "clock-device",
+    archived: false,
+  });
+  const deterministicMemberships = createMembershipModule({
+    db: fakeCloud.database(),
+    collections: {
+      devicePairingCodes: "device_pairing_codes",
+      serviceUsers: "service_users",
+    },
+    nowText: () => "2026-08-10 12:00:00",
+    nowEpochMs: () => Date.parse("2026-08-10T04:00:00.000Z"),
+  });
+  const deterministicIssue = await deterministicMemberships.issuePairingCode({
+    deviceId: "clock-device",
+    codeHash: "7".repeat(64),
+    serviceUserScopes: ["clock-wang"],
+    ttlSeconds: 600,
+  });
+  assert.equal(deterministicIssue.expiresAt, "2026-08-10T04:10:00.000Z");
+  assert.equal(
+    storeFor("device_pairing_codes").get(`pairing-${"7".repeat(64)}`).createdAt,
+    "2026-08-10 12:00:00",
+  );
+  storeFor("service_users").delete("clock-device-user-clock-wang");
+  storeFor("device_pairing_codes").delete(`pairing-${"7".repeat(64)}`);
+
+  const issuePairingOriginalSharedSecret = process.env.DEVICE_SECRET;
+  const issuePairingOriginalDeviceSecrets = process.env.DEVICE_SECRETS;
+  process.env.DEVICE_SECRET = "server-test-secret";
+  delete process.env.DEVICE_SECRETS;
+  storeFor("service_users").set("zykh-qsm-001-user-wang-nainai", {
+    id: "wang-nainai",
+    name: "王奶奶",
+    deviceId: "zykh-qsm-001",
+    archived: false,
+  });
+  storeFor("service_users").set("zykh-qsm-001-user-archived", {
+    id: "archived-person",
+    name: "已归档对象",
+    deviceId: "zykh-qsm-001",
+    archived: true,
+  });
+  const issueWithoutSecret = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    codeHash: "b".repeat(64),
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+  });
+  assert.equal(issueWithoutSecret.ok, false);
+  assert.match(issueWithoutSecret.error, /per-device|unauthorized/);
+  const issueWithSharedSecretOnly = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "1".repeat(64),
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+  });
+  assert.equal(issueWithSharedSecretOnly.ok, false);
+  assert.match(issueWithSharedSecretOnly.error, /per-device|unauthorized/);
+  process.env.DEVICE_SECRETS = JSON.stringify({
+    "zykh-qsm-001": "server-test-secret",
+  });
+  const issueWithCallerSelectedAuthority = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "c".repeat(64),
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+    role: "OWNER",
+    permissions: ["CREATE_COMMAND"],
+  });
+  assert.equal(issueWithCallerSelectedAuthority.ok, false);
+  assert.match(issueWithCallerSelectedAuthority.error, /PAIRING_CODE_ISSUE_INVALID/);
+  const issueWithoutScope = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "d".repeat(64),
+    serviceUserScopes: [],
+    ttlSeconds: 600,
+  });
+  assert.equal(issueWithoutScope.ok, false);
+  assert.match(issueWithoutScope.error, /PAIRING_CODE_ISSUE_INVALID/);
+  const issueWithForgedScope = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "9".repeat(64),
+    serviceUserScopes: ["not-a-current-service-user"],
+    ttlSeconds: 600,
+  });
+  assert.equal(issueWithForgedScope.ok, false);
+  assert.match(issueWithForgedScope.error, /PAIRING_CODE_ISSUE_INVALID/);
+  const issueWithArchivedScope = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "8".repeat(64),
+    serviceUserScopes: ["archived-person"],
+    ttlSeconds: 600,
+  });
+  assert.equal(issueWithArchivedScope.ok, false);
+  assert.match(issueWithArchivedScope.error, /PAIRING_CODE_ISSUE_INVALID/);
+  failPairingCodeSet = true;
+  const issueWithDatabaseWriteFailure = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: "2".repeat(64),
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+  });
+  failPairingCodeSet = false;
+  assert.equal(issueWithDatabaseWriteFailure.ok, false);
+  assert.match(issueWithDatabaseWriteFailure.error, /PAIRING_CODE_ISSUE_INVALID/);
+  assert.equal(storeFor("device_pairing_codes").has(`pairing-${"2".repeat(64)}`), false);
+  for (const ttlSeconds of [299, 901]) {
+    const invalidTtl = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+      deviceId: "zykh-qsm-001",
+      deviceSecret: "server-test-secret",
+      codeHash: "e".repeat(64),
+      serviceUserScopes: ["wang-nainai"],
+      ttlSeconds,
+    });
+    assert.equal(invalidTtl.ok, false);
+    assert.match(invalidTtl.error, /PAIRING_CODE_ISSUE_INVALID/);
+  }
+  const concurrentIssueHash = "f".repeat(64);
+  const concurrentIssues = await Promise.all([
+    invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+      deviceId: "zykh-qsm-001",
+      deviceSecret: "server-test-secret",
+      codeHash: concurrentIssueHash,
+      serviceUserScopes: ["wang-nainai"],
+      ttlSeconds: 600,
+    }),
+    invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+      deviceId: "zykh-qsm-001",
+      deviceSecret: "server-test-secret",
+      codeHash: concurrentIssueHash,
+      serviceUserScopes: ["wang-nainai"],
+      ttlSeconds: 600,
+    }),
+  ]);
+  assert.equal(concurrentIssues.filter(result => result.ok === true).length, 1);
+  assert.equal(
+    concurrentIssues.filter(result => /PAIRING_CODE_ISSUE_INVALID/.test(result.error || "")).length,
+    1,
+  );
+  const issuedPairingHash = "3dd27a27fd12479222e4d95bdc2161012a5695b7426971de78e713b28002c403";
+  const issueStartedAt = Date.now();
+  const issuedPairing = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: issuedPairingHash,
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+  });
+  assert.equal(issuedPairing.ok, true);
+  assert.equal(issuedPairing.deviceId, "zykh-qsm-001");
+  assert.equal(issuedPairing.role, "CAREGIVER");
+  assert.deepEqual(issuedPairing.permissions, [
+    "READ_SAFETY",
+    "READ_INQUIRY",
+    "READ_PLAN",
+    "READ_PROFILE",
+    "READ_RECORD",
+    "READ_VITALS",
+    "READ_MEDICINE",
+  ]);
+  assert.deepEqual(issuedPairing.serviceUserScopes, ["wang-nainai"]);
+  assert.match(issuedPairing.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  const issuedTtlMs = Date.parse(issuedPairing.expiresAt) - issueStartedAt;
+  assert.ok(issuedTtlMs >= 599_000 && issuedTtlMs <= 601_000);
+  const storedIssuedPairing = storeFor("device_pairing_codes")
+    .get(`pairing-${issuedPairingHash}`);
+  assert.equal(storedIssuedPairing.codeHash, issuedPairingHash);
+  assert.equal(storedIssuedPairing.deviceId, "zykh-qsm-001");
+  assert.equal(storedIssuedPairing.status, "UNUSED");
+  assert.equal(Object.prototype.hasOwnProperty.call(storedIssuedPairing, "pairingCode"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(storedIssuedPairing, "code"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(storedIssuedPairing, "deviceSecret"), false);
+  storedIssuedPairing.status = "CONSUMED";
+  storeFor("device_pairing_codes").set(`pairing-${issuedPairingHash}`, storedIssuedPairing);
+  const repeatedIssue = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    codeHash: issuedPairingHash,
+    serviceUserScopes: ["wang-nainai"],
+    ttlSeconds: 600,
+  });
+  assert.equal(repeatedIssue.ok, false);
+  assert.match(repeatedIssue.error, /PAIRING_CODE_ISSUE_INVALID/);
+  assert.equal(
+    storeFor("device_pairing_codes").get(`pairing-${issuedPairingHash}`).status,
+    "CONSUMED",
+  );
+  if (issuePairingOriginalSharedSecret === undefined) delete process.env.DEVICE_SECRET;
+  else process.env.DEVICE_SECRET = issuePairingOriginalSharedSecret;
+  if (issuePairingOriginalDeviceSecrets === undefined) delete process.env.DEVICE_SECRETS;
+  else process.env.DEVICE_SECRETS = issuePairingOriginalDeviceSecrets;
+  storeFor("service_users").delete("zykh-qsm-001-user-wang-nainai");
+  storeFor("service_users").delete("zykh-qsm-001-user-archived");
 
   storeFor("device_memberships").set("membership-bind-active", {
     openid: "binding-openid",
@@ -180,6 +479,98 @@ async function run() {
   const myDevicesOverHttp = await invokeHttp("GET_MY_DEVICES", {});
   assert.equal(myDevicesOverHttp.ok, false);
   assert.match(myDevicesOverHttp.error, /miniprogram function invocation required/);
+
+  const queryFailureCode = "ZYKH-QSM-PAIR-QUERY-FAILURE";
+  const queryFailureHash = crypto.createHash("sha256").update(queryFailureCode).digest("hex");
+  storeFor("device_pairing_codes").set(`pairing-${queryFailureHash}`, {
+    codeHash: queryFailureHash,
+    deviceId: "binding-device-query-failure",
+    role: "CAREGIVER",
+    service_user_scopes: ["li-yeye"],
+    permissions: ["READ_SAFETY"],
+    status: "UNUSED",
+    expiresAt: "2099-12-31T23:59:59+08:00",
+  });
+  currentOpenId = "query-failure-openid";
+  failMembershipQuery = true;
+  const queryFailureResult = await cloudFunction.main({
+    action: "REDEEM_DEVICE_PAIRING_CODE",
+    data: { pairingCode: queryFailureCode },
+  });
+  failMembershipQuery = false;
+  assert.equal(queryFailureResult.ok, false);
+  assert.equal(
+    storeFor("device_pairing_codes").get(`pairing-${queryFailureHash}`).status,
+    "UNUSED",
+  );
+  assert.equal(
+    Array.from(storeFor("device_memberships").values())
+      .some(row => row.deviceId === "binding-device-query-failure"),
+    false,
+  );
+  storeFor("device_pairing_codes").delete(`pairing-${queryFailureHash}`);
+
+  const membershipFailureCode = "ZYKH-QSM-PAIR-MEMBERSHIP-FAILURE";
+  const membershipFailureHash = crypto.createHash("sha256")
+    .update(membershipFailureCode)
+    .digest("hex");
+  storeFor("device_pairing_codes").set(`pairing-${membershipFailureHash}`, {
+    codeHash: membershipFailureHash,
+    deviceId: "binding-device-membership-failure",
+    role: "CAREGIVER",
+    service_user_scopes: ["li-yeye"],
+    permissions: ["READ_SAFETY"],
+    status: "UNUSED",
+    expiresAt: "2099-12-31T23:59:59+08:00",
+  });
+  currentOpenId = "membership-failure-openid";
+  failMembershipSet = true;
+  const membershipFailureResult = await cloudFunction.main({
+    action: "REDEEM_DEVICE_PAIRING_CODE",
+    data: { pairingCode: membershipFailureCode },
+  });
+  failMembershipSet = false;
+  assert.equal(membershipFailureResult.ok, false);
+  assert.equal(
+    storeFor("device_pairing_codes").get(`pairing-${membershipFailureHash}`).status,
+    "UNUSED",
+  );
+  assert.equal(
+    Array.from(storeFor("device_memberships").values())
+      .some(row => row.deviceId === "binding-device-membership-failure"),
+    false,
+  );
+  storeFor("device_pairing_codes").delete(`pairing-${membershipFailureHash}`);
+
+  const consumeFailureCode = "ZYKH-QSM-PAIR-CONSUME-FAILURE";
+  const consumeFailureHash = crypto.createHash("sha256").update(consumeFailureCode).digest("hex");
+  storeFor("device_pairing_codes").set(`pairing-${consumeFailureHash}`, {
+    codeHash: consumeFailureHash,
+    deviceId: "binding-device-consume-failure",
+    role: "CAREGIVER",
+    service_user_scopes: ["li-yeye"],
+    permissions: ["READ_SAFETY"],
+    status: "UNUSED",
+    expiresAt: "2099-12-31T23:59:59+08:00",
+  });
+  currentOpenId = "consume-failure-openid";
+  failPairingCodeSet = true;
+  const consumeFailureResult = await cloudFunction.main({
+    action: "REDEEM_DEVICE_PAIRING_CODE",
+    data: { pairingCode: consumeFailureCode },
+  });
+  failPairingCodeSet = false;
+  assert.equal(consumeFailureResult.ok, false);
+  assert.equal(
+    storeFor("device_pairing_codes").get(`pairing-${consumeFailureHash}`).status,
+    "UNUSED",
+  );
+  assert.equal(
+    Array.from(storeFor("device_memberships").values())
+      .some(row => row.deviceId === "binding-device-consume-failure"),
+    false,
+  );
+  storeFor("device_pairing_codes").delete(`pairing-${consumeFailureHash}`);
 
   const pairingHash = "313cbcaa996cfeb1d82bf42258227129db77d12a54bead2641d9a002c0cb3111";
   storeFor("device_pairing_codes").set(`pairing-${pairingHash}`, {
@@ -384,6 +775,24 @@ async function run() {
   assert.match(reportWithNonCanonicalDigest.error, /PAYLOAD_DIGEST_MISMATCH/);
   assert.equal(storeFor("medication_safety_events").size, 0);
 
+  const eventWriteFailure = Object.assign({}, safetyEvent, {
+    event_id: "safety-event-write-failure",
+  });
+  failSafetyEventSet = true;
+  const failedEventWrite = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    payloadDigest: canonicalPayloadDigest(eventWriteFailure),
+    event: eventWriteFailure,
+  });
+  failSafetyEventSet = false;
+  assert.equal(failedEventWrite.ok, false);
+  assert.equal(
+    Array.from(storeFor("medication_safety_events").values())
+      .some(event => event.eventId === eventWriteFailure.event_id),
+    false,
+  );
+
   const firstReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "zykh-qsm-001",
     deviceSecret: "server-test-secret",
@@ -394,6 +803,17 @@ async function run() {
   assert.equal(firstReport.eventId, safetyEvent.event_id);
   assert.equal(firstReport.payloadDigest, canonicalDigest);
   assert.equal(firstReport.replay, false);
+
+  failSafetyEventGet = true;
+  const transientReadFailure = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    payloadDigest: canonicalDigest,
+    event: safetyEvent,
+  });
+  failSafetyEventGet = false;
+  assert.equal(transientReadFailure.ok, false);
+  assert.equal(storeFor("medication_safety_events").size, 1);
 
   const reorderedSafetyEvent = {
     service_user_id: safetyEvent.service_user_id,
@@ -479,6 +899,30 @@ async function run() {
     reason_codes: ["CONDITION_CONTRAINDICATION"],
     caregiver_summary: "药箱已阻止本次取药，请打开小程序查看。",
   };
+  failSafetyReceiptSet = true;
+  const failedReceiptWrite = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "notification-device",
+    deviceSecret: "server-test-secret",
+    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    event: notificationEvent,
+  });
+  failSafetyReceiptSet = false;
+  assert.equal(failedReceiptWrite.ok, false);
+  assert.equal(storeFor("caregiver_event_receipts").size, 0);
+  assert.equal(storeFor("caregiver_notification_outbox").size, 0);
+
+  failSafetyNotificationSet = true;
+  const failedNotificationWrite = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "notification-device",
+    deviceSecret: "server-test-secret",
+    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    event: notificationEvent,
+  });
+  failSafetyNotificationSet = false;
+  assert.equal(failedNotificationWrite.ok, false);
+  assert.equal(storeFor("caregiver_event_receipts").size, 0);
+  assert.equal(storeFor("caregiver_notification_outbox").size, 0);
+
   const notificationReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "notification-device",
     deviceSecret: "server-test-secret",

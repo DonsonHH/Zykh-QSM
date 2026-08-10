@@ -8,14 +8,16 @@ const { createMembershipModule } = require("./memberships");
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.5-caregiver-safety-events";
+const schemaRevision = "2.6-station-pairing-notification-worker";
 const capabilities = Object.freeze({
   medicationSafetyEvents: "v1",
   caregiverMembership: "v1",
   inquiryDetail: "v1",
   snapshotBatch: "v2",
   devicePairing: "v1",
+  devicePairingIssue: "v1",
   caregiverNotificationOutbox: "v1",
+  caregiverNotificationWorker: "v1",
 });
 
 const collections = {
@@ -30,11 +32,17 @@ const collections = {
   medicationSafetyEvents: "medication_safety_events",
   caregiverEventReceipts: "caregiver_event_receipts",
   caregiverNotificationOutbox: "caregiver_notification_outbox",
+  caregiverNotificationSubscriptions: "caregiver_notification_subscriptions",
   deviceMemberships: "device_memberships",
   devicePairingCodes: "device_pairing_codes",
 };
 
-const memberships = createMembershipModule({ db, collections, nowText });
+const memberships = createMembershipModule({
+  db,
+  collections,
+  nowText,
+  nowEpochMs: () => Date.now(),
+});
 const medicationSafetyEvents = createMedicationSafetyEventModule({
   db,
   collections,
@@ -53,6 +61,7 @@ const boardActions = new Set([
   "FINALIZE_SNAPSHOT",
   "PULL_COMMANDS",
   "ACK_COMMAND",
+  "ISSUE_DEVICE_PAIRING_CODE",
 ]);
 
 const readActions = new Set([
@@ -219,15 +228,25 @@ function validateMedicineCommand(payload = {}) {
   }
 }
 
-function expectedDeviceSecret(deviceId) {
+function configuredDeviceSecrets() {
   try {
     const map = JSON.parse((process.env.DEVICE_SECRETS || "{}").trim() || "{}");
-    if (Object.prototype.hasOwnProperty.call(map, deviceId)) {
-      return String(map[deviceId] || "").trim();
-    }
+    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
   } catch (error) {
-    // Fall through to the shared secret.
+    return {};
   }
+}
+
+function expectedPerDeviceSecret(deviceId) {
+  const map = configuredDeviceSecrets();
+  return Object.prototype.hasOwnProperty.call(map, deviceId)
+    ? String(map[deviceId] || "").trim()
+    : "";
+}
+
+function expectedDeviceSecret(deviceId) {
+  const perDevice = expectedPerDeviceSecret(deviceId);
+  if (perDevice) return perDevice;
   return (process.env.DEVICE_SECRET || "").trim();
 }
 
@@ -235,6 +254,14 @@ function validateDevice(data) {
   if (!data || !data.deviceId) return { ok: false, error: "deviceId required" };
   const expected = expectedDeviceSecret(data.deviceId);
   if (!expected) return { ok: false, error: "device secret is not configured" };
+  if (data.deviceSecret !== expected) return { ok: false, error: "unauthorized" };
+  return null;
+}
+
+function validatePairingIssuer(data) {
+  if (!data || !data.deviceId) return { ok: false, error: "deviceId required" };
+  const expected = expectedPerDeviceSecret(data.deviceId);
+  if (!expected) return { ok: false, error: "per-device secret is not configured" };
   if (data.deviceSecret !== expected) return { ok: false, error: "unauthorized" };
   return null;
 }
@@ -899,6 +926,9 @@ async function handleAction(payload, wxContext, isHttp = false) {
   if (action === "REPORT_MEDICATION_SAFETY_EVENT") {
     const error = validateSafetyEventReporter(data);
     if (error) return error;
+  } else if (action === "ISSUE_DEVICE_PAIRING_CODE") {
+    const error = validatePairingIssuer(data);
+    if (error) return error;
   } else if (boardActions.has(action)) {
     const error = validateDevice(data);
     if (error) return error;
@@ -926,6 +956,7 @@ async function handleAction(payload, wxContext, isHttp = false) {
     case "FINALIZE_SNAPSHOT": return finalizeSnapshot(data);
     case "PULL_COMMANDS": return pullCommands(data);
     case "ACK_COMMAND": return ackCommand(data);
+    case "ISSUE_DEVICE_PAIRING_CODE": return memberships.issuePairingCode(data);
     case "REPORT_MEDICATION_SAFETY_EVENT": return medicationSafetyEvents.report(data);
     case "LIST_MEDICATION_SAFETY_EVENTS": return medicationSafetyEvents.list(data, wxContext);
     case "GET_MEDICATION_SAFETY_EVENT": return medicationSafetyEvents.get(data, wxContext);

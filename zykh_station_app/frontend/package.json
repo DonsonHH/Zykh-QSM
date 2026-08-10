@@ -25,6 +25,7 @@
     "test:vitals-failure-reasons": "node scripts/test-vitals-failure-reasons.mjs",
     "test:vitals-transport-recovery": "node scripts/test-vitals-transport-recovery.mjs",
     "test:network-display": "node scripts/test-network-display-mode.mjs",
+    "test:admin-pairing": "node scripts/test-admin-pairing-code.mjs",
     "test:settings": "node scripts/test-settings-layout.mjs && node scripts/test-speaker-volume.mjs",
     "test:settings-live": "node scripts/test-settings-live.mjs",
     "test:motion-live": "node scripts/test-settings-live.mjs",

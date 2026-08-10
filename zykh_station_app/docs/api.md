@@ -556,9 +556,18 @@ Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mod
 - `POST|DELETE /api/admin/users/{id}/fingerprint`
 - `GET|PATCH /api/admin/medicines...`
 - `GET|POST|PATCH|DELETE /api/admin/today-plans...`
+- `POST /api/admin/pairing-codes`
 - `POST /api/admin/cabinet/{slot}/open`
 - `POST /api/admin/system/action`
 
 The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. The UI uses a normal yes/no confirmation while the server still validates an internal operation token; every protected action creates an `admin_audit_records` entry. Log output is limited to an allowlist, updates only while the log page is mounted, and redacts API keys, bearer tokens and secrets.
+
+`POST /api/admin/pairing-codes` accepts one to eight active `service_user_ids` and a
+5–15 minute TTL. It generates 256-bit random input, publishes only SHA-256 through the
+current device's authenticated cloud port, and verifies that the cloud receipt still has
+the exact scope, fixed CAREGIVER role, seven read-only permissions, `UNUSED` state and
+matching expiry. The plaintext is returned once for the protected administrator UI; it is
+never written to SQLite, CloudBase, logs or `admin_audit_records`. Pairing issuance fails
+closed unless the cloud function has a per-device `DEVICE_SECRETS` entry.
 
 Administrator today-plan create/update payloads accept `schedule_type`, `interval_days`, `weekdays` and `start_date`. A successful plan dispense is serialized per plan, validates the recognized person and medicine, and records `last_action_date` so recurring plans become pending again only on their next due date.

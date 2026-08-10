@@ -176,6 +176,34 @@ class CloudSyncServiceTest(unittest.TestCase):
 
         self.assertEqual(worker.calls, [])
 
+    def test_pairing_issue_port_is_narrow_and_fails_closed_without_cloud_credentials(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "codeHash": "a" * 64,
+            "serviceUserScopes": ["wang-nainai"],
+            "ttlSeconds": 600,
+        }
+        configured = replace(
+            settings,
+            cloud_sync_endpoint="https://cloud.example.test/pairing",
+            cloud_sync_device_secret="device-test-secret",
+        )
+        with patch("app.services.cloud_sync_service.settings", configured):
+            worker.issue_pairing_code_hash(payload)
+
+        self.assertEqual(worker.calls, [("ISSUE_DEVICE_PAIRING_CODE", payload)])
+
+        for missing in (
+            replace(configured, cloud_sync_endpoint=""),
+            replace(configured, cloud_sync_device_secret="", cloud_sync_device_secret_file=self.db_path / "missing"),
+        ):
+            with self.subTest(missing=missing):
+                with patch("app.services.cloud_sync_service.settings", missing):
+                    with self.assertRaises(CloudSyncError):
+                        worker.issue_pairing_code_hash(payload)
+
+        self.assertEqual(worker.calls, [("ISSUE_DEVICE_PAIRING_CODE", payload)])
+
     def test_switching_local_after_pull_stops_the_remaining_sync_cycle(self) -> None:
         worker = PauseAfterPullWorker()
 

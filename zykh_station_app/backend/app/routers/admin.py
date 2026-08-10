@@ -15,6 +15,8 @@ from ..schemas.admin import (
     AdminMedicineUpdateRequest,
     AdminNetworkUpdateRequest,
     AdminOverviewResponse,
+    AdminPairingCodeIssueRequest,
+    AdminPairingCodeResponse,
     AdminSessionRequest,
     AdminSessionResponse,
     AdminSystemActionRequest,
@@ -29,6 +31,12 @@ from ..schemas.dispense import DispenseOpenResponse
 from ..schemas.settings import BasicSettingsResponse
 from ..services.admin_auth_service import AdminAuthError, AdminAuthService
 from ..services.admin_service import AdminService, AdminServiceError
+from ..services.cloud_sync_service import CloudSyncError
+from ..services.pairing_code_issuer import (
+    PairingCodeIssueError,
+    PairingCodeIssueRequest,
+    PairingCodeIssuer,
+)
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -94,6 +102,40 @@ def admin_update_network_settings(
     return AdminService().update_network_settings(
         wifi_enabled=payload.wifi_enabled,
         sim_enabled=payload.sim_enabled,
+    )
+
+
+@router.post("/pairing-codes", response_model=AdminPairingCodeResponse)
+def admin_issue_pairing_code(
+    payload: AdminPairingCodeIssueRequest,
+    _: str = Depends(require_admin),
+) -> AdminPairingCodeResponse:
+    audit = AdminService()
+    target = ",".join(payload.service_user_ids)
+    try:
+        issued = PairingCodeIssuer().issue(
+            PairingCodeIssueRequest(
+                service_user_ids=tuple(payload.service_user_ids),
+                ttl_minutes=payload.ttl_minutes,
+            )
+        )
+    except PairingCodeIssueError as exc:
+        audit.audit("pairing-code.issue", target, "failed", str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CloudSyncError as exc:
+        audit.audit("pairing-code.issue", target, "failed", str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    audit.audit(
+        "pairing-code.issue",
+        ",".join(issued.service_user_ids),
+        "success",
+        f"scopes={len(issued.service_user_ids)} ttl_seconds={issued.ttl_seconds}",
+    )
+    return AdminPairingCodeResponse(
+        pairing_code=issued.pairing_code,
+        expires_at=issued.expires_at,
+        ttl_seconds=issued.ttl_seconds,
+        service_user_ids=list(issued.service_user_ids),
     )
 
 

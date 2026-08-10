@@ -151,3 +151,16 @@ class AdminBiometricResponse(BaseModel):
     user: ServiceUser | None = None
     job_id: str | None = None
     event: str | None = None
+
+
+class AdminPairingCodeIssueRequest(BaseModel):
+    service_user_ids: list[str] = Field(min_length=1, max_length=8)
+    ttl_minutes: int = Field(default=10, ge=5, le=15)
+
+
+class AdminPairingCodeResponse(BaseModel):
+    ok: bool = True
+    pairing_code: str
+    expires_at: str
+    ttl_seconds: int
+    service_user_ids: list[str]

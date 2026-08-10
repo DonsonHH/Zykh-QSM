@@ -222,6 +222,15 @@ class CloudSyncWorker:
         self._ensure_realtime_enabled()
         return self._call(action, data)
 
+    def issue_pairing_code_hash(self, payload: dict[str, object]) -> Any:
+        """Publish a hash-only pairing credential through the authenticated device port."""
+        self._ensure_realtime_enabled()
+        if not settings.cloud_sync_endpoint.strip():
+            raise CloudSyncError("云端配对服务未配置。")
+        if not self._device_secret():
+            raise CloudSyncError("设备云端密钥未配置。")
+        return self._call("ISSUE_DEVICE_PAIRING_CODE", payload)
+
     def _ensure_realtime_enabled(self) -> None:
         if not self._realtime_enabled():
             raise CloudSyncError("本地模式已暂停微信小程序实时连接。")

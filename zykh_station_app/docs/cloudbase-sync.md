@@ -38,6 +38,7 @@ inquiries
 medication_safety_events
 caregiver_event_receipts
 caregiver_notification_outbox
+caregiver_notification_subscriptions
 device_memberships
 device_pairing_codes
 ```
@@ -49,12 +50,16 @@ tcb login
 sh zykh_station_app/scripts/deploy_cloudbase_sync.sh
 ```
 
-部署脚本会自动检查并创建上述八个业务集合，随后通过小体积 ZIP 直接
-更新现有 Event 云函数，保留原 `/api` HTTP 路由。它不会把函数类型改成
-HTTP，也不依赖容易超时的 COS 上传；最终必须同时检测到
-`schemaRevision=2.5-caregiver-safety-events`、`devicePairing=v1` 与
-`caregiverNotificationOutbox=v1` 才会成功退出，不能把仍缺新 action 的旧 2.5
-函数误判为部署完成。
+部署脚本会先只读核验既有 `api` 和同名通知 worker 的 Event 类型、Node.js
+运行时、handler 及触发器集合；身份冲突时在创建集合或覆盖代码前失败关闭。
+随后它检查并创建上述九个业务集合，用显式白名单小体积 ZIP 更新现有 `api`
+Event 云函数并创建或更新独立 `caregiverNotificationWorker`。原 `/api` HTTP
+路由不会被重建，测试文件不会进入 ZIP，也不依赖容易超时的 COS 上传。
+
+worker 的唯一受管定时器会在更新代码前关闭；部署器只有在 API 返回
+`schemaRevision=2.6-station-pairing-notification-worker`、配对签发与通知 worker
+能力齐全，且 worker 自身无副作用运行探针通过后，才可能执行最后的显式启用。
+默认部署始终保持定时器关闭，部署或探针失败也不会留下 OPEN timer。
 
 也可以在微信开发者工具中，把 `zykh_station_app/cloudbase/cloudfunctions/api/` 复制为项目的 `cloudfunctions/api/`，然后右键选择“上传并部署：云端安装依赖”。
 
@@ -73,11 +78,12 @@ curl -sS -H 'Content-Type: application/json' \
 ```
 
 返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为
-`2.5-caregiver-safety-events`，并声明 `medicationSafetyEvents=v1`、
-`caregiverMembership=v1`、`devicePairing=v1`、
-`caregiverNotificationOutbox=v1`、`inquiryDetail=v1` 与 `snapshotBatch=v2`。终端把
-revision 纳入 snapshot hash；后续云函数清理或映射逻辑升级后会自动触发
-一次完整重同步。
+`2.6-station-pairing-notification-worker`，并声明
+`medicationSafetyEvents=v1`、`caregiverMembership=v1`、`devicePairing=v1`、
+`devicePairingIssue=v1`、`caregiverNotificationOutbox=v1`、
+`caregiverNotificationWorker=v1`、`inquiryDetail=v1` 与 `snapshotBatch=v2`。
+终端把 revision 纳入 snapshot hash；后续云函数清理或映射逻辑升级后会自动
+触发一次完整重同步。
 
 ## 小程序反向命令
 
@@ -116,8 +122,10 @@ membership 已授权且人物范围匹配的分区；权限数组为空时不返
 缓存的 `deviceId` 授权。两项绑定 action 只接受带当前微信 `OPENID` 的 Event
 调用，公共 HTTP 调用失败关闭。
 
-`device_pairing_codes` 是服务端专用集合。外部受控管理端创建配对码时必须使用
-足够随机、至少 16 字符的一次性原文，集合中只保存 SHA-256：文档 ID 为
+`device_pairing_codes` 是服务端专用集合。Station 受保护管理台的“家属配对”
+区域会为选定的活动服务对象生成 256-bit CSPRNG 一次性原文；原文只在当前
+页面显示至过期，管理员审计只记录授权对象与 TTL。Station 只把 SHA-256、
+人物范围和 5–15 分钟 TTL 通过设备认证通道交给云端，文档 ID 为
 `pairing-<sha256(raw_code)>`，字段包含同一 `codeHash`、`deviceId`、`role`、
 `permissions`、`service_user_scopes`、`status=UNUSED` 和带时区的 `expiresAt`；
 不得保存原文。兑换请求只提交 `pairingCode`，云函数忽略调用者伪造的设备、角色
@@ -126,11 +134,12 @@ membership 后把码置为 `CONSUMED`。重复、过期、未知、已绑定或�
 返回 `PAIRING_CODE_INVALID`；`GET_MY_DEVICES` 只枚举当前 OPENID 的 ACTIVE
 membership。
 
-本仓没有 Station 管理端的配对码生成界面，也没有外部 Windows 小程序的扫码/
-输入和设备切换页面。上线前还需在受控服务端生成高熵配对文档、将
-`device_pairing_codes` 与 `device_memberships` 的数据库规则设为小程序端不可直读写，
-并在实际小程序接入 helper 后完成双人并发、
-过期和撤销验收；本次没有创建真实配对码或部署云函数。
+签发 action 只接受当前 `deviceId` 在服务端 `DEVICE_SECRETS` 中配置的独立密钥；
+共享 `DEVICE_SECRET` 不能签发配对码。外部 Windows 小程序工程的扫码/输入和设备
+切换页面仍不在本仓。上线前还需把 `device_pairing_codes` 与
+`device_memberships` 的数据库规则设为小程序端不可直读写，并在实际小程序接入
+helper 后完成双人并发、过期、撤销与跨设备验收；本轮不会创建真实配对码或部署
+云函数。
 
 同步与命令兼容契约可在主机执行：
 
@@ -228,12 +237,30 @@ UNREAD receipt 和一条 `caregiver_notification_outbox`。出站项以
 人物名、病史、禁忌或问询内容；事件重放不会重复排队。REPORT 返回不等待微信
 订阅消息发送，推送失败也不能删除事件或把 receipt 标为 READ。
 
-本仓没有订阅消息模板、用户订阅授权流程或消费
-`caregiver_notification_outbox` 的发送 worker，因此当前实现的可靠事实来源仍是
-云端事件和小程序未读记录。上线前需单独配置最小文案模板与异步 worker；worker
-认领 PENDING 项时必须再次验证 membership，发送结果只更新通知尝试状态，不能
-修改安全事件或触发任何 Station 命令。本次没有伪造“已发送”状态，也没有发送
-真实微信通知。
+独立 `caregiverNotificationWorker` 以事务认领 `PENDING`，并在发送前重新验证原始
+事件、ACTIVE membership、`READ_SAFETY`、人物范围、`AUTHORIZED` 订阅授权和
+未读 receipt。发送内容固定为“家庭药箱新增一条取药核查记录 / 请打开小程序
+查看”，不含姓名、药名、病史、原因或问询内容，因此既适用于正常取药记录，也
+不会把正常结果误报成拦截。明确拒绝记为 `FAILED`；超时、异常或遗留 `SENDING`
+只收敛为 `RESULT_UNKNOWN`，不自动重试；发送结果只更新 outbox 与 receipt 的通知
+尝试状态，不修改安全事件、已读时间或任何 Station 命令。
+
+部署脚本默认创建/更新 worker 但保持 timer 关闭。只有外部小程序已经通过
+`wx.requestSubscribeMessage` 获取授权并安全写入
+`caregiver_notification_subscriptions`、微信模板和真实页面已审核、CloudBase
+OpenAPI 权限已确认时，才可显式启用：
+
+```bash
+CAREGIVER_NOTIFICATION_TEMPLATE_ID='已审核模板ID' \
+CAREGIVER_NOTIFICATION_PAGE='pages/records/index' \
+CLOUDBASE_ENABLE_NOTIFICATION_WORKER=1 \
+CLOUDBASE_CONFIRM_WORKER_OPENAPI_PERMISSION=1 \
+CLOUDBASE_CONFIRM_NOTIFICATION_SUBSCRIPTIONS=1 \
+sh zykh_station_app/scripts/deploy_cloudbase_sync.sh
+```
+
+当前仓库没有外部小程序的订阅授权页面，也没有真实模板 ID；未完成这些现场条件
+时不得设置上述启用开关。本轮不会发送真实微信通知或把本地 mock 结果表述为送达。
 
 本仓库只包含 CloudBase 函数与可嵌入的小程序 helper，不包含外部 Windows
 小程序工程的页面代码；部署前必须在实际小程序中接入页面、完成安全配对或受控建立 membership
@@ -253,9 +280,12 @@ zykh_station_app/backend/data/cloud-device-secret.txt
 密钥时云函数会失败关闭，而不是把 `deviceId` 当成授权。安全事件读取和其他健康
 读取使用小程序 OpenID membership，二者不能互相替代。
 
-`device_pairing_codes` 与 `caregiver_notification_outbox` 只允许云函数服务端访问；
-不得给小程序开放集合直读写规则。实际部署还应为通知 worker 的 `state + createdAt`
-认领查询配置索引，并保留文档稳定 ID 的唯一性。
+`device_pairing_codes`、`caregiver_notification_outbox` 与
+`caregiver_notification_subscriptions` 只允许云函数服务端访问；不得给小程序开放
+集合直读写规则。通知 worker 需要为 `state + createdAt` 的 PENDING 查询和
+`state + claimedAt` 的 SENDING 收敛查询分别配置复合索引，并保留文档稳定 ID 的
+唯一性。签发配对码还要求云函数环境配置按设备映射的 `DEVICE_SECRETS`，例如
+`{"zykh-qsm-001":"<secret>"}`；真实密钥不得写入仓库或文档。
 
 状态接口：
 
