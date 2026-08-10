@@ -201,10 +201,21 @@ class ManualMedicationAccessRepository:
                 )
             cursor = conn.execute(
                 """
-                UPDATE medicines SET stock=stock-?, updated_at=?
+                UPDATE medicines
+                SET stock=stock-?,
+                    inventory_state=CASE
+                      WHEN stock-? > 0 THEN 'AVAILABLE'
+                      ELSE 'UNKNOWN'
+                    END,
+                    inventory_confirmed_at='',
+                    last_inventory_request_id='',
+                    last_inventory_dispense_record_id='',
+                    inventory_revision=inventory_revision+1,
+                    updated_at=?
                 WHERE id=? AND stock=? AND stock>=?
                 """,
                 (
+                    command.quantity,
                     command.quantity,
                     checked_at,
                     command.medicine_id,

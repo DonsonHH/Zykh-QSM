@@ -82,6 +82,13 @@ assert_recorded_process_dead() {
   exit 1
 }
 
+stop_ai_line="$(grep -n 'stop_qsm_offline_ai.sh' "$TEST_ROOT/scripts/launch_kiosk.sh" | head -n 1 | cut -d: -f1)"
+ensure_gateway_line="$(grep -n 'ensure_qsm_gateway.sh' "$TEST_ROOT/scripts/launch_kiosk.sh" | head -n 1 | cut -d: -f1)"
+if [ -z "$stop_ai_line" ] || [ -z "$ensure_gateway_line" ] || [ "$stop_ai_line" -ge "$ensure_gateway_line" ]; then
+  printf 'FAIL: old board language model is not stopped before peripheral gateways start\n' >&2
+  exit 1
+fi
+
 PATH="$FAKE_BIN:$PATH" \
   KIOSK_BROWSER_LOG=terminal \
   KIOSK_RESTART_BACKEND=0 \

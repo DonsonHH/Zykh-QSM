@@ -301,7 +301,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(history["status"], "failed_unacked")
         self.assertIn("远程开柜已禁用", history["result_json"])
 
-    def test_v2_cloud_sends_bounded_batches_and_finalizes_each_collection(self) -> None:
+    def test_v2_cloud_never_finalizes_truncated_inquiry_or_vitals_history(self) -> None:
         worker = FakeV2CloudSyncWorker()
 
         count, _ = worker.run_once()
@@ -309,9 +309,67 @@ class CloudSyncServiceTest(unittest.TestCase):
         batches = [payload for action, payload in worker.calls if action == "UPSERT_SNAPSHOT_BATCH"]
         finalized = [payload["kind"] for action, payload in worker.calls if action == "FINALIZE_SNAPSHOT"]
         self.assertGreater(count, 0)
-        self.assertEqual(set(finalized), {"medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"})
+        self.assertEqual(set(finalized), {"medicines", "serviceUsers", "plans", "records"})
+        self.assertNotIn("inquiries", finalized)
+        self.assertNotIn("vitals", finalized)
         self.assertTrue(all(len(payload["rows"]) <= 20 for payload in batches))
         self.assertTrue(all(len(__import__("json").dumps(payload, ensure_ascii=False).encode("utf-8")) < 60_000 for payload in batches))
+
+    def test_v2_snapshot_projects_active_people_and_archived_tombstones_together(self) -> None:
+        with db.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  persona_generation, archived
+                ) VALUES (?, ?, ?, '', '', '', '已归档', 'legacy-family-demo-v6', 1)
+                """,
+                [
+                    ("legacy-zhang-dynamic", "张三", 70),
+                    ("legacy-li-dynamic", "李四", 8),
+                ],
+            )
+        worker = FakeV2CloudSyncWorker()
+
+        worker.run_once()
+
+        rows = [
+            row
+            for action, payload in worker.calls
+            if action == "UPSERT_SNAPSHOT_BATCH" and payload["kind"] == "serviceUsers"
+            for row in payload["rows"]
+        ]
+        projected = {
+            row["id"]: (row["name"], row["persona_generation"], row["archived"])
+            for row in rows
+            if row["id"] in {
+                "wang-nainai",
+                "li-yeye",
+                "legacy-zhang-dynamic",
+                "legacy-li-dynamic",
+            }
+        }
+        self.assertEqual(
+            projected,
+            {
+                "wang-nainai": ("王奶奶", "senior-demo-v1", False),
+                "li-yeye": ("李爷爷", "senior-demo-v1", False),
+                "legacy-zhang-dynamic": ("张三", "legacy-family-demo-v6", True),
+                "legacy-li-dynamic": ("李四", "legacy-family-demo-v6", True),
+            },
+        )
+        device_summary = next(
+            payload["syncSummary"]
+            for action, payload in worker.calls
+            if action == "REPORT_DEVICE"
+        )
+        self.assertEqual(
+            [row["id"] for row in device_summary["serviceUsers"]],
+            ["li-yeye", "wang-nainai"],
+        )
+        self.assertTrue(
+            all(row["persona_generation"] == "senior-demo-v1" for row in device_summary["serviceUsers"])
+        )
 
     def test_v2_capability_flushes_safety_outbox_outside_snapshot_finalize(self) -> None:
         payload = {
@@ -399,6 +457,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                 "inquiries": [
                     {
                         "session_id": "session-summary",
+                        "persona_generation": "persona-summary-v1",
                         "target_user_name": "张三",
                         "title": "头晕问询",
                         "reply": "建议先休息并观察。",
@@ -419,6 +478,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertNotIn("messages", inquiry)
         self.assertEqual(inquiry["messageCount"], 2)
         self.assertEqual(inquiry["reply"], "建议先休息并观察。")
+        self.assertEqual(inquiry["persona_generation"], "persona-summary-v1")
 
     def test_medicine_patch_updates_only_explicit_fields_and_preserves_zero_stock(self) -> None:
         repository = MedicineRepository()
@@ -1003,6 +1063,24 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(acknowledgements[0]["status"], "failed")
         self.assertIn("远程开柜已禁用", acknowledgements[0]["result"]["error"])
         qsm_dispense.assert_not_called()
+
+    def test_person_scoped_cloud_command_requires_the_current_persona_generation(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "id": "plan-demo-wang-amlodipine",
+            "service_user_id": "wang-nainai",
+            "timing_label": "早餐后",
+            "persona_generation": "stale-persona-v0",
+        }
+
+        with self.assertRaisesRegex(CloudSyncError, "人物代次"):
+            worker._execute_command("UPSERT_TODAY_PLAN", {"payload": payload})
+
+        payload["persona_generation"] = "senior-demo-v1"
+        result = worker._execute_command("UPSERT_TODAY_PLAN", {"payload": payload})
+
+        self.assertEqual(result["plan"]["service_user_id"], "wang-nainai")
+        self.assertEqual(result["plan"]["persona_generation"], "senior-demo-v1")
 
     def test_miniprogram_speak_command_announces_the_named_reminder(self) -> None:
         worker = FakeCloudSyncWorker()

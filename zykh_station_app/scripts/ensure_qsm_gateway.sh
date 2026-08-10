@@ -11,8 +11,6 @@ VITALS_HOST_PORT="${QSM_VITALS_FORWARD_HOST_PORT:-18085}"
 VITALS_DEVICE_PORT="${QSM_VITALS_FORWARD_DEVICE_PORT:-8085}"
 FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
 FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
-LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
-LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
 LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
 LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 AUDIO_STREAM_HOST_PORT="${QSM_AUDIO_STREAM_HOST_PORT:-19001}"
@@ -43,7 +41,7 @@ warn() {
 }
 
 gateway_ready() {
-  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 -X POST "$QSM_BASE_URL/api/audio/stream/stop" >/dev/null 2>&1
+  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "$QSM_BASE_URL/api/status" >/dev/null 2>&1
 }
 
 face_ready() {
@@ -66,13 +64,20 @@ local_asr_ready() {
   command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$LOCAL_ASR_HOST_PORT" >/dev/null 2>&1
 }
 
-if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready && local_asr_ready; then
+tts_ready() {
+  command -v curl >/dev/null 2>&1 || return 1
+  payload="$(curl -fsS --max-time 3 "$QSM_BASE_URL/api/audio/status" 2>/dev/null || true)"
+  printf '%s' "$payload" | grep -Eq '"offline_available"[[:space:]]*:[[:space:]]*true'
+}
+
+if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready && local_asr_ready && tts_ready; then
   log "外设网关已可访问：$QSM_BASE_URL"
   log "人脸识别网关已可访问：$QSM_FACE_BASE_URL"
   log "麦克风采集网关已可访问：$QSM_MIC_BASE_URL"
   log "指纹识别网关已可访问：$QSM_FINGERPRINT_BASE_URL"
   log "体征测量网关已可访问：$QSM_VITALS_BASE_URL"
   log "本地 Paraformer 语音识别已可访问：127.0.0.1:${LOCAL_ASR_HOST_PORT}"
+  log "板端离线语音合成资料已就绪。"
   exit 0
 fi
 
@@ -106,8 +111,6 @@ log "建立体征测量端口转发：127.0.0.1:${VITALS_HOST_PORT} -> tcp:${VIT
 $ADB_PREFIX forward "tcp:${VITALS_HOST_PORT}" "tcp:${VITALS_DEVICE_PORT}" >/dev/null 2>&1 || warn "体征测量端口转发失败。"
 log "建立指纹识别端口转发：127.0.0.1:${FINGERPRINT_HOST_PORT} -> tcp:${FINGERPRINT_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${FINGERPRINT_HOST_PORT}" "tcp:${FINGERPRINT_DEVICE_PORT}" >/dev/null 2>&1 || warn "指纹识别端口转发失败。"
-log "建立离线模型端口转发：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
-$ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1 || warn "离线模型端口转发失败。"
 if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_asr_service.sh' >/dev/null 2>&1; then
   $ADB_PREFIX shell '/userdata/zykh_app/scripts/start_asr_service.sh start' >/dev/null 2>&1 \
     || warn "板端本地语音识别服务未能启动。"
@@ -119,8 +122,8 @@ $ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" 
 log "建立实时音频播放端口转发：127.0.0.1:${AUDIO_STREAM_HOST_PORT} -> tcp:${AUDIO_STREAM_DEVICE_PORT}"
 $ADB_PREFIX forward "tcp:${AUDIO_STREAM_HOST_PORT}" "tcp:${AUDIO_STREAM_DEVICE_PORT}" >/dev/null 2>&1 || warn "实时音频播放端口转发失败。"
 
-if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready; then
-  log "端口转发后全部外设网关均已可访问。"
+if gateway_ready && face_ready && audio_ready && fingerprint_ready && vitals_ready && local_asr_ready && tts_ready; then
+  log "端口转发后全部外设、板端识别与离线语音合成均已可访问。"
   exit 0
 fi
 
@@ -179,4 +182,14 @@ if vitals_ready; then
   log "体征测量网关启动完成：$QSM_VITALS_BASE_URL"
 else
   warn "体征测量网关仍不可访问；身体状态测量会显示真实不可用状态。"
+fi
+if local_asr_ready; then
+  log "本地 Paraformer 语音识别启动完成：127.0.0.1:${LOCAL_ASR_HOST_PORT}"
+else
+  warn "板端本地语音识别仍不可访问；本地展示模式会显示真实不可用状态。"
+fi
+if tts_ready; then
+  log "板端离线语音合成资料已就绪。"
+else
+  warn "板端离线语音合成资料不完整；本地展示模式会显示真实不可用状态。"
 fi

@@ -114,7 +114,7 @@ class InquiryRepository:
             conn.execute(
                 """
                 INSERT INTO inquiry_sessions(
-                  session_id, user_id, user_name, user_age, user_profile, user_allergies,
+                  session_id, user_id, persona_generation, user_name, user_age, user_profile, user_allergies,
                   stage, reply, source, reasoning_summary, model_action_intent, action_reason,
                   extracted_json, vitals_json, risk_level,
                   risk_reasons_json, next_action, primary_candidate_json,
@@ -122,9 +122,10 @@ class InquiryRepository:
                   selected_option_id, action_status, action_message,
                   action_progress_index, action_total_items, action_items_json,
                   title, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   user_id=excluded.user_id,
+                  persona_generation=excluded.persona_generation,
                   user_name=excluded.user_name,
                   user_age=excluded.user_age,
                   user_profile=excluded.user_profile,
@@ -156,6 +157,7 @@ class InquiryRepository:
                 (
                     session.session_id,
                     session.user_id,
+                    session.persona_generation,
                     session.user_name,
                     session.user_age,
                     session.user_profile,
@@ -249,6 +251,7 @@ class InquiryRepository:
         return InquirySessionResponse(
             session_id=values["session_id"],
             user_id=values["user_id"],
+            persona_generation=values.get("persona_generation", ""),
             user_name=values["user_name"],
             user_age=values["user_age"],
             user_profile=values["user_profile"],
@@ -332,22 +335,30 @@ class InquiryRepository:
         self,
         user_id: str,
         *,
+        persona_generation: str = "",
         exclude_session_id: str = "",
         limit: int = 8,
     ) -> list[InquirySessionResponse]:
         if not user_id:
             return []
+        normalized_generation = str(persona_generation or "").strip()
         db.init_db()
         with db.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT session_id
                 FROM inquiry_sessions
-                WHERE user_id=? AND session_id<>? AND risk_level<>''
+                WHERE user_id=? AND persona_generation=?
+                  AND session_id<>? AND risk_level<>''
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
-                (user_id, exclude_session_id, max(1, min(limit, 30))),
+                (
+                    user_id,
+                    normalized_generation,
+                    exclude_session_id,
+                    max(1, min(limit, 30)),
+                ),
             ).fetchall()
         return [session for row in rows if (session := self.get_session(str(row["session_id"]))) is not None]
 
@@ -355,6 +366,7 @@ class InquiryRepository:
         self,
         user_id: str,
         *,
+        persona_generation: str = "",
         limit: int = 20,
         cursor: str = "",
     ) -> tuple[list[InquirySessionResponse], str | None]:
@@ -363,6 +375,7 @@ class InquiryRepository:
         if not normalized_user_id:
             return [], None
         page_limit = max(1, min(int(limit), 20))
+        normalized_generation = str(persona_generation or "").strip()
         normalized_cursor = str(cursor or "").strip()
         db.init_db()
         with db.connect() as conn:
@@ -372,9 +385,10 @@ class InquiryRepository:
                     """
                     SELECT session_id, updated_at
                     FROM inquiry_sessions
-                    WHERE session_id=? AND user_id=? AND risk_level<>''
+                    WHERE session_id=? AND user_id=?
+                      AND persona_generation=? AND risk_level<>''
                     """,
-                    (normalized_cursor, normalized_user_id),
+                    (normalized_cursor, normalized_user_id, normalized_generation),
                 ).fetchone()
                 if cursor_row is None:
                     raise ValueError("历史问询游标无效或已失效")
@@ -383,24 +397,25 @@ class InquiryRepository:
                     """
                     SELECT session_id
                     FROM inquiry_sessions
-                    WHERE user_id=? AND risk_level<>''
+                    WHERE user_id=? AND persona_generation=? AND risk_level<>''
                     ORDER BY updated_at DESC, session_id DESC
                     LIMIT ?
                     """,
-                    (normalized_user_id, page_limit + 1),
+                    (normalized_user_id, normalized_generation, page_limit + 1),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     """
                     SELECT session_id
                     FROM inquiry_sessions
-                    WHERE user_id=? AND risk_level<>''
+                    WHERE user_id=? AND persona_generation=? AND risk_level<>''
                       AND (updated_at<? OR (updated_at=? AND session_id<?))
                     ORDER BY updated_at DESC, session_id DESC
                     LIMIT ?
                     """,
                     (
                         normalized_user_id,
+                        normalized_generation,
                         str(cursor_row["updated_at"]),
                         str(cursor_row["updated_at"]),
                         normalized_cursor,

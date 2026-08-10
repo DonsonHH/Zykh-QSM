@@ -1,6 +1,7 @@
 import { apiRequest } from "./client.js";
 
 const TOKEN_KEY = "zykh.admin.session";
+const CABINET_ACTION_KEY_PREFIX = "zykh.admin.cabinet-action.";
 
 export function getAdminToken() {
   return window.sessionStorage.getItem(TOKEN_KEY) || "";
@@ -152,9 +153,22 @@ export function deleteAdminTodayPlan(planId) {
   });
 }
 
-export function openAdminCabinet(slot, confirmation, reason = "管理员调试开柜") {
+export function pendingAdminCabinetRequestId(slot) {
+  const key = `${CABINET_ACTION_KEY_PREFIX}${slot}`;
+  const pending = window.sessionStorage.getItem(key);
+  if (pending) return pending;
+  const requestId = `admin-cabinet-${slot}-${window.crypto.randomUUID()}`;
+  window.sessionStorage.setItem(key, requestId);
+  return requestId;
+}
+
+export function clearAdminCabinetRequestId(slot) {
+  window.sessionStorage.removeItem(`${CABINET_ACTION_KEY_PREFIX}${slot}`);
+}
+
+export function openAdminCabinet(slot, confirmation, reason = "管理员调试开柜", requestId) {
   return adminRequest(`/api/admin/cabinet/${slot}/open`, {
     method: "POST",
-    payload: { confirmation, reason }
+    payload: { confirmation, reason, request_id: requestId }
   });
 }

@@ -30,7 +30,7 @@ from .dispense_service import DispenseError
 
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
-MANUAL_MEDICATION_RULESET_VERSION = "manual-medication-safety-v1"
+MANUAL_MEDICATION_RULESET_VERSION = "manual-medication-safety-v2"
 
 
 class ManualDispenseAdapter(Protocol):
@@ -135,7 +135,7 @@ class ManualMedicationAccessModule:
             request_payload_digest=payload_digest,
         )
         if replay is not None:
-            return replay
+            return self._with_inventory_confirmation_state(replay)
         if command.confirmed_safety_notice is not True:
             raise ValueError("请先阅读并确认药品说明与安全提示。")
         if self.dispense_adapter is None:
@@ -158,7 +158,7 @@ class ManualMedicationAccessModule:
                 request_payload_digest=payload_digest,
             )
             if replay is not None:
-                return replay
+                return self._with_inventory_confirmation_state(replay)
             raise ValueError("该安全核查已被使用，请重新确认身份并核查。")
 
         person = self.repository.get_person(check.service_user_id)
@@ -204,7 +204,7 @@ class ManualMedicationAccessModule:
             )
             if replay is None:
                 raise RuntimeError("取药确认幂等状态不完整，请勿自动重试。")
-            return replay
+            return self._with_inventory_confirmation_state(replay)
         execution = ManualDispenseExecutionCommand(
             qsm_operation_id=qsm_operation_id,
             medicine_id=medicine.id,
@@ -248,12 +248,29 @@ class ManualMedicationAccessModule:
                 dispense_record_id="",
                 completed_at=self._clock().strftime(_TIMESTAMP_FORMAT),
             )
-        return self.repository.complete_confirm(
-            check_id=check.check_id,
-            dispense_status=result.dispense_status,
-            message=result.message,
-            dispense_record_id=result.dispense_record_id,
-            completed_at=self._clock().strftime(_TIMESTAMP_FORMAT),
+        return self._with_inventory_confirmation_state(
+            self.repository.complete_confirm(
+                check_id=check.check_id,
+                dispense_status=result.dispense_status,
+                message=result.message,
+                dispense_record_id=result.dispense_record_id,
+                completed_at=self._clock().strftime(_TIMESTAMP_FORMAT),
+            )
+        )
+
+    def _with_inventory_confirmation_state(
+        self,
+        outcome: ManualMedicationOutcome,
+    ) -> ManualMedicationOutcome:
+        return outcome.model_copy(
+            update={
+                "inventory_confirmation_required": (
+                    outcome.ok
+                    and self.medicine_repository.inventory_confirmation_required(
+                        outcome.dispense_record_id
+                    )
+                )
+            }
         )
 
     def _classify_final_recheck_failure(
@@ -372,18 +389,20 @@ class ManualMedicationAccessModule:
             or person is None
             or person.archived
             or not person.persona_generation.strip()
-            or not (
-                person.medical_conditions
-                or person.current_medications
-                or person.allergy_facts
-                or person.legacy_allergies.strip()
-            )
         ):
             return (
                 "CHECK_FAILED",
                 ["PROFILE_UNAVAILABLE"],
                 "未找到可用于核查的个人健康档案，本次柜门未打开。",
             )
+        profile_complete = (
+            self._has_auditable_medical_history(person.medical_conditions)
+            and self._has_auditable_current_medications(person.current_medications)
+            and self._has_auditable_allergy_conclusion(
+                person.allergy_facts,
+                person.legacy_allergies,
+            )
+        )
         if medicine is None or medicine.slot != command.slot:
             return (
                 "CHECK_FAILED",
@@ -461,10 +480,94 @@ class ManualMedicationAccessModule:
                 f"{'；'.join(block_messages)}；本次已阻止取药，柜门未打开。",
             )
 
+        if not profile_complete:
+            return (
+                "CHECK_FAILED",
+                ["PROFILE_UNAVAILABLE"],
+                "个人病史、当前用药或过敏结论不完整，本次柜门未打开。",
+            )
+
         return (
             "PASSED",
             [],
             "未发现已登记冲突，请核对药品说明后继续。",
+        )
+
+    @staticmethod
+    def _has_auditable_medical_history(
+        conditions: tuple[dict[str, object], ...],
+    ) -> bool:
+        return bool(conditions) and all(
+            str(condition.get("concept_code") or "").strip()
+            and str(condition.get("status") or "").strip().lower()
+            in {"present", "absent"}
+            for condition in conditions
+        )
+
+    @staticmethod
+    def _has_auditable_current_medications(
+        medications: tuple[dict[str, object], ...],
+    ) -> bool:
+        if not medications:
+            return False
+        for medication in medications:
+            status = str(medication.get("status") or "").strip().lower()
+            if status == "absent":
+                conclusion = str(
+                    medication.get("display_text")
+                    or medication.get("medicine_name")
+                    or ""
+                ).strip()
+                if not conclusion:
+                    return False
+                continue
+            if status not in {"", "present", "current", "active"}:
+                return False
+            ingredients = medication.get("active_ingredients")
+            if not isinstance(ingredients, list) or not any(
+                str(ingredient).strip() for ingredient in ingredients
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _has_auditable_allergy_conclusion(
+        allergy_facts: tuple[dict[str, object], ...],
+        legacy_allergies: str,
+    ) -> bool:
+        if not allergy_facts:
+            legacy_conclusion = legacy_allergies.strip()
+            if not legacy_conclusion:
+                return False
+            normalized = "".join(legacy_conclusion.split()).strip("，。；、,.!?！？")
+            return normalized.lower() not in {
+                "未知",
+                "待补充",
+                "不清楚",
+                "不知道",
+                "未确认",
+                "待确认",
+                "无资料",
+                "无记录",
+                "unknown",
+                "pending",
+                "pendingconfirmation",
+                "unconfirmed",
+                "unclear",
+                "nodata",
+                "norecord",
+            }
+        return all(
+            str(fact.get("status") or "").strip().lower()
+            in {"present", "absent"}
+            and bool(
+                str(
+                    fact.get("display_text")
+                    or fact.get("substance")
+                    or ""
+                ).strip()
+            )
+            for fact in allergy_facts
         )
 
     @staticmethod

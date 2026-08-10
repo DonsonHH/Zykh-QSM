@@ -101,6 +101,21 @@ authorized local reviewer must explicitly save a new exact combination.
 
 Returns a single medicine detail.
 
+### POST /api/medicines/{medicine_id}/inventory-confirmation
+
+Reconciles the physical remainder after the latest successful, non-dry cabinet
+action for this medicine. The request contains a stable `request_id`, the
+server-issued `dispense_record_id`, and exactly one observation:
+`HAS_REMAINING` or `DEPLETED`. The first restores an `AVAILABLE` truth with a
+minimum quantity of one; the second records quantity zero and `DEPLETED`.
+
+The request is stored in a SQLite idempotency ledger. Replaying the same ID and
+payload returns the saved result; changing its medicine, dispense record or
+observation returns HTTP 409. A stale/nonmatching/failed/dry-run dispense record,
+or a second confirmation for the same physical action, also returns HTTP 409.
+Until this observation is saved, a physical action that consumes the last
+counted unit is exposed as `inventory_state=UNKNOWN`, not as proven depletion.
+
 ### POST /api/dispense/confirm
 
 This public endpoint is the existing PLAN cabinet boundary. Inquiry dispensing
@@ -138,6 +153,18 @@ The response separates business state from transport state:
   ingredient, interaction or actual expiry matched; QSM is not called;
 - `CHECK_FAILED`: identity, profile, package, review, effective-date or inventory
   evidence was insufficient; QSM is not called.
+
+For a registered person, the profile is complete only when all three axes have
+an auditable conclusion: structured medical-history facts carry a concept and
+present/absent status; every present/current medicine carries at least one
+active ingredient, while an explicit `absent` fact records that no medicine is
+currently used; and allergy facts carry present/absent status plus a display or
+substance value. A reviewed legacy allergy conclusion remains compatible, but
+placeholder text such as “unknown” or “pending confirmation” does not. A known
+allergy, contraindication, duplicate ingredient or
+interaction is still reported as `BLOCKED` even if another profile axis is
+incomplete; otherwise any incomplete axis is `CHECK_FAILED` with
+`PROFILE_UNAVAILABLE`.
 
 Business blocks use HTTP 200 and stable `reason_codes`. Replaying the same
 `request_id` and payload returns the original result; using the key for different
@@ -177,8 +204,9 @@ Returns local dispense confirmation records.
 
 Returns a user-scoped read-only history projection with at most 20 items per page
 and an opaque session cursor. Items contain only session ID, time, title, case
-summary, risk level/label, outcome and final medicine summary. Messages, prompts,
-provider source, reasoning and debug fields are never returned. Archived people
+summary, risk level/label, up to five landed risk reasons, a deterministic
+no-medicine explanation, outcome and final medicine summary. Messages, prompts,
+provider source, reasoning, free-form assistant replies and debug fields are never returned. Archived people
 remain explicitly readable by their original ID while being hidden from the
 ordinary service-user list.
 
@@ -218,7 +246,11 @@ decision question. The model may choose `measure_vitals` only after symptom scop
 has been confirmed and only when core vitals materially affect the next decision. The frontend
 finishes the spoken guidance, pauses for 3 seconds, then renders the vitals tool
 inside the inquiry flow. It does not navigate away or transfer results through
-browser storage. Returning from a completed measurement preserves the measured
+browser storage. A completed tool result must carry the board-issued
+`vitals_session_id`; the server reloads that exact completed measurement and
+requires the same inquiry session, service user and `persona_generation` before
+accepting any value. Client-submitted metric values and provenance are replaced
+with the trusted persisted record. Returning from a completed measurement preserves the measured
 values and immediately replaces the tool with a visible processing state while
 the final model analysis is pending; the information-review view appears when the
 response arrives. Cloud turn extraction, Responses final analysis and
@@ -367,7 +399,17 @@ Returns current peripheral capability states:
 
 ### POST /api/vitals/session/start
 
-Starts a QSM measurement session. A successful response requires `hardware_started=true`, which is returned only after the board writes UART start byte `0x24`.
+Starts a QSM measurement session. A successful response requires
+`hardware_started=true`, which is returned only after the board writes UART
+start byte `0x24`.
+
+The request defaults to `source_route=HOME` and must not include an inquiry ID;
+those measurements are persisted as `attribution_source=UNREGISTERED`. Embedded
+inquiry measurement sends `source_route=INQUIRY` plus the current
+`inquiry_session_id`. The server resolves the active service user and
+`persona_generation` from that persisted inquiry; clients cannot submit a person
+ID or name. A missing, unregistered or archived inquiry identity returns HTTP
+422 before the gateway session starts.
 
 ### GET /api/vitals/session/{session_id}
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+from dataclasses import dataclass
 from uuid import uuid4
 
 from .. import db
@@ -56,6 +57,14 @@ BUNDLED_LABEL_SAFETY_IDS = frozenset(
         "slot-23-desloratadine",
     }
 )
+
+
+@dataclass(frozen=True)
+class InventoryObservationToken:
+    stock: int
+    revision: int
+
+
 NON_DRUG_COMBINATION_BASELINE_IDS = frozenset(
     {"slot-10-gauze", "slot-20-bandage", "slot-22-cotton-swab"}
 )
@@ -1589,7 +1598,9 @@ class MedicineRepository:
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
-                       safety_review_status, safety_reviewed_by, safety_reviewed_at
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at,
+                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       last_inventory_dispense_record_id
                 FROM medicines
                 ORDER BY hardware_slot, slot
                 """
@@ -1607,7 +1618,9 @@ class MedicineRepository:
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
-                       safety_review_status, safety_reviewed_by, safety_reviewed_at
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at,
+                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       last_inventory_dispense_record_id
                 FROM medicines
                 WHERE id=?
                 """,
@@ -1626,7 +1639,9 @@ class MedicineRepository:
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
-                       safety_review_status, safety_reviewed_by, safety_reviewed_at
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at,
+                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       last_inventory_dispense_record_id
                 FROM medicines
                 WHERE barcode=?
                 """,
@@ -1645,7 +1660,9 @@ class MedicineRepository:
                        indications, dosage, contraindications_json, stock, unit, expire_date,
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
-                       safety_review_status, safety_reviewed_by, safety_reviewed_at
+                       safety_review_status, safety_reviewed_by, safety_reviewed_at,
+                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       last_inventory_dispense_record_id
                 FROM medicines
                 WHERE hardware_slot=?
                 ORDER BY updated_at DESC
@@ -1690,7 +1707,12 @@ class MedicineRepository:
             "safety_review_status": medicine.safety_review_status,
             "safety_reviewed_by": medicine.safety_reviewed_by,
             "safety_reviewed_at": medicine.safety_reviewed_at,
+            "inventory_state": medicine.inventory_state,
+            "inventory_confirmed_at": medicine.inventory_confirmed_at,
+            "last_inventory_request_id": medicine.last_inventory_request_id,
+            "last_inventory_dispense_record_id": medicine.last_inventory_dispense_record_id,
         }
+        stock_explicitly_updated = False
         for key, value in updates.items():
             if value is None or key not in next_values:
                 continue
@@ -1733,6 +1755,13 @@ class MedicineRepository:
                 continue
             if key == "stock":
                 next_values[key] = max(int(value), 0)
+                stock_explicitly_updated = True
+                next_values["inventory_state"] = (
+                    "AVAILABLE" if next_values[key] > 0 else "DEPLETED"
+                )
+                next_values["inventory_confirmed_at"] = db.now_text()
+                next_values["last_inventory_request_id"] = ""
+                next_values["last_inventory_dispense_record_id"] = ""
                 continue
             if key == "low_stock_line":
                 next_values[key] = max(int(value), 0)
@@ -1744,6 +1773,13 @@ class MedicineRepository:
             next_values[field] != getattr(medicine, field)
             for field in ("name", "manufacturer", "barcode", "category", "spec")
         )
+        if identity_changed:
+            next_values["inventory_state"] = (
+                "AVAILABLE" if int(next_values["stock"]) > 0 else "DEPLETED"
+            )
+            next_values["inventory_confirmed_at"] = db.now_text()
+            next_values["last_inventory_request_id"] = ""
+            next_values["last_inventory_dispense_record_id"] = ""
         safety_content_changed = any(
             next_values[field] != getattr(medicine, field)
             for field in (
@@ -1827,6 +1863,9 @@ class MedicineRepository:
                     low_stock_line=?, image_hint=?, is_otc=?, is_emergency=?, safety_note=?, guidance_source=?,
                     guidance_review_required=?, package_verified=?, guidance_updated_at=?, safety_review_status=?,
                     safety_reviewed_by=?, safety_reviewed_at=?, updated_at=?
+                    , inventory_state=?, inventory_confirmed_at=?, last_inventory_request_id=?,
+                    last_inventory_dispense_record_id=?,
+                    inventory_revision=inventory_revision+?
                 WHERE id=?
                 """,
                 (
@@ -1859,6 +1898,11 @@ class MedicineRepository:
                     next_values["safety_reviewed_by"],
                     next_values["safety_reviewed_at"],
                     db.now_text(),
+                    next_values["inventory_state"],
+                    next_values["inventory_confirmed_at"],
+                    next_values["last_inventory_request_id"],
+                    next_values["last_inventory_dispense_record_id"],
+                    1 if stock_explicitly_updated or identity_changed else 0,
                     medicine_id,
                 ),
             )
@@ -1925,6 +1969,8 @@ class MedicineRepository:
         stock = max(int(stock if stock is not None else 1), 0)
         low_stock_line = max(int(low_stock_line if low_stock_line is not None else 1), 0)
         safety = safety_note or "扫码录入药品，开柜前请核对药盒、有效期和家庭用药记录。"
+        inventory_state = "AVAILABLE" if stock > 0 else "DEPLETED"
+        changed_at = db.now_text()
         with db.connect() as conn:
             conn.execute(
                 """
@@ -1932,9 +1978,10 @@ class MedicineRepository:
                   id, slot, hardware_slot, barcode, manufacturer, name, category, spec, trace_code, tags_json,
                   indications, dosage, contraindications_json, stock, low_stock_line, unit, expire_date, image_hint,
                   is_otc, is_emergency, safety_note, guidance_source,
-                  guidance_review_required, package_verified, guidance_updated_at, updated_at
+                  guidance_review_required, package_verified, guidance_updated_at, updated_at,
+                  inventory_state, inventory_confirmed_at, inventory_revision
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   slot=excluded.slot,
                   hardware_slot=excluded.hardware_slot,
@@ -1956,6 +2003,11 @@ class MedicineRepository:
                   guidance_review_required=excluded.guidance_review_required,
                   package_verified=excluded.package_verified,
                   guidance_updated_at=excluded.guidance_updated_at,
+                  inventory_state=excluded.inventory_state,
+                  inventory_confirmed_at=excluded.inventory_confirmed_at,
+                  last_inventory_request_id='',
+                  last_inventory_dispense_record_id='',
+                  inventory_revision=medicines.inventory_revision+1,
                   updated_at=excluded.updated_at
                 """,
                 (
@@ -1983,8 +2035,11 @@ class MedicineRepository:
                     "pending",
                     1,
                     0,
-                    db.now_text(),
-                    db.now_text(),
+                    changed_at,
+                    changed_at,
+                    inventory_state,
+                    changed_at,
+                    0,
                 ),
             )
         created = self.get_by_id(medicine_id)
@@ -2041,11 +2096,113 @@ class MedicineRepository:
             conn.execute(
                 """
                 UPDATE medicines
-                SET stock=MAX(stock - ?, 0), updated_at=?
+                SET stock=MAX(stock - ?, 0),
+                    inventory_state=CASE WHEN stock - ? > 0 THEN 'AVAILABLE' ELSE 'UNKNOWN' END,
+                    inventory_confirmed_at='', last_inventory_request_id='',
+                    last_inventory_dispense_record_id='',
+                    inventory_revision=inventory_revision+1, updated_at=?
                 WHERE id=?
                 """,
-                (quantity, db.now_text(), medicine_id),
+                (quantity, quantity, db.now_text(), medicine_id),
             )
+
+    def get_inventory_observation_token(
+        self,
+        medicine_id: str,
+    ) -> InventoryObservationToken | None:
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT stock, inventory_revision FROM medicines WHERE id=?",
+                (str(medicine_id or "").strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return InventoryObservationToken(
+            stock=int(row["stock"]),
+            revision=int(row["inventory_revision"]),
+        )
+
+    def inventory_confirmation_required(self, dispense_record_id: str) -> bool:
+        normalized_record_id = str(dispense_record_id or "").strip()
+        if not normalized_record_id:
+            return False
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM medicines
+                WHERE inventory_state='UNKNOWN'
+                  AND last_inventory_dispense_record_id=?
+                LIMIT 1
+                """,
+                (normalized_record_id,),
+            ).fetchone()
+        return row is not None
+
+    def mark_inventory_observation_pending(
+        self,
+        medicine_id: str,
+        dispense_record_id: str,
+        *,
+        expected_stock: int,
+        expected_inventory_revision: int,
+    ) -> bool:
+        """Bind unknown physical inventory to a successful dispense if stock is unchanged."""
+        normalized_medicine_id = str(medicine_id or "").strip()
+        normalized_record_id = str(dispense_record_id or "").strip()
+        normalized_stock = int(expected_stock)
+        normalized_revision = int(expected_inventory_revision)
+        if (
+            not normalized_medicine_id
+            or not normalized_record_id
+            or normalized_stock < 0
+            or normalized_revision < 0
+        ):
+            return False
+        with db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return self._mark_inventory_observation_pending_in_connection(
+                conn,
+                normalized_medicine_id,
+                normalized_record_id,
+                expected_stock=normalized_stock,
+                expected_inventory_revision=normalized_revision,
+            )
+
+    @staticmethod
+    def _mark_inventory_observation_pending_in_connection(
+        conn,
+        medicine_id: str,
+        dispense_record_id: str,
+        *,
+        expected_stock: int,
+        expected_inventory_revision: int,
+    ) -> bool:
+        cursor = conn.execute(
+            """
+            UPDATE medicines
+            SET inventory_state='UNKNOWN', inventory_confirmed_at='',
+                last_inventory_request_id='', last_inventory_dispense_record_id=?,
+                updated_at=?
+            WHERE id=? AND stock=? AND inventory_revision=?
+              AND ? = (
+                SELECT id FROM dispense_records
+                WHERE medicine_id=? AND dry_run=0 AND qsm_ok=1
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
+              )
+            """,
+            (
+                dispense_record_id,
+                db.now_text(),
+                medicine_id,
+                int(expected_stock),
+                int(expected_inventory_revision),
+                dispense_record_id,
+                medicine_id,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def restore_reserved_stock(
         self,
@@ -2053,6 +2210,7 @@ class MedicineRepository:
         quantity: int,
         *,
         expected_stock: int,
+        expected_inventory_revision: int,
     ) -> bool:
         """Release a reservation only after the hardware reports a known failure."""
         normalized_quantity = int(quantity)
@@ -2065,10 +2223,19 @@ class MedicineRepository:
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
                 """
-                UPDATE medicines SET stock=?, updated_at=?
-                WHERE id=? AND stock=?
+                UPDATE medicines
+                SET stock=?, inventory_state='AVAILABLE', inventory_confirmed_at='',
+                    last_inventory_request_id='', last_inventory_dispense_record_id='',
+                    inventory_revision=inventory_revision+1, updated_at=?
+                WHERE id=? AND stock=? AND inventory_revision=?
                 """,
-                (int(expected_stock), db.now_text(), medicine_id, reserved_stock),
+                (
+                    int(expected_stock),
+                    db.now_text(),
+                    medicine_id,
+                    reserved_stock,
+                    int(expected_inventory_revision),
+                ),
             )
         return cursor.rowcount == 1
 
@@ -2810,6 +2977,10 @@ class MedicineRepository:
             safety_review_status=row["safety_review_status"] or "draft",
             safety_reviewed_by=row["safety_reviewed_by"] or "",
             safety_reviewed_at=row["safety_reviewed_at"] or "",
+            inventory_state=(row["inventory_state"] or "UNKNOWN"),
+            inventory_confirmed_at=row["inventory_confirmed_at"] or "",
+            last_inventory_request_id=row["last_inventory_request_id"] or "",
+            last_inventory_dispense_record_id=row["last_inventory_dispense_record_id"] or "",
         )
         return medicine.model_copy(
             update={"review_fingerprint": MedicineRepository.review_fingerprint(medicine)}

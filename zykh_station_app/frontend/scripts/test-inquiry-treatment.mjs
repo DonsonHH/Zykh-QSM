@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 const TEST_SCOPE = "问诊算法与结果页 UI（不执行摄像头身份识别）";
 const root = process.cwd();
 const api = fs.readFileSync(path.join(root, "src/api/inquiry.js"), "utf8");
+const medicinesApi = fs.readFileSync(path.join(root, "src/api/medicines.js"), "utf8");
 const page = fs.readFileSync(path.join(root, "src/pages/Inquiry.jsx"), "utf8");
 const result = fs.readFileSync(path.join(root, "src/components/InquiryResultStep.jsx"), "utf8");
 const styles = fs.readFileSync(path.join(root, "src/styles/inquiry-actions.css"), "utf8");
@@ -69,6 +70,11 @@ const checks = [
   [!page.includes("api.deepseek.com") && !page.includes("/chat/completions") && !page.includes("/responses"), "Inquiry.jsx must not bypass the backend safety chain by calling DeepSeek directly"],
   [page.includes("openingTreatmentRef.current"), "duplicate frontend confirmation guard is missing"],
   [page.includes("data.status !== \"opening\"") && page.includes("1800"), "multi-cabinet flow must advance one cabinet at a time"],
+  [page.includes("inventory_confirmation_required") && page.includes("record_id"), "real inquiry dispense does not pause for explicit inventory confirmation"],
+  [page.includes("confirmMedicineInventory") && medicinesApi.includes("/inventory-confirmation"), "inquiry inventory confirmation does not use the medicine inventory API"],
+  [page.includes("buildInquiryInventoryRequestId") && page.includes("dispense_record_id") && page.includes("observation"), "inquiry inventory confirmation request is incomplete or unstable"],
+  [page.includes("setInventoryConfirmationError") && page.includes("await runTreatmentSequence"), "failed inventory confirmation cannot stay put and safely resume the next cabinet"],
+  [result.includes("<MedicineRemainingPrompt") && result.includes("onInventoryHasStock") && result.includes("onInventoryDepleted"), "result step does not require an explicit has-stock or depleted choice"],
   [!page.match(/handleTreatmentConfirm[\s\S]{0,500}setResultConfirmed\(false\)/), "cabinet progress must not reopen the information review"],
   [page.includes("useCallback(async (optionId)"), "countdown callback is not stable across clock renders"],
   [!page.includes("handleViewCandidates"), "inquiry result still navigates directly to medicines"],

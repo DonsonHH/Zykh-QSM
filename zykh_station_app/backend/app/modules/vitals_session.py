@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import uuid4
 
+from .. import db
 from ..db import now_text
+from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
 from ..repositories.sync_repository import SyncRepository
 from ..repositories.vitals_repository import VitalsRecord, VitalsRepository
@@ -36,21 +38,142 @@ class VitalsSessionModule:
     def prepare(self) -> dict[str, object]:
         return self._gateway.prepare_vitals()
 
-    def start(self, *, replace_active: bool = True) -> VitalsSessionResponse:
-        return VitalsSessionResponse(
+    def start(
+        self,
+        *,
+        replace_active: bool = True,
+        source_route: str = "HOME",
+        inquiry_session_id: str = "",
+    ) -> VitalsSessionResponse:
+        context = self._resolve_context(source_route, inquiry_session_id)
+        response = VitalsSessionResponse(
             **self._gateway.start_vitals_session(replace_active=replace_active)
         )
+        if not response.session_id:
+            raise VitalsSessionNotFound("gateway did not return a session id")
+        if not response.hardware_started:
+            return response.model_copy(
+                update=self._context_for_session(response.session_id)
+            )
+        self._store_context(response.session_id, context)
+        return response.model_copy(update=context)
 
     def get(self, session_id: str) -> VitalsSessionResponse:
         result = self._gateway.get_vitals_session(session_id)
         if not result.get("session_id"):
             raise VitalsSessionNotFound(session_id)
-        response = self._attach_previous_reference(VitalsSessionResponse(**result))
+        response = VitalsSessionResponse(**result).model_copy(
+            update=self._context_for_session(session_id)
+        )
+        response = self._attach_previous_reference(response)
         self._persist_completed_measurement(response)
         return response
 
     def cancel(self, session_id: str) -> VitalsSessionResponse:
-        return VitalsSessionResponse(**self._gateway.cancel_vitals_session(session_id))
+        return VitalsSessionResponse(
+            **self._gateway.cancel_vitals_session(session_id)
+        ).model_copy(update=self._context_for_session(session_id))
+
+    @staticmethod
+    def _resolve_context(source_route: str, inquiry_session_id: str) -> dict[str, str]:
+        route = str(source_route or "HOME").strip().upper()
+        inquiry_id = str(inquiry_session_id or "").strip()
+        if route == "HOME":
+            if inquiry_id:
+                raise ValueError("首页体征测量不能携带问询会话。")
+            return {
+                "source_route": "HOME",
+                "inquiry_session_id": "",
+                "attribution_source": "UNREGISTERED",
+                "service_user_id": "",
+                "service_user_name_snapshot": "",
+                "persona_generation": "",
+            }
+        if route != "INQUIRY" or not inquiry_id:
+            raise ValueError("问询体征测量缺少有效问询会话。")
+        session = InquiryRepository().get_session(inquiry_id)
+        if session is None or not session.user_id.strip():
+            raise ValueError("问询会话没有可归属的已登记人物。")
+        if session.stage != "vitals" or session.next_action != "measure_vitals":
+            raise ValueError("问询会话当前阶段不允许启动体征测量。")
+        session_generation = session.persona_generation.strip()
+        if not session_generation:
+            raise ValueError("问询会话缺少人物代次快照，不能启动体征测量。")
+        db.init_db()
+        with db.connect() as conn:
+            person = conn.execute(
+                """
+                SELECT id, persona_generation FROM service_users
+                WHERE id=? AND archived=0
+                """,
+                (session.user_id,),
+            ).fetchone()
+        if person is None:
+            raise ValueError("问询人物资料已归档或缺少代次，不能启动体征测量。")
+        current_generation = str(person["persona_generation"] or "").strip()
+        if not current_generation or current_generation != session_generation:
+            raise ValueError("问询人物代次已变化，不能沿用旧会话启动体征测量。")
+        return {
+            "source_route": "INQUIRY",
+            "inquiry_session_id": inquiry_id,
+            "attribution_source": "INQUIRY_SESSION",
+            "service_user_id": str(person["id"]),
+            "service_user_name_snapshot": session.user_name,
+            "persona_generation": session_generation,
+        }
+
+    @staticmethod
+    def _store_context(session_id: str, context: dict[str, str]) -> None:
+        db.init_db()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO vitals_session_contexts(
+                  session_id, source_route, inquiry_session_id, attribution_source,
+                  service_user_id, service_user_name_snapshot, persona_generation, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  source_route=excluded.source_route,
+                  inquiry_session_id=excluded.inquiry_session_id,
+                  attribution_source=excluded.attribution_source,
+                  service_user_id=excluded.service_user_id,
+                  service_user_name_snapshot=excluded.service_user_name_snapshot,
+                  persona_generation=excluded.persona_generation
+                """,
+                (
+                    session_id,
+                    context["source_route"],
+                    context["inquiry_session_id"],
+                    context["attribution_source"],
+                    context["service_user_id"],
+                    context["service_user_name_snapshot"],
+                    context["persona_generation"],
+                    now_text(),
+                ),
+            )
+
+    @staticmethod
+    def _context_for_session(session_id: str) -> dict[str, str]:
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT source_route, inquiry_session_id, attribution_source,
+                       service_user_id, service_user_name_snapshot, persona_generation
+                FROM vitals_session_contexts WHERE session_id=?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return {
+                "source_route": "HOME",
+                "inquiry_session_id": "",
+                "attribution_source": "UNREGISTERED",
+                "service_user_id": "",
+                "service_user_name_snapshot": "",
+                "persona_generation": "",
+            }
+        return dict(row)
 
     @staticmethod
     def _persist_completed_measurement(response: VitalsSessionResponse) -> None:
@@ -84,6 +207,15 @@ class VitalsSessionModule:
             sensor_model=response.source or "",
             error_message="",
             measured_at=measured_at,
+            source_route=response.source_route,
+            inquiry_session_id=response.inquiry_session_id,
+            attribution_source=response.attribution_source,
+            service_user_id=response.service_user_id,
+            service_user_name_snapshot=response.service_user_name_snapshot,
+            persona_generation=response.persona_generation,
+            temperature_source=response.temperature_source or "",
+            heart_rate_source=response.heart_rate_source or "",
+            spo2_source=response.spo2_source or "",
         )
         if not VitalsRepository().append_once(record):
             return
@@ -113,7 +245,11 @@ class VitalsSessionModule:
         if response.heart_rate is not None or response.spo2 is not None:
             return response
 
-        previous = VitalsRepository().latest_complete_core()
+        previous = VitalsRepository().latest_complete_core(
+            source_route=response.source_route,
+            service_user_id=response.service_user_id,
+            persona_generation=response.persona_generation,
+        )
         if previous is None:
             return response
 

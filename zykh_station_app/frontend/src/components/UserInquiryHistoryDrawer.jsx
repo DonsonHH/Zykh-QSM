@@ -71,7 +71,9 @@ export function UserInquiryHistoryDrawer({ user, state, onClose, onRefresh, onLo
                 case_summary: caseSummary,
                 risk_level: riskLevel,
                 risk_label: riskLabel,
+                risk_reasons: riskReasons = [],
                 outcome,
+                no_medicine_reason: noMedicineReason,
                 final_medicine_summary: finalMedicineSummary
               } = inquiry;
               return (
@@ -92,6 +94,22 @@ export function UserInquiryHistoryDrawer({ user, state, onClose, onRefresh, onLo
                       <dt>问询结果</dt>
                       <dd>{outcome}</dd>
                     </div>
+                    {riskReasons.length ? (
+                      <div>
+                        <dt>风险依据</dt>
+                        <dd>
+                          <ul className="user-inquiry-history-reasons">
+                            {riskReasons.map((reason) => <li key={reason}>{reason}</li>)}
+                          </ul>
+                        </dd>
+                      </div>
+                    ) : null}
+                    {noMedicineReason ? (
+                      <div>
+                        <dt>未提供药品原因</dt>
+                        <dd>{noMedicineReason}</dd>
+                      </div>
+                    ) : null}
                     {finalMedicineSummary ? (
                       <div>
                         <dt>最终药品</dt>

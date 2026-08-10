@@ -58,9 +58,15 @@ class PairingCodeIssuer:
         scopes = tuple(dict.fromkeys(str(item or "").strip() for item in request.service_user_ids))
         if not scopes or any(not item for item in scopes):
             raise PairingCodeIssueError("请至少选择一位服务对象。")
-        active_ids = {item.id for item in RecordsService().list_service_users()}
-        if any(item not in active_ids for item in scopes):
+        active_users = {item.id: item for item in RecordsService().list_service_users()}
+        if any(item not in active_users for item in scopes):
             raise PairingCodeIssueError("所选服务对象不存在或已停用。")
+        scope_generations = {
+            item: str(active_users[item].persona_generation or "").strip()
+            for item in scopes
+        }
+        if any(not generation for generation in scope_generations.values()):
+            raise PairingCodeIssueError("所选服务对象缺少人物代次，无法安全配对。")
 
         pairing_code = str(self._token_factory() or "").strip()
         if not 16 <= len(pairing_code) <= 256:
@@ -68,6 +74,7 @@ class PairingCodeIssuer:
         payload: dict[str, object] = {
             "codeHash": hashlib.sha256(pairing_code.encode("utf-8")).hexdigest(),
             "serviceUserScopes": list(scopes),
+            "serviceUserGenerations": scope_generations,
             "ttlSeconds": request.ttl_minutes * 60,
         }
         published = self._publish(payload)
@@ -82,6 +89,16 @@ class PairingCodeIssuer:
         )
         if published_scopes != scopes:
             raise PairingCodeIssueError("云端返回的授权对象不一致，请重新生成。")
+        raw_published_generations = published.get("serviceUserGenerations")
+        if not isinstance(raw_published_generations, dict):
+            raise PairingCodeIssueError("云端未确认人物代次，请重新生成。")
+        published_generations = {
+            str(key or "").strip(): str(value or "").strip()
+            for key, value in raw_published_generations.items()
+            if str(key or "").strip()
+        }
+        if published_generations != scope_generations:
+            raise PairingCodeIssueError("云端返回的人物代次不一致，请重新生成。")
         published_permissions = tuple(
             dict.fromkeys(
                 str(item or "").strip().upper()

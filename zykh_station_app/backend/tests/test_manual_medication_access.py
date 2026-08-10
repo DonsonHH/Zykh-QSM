@@ -300,6 +300,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             )
         )
         self.assertEqual(assessment.check_status, "PASSED")
+        self.assertEqual(assessment.reason_codes, [])
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 0)
 
@@ -763,10 +764,12 @@ class ManualMedicationAccessTest(unittest.TestCase):
             ).confirm_manual(command)
 
         self.assertEqual(outcome.dispense_status, "HARDWARE_FAILED")
-        self.assertEqual(
-            MedicineRepository().get_by_id(command.medicine_id).stock,
-            1,
-        )
+        self.assertFalse(outcome.inventory_confirmation_required)
+        refreshed = MedicineRepository().get_by_id(command.medicine_id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
 
     def test_hardware_failure_does_not_overwrite_stock_changed_after_reservation(self) -> None:
         from app.services.dispense_service import DispenseService
@@ -862,10 +865,12 @@ class ManualMedicationAccessTest(unittest.TestCase):
             ).confirm_manual(command)
 
         self.assertEqual(outcome.dispense_status, "RESULT_UNKNOWN")
-        self.assertEqual(
-            MedicineRepository().get_by_id(command.medicine_id).stock,
-            0,
-        )
+        self.assertFalse(outcome.inventory_confirmation_required)
+        refreshed = MedicineRepository().get_by_id(command.medicine_id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, 0)
+        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
 
     def test_manual_dry_run_does_not_reserve_stock(self) -> None:
         from app.services.dispense_service import DispenseService
@@ -906,14 +911,16 @@ class ManualMedicationAccessTest(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertTrue(response.dry_run)
+        self.assertFalse(response.inventory_confirmation_required)
         self.assertEqual(
             qsm.calls,
             [("14", 1, True, "manual-dry-run-stock-001")],
         )
-        self.assertEqual(
-            MedicineRepository().get_by_id(command.medicine_id).stock,
-            1,
-        )
+        refreshed = MedicineRepository().get_by_id(command.medicine_id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
 
     def test_manual_execution_command_rejects_non_positive_quantity(self) -> None:
         from app.schemas.manual_medication_access import ManualDispenseExecutionCommand
@@ -1828,6 +1835,628 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.reason_codes, ["ALLERGY_CONFLICT"])
         self.assertIn("青霉素类药物过敏", assessment.message)
 
+    def test_missing_medical_history_axis_cannot_pass_manual_access(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("incomplete profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  current_medications_json, persona_generation, safety_profile_revision
+                ) VALUES (
+                  'missing-medical-history', '缺病史结论档案', 68, '旧版健康档案',
+                  '无已知药物过敏', '', '已登记', ?, 'legacy-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "medicine_name": "维生素 C 片",
+                                "active_ingredients": ["维生素C"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="missing-medical-history",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-missing-medical-history-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="missing-medical-history",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_missing_current_medication_axis_cannot_pass_manual_access(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("incomplete profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, persona_generation, safety_profile_revision
+                ) VALUES (
+                  'missing-current-medication', '缺当前用药结论档案', 68, '旧版健康档案',
+                  '无已知药物过敏', '', '已登记', ?, 'legacy-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "present",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="missing-current-medication",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-missing-current-medication-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="missing-current-medication",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_missing_allergy_axis_cannot_pass_manual_access(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("incomplete profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  persona_generation, safety_profile_revision
+                ) VALUES (
+                  'missing-allergy', '缺过敏结论档案', 68, '结构化健康档案',
+                  '', '', '已登记', ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "present",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "medicine_name": "维生素 C 片",
+                                "active_ingredients": ["维生素C"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="missing-allergy",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-missing-allergy-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="missing-allergy",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_unstructured_medical_history_cannot_pass_manual_access(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("unreviewable profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  persona_generation, safety_profile_revision
+                ) VALUES (
+                  'unstructured-medical-history', '病史不可核查档案', 68,
+                  '结构化健康档案', '无已知药物过敏', '', '已登记',
+                  ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [{"display_text": "高血压", "status": "present"}],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "medicine_name": "维生素 C 片",
+                                "active_ingredients": ["维生素C"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="unstructured-medical-history",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-unstructured-medical-history-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="unstructured-medical-history",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_current_medication_without_active_ingredients_cannot_pass(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("unreviewable profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  persona_generation, safety_profile_revision
+                ) VALUES (
+                  'medication-without-ingredients', '当前用药不可核查档案', 68,
+                  '结构化健康档案', '无已知药物过敏', '', '已登记',
+                  ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "present",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [{"medicine_name": "成分待补录的长期用药"}],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="medication-without-ingredients",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-medication-without-ingredients-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="medication-without-ingredients",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_allergy_fact_without_matchable_substance_cannot_pass(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        class RecordingDispenseAdapter:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+
+            def confirm_manual(self, command: object) -> object:
+                self.calls.append(command)
+                raise AssertionError("unreviewable profiles must never reach QSM")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, persona_generation, safety_profile_revision
+                ) VALUES (
+                  'allergy-without-substance', '过敏事实不可核查档案', 68,
+                  '结构化健康档案', '', '', '已登记',
+                  ?, ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "present",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "medicine_name": "维生素 C 片",
+                                "active_ingredients": ["维生素C"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps([{"status": "present"}], ensure_ascii=False),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="allergy-without-substance",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        repository = ManualMedicationAccessRepository()
+        dispense = RecordingDispenseAdapter()
+
+        assessment = ManualMedicationAccessModule(
+            repository=repository,
+            identity_assertions=assertions,
+            dispense_adapter=dispense,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-allergy-without-substance-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="allergy-without-substance",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertEqual(assessment.expires_at, "")
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(dispense.calls, [])
+        self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
+
+    def test_unknown_legacy_allergy_text_is_not_an_auditable_conclusion(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  persona_generation, safety_profile_revision
+                ) VALUES (
+                  'unknown-legacy-allergy', '过敏结论待补人物', 68,
+                  '结构化健康档案', '未知', '', '已登记',
+                  ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "absent",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "medicine_name": "维生素 C 片",
+                                "active_ingredients": ["维生素C"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="unknown-legacy-allergy",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+
+        assessment = ManualMedicationAccessModule(
+            identity_assertions=assertions,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-unknown-legacy-allergy-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="unknown-legacy-allergy",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertIn("柜门未打开", assessment.message)
+
+    def test_explicit_no_current_medication_conclusion_is_auditable(self) -> None:
+        from app.repositories.identity_assertion_repository import IdentityAssertionRepository
+        from app.schemas.manual_medication_access import AssessManualMedicationCommand
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, persona_generation, safety_profile_revision
+                ) VALUES (
+                  'explicit-no-current-medicine', '明确未用药人物', 68,
+                  '结构化健康档案', '', '', '已登记',
+                  ?, ?, ?, 'structured-profile-v1', 1
+                )
+                """,
+                (
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "hypertension",
+                                "display_text": "高血压",
+                                "status": "absent",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "status": "absent",
+                                "display_text": "当前未使用任何药物",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "status": "absent",
+                                "display_text": "无已知药物过敏",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id="explicit-no-current-medicine",
+            verification_method="face",
+        )
+        medicine = MedicineRepository().get_by_id("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+
+        assessment = ManualMedicationAccessModule(
+            identity_assertions=assertions,
+        ).assess(
+            AssessManualMedicationCommand(
+                request_id="assess-explicit-no-current-medicine-001",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id="explicit-no-current-medicine",
+                verification_method="face",
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=medicine.review_fingerprint,
+            )
+        )
+
+        self.assertEqual(assessment.check_status, "PASSED")
+
+    def test_unknown_current_medication_status_is_not_auditable(self) -> None:
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        self.assertFalse(
+            ManualMedicationAccessModule._has_auditable_current_medications(
+                (
+                    {
+                        "status": "unknown",
+                        "medicine_name": "待核对药物",
+                        "active_ingredients": ["维生素C"],
+                    },
+                )
+            )
+        )
+
+    def test_english_legacy_allergy_placeholders_are_not_auditable(self) -> None:
+        from app.services.manual_medication_access_module import ManualMedicationAccessModule
+
+        for placeholder in ("unknown", "pending confirmation", "unconfirmed"):
+            with self.subTest(placeholder=placeholder):
+                self.assertFalse(
+                    ManualMedicationAccessModule._has_auditable_allergy_conclusion(
+                        (), placeholder
+                    )
+                )
     def test_profile_revision_change_invalidates_a_pass_before_qsm(self) -> None:
         from app.repositories.identity_assertion_repository import IdentityAssertionRepository
         from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository

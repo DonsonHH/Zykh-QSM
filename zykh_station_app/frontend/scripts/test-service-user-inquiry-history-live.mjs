@@ -109,7 +109,9 @@ async function fulfillApiRequest({ requestId, request }) {
           case_summary: "午后短暂头晕，休息后缓解",
           risk_level: "low",
           risk_label: "低风险",
-          outcome: "问询已记录",
+          risk_reasons: ["未触发硬性危险信号"],
+          outcome: "建议基础护理和观察",
+          no_medicine_reason: "未找到与当前症状相关且通过核验的候选药品",
           final_medicine_summary: ""
         }],
         next_cursor: null
@@ -126,7 +128,9 @@ async function fulfillApiRequest({ requestId, request }) {
           case_summary: "咳嗽两天，未见高热",
           risk_level: "medium",
           risk_label: "中风险",
+          risk_reasons: ["症状持续时间较长"],
           outcome: "已展示候选药品信息",
+          no_medicine_reason: "",
           final_medicine_summary: "蜜炼川贝枇杷膏",
           system_prompt: "SECRET SYSTEM PROMPT",
           reasoning_summary: "SECRET REASONING",
@@ -294,6 +298,8 @@ try {
   assert.match(summary, /咳嗽复查/, "summary does not show the title");
   assert.match(summary, /咳嗽两天，未见高热/, "summary does not show the case summary");
   assert.match(summary, /中风险/, "summary does not show the backend risk label");
+  assert.match(summary, /风险依据/, "summary does not label the landed risk reasons");
+  assert.match(summary, /症状持续时间较长/, "summary does not show a landed risk reason");
   assert.match(summary, /已展示候选药品信息/, "summary does not show the outcome");
   assert.match(summary, /蜜炼川贝枇杷膏/, "summary does not show the final medicine summary");
   assert.doesNotMatch(
@@ -316,6 +322,12 @@ try {
   const pagedSummary = await evaluate(`document.querySelector('[role="dialog"]')?.innerText || ''`);
   assert.match(pagedSummary, /咳嗽复查/, "load more replaced the first page");
   assert.match(pagedSummary, /头晕问询/, "load more did not append the second page");
+  assert.match(pagedSummary, /未提供药品原因/, "summary does not label the no-medicine reason");
+  assert.match(
+    pagedSummary,
+    /未找到与当前症状相关且通过核验的候选药品/,
+    "summary does not explain the no-medicine outcome"
+  );
   assert.equal(
     await evaluate(`document.querySelectorAll('[data-inquiry-session-id="history-wang-001"]').length`),
     1,

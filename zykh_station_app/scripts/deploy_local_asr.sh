@@ -25,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for command in adb unzip sha256sum awk grep; do
+for command in adb unzip sha256sum awk grep nc; do
   command -v "$command" >/dev/null 2>&1 || fail "主机缺少命令：$command"
 done
 
@@ -45,24 +45,25 @@ for file in \
   "$GATEWAY_DIR/offline_asr_resident.sh" \
   "$GATEWAY_DIR/offline_asr_paraformer.sh" \
   "$GATEWAY_DIR/start_station_gateway.sh" \
-  "$REPO_ROOT/zykh_app/server.pl" \
-  "$REPO_ROOT/zykh_app/scripts/start_zykh_server.sh"; do
+  "$GATEWAY_DIR/patch_station_gateway.pl"; do
   [ -s "$file" ] || fail "仓库缺少接入文件：$file"
 done
 
-DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
-[ -n "$DEVICES" ] || fail "未检测到 QSM 设备。"
-DEVICE_COUNT="$(printf '%s\n' "$DEVICES" | wc -l | tr -d ' ')"
-if [ "$DEVICE_COUNT" -gt 1 ]; then
+if [ -n "${ADB_SERIAL:-}" ]; then
+  ADB_PREFIX="adb -s $ADB_SERIAL"
+else
+  DEVICES="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
+  [ -n "$DEVICES" ] || fail "未检测到 QSM 设备。"
+  DEVICE_COUNT="$(printf '%s\n' "$DEVICES" | wc -l | tr -d ' ')"
+  [ "$DEVICE_COUNT" -eq 1 ] || fail "检测到 $DEVICE_COUNT 个 QSM 设备，请设置 ADB_SERIAL。"
   SERIAL="$(printf '%s\n' "$DEVICES" | head -n 1)"
   ADB_PREFIX="adb -s $SERIAL"
-  log "检测到多个设备，使用第一个设备：$SERIAL"
-else
-  ADB_PREFIX="adb"
 fi
 
 ARCH="$($ADB_PREFIX shell uname -m 2>/dev/null | tr -d '\r')"
 [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ] || fail "部署包仅支持 ARM64，当前为 $ARCH。"
+$ADB_PREFIX shell "test -s '$APP_ROOT/server.pl'" >/dev/null 2>&1 \
+  || fail "板端缺少既有 $APP_ROOT/server.pl；请先部署主网关，ASR 部署不会从历史源码覆写它。"
 
 TEMP_DIR="$(mktemp -d /tmp/zykh-offline-asr.XXXXXX)"
 unzip -q "$BUNDLE" 'payload/*' 'test-audio/penicillin-allergy.wav' -d "$TEMP_DIR"
@@ -102,18 +103,14 @@ $ADB_PREFIX push "$GATEWAY_DIR/offline_asr_paraformer.sh" "$APP_ROOT/scripts/" >
 $ADB_PREFIX shell "cp '$APP_ROOT/scripts/offline_asr_resident.sh' '$APP_ROOT/scripts/offline_asr.sh'; chmod 755 '$VOICE_ROOT/runtime/bin/sherpa-onnx-offline' '$VOICE_ROOT/runtime/bin/sherpa-onnx-offline-websocket-server' '$APP_ROOT/scripts/asr_ws_client.pl' '$APP_ROOT/scripts/start_asr_service.sh' '$APP_ROOT/scripts/offline_asr_resident.sh' '$APP_ROOT/scripts/offline_asr_paraformer.sh' '$APP_ROOT/scripts/offline_asr.sh'" >/dev/null
 
 log "同步板端兼容 API 并预热模型。"
-$ADB_PREFIX push "$REPO_ROOT/zykh_app/server.pl" "$APP_ROOT/server.pl" >/dev/null
-$ADB_PREFIX push "$REPO_ROOT/zykh_app/scripts/start_zykh_server.sh" "$APP_ROOT/scripts/start_zykh_server.sh" >/dev/null
+$ADB_PREFIX push "$GATEWAY_DIR/patch_station_gateway.pl" "$APP_ROOT/scripts/patch_station_gateway.pl" >/dev/null
 $ADB_PREFIX push "$GATEWAY_DIR/start_station_gateway.sh" "$APP_ROOT/scripts/start_station_gateway.sh" >/dev/null
-$ADB_PREFIX shell "chmod 755 '$APP_ROOT/scripts/start_zykh_server.sh' '$APP_ROOT/scripts/start_station_gateway.sh'; '$APP_ROOT/scripts/start_asr_service.sh' start" || fail "Paraformer 常驻服务启动失败。"
-
-if $ADB_PREFIX shell "test -x '$APP_ROOT/scripts/start_station_gateway.sh'" >/dev/null 2>&1; then
-  $ADB_PREFIX shell "QSM_HOME='$APP_ROOT' PORT=8080 sh '$APP_ROOT/scripts/start_station_gateway.sh'" >/dev/null || fail "外设网关重启失败。"
-else
-  $ADB_PREFIX shell "sh '$APP_ROOT/scripts/start_zykh_server.sh'" >/dev/null || fail "业务网关重启失败。"
-fi
+$ADB_PREFIX shell "chmod 755 '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/scripts/start_station_gateway.sh' && perl '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/server.pl' && '$APP_ROOT/scripts/start_asr_service.sh' start && QSM_HOME='$APP_ROOT' PORT=8080 sh '$APP_ROOT/scripts/start_station_gateway.sh'" \
+  >/dev/null || fail "Paraformer 或补丁后的外设网关启动失败。"
 
 $ADB_PREFIX forward "tcp:$HOST_PORT" "tcp:$DEVICE_PORT" >/dev/null || fail "ASR 端口转发失败。"
+nc -z -w 3 127.0.0.1 "$HOST_PORT" >/dev/null 2>&1 \
+  || fail "ASR 端口转发已建立，但常驻识别服务不可访问。"
 
 log "使用部署包测试音频验证真实板端识别。"
 $ADB_PREFIX push "$TEMP_DIR/test-audio/penicillin-allergy.wav" /tmp/zykh-asr-test.wav >/dev/null

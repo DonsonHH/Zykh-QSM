@@ -28,4 +28,5 @@ class DispenseServiceManualAdapter:
             dispense_status=status,
             message=response.message,
             dispense_record_id=str(response.record_id or ""),
+            inventory_confirmation_required=response.inventory_confirmation_required,
         )

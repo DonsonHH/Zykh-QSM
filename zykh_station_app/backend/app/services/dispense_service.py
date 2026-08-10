@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import threading
 from uuid import uuid4
 
@@ -127,7 +128,10 @@ class DispenseService:
             and not debug_dry_run
         ):
             raise DispenseError("该药品需凭处方或既往用药计划取用，请先完成医生审核。")
-        canonical_name, target_user_type = self._resolve_identity(request.target_user_id, request.target_user_name)
+        canonical_name, target_user_type, persona_generation = self._resolve_identity(
+            request.target_user_id,
+            request.target_user_name,
+        )
         registered_allergies = self._registered_allergies(request.target_user_id)
         if registered_allergies and MedicineKnowledgeRepository.has_allergy_conflict(
             medicine,
@@ -137,15 +141,25 @@ class DispenseService:
                 f"已登记的用药禁忌（{registered_allergies}）与{medicine.name}冲突，不可取药。"
             )
         request = request.model_copy(update={"target_user_name": canonical_name})
+        plan_records_service = None
         if request.today_plan_id:
             from .records_service import RecordsService
 
+            plan_records_service = RecordsService()
             try:
-                RecordsService().validate_dispense_plan(
-                    request.today_plan_id,
-                    request.medicine_id,
-                    request.target_user_id,
+                pending_plan_operation = (
+                    plan_records_service.pending_plan_dispense_operation(
+                        request.today_plan_id,
+                        request.medicine_id,
+                        request.target_user_id,
+                    )
                 )
+                if not pending_plan_operation:
+                    plan_records_service.validate_dispense_plan(
+                        request.today_plan_id,
+                        request.medicine_id,
+                        request.target_user_id,
+                    )
             except ValueError as exc:
                 raise DispenseError(str(exc)) from exc
         latest = self.medicine_repository.get_by_id(request.medicine_id)
@@ -176,6 +190,15 @@ class DispenseService:
             self._validate_manual_execution_snapshot(manual_execution, latest)
         medicine = latest
         dry_run = self._should_dry_run(request, medicine, force_dry_run)
+        if (
+            not dry_run
+            and request.verification_method.strip() == "inquiry_confirmed"
+            and not request.request_id.strip()
+        ):
+            raise DispenseError(
+                "问询取药缺少稳定动作标识，本次柜门未打开；请返回原问询会话重试。",
+                status_code=409,
+            )
         stock_reserved = False
         if validated_manual and not dry_run:
             if manual_execution is None:
@@ -190,7 +213,40 @@ class DispenseService:
             except ManualExecutionPreconditionError as exc:
                 raise DispenseError(str(exc), status_code=409) from exc
             stock_reserved = True
+        inventory_token = None
+        if not dry_run:
+            inventory_token = self.medicine_repository.get_inventory_observation_token(
+                medicine.id
+            )
+            if inventory_token is None:
+                raise DispenseError(
+                    "药品库存记录已变化，本次柜门未打开。",
+                    status_code=409,
+                )
         qsm_slot = str(medicine.hardware_slot or medicine.slot)
+        if (
+            not qsm_operation_id
+            and request.today_plan_id.strip()
+            and not dry_run
+        ):
+            if plan_records_service is None:
+                from .records_service import RecordsService
+
+                plan_records_service = RecordsService()
+            try:
+                qsm_operation_id = plan_records_service.reserve_plan_dispense_operation(
+                    request.today_plan_id,
+                    request.medicine_id,
+                    request.target_user_id,
+                )
+            except ValueError as exc:
+                raise DispenseError(str(exc), status_code=409) from exc
+        elif (
+            not qsm_operation_id
+            and request.verification_method.strip() == "inquiry_confirmed"
+            and request.request_id.strip()
+        ):
+            qsm_operation_id = self._inquiry_operation_id(request.request_id)
         if qsm_operation_id:
             qsm_result = self.qsm_client.dispense(
                 qsm_slot,
@@ -206,21 +262,38 @@ class DispenseService:
             )
         qsm_ok = bool(qsm_result.get("ok"))
         result_unknown = bool(qsm_result.get("result_unknown"))
+        retry_safe = bool(qsm_result.get("retry_safe", not result_unknown))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
-        if not dry_run and not qsm_ok:
+        if not dry_run and (not qsm_ok or result_unknown):
             stock_restore_conflict = False
             if stock_reserved and not result_unknown:
                 stock_restore_conflict = not self.medicine_repository.restore_reserved_stock(
                     medicine.id,
                     request.quantity,
                     expected_stock=manual_execution.expected_stock,
+                    expected_inventory_revision=inventory_token.revision,
                 )
-            if validated_manual and result_unknown:
+            if result_unknown:
                 message = "柜门结果待现场确认，请勿自动重试。"
             else:
                 message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
                 if stock_restore_conflict:
                     message += "；库存已被其他操作更新，请人工核对当前库存。"
+            if request.today_plan_id and qsm_operation_id:
+                if plan_records_service is None:
+                    from .records_service import RecordsService
+
+                    plan_records_service = RecordsService()
+                try:
+                    plan_records_service.mark_plan_dispense_operation(
+                        request.today_plan_id,
+                        qsm_operation_id,
+                        "result_unknown" if result_unknown else "failed",
+                    )
+                except ValueError:
+                    result_unknown = True
+                    retry_safe = False
+                    message = "柜门结果待现场确认，请勿自动重试。"
             record = self._build_record(
                 request,
                 medicine,
@@ -229,6 +302,7 @@ class DispenseService:
                 qsm_ok=False,
                 qsm_detail=qsm_detail,
                 target_user_type=target_user_type,
+                persona_generation=persona_generation,
             )
             self.dispense_repository.append(record)
             self._archive_identity_if_requested(request, record, target_user_type)
@@ -238,7 +312,8 @@ class DispenseService:
                 message=message,
                 record_id=record.id,
                 qsm_detail=qsm_detail,
-                result_unknown=validated_manual and result_unknown,
+                result_unknown=result_unknown,
+                retry_safe=retry_safe,
             )
 
         message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
@@ -250,8 +325,24 @@ class DispenseService:
             qsm_ok=qsm_ok,
             qsm_detail=qsm_detail,
             target_user_type=target_user_type,
+            persona_generation=persona_generation,
         )
-        self.dispense_repository.append(record)
+        inventory_observation_pending = False
+        if not dry_run:
+            _saved, inventory_observation_pending = (
+                self.dispense_repository.append_with_inventory_observation(
+                    record,
+                    expected_stock=inventory_token.stock,
+                    expected_inventory_revision=inventory_token.revision,
+                )
+            )
+            if not inventory_observation_pending:
+                message = (
+                    "柜门已打开；库存记录在开柜期间已更新，"
+                    "本次不再接受旧现场确认，请勿重复开柜。"
+                )
+        else:
+            self.dispense_repository.append(record)
         self._archive_identity_if_requested(request, record, target_user_type)
         if request.today_plan_id and not dry_run:
             from .records_service import RecordsService
@@ -260,8 +351,21 @@ class DispenseService:
                 request.today_plan_id,
                 request.medicine_id,
                 request.target_user_id,
+                dispense_operation_id=qsm_operation_id,
             )
-        return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
+        return DispenseConfirmResponse(
+            ok=True,
+            dry_run=dry_run,
+            message=message,
+            record_id=record.id,
+            qsm_detail=qsm_detail,
+            inventory_confirmation_required=inventory_observation_pending,
+        )
+
+    @staticmethod
+    def _inquiry_operation_id(request_id: str) -> str:
+        logical_action = f"inquiry-v1|{request_id.strip()}"
+        return f"inquiry-{sha256(logical_action.encode('utf-8')).hexdigest()[:40]}"
 
     def _validate_manual_execution_snapshot(
         self,
@@ -318,9 +422,25 @@ class DispenseService:
         dry_run = settings.dispense_dry_run or not settings.enable_real_dispense
         if not dry_run and allowed_slot and allowed_slot != str(request.slot):
             raise DispenseError("真实开柜测试仓位与请求仓位不一致，已拒绝执行。")
+        if not dry_run and not request.request_id.strip():
+            raise DispenseError(
+                "管理员开柜缺少稳定动作标识，本次柜门未打开。",
+                status_code=409,
+            )
 
-        qsm_result = self.qsm_client.dispense(str(request.slot), request.quantity, dry_run=dry_run)
+        qsm_result = self.qsm_client.dispense(
+            str(request.slot),
+            request.quantity,
+            dry_run=dry_run,
+            operation_id=(
+                self._admin_operation_id(request.request_id)
+                if request.request_id.strip()
+                else ""
+            ),
+        )
         qsm_ok = bool(qsm_result.get("ok"))
+        result_unknown = bool(qsm_result.get("result_unknown"))
+        retry_safe = bool(qsm_result.get("retry_safe", not result_unknown))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if dry_run:
             return DispenseOpenResponse(
@@ -330,6 +450,16 @@ class DispenseService:
                 message="本地测试记录已保存，未打开柜门。",
                 qsm_detail=qsm_detail,
             )
+        if result_unknown:
+            return DispenseOpenResponse(
+                ok=False,
+                dry_run=False,
+                slot=request.slot,
+                message="柜门结果待现场确认，请勿自动重试。",
+                qsm_detail=qsm_detail,
+                result_unknown=True,
+                retry_safe=False,
+            )
         if not qsm_ok:
             return DispenseOpenResponse(
                 ok=False,
@@ -337,11 +467,12 @@ class DispenseService:
                 slot=request.slot,
                 message=f"外设开柜失败：{qsm_detail or '未返回成功状态'}",
                 qsm_detail=qsm_detail,
+                retry_safe=retry_safe,
             )
         if request.target_user_name and request.medicine_id:
             medicine = self.medicine_repository.get_by_id(request.medicine_id)
             if medicine is not None:
-                target_user_name, target_user_type = self._resolve_identity(
+                target_user_name, target_user_type, persona_generation = self._resolve_identity(
                     request.target_user_id,
                     request.target_user_name,
                     require_known=False,
@@ -360,6 +491,7 @@ class DispenseService:
                     qsm_ok=True,
                     qsm_detail=qsm_detail,
                     target_user_id=request.target_user_id,
+                    persona_generation=persona_generation,
                     target_user_name=target_user_name,
                     verification_method="manual",
                     verification_score=None,
@@ -374,6 +506,11 @@ class DispenseService:
             message=f"{request.slot}号柜门已打开。",
             qsm_detail=qsm_detail,
         )
+
+    @staticmethod
+    def _admin_operation_id(request_id: str) -> str:
+        logical_action = f"admin-v1|{request_id.strip()}"
+        return f"admin-{sha256(logical_action.encode('utf-8')).hexdigest()[:40]}"
 
     def list_records(self) -> list[DispenseRecord]:
         return self.dispense_repository.list_records()
@@ -409,6 +546,7 @@ class DispenseService:
         qsm_ok: bool,
         qsm_detail: str,
         target_user_type: str,
+        persona_generation: str,
     ) -> DispenseRecord:
         record_id = f"{'dryrun' if dry_run else 'dispense'}-{uuid4().hex[:12]}"
         return DispenseRecord(
@@ -425,6 +563,7 @@ class DispenseService:
             qsm_ok=qsm_ok,
             qsm_detail=qsm_detail,
             target_user_id=request.target_user_id,
+            persona_generation=persona_generation,
             target_user_name=request.target_user_name.strip() or "家庭成员",
             verification_method=request.verification_method.strip() or "manual",
             verification_score=request.verification_score,
@@ -439,26 +578,34 @@ class DispenseService:
         target_user_name: str,
         *,
         require_known: bool = True,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str]:
         user_id = str(target_user_id or "").strip()
         supplied_name = str(target_user_name or "").strip()
         if user_id:
             db.init_db()
             with db.connect() as conn:
                 row = conn.execute(
-                    "SELECT name, status FROM service_users WHERE id=? AND archived=0",
+                    """
+                    SELECT name, status, persona_generation
+                    FROM service_users
+                    WHERE id=? AND archived=0
+                    """,
                     (user_id,),
                 ).fetchone()
             if row:
                 status = str(row["status"] or "")
                 user_type = "guest" if user_id.startswith("guest-") or status in {"访客", "游客"} else "registered"
-                return str(row["name"]), user_type
+                return (
+                    str(row["name"]),
+                    user_type,
+                    str(row["persona_generation"] or ""),
+                )
             if require_known:
                 raise DispenseError("身份记录不存在，请重新进行指纹或面部确认。")
         if supplied_name:
             visitor = supplied_name.startswith(("访客", "游客"))
-            return supplied_name, "guest" if visitor or not user_id else "registered"
-        return "游客", "guest"
+            return supplied_name, "guest" if visitor or not user_id else "registered", ""
+        return "游客", "guest", ""
 
     @staticmethod
     def _registered_allergies(target_user_id: str) -> str:

@@ -308,6 +308,11 @@ def admin_delete_today_plan(plan_id: str, payload: AdminConfirmationRequest, _: 
 @router.post("/cabinet/{slot}/open", response_model=DispenseOpenResponse)
 def admin_open_cabinet(slot: int, payload: AdminCabinetOpenRequest, _: str = Depends(require_admin)) -> DispenseOpenResponse:
     try:
-        return AdminService().open_cabinet(slot, payload.confirmation, payload.reason)
+        return AdminService().open_cabinet(
+            slot,
+            payload.confirmation,
+            payload.reason,
+            payload.request_id,
+        )
     except AdminServiceError as exc:
         raise _service_error(exc) from exc

@@ -260,13 +260,26 @@ class AdminService:
             raise AdminServiceError(str(exc), 404) from exc
         self.audit("today-plan.delete", plan_id, "success", f"{plan.target_user} {plan.time} {plan.medicine}")
 
-    def open_cabinet(self, slot: int, confirmation: str, reason: str) -> object:
+    def open_cabinet(
+        self,
+        slot: int,
+        confirmation: str,
+        reason: str,
+        request_id: str,
+    ) -> object:
         if confirmation.strip() != f"OPEN {slot}":
             raise AdminServiceError("开柜操作的二次确认校验失败。")
         result = DispenseService().open_cabinet(
-            DispenseOpenRequest(slot=slot, quantity=1, reason=reason, confirmed_open=True)
+            DispenseOpenRequest(
+                slot=slot,
+                quantity=1,
+                reason=reason,
+                confirmed_open=True,
+                request_id=request_id,
+            )
         )
-        self.audit("cabinet.open", str(slot), "success" if result.ok else "failed", result.message)
+        audit_result = "unknown" if result.result_unknown else ("success" if result.ok else "failed")
+        self.audit("cabinet.open", str(slot), audit_result, result.message)
         return result
 
     def system_action(self, action: str, confirmation: str) -> dict[str, object]:

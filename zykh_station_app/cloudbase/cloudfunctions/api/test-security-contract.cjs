@@ -77,6 +77,11 @@ function collection(name) {
         store.set(id, data);
         return { errCode: 0, errMsg: "document.set:ok" };
       },
+      update: async ({ data }) => {
+        if (!store.has(id)) throw new Error("missing document");
+        store.set(id, Object.assign({}, store.get(id), data));
+        return { errCode: 0, errMsg: "document.update:ok" };
+      },
       remove: async () => { store.delete(id); },
     }),
   });
@@ -149,8 +154,8 @@ async function run() {
   );
   assert.match(
     source,
-    /2\.6-station-pairing-notification-worker/,
-    "station pairing issue schema revision was not advanced",
+    /2\.7-service-user-persona-tombstones/,
+    "service-user persona tombstone schema revision was not advanced",
   );
   for (const collectionName of [
     "medication_safety_events",
@@ -165,6 +170,7 @@ async function run() {
   for (const moduleName of [
     "medicationSafetyEvents.js",
     "memberships.js",
+    "serviceUserIdentity.js",
     "caregiverNotificationWorker",
     "subscribeMessageSender.js",
     "invocation.js",
@@ -174,7 +180,7 @@ async function run() {
   }
   assert.match(
     deploySource,
-    /2\.6-station-pairing-notification-worker/,
+    /2\.7-service-user-persona-tombstones/,
     "deployment verification must not accept an older parallel schemaVersion=2 contract",
   );
   assert.doesNotMatch(
@@ -186,6 +192,11 @@ async function run() {
     deploySource,
     /capabilities\.get\("devicePairing"\)\s*==\s*"v1"/,
     "deployment verification must wait for the secure pairing capability",
+  );
+  assert.match(
+    deploySource,
+    /capabilities\.get\("serviceUserPersonaTombstones"\)\s*==\s*"v1"/,
+    "deployment verification must wait for persona-generation tombstones",
   );
   assert.match(
     deploySource,
@@ -210,7 +221,7 @@ async function run() {
     "vitals history is sorted by synchronization time instead of measurement time",
   );
   const ping = await cloudFunction.main({ action: "PING", data: {} });
-  assert.equal(ping.schemaRevision, "2.6-station-pairing-notification-worker");
+  assert.equal(ping.schemaRevision, "2.7-service-user-persona-tombstones");
   assert.equal(ping.capabilities && ping.capabilities.medicationSafetyEvents, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverMembership, "v1");
   assert.equal(ping.capabilities && ping.capabilities.inquiryDetail, "v1");
@@ -219,6 +230,7 @@ async function run() {
   assert.equal(ping.capabilities && ping.capabilities.devicePairingIssue, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationOutbox, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationWorker, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.serviceUserPersonaTombstones, "v1");
   assert.equal(ping.collections && ping.collections.devicePairingCodes, "device_pairing_codes");
   assert.equal(
     ping.collections && ping.collections.caregiverNotificationOutbox,
@@ -229,9 +241,386 @@ async function run() {
     "caregiver_notification_subscriptions",
   );
 
-  storeFor("service_users").set("clock-device-user-clock-wang", {
+  const personaOriginalDeviceSecrets = process.env.DEVICE_SECRETS;
+  process.env.DEVICE_SECRETS = JSON.stringify({
+    "persona-sync-device": "persona-test-secret",
+  });
+  const personaStore = storeFor("service_users");
+  personaStore.set("persona-sync-device-user-legacy-zhang", {
+    id: "legacy-zhang",
+    name: "张三",
+    deviceId: "persona-sync-device",
+    archived: false,
+  });
+  personaStore.set("ownerless-unrelated-document", {
+    id: "manual-family-note",
+    name: "人工维护文档",
+    deviceId: "persona-sync-device",
+  });
+  personaStore.set("persona-sync-device-user-legacy-li", {
+    id: "manual-ownerless-person",
+    name: "人工维护人物",
+    deviceId: "persona-sync-device",
+  });
+  const personaRows = [
+    {
+      id: "wang-nainai",
+      name: "王奶奶",
+      persona_generation: "senior-demo-v1",
+      archived: false,
+    },
+    {
+      id: "legacy-zhang",
+      name: "张三",
+      persona_generation: "legacy-family-demo-v6",
+      archived: true,
+    },
+    {
+      id: "legacy-li",
+      name: "李四",
+      persona_generation: "legacy-family-demo-v6",
+      archived: true,
+    },
+  ];
+  const firstPersonaBatch = await cloudFunction.main({
+    action: "UPSERT_SNAPSHOT_BATCH",
+    data: {
+      deviceId: "persona-sync-device",
+      deviceSecret: "persona-test-secret",
+      kind: "serviceUsers",
+      rows: personaRows,
+    },
+  });
+  assert.deepEqual(firstPersonaBatch.ids.sort(), [
+    "persona-sync-device-user-legacy-li-generation-5c25c797e593f21d",
+    "persona-sync-device-user-legacy-zhang-generation-5c25c797e593f21d",
+    "persona-sync-device-user-wang-nainai-generation-7bbe42f195075471",
+  ]);
+  assert.equal(personaStore.has("persona-sync-device-user-legacy-zhang"), false);
+  assert.equal(personaStore.has("persona-sync-device-user-legacy-li"), true);
+  assert.equal(personaStore.get("persona-sync-device-user-legacy-li").id, "manual-ownerless-person");
+  assert.equal(personaStore.has("ownerless-unrelated-document"), true);
+  const personaStoreSizeAfterFirstBatch = personaStore.size;
+  const secondPersonaBatch = await cloudFunction.main({
+    action: "UPSERT_SNAPSHOT_BATCH",
+    data: {
+      deviceId: "persona-sync-device",
+      deviceSecret: "persona-test-secret",
+      kind: "serviceUsers",
+      rows: personaRows,
+    },
+  });
+  assert.deepEqual(secondPersonaBatch.ids.sort(), firstPersonaBatch.ids.sort());
+  assert.equal(personaStore.size, personaStoreSizeAfterFirstBatch);
+  const legacyBlankPersonaBatch = await cloudFunction.main({
+    action: "UPSERT_SNAPSHOT_BATCH",
+    data: {
+      deviceId: "persona-sync-device",
+      deviceSecret: "persona-test-secret",
+      kind: "serviceUsers",
+      rows: [{ id: "legacy-blank-generation", name: "旧版人物", archived: false }],
+    },
+  });
+  assert.deepEqual(legacyBlankPersonaBatch.ids, [
+    "persona-sync-device-user-legacy-blank-generation",
+  ]);
+  personaStore.set("persona-sync-device-user-legacy-zhang", {
+    id: "legacy-zhang",
+    name: "张三",
+    deviceId: "persona-sync-device",
+    archived: false,
+  });
+  await cloudFunction.main({
+    action: "UPLOAD_SNAPSHOT",
+    data: {
+      deviceId: "persona-sync-device",
+      deviceSecret: "persona-test-secret",
+      snapshot: { serviceUsers: personaRows },
+    },
+  });
+  assert.equal(personaStore.has("persona-sync-device-user-legacy-zhang"), false);
+  assert.equal(
+    personaStore.has("persona-sync-device-user-wang-nainai-generation-7bbe42f195075471"),
+    true,
+  );
+  storeFor("device_memberships").set("persona-public-viewer", {
+    openid: "persona-public-viewer",
+    deviceId: "persona-sync-device",
+    role: "CAREGIVER",
+    service_user_scopes: ["wang-nainai", "legacy-zhang"],
+    permissions: ["READ_PROFILE"],
+    status: "ACTIVE",
+  });
+  await cloudFunction.main({
+    action: "REPORT_DEVICE",
+    data: {
+      deviceId: "persona-sync-device",
+      deviceSecret: "persona-test-secret",
+      schemaVersion: 2,
+      syncSummary: {
+        counts: { serviceUsers: 2 },
+        serviceUsers: personaRows,
+      },
+    },
+  });
+  currentOpenId = "persona-public-viewer";
+  const publicPersonaSnapshot = await cloudFunction.main({
+    action: "GET_SNAPSHOT",
+    data: { deviceId: "persona-sync-device" },
+  });
+  assert.deepEqual(publicPersonaSnapshot.serviceUsers.map(row => row.id), ["wang-nainai"]);
+  assert.equal(publicPersonaSnapshot.serviceUsers[0].persona_generation, "senior-demo-v1");
+  const publicPersonaDevice = await cloudFunction.main({
+    action: "GET_DEVICE",
+    data: { deviceId: "persona-sync-device" },
+  });
+  assert.deepEqual(publicPersonaDevice.syncSummary.serviceUsers.map(row => row.id), ["wang-nainai"]);
+  assert.deepEqual(publicPersonaDevice.syncSummary.counts, { serviceUsers: 1 });
+  currentOpenId = "wechat-openid";
+  const generationPairingCode = "ZYKH-QSM-PERSONA-GENERATION-PAIR-20260810";
+  const generationPairingHash = crypto.createHash("sha256").update(generationPairingCode).digest("hex");
+  const generationBoundPairing = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "persona-sync-device",
+    deviceSecret: "persona-test-secret",
+    codeHash: generationPairingHash,
+    serviceUserScopes: ["wang-nainai"],
+    serviceUserGenerations: { "wang-nainai": "senior-demo-v1" },
+    ttlSeconds: 600,
+  });
+  assert.equal(generationBoundPairing.ok, true);
+  assert.deepEqual(generationBoundPairing.serviceUserGenerations, {
+    "wang-nainai": "senior-demo-v1",
+  });
+  assert.deepEqual(
+    storeFor("device_pairing_codes").get(`pairing-${generationPairingHash}`).service_user_generations,
+    { "wang-nainai": "senior-demo-v1" },
+  );
+  const staleGenerationPairing = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
+    deviceId: "persona-sync-device",
+    deviceSecret: "persona-test-secret",
+    codeHash: "5".repeat(64),
+    serviceUserScopes: ["wang-nainai"],
+    serviceUserGenerations: { "wang-nainai": "stale-demo-v0" },
+    ttlSeconds: 600,
+  });
+  assert.equal(staleGenerationPairing.ok, false);
+  assert.match(staleGenerationPairing.error, /PAIRING_CODE_ISSUE_INVALID/);
+  currentOpenId = "persona-generation-caregiver";
+  const generationBoundRedemption = await cloudFunction.main({
+    action: "REDEEM_DEVICE_PAIRING_CODE",
+    data: { pairingCode: generationPairingCode },
+  });
+  assert.deepEqual(generationBoundRedemption.serviceUserGenerations, {
+    "wang-nainai": "senior-demo-v1",
+  });
+  const generationMembership = Array.from(storeFor("device_memberships").values())
+    .find(row => row.openid === "persona-generation-caregiver");
+  assert.deepEqual(generationMembership.service_user_generations, {
+    "wang-nainai": "senior-demo-v1",
+  });
+  generationMembership.permissions.push("CREATE_COMMAND");
+  const ownerlessPersonCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "persona-sync-device",
+      type: "AI_CHAT",
+      requestId: "persona-ownerless-command",
+      payload: { question: "不应绕过人物代次" },
+    },
+  });
+  assert.equal(ownerlessPersonCommand.ok, false);
+  assert.match(ownerlessPersonCommand.error, /NOT_FOUND/);
+  const currentGenerationCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "persona-sync-device",
+      type: "AI_CHAT",
+      requestId: "persona-current-generation-command",
+      payload: { target_user_id: "wang-nainai", question: "当前代次问询" },
+    },
+  });
+  assert.equal(currentGenerationCommand.payload.persona_generation, "senior-demo-v1");
+  assert.equal(currentGenerationCommand.persona_generation, "senior-demo-v1");
+  const currentGenerationAck = await invokeHttp("ACK_COMMAND", {
+    deviceId: "persona-sync-device",
+    deviceSecret: "persona-test-secret",
+    commandId: currentGenerationCommand._id,
+    status: "done",
+    result: { reply: "当前代次回复" },
+  });
+  assert.equal(
+    currentGenerationAck.status,
+    "done",
+    JSON.stringify(currentGenerationAck),
+  );
+  const currentGenerationInquiries = await cloudFunction.main({
+    action: "LIST_INQUIRIES",
+    data: { deviceId: "persona-sync-device", limit: 100 },
+  });
+  const mirroredCurrentGenerationInquiry = currentGenerationInquiries.find(
+    row => row.inquiry_id === currentGenerationCommand._id,
+  );
+  assert.ok(mirroredCurrentGenerationInquiry);
+  assert.equal(
+    mirroredCurrentGenerationInquiry.persona_generation,
+    "senior-demo-v1",
+  );
+  personaStore.get("persona-sync-device-user-wang-nainai-generation-7bbe42f195075471").archived = true;
+  personaStore.set("persona-sync-device-user-wang-nainai-generation-5791e1795527d3f2", {
+    id: "wang-nainai",
+    name: "同 ID 新代次人物",
+    deviceId: "persona-sync-device",
+    persona_generation: "real-generation-v2",
+    archived: false,
+  });
+  const staleMembershipSnapshot = await cloudFunction.main({
+    action: "GET_SNAPSHOT",
+    data: { deviceId: "persona-sync-device" },
+  });
+  assert.deepEqual(staleMembershipSnapshot.serviceUsers, []);
+  storeFor("today_plans").set("persona-plan-matching-generation", {
+    id: "persona-plan-matching-generation",
+    deviceId: "persona-sync-device",
+    service_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
+  });
+  storeFor("today_plans").set("persona-plan-missing-generation", {
+    id: "persona-plan-missing-generation",
+    deviceId: "persona-sync-device",
+    service_user_id: "wang-nainai",
+  });
+  storeFor("today_plans").set("persona-plan-new-generation", {
+    id: "persona-plan-new-generation",
+    deviceId: "persona-sync-device",
+    service_user_id: "wang-nainai",
+    persona_generation: "real-generation-v2",
+  });
+  storeFor("records").set("persona-record-matching-generation", {
+    id: "persona-record-matching-generation",
+    deviceId: "persona-sync-device",
+    target_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
+    createdAt: "2026-08-10 10:00:00",
+  });
+  storeFor("records").set("persona-record-missing-generation", {
+    id: "persona-record-missing-generation",
+    deviceId: "persona-sync-device",
+    target_user_id: "wang-nainai",
+    createdAt: "2026-08-10 10:01:00",
+  });
+  storeFor("records").set("persona-record-new-generation", {
+    id: "persona-record-new-generation",
+    deviceId: "persona-sync-device",
+    target_user_id: "wang-nainai",
+    persona_generation: "real-generation-v2",
+    createdAt: "2026-08-10 10:02:00",
+  });
+  const generationBoundHistory = await cloudFunction.main({
+    action: "GET_SNAPSHOT",
+    data: { deviceId: "persona-sync-device" },
+  });
+  assert.deepEqual(
+    generationBoundHistory.plans.map(row => row.id),
+    ["persona-plan-matching-generation"],
+  );
+  const generationBoundRecords = await cloudFunction.main({
+    action: "LIST_RECORDS",
+    data: { deviceId: "persona-sync-device", limit: 20 },
+  });
+  assert.deepEqual(generationBoundRecords.map(row => row.id), [
+    "persona-record-matching-generation",
+  ]);
+  generationMembership.service_user_scopes.push("li-yeye");
+  storeFor("today_plans").set("persona-plan-scope-without-generation", {
+    id: "persona-plan-scope-without-generation",
+    deviceId: "persona-sync-device",
+    service_user_id: "li-yeye",
+    persona_generation: "senior-demo-v1",
+  });
+  const missingMembershipGenerationSnapshot = await cloudFunction.main({
+    action: "GET_SNAPSHOT",
+    data: { deviceId: "persona-sync-device" },
+  });
+  assert.equal(
+    missingMembershipGenerationSnapshot.plans.some(
+      row => row.id === "persona-plan-scope-without-generation",
+    ),
+    false,
+  );
+
+  const staleGenerationCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "persona-sync-device",
+      type: "AI_CHAT",
+      payload: { target_user_id: "wang-nainai", question: "不应进入新代次" },
+    },
+  });
+  assert.equal(staleGenerationCommand.ok, false);
+  assert.match(staleGenerationCommand.error, /NOT_FOUND/);
+
+  const newGenerationSafetyEvent = {
+    schema_version: 1,
+    event_id: "persona-new-generation-safety-event",
+    service_user_id: "wang-nainai",
+    persona_generation: "real-generation-v2",
+    occurred_at: "2026-08-10 10:03:00",
+    check_status: "BLOCKED",
+    dispense_status: "BLOCKED",
+    reason_codes: ["CONDITION_CONTRAINDICATION"],
+    caregiver_summary: "新代次人物的安全事件。",
+  };
+  const newGenerationReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "persona-sync-device",
+    deviceSecret: "persona-test-secret",
+    payloadDigest: canonicalPayloadDigest(newGenerationSafetyEvent),
+    event: newGenerationSafetyEvent,
+  });
+  assert.equal(newGenerationReport.ok, true);
+  assert.equal(
+    Array.from(storeFor("caregiver_notification_outbox").values())
+      .filter(row => row.eventId === newGenerationSafetyEvent.event_id).length,
+    0,
+  );
+  const staleGenerationSafetyList = await cloudFunction.main({
+    action: "LIST_MEDICATION_SAFETY_EVENTS",
+    data: { deviceId: "persona-sync-device", limit: 20 },
+  });
+  assert.deepEqual(staleGenerationSafetyList.items, []);
+  currentOpenId = "wechat-openid";
+  storeFor("device_pairing_codes").delete(`pairing-${generationPairingHash}`);
+  for (const [key, row] of Array.from(storeFor("device_memberships").entries())) {
+    if (row.openid === "persona-generation-caregiver") storeFor("device_memberships").delete(key);
+  }
+  storeFor("device_memberships").delete("persona-public-viewer");
+  storeFor("devices").delete("persona-sync-device");
+  for (const collectionName of [
+    "today_plans",
+    "records",
+    "medication_safety_events",
+    "caregiver_event_receipts",
+    "caregiver_notification_outbox",
+    "commands",
+  ]) {
+    for (const [key, row] of Array.from(storeFor(collectionName).entries())) {
+      if (
+        String(row.deviceId || "") === "persona-sync-device"
+        || String(row.eventId || "") === "persona-new-generation-safety-event"
+      ) storeFor(collectionName).delete(key);
+    }
+  }
+  for (const key of Array.from(personaStore.keys())) {
+    if (key.startsWith("persona-sync-device-") || key === "ownerless-unrelated-document") {
+      personaStore.delete(key);
+    }
+  }
+  if (personaOriginalDeviceSecrets === undefined) delete process.env.DEVICE_SECRETS;
+  else process.env.DEVICE_SECRETS = personaOriginalDeviceSecrets;
+
+  storeFor("service_users").set("clock-device-user-clock-wang-generation-ffb0066a1c8dedb0", {
     id: "clock-wang",
     deviceId: "clock-device",
+    persona_generation: "clock-generation-v1",
     archived: false,
   });
   const deterministicMemberships = createMembershipModule({
@@ -254,23 +643,25 @@ async function run() {
     storeFor("device_pairing_codes").get(`pairing-${"7".repeat(64)}`).createdAt,
     "2026-08-10 12:00:00",
   );
-  storeFor("service_users").delete("clock-device-user-clock-wang");
+  storeFor("service_users").delete("clock-device-user-clock-wang-generation-ffb0066a1c8dedb0");
   storeFor("device_pairing_codes").delete(`pairing-${"7".repeat(64)}`);
 
   const issuePairingOriginalSharedSecret = process.env.DEVICE_SECRET;
   const issuePairingOriginalDeviceSecrets = process.env.DEVICE_SECRETS;
   process.env.DEVICE_SECRET = "server-test-secret";
   delete process.env.DEVICE_SECRETS;
-  storeFor("service_users").set("zykh-qsm-001-user-wang-nainai", {
+  storeFor("service_users").set("zykh-qsm-001-user-wang-nainai-generation-7bbe42f195075471", {
     id: "wang-nainai",
     name: "王奶奶",
     deviceId: "zykh-qsm-001",
+    persona_generation: "senior-demo-v1",
     archived: false,
   });
-  storeFor("service_users").set("zykh-qsm-001-user-archived", {
+  storeFor("service_users").set("zykh-qsm-001-user-archived-person-generation-d1abb59fb4d2987d", {
     id: "archived-person",
     name: "已归档对象",
     deviceId: "zykh-qsm-001",
+    persona_generation: "archived-generation-v1",
     archived: true,
   });
   const issueWithoutSecret = await invokeHttp("ISSUE_DEVICE_PAIRING_CODE", {
@@ -428,8 +819,8 @@ async function run() {
   else process.env.DEVICE_SECRET = issuePairingOriginalSharedSecret;
   if (issuePairingOriginalDeviceSecrets === undefined) delete process.env.DEVICE_SECRETS;
   else process.env.DEVICE_SECRETS = issuePairingOriginalDeviceSecrets;
-  storeFor("service_users").delete("zykh-qsm-001-user-wang-nainai");
-  storeFor("service_users").delete("zykh-qsm-001-user-archived");
+  storeFor("service_users").delete("zykh-qsm-001-user-wang-nainai-generation-7bbe42f195075471");
+  storeFor("service_users").delete("zykh-qsm-001-user-archived-person-generation-d1abb59fb4d2987d");
 
   storeFor("device_memberships").set("membership-bind-active", {
     openid: "binding-openid",
@@ -704,6 +1095,7 @@ async function run() {
     schema_version: 1,
     event_id: "safety-event-blocked-1",
     service_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
     person_display_name: "王奶奶",
     medicine: { id: "slot-13-ibuprofen", name: "布洛芬缓释胶囊", slot: 13 },
     occurred_at: "2026-08-10 14:30:00",
@@ -739,7 +1131,21 @@ async function run() {
 
   process.env.DEVICE_SECRET = "server-test-secret";
   delete process.env.DEVICE_SECRETS;
-  const canonicalDigest = "7b5066cad1d4e7da340c0529b312370f83ab99b4285f626a8adcdd33b6916098";
+  const canonicalDigest = canonicalPayloadDigest(safetyEvent);
+  const ownerlessSafetyEvent = Object.assign({}, safetyEvent, {
+    event_id: "safety-event-ownerless",
+    service_user_id: "",
+    persona_generation: "",
+  });
+  const ownerlessReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    eventId: ownerlessSafetyEvent.event_id,
+    payloadDigest: canonicalPayloadDigest(ownerlessSafetyEvent),
+    event: ownerlessSafetyEvent,
+  });
+  assert.equal(ownerlessReport.ok, false);
+  assert.match(ownerlessReport.error, /service_user_id|persona_generation/);
   const reportWithoutDeviceSecret = await cloudFunction.main({
     action: "REPORT_MEDICATION_SAFETY_EVENT",
     data: {
@@ -817,6 +1223,7 @@ async function run() {
 
   const reorderedSafetyEvent = {
     service_user_id: safetyEvent.service_user_id,
+    persona_generation: safetyEvent.persona_generation,
     reason_codes: safetyEvent.reason_codes,
     person_display_name: safetyEvent.person_display_name,
     occurred_at: safetyEvent.occurred_at,
@@ -844,7 +1251,7 @@ async function run() {
     deviceId: "zykh-qsm-001",
     deviceSecret: "server-test-secret",
     eventId: safetyEvent.event_id,
-    payloadDigest: "d2167a3020269d3c62f9abb5fb9d364ded9909fdc66b30e44a54cc1d54cbf5f6",
+    payloadDigest: canonicalPayloadDigest(conflictingEvent),
     event: conflictingEvent,
   });
   assert.equal(conflictingReport.ok, false);
@@ -893,6 +1300,7 @@ async function run() {
     schema_version: 1,
     event_id: "safety-event-notification-1",
     service_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
     occurred_at: "2026-08-10 18:00:00",
     check_status: "BLOCKED",
     dispense_status: "BLOCKED",
@@ -903,7 +1311,7 @@ async function run() {
   const failedReceiptWrite = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "notification-device",
     deviceSecret: "server-test-secret",
-    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    payloadDigest: canonicalPayloadDigest(notificationEvent),
     event: notificationEvent,
   });
   failSafetyReceiptSet = false;
@@ -915,7 +1323,7 @@ async function run() {
   const failedNotificationWrite = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "notification-device",
     deviceSecret: "server-test-secret",
-    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    payloadDigest: canonicalPayloadDigest(notificationEvent),
     event: notificationEvent,
   });
   failSafetyNotificationSet = false;
@@ -926,7 +1334,7 @@ async function run() {
   const notificationReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "notification-device",
     deviceSecret: "server-test-secret",
-    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    payloadDigest: canonicalPayloadDigest(notificationEvent),
     event: notificationEvent,
   });
   assert.equal(notificationReport.ok, true);
@@ -957,7 +1365,7 @@ async function run() {
   const replayedNotificationReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "notification-device",
     deviceSecret: "server-test-secret",
-    payloadDigest: "34e66ad9157c031e671d925d4b4c4eaa4a78199709175fef6d511052bcb1c5c9",
+    payloadDigest: canonicalPayloadDigest(notificationEvent),
     event: notificationEvent,
   });
   assert.equal(replayedNotificationReport.ok, true);
@@ -1423,6 +1831,7 @@ async function run() {
     schema_version: 1,
     event_id: "safety-event-passed-2",
     service_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
     service_user_name: "王奶奶",
     medicine_id: "slot-3-smecta",
     medicine_name: "蒙脱石散",
@@ -1433,7 +1842,7 @@ async function run() {
     reason_codes: [],
     reason_summary: "安全核查通过，已完成取药。",
   };
-  const secondDigest = "77941f9f74a6fdb101788695297d70fc0e6650f000cf06df041cf237c3da5ca0";
+  const secondDigest = canonicalPayloadDigest(secondSafetyEvent);
   const secondReport = await invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
     deviceId: "zykh-qsm-001",
     deviceSecret: "server-test-secret",
@@ -1557,6 +1966,44 @@ async function run() {
   assert.equal(corruptDetail.event.dispenseStatus, "NOT_STARTED");
 
   const eventsBeforeFinalize = JSON.stringify(Array.from(safetyStore.entries()));
+  storeFor("inquiries").set("history-window-old-inquiry", {
+    _id: "history-window-old-inquiry",
+    deviceId: "zykh-qsm-001",
+    syncOwner: "zykh_station_app",
+    session_id: "old-inquiry",
+  });
+  storeFor("vitals").set("history-window-old-vitals", {
+    _id: "history-window-old-vitals",
+    deviceId: "zykh-qsm-001",
+    syncOwner: "zykh_station_app",
+    id: "old-vitals",
+  });
+  await invokeHttp("UPLOAD_SNAPSHOT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    snapshot: {
+      inquiries: [{ session_id: "new-window-inquiry" }],
+      vitals: [{ id: "new-window-vitals" }],
+    },
+  });
+  assert.equal(storeFor("inquiries").has("history-window-old-inquiry"), true);
+  assert.equal(storeFor("vitals").has("history-window-old-vitals"), true);
+  const inquiryWindowFinalize = await invokeHttp("FINALIZE_SNAPSHOT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    kind: "inquiries",
+    ids: [],
+  });
+  const vitalsWindowFinalize = await invokeHttp("FINALIZE_SNAPSHOT", {
+    deviceId: "zykh-qsm-001",
+    deviceSecret: "server-test-secret",
+    kind: "vitals",
+    ids: [],
+  });
+  assert.equal(inquiryWindowFinalize.removed, 0);
+  assert.equal(vitalsWindowFinalize.removed, 0);
+  assert.equal(storeFor("inquiries").has("history-window-old-inquiry"), true);
+  assert.equal(storeFor("vitals").has("history-window-old-vitals"), true);
   const rejectedSafetyFinalize = await invokeHttp("FINALIZE_SNAPSHOT", {
     deviceId: "zykh-qsm-001",
     deviceSecret: "server-test-secret",
@@ -1594,6 +2041,7 @@ async function run() {
   const raceEventA = {
     event_id: "safety-event-race-1",
     service_user_id: "wang-nainai",
+    persona_generation: "senior-demo-v1",
     occurred_at: "2026-08-10 17:00:00",
     check_status: "BLOCKED",
     dispense_status: "BLOCKED",
@@ -1604,13 +2052,13 @@ async function run() {
     invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
       deviceId: "zykh-qsm-race",
       deviceSecret: "server-test-secret",
-      payloadDigest: "9155b5d40ca60109e22b35911f99c3e1ef8f865c8b2acdae81b3ee3fedbb63b3",
+      payloadDigest: canonicalPayloadDigest(raceEventA),
       event: raceEventA,
     }),
     invokeHttp("REPORT_MEDICATION_SAFETY_EVENT", {
       deviceId: "zykh-qsm-race",
       deviceSecret: "server-test-secret",
-      payloadDigest: "bf4b455945cd7612eea1be77061756ea0585d5c03b9c048c5bc8da3e11efaf35",
+      payloadDigest: canonicalPayloadDigest(raceEventB),
       event: raceEventB,
     }),
   ]);

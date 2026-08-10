@@ -60,6 +60,35 @@ class LocalAiGatewaySourceTest(unittest.TestCase):
         self.assertNotIn("pkill", board_stop)
         self.assertNotIn("killall", board_stop)
 
+    def test_normal_gateway_scripts_do_not_probe_or_forward_the_legacy_model(self) -> None:
+        normal_scripts = (
+            ROOT / "scripts" / "ensure_qsm_gateway.sh",
+            ROOT / "scripts" / "check_devices.sh",
+            ROOT / "scripts" / "adb_forward.sh",
+        )
+
+        for path in normal_scripts:
+            with self.subTest(path=path.name):
+                source = path.read_text(encoding="utf-8")
+                self.assertNotIn("QSM_LOCAL_AI_FORWARD", source)
+                self.assertNotIn("18083", source)
+                self.assertNotIn("8083", source)
+
+        ensure_source = normal_scripts[0].read_text(encoding="utf-8")
+        self.assertIn("local_asr_ready", ensure_source)
+        self.assertIn("tts_ready", ensure_source)
+        self.assertIn('curl -fsS --max-time 3 "$QSM_BASE_URL/api/status"', ensure_source)
+        self.assertNotIn("/api/audio/stream/stop", ensure_source)
+        self.assertIn("/api/audio/status", ensure_source)
+        self.assertIn('"offline_available"', ensure_source)
+
+        check_source = normal_scripts[1].read_text(encoding="utf-8")
+        self.assertIn("QSM_LOCAL_ASR_FORWARD_HOST_PORT", check_source)
+        self.assertIn("QSM_LOCAL_ASR_FORWARD_DEVICE_PORT", check_source)
+        self.assertIn('check_tcp "QSM 板端离线语音识别"', check_source)
+        self.assertIn("/api/audio/status", check_source)
+        self.assertIn('"offline_available"', check_source)
+
 
 if __name__ == "__main__":
     unittest.main()

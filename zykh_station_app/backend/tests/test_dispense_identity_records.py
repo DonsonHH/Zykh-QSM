@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
@@ -53,12 +54,19 @@ from app.schemas.manual_medication_access import (  # noqa: E402
     ConfirmManualMedicationCommand,
     ManualMedicationAssessment,
 )
-from app.schemas.medicine import MedicineScanRegisterRequest  # noqa: E402
+from app.schemas.medicine import (  # noqa: E402
+    MedicineInventoryConfirmationRequest,
+    MedicineScanRegisterRequest,
+)
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.dispense_service import DispenseError, DispenseService  # noqa: E402
 from app.services.manual_dispense_adapter import DispenseServiceManualAdapter  # noqa: E402
 from app.services.manual_medication_access_module import ManualMedicationAccessModule  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
+from app.services.medicine_inventory_confirmation import (  # noqa: E402
+    MedicineInventoryConfirmationConflictError,
+    MedicineInventoryConfirmationModule,
+)
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
@@ -89,6 +97,65 @@ class FailedQsmClient:
     ) -> dict[str, object]:
         del operation_id
         return {"ok": False, "detail": "mock cabinet failure"}
+
+
+class UnknownThenReplayQsmClient:
+    def __init__(self) -> None:
+        self.operation_ids: list[str] = []
+
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del slot, quantity, dry_run
+        self.operation_ids.append(operation_id)
+        if len(self.operation_ids) == 1:
+            return {
+                "ok": False,
+                "detail": "response connection closed",
+                "result_unknown": True,
+                "retry_safe": False,
+            }
+        return {"ok": True, "detail": "replayed completed operation"}
+
+
+class ContradictoryUnknownQsmClient:
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del slot, quantity, dry_run, operation_id
+        return {
+            "ok": True,
+            "detail": "gateway could not persist the final result",
+            "result_unknown": True,
+            "retry_safe": False,
+        }
+
+
+class SameStockAdminUpdateQsmClient:
+    def __init__(self, medicine_id: str) -> None:
+        self.medicine_id = medicine_id
+
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del slot, quantity, dry_run, operation_id
+        repository = MedicineRepository()
+        current = repository.get_by_id(self.medicine_id)
+        assert current is not None
+        repository.update(self.medicine_id, {"stock": current.stock})
+        return {"ok": True, "detail": "cabinet opened while admin saved stock"}
 
 
 class RecordingArchiveService:
@@ -162,6 +229,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
     def test_scheduled_dispense_requires_expected_person_and_completes_plan(self) -> None:
         plan = self.records.get_today_plan("plan-demo-wang-amlodipine")
         self.assertIsNotNone(plan)
+        self.assertEqual(plan.persona_generation, "senior-demo-v1")
         medicine = MedicineService().get_medicine(plan.medicine_id)
         self.assertIsNotNone(medicine)
         request = DispenseConfirmRequest(
@@ -180,14 +248,172 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         result = self.service.confirm(request, force_dry_run=False)
 
         self.assertTrue(result.ok)
+        self.assertTrue(result.inventory_confirmation_required)
         self.assertEqual(self.records.get_today_plan(plan.id).status, "已执行")
+        refreshed = MedicineRepository().get_by_id(medicine.id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, medicine.stock)
+        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, result.record_id)
         saved = self.service.list_records()[0]
         self.assertEqual(saved.target_user_name, plan.target_user)
         self.assertEqual(saved.target_user_type, "registered")
         self.assertEqual(saved.today_plan_id, plan.id)
+        self.assertEqual(saved.persona_generation, "senior-demo-v1")
 
         with self.assertRaisesRegex(DispenseError, "已经处理"):
             self.service.confirm(request, force_dry_run=False)
+
+    def test_plan_transport_unknown_is_explicit_and_replays_one_stable_operation(self) -> None:
+        plan = self.records.get_today_plan("plan-demo-wang-amlodipine")
+        self.assertIsNotNone(plan)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE today_plans
+                SET schedule_type='interval', interval_days=2, start_date=?
+                WHERE id=?
+                """,
+                (date.today().isoformat(), plan.id),
+            )
+        medicine = MedicineService().get_medicine(plan.medicine_id)
+        self.assertIsNotNone(medicine)
+        request = DispenseConfirmRequest(
+            medicine_id=medicine.id,
+            slot=medicine.slot,
+            quantity=1,
+            reason="今日计划一键取药",
+            confirmed_safety_notice=True,
+            confirm_real_dispense=True,
+            target_user_id=plan.service_user_id,
+            target_user_name=plan.target_user,
+            verification_method="fingerprint",
+            today_plan_id=plan.id,
+        )
+        qsm = UnknownThenReplayQsmClient()
+        service = DispenseService(qsm_client=qsm, archive_service=self.archive)
+
+        first = service.confirm(request, force_dry_run=False)
+
+        self.assertFalse(first.ok)
+        self.assertTrue(first.result_unknown)
+        self.assertFalse(first.retry_safe)
+        self.assertIn("现场确认", first.message)
+        self.assertIn("请勿自动重试", first.message)
+        self.assertEqual(self.records.get_today_plan(plan.id).status, "待执行")
+
+        next_day = date.today() + timedelta(days=1)
+        class NextDayDate(date):
+            @classmethod
+            def today(cls):
+                return next_day
+
+        with patch("app.services.records_service.date", NextDayDate):
+            replay = service.confirm(request, force_dry_run=False)
+
+        self.assertTrue(replay.ok)
+        self.assertEqual(len(qsm.operation_ids), 2)
+        self.assertTrue(qsm.operation_ids[0])
+        self.assertEqual(qsm.operation_ids[0], qsm.operation_ids[1])
+        with db.connect() as conn:
+            operation = conn.execute(
+                """
+                SELECT status, last_action_date, dispense_operation_id,
+                       dispense_operation_state
+                FROM today_plans WHERE id=?
+                """,
+                (plan.id,),
+            ).fetchone()
+        self.assertEqual(operation["dispense_operation_id"], qsm.operation_ids[0])
+        self.assertEqual(operation["dispense_operation_state"], "complete")
+        self.assertEqual(operation["status"], "已执行")
+        self.assertEqual(operation["last_action_date"], next_day.isoformat())
+
+    def test_result_unknown_dominates_a_contradictory_qsm_ok_flag(self) -> None:
+        plan = self.records.get_today_plan("plan-demo-wang-amlodipine")
+        self.assertIsNotNone(plan)
+        medicine = MedicineService().get_medicine(plan.medicine_id)
+        self.assertIsNotNone(medicine)
+        service = DispenseService(
+            qsm_client=ContradictoryUnknownQsmClient(),
+            archive_service=self.archive,
+        )
+
+        result = service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="今日计划一键取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id=plan.service_user_id,
+                target_user_name=plan.target_user,
+                verification_method="fingerprint",
+                today_plan_id=plan.id,
+            ),
+            force_dry_run=False,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.result_unknown)
+        self.assertFalse(result.retry_safe)
+        self.assertEqual(self.records.get_today_plan(plan.id).status, "待执行")
+
+    def test_inquiry_action_request_id_replays_one_stable_board_operation(self) -> None:
+        medicine = MedicineService().get_medicine("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+        request = DispenseConfirmRequest(
+            medicine_id=medicine.id,
+            slot=medicine.slot,
+            quantity=1,
+            reason="AI应急问询方案取药",
+            confirmed_safety_notice=True,
+            confirm_real_dispense=True,
+            target_user_id="li-yeye",
+            target_user_name="李爷爷",
+            verification_method="inquiry_confirmed",
+            expected_review_fingerprint=(
+                MedicineKnowledgeRepository.review_fingerprint(medicine)
+            ),
+            request_id="inquiry-session-001:option-01:0",
+        )
+        qsm = UnknownThenReplayQsmClient()
+        service = DispenseService(qsm_client=qsm, archive_service=self.archive)
+
+        first = service.confirm(request, force_dry_run=False)
+        replay = service.confirm(request, force_dry_run=False)
+
+        self.assertTrue(first.result_unknown)
+        self.assertTrue(replay.ok)
+        self.assertEqual(len(qsm.operation_ids), 2)
+        self.assertTrue(qsm.operation_ids[0].startswith("inquiry-"))
+        self.assertEqual(qsm.operation_ids[0], qsm.operation_ids[1])
+
+    def test_real_inquiry_without_action_request_id_fails_closed_before_qsm(self) -> None:
+        medicine = MedicineService().get_medicine("slot-17-iodophor")
+        self.assertIsNotNone(medicine)
+
+        with self.assertRaisesRegex(DispenseError, "稳定动作标识"):
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="AI应急问询方案取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    target_user_id="li-yeye",
+                    target_user_name="李爷爷",
+                    verification_method="inquiry_confirmed",
+                    expected_review_fingerprint=(
+                        MedicineKnowledgeRepository.review_fingerprint(medicine)
+                    ),
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(self.qsm.calls, [])
 
     def test_archived_person_plan_cannot_reach_qsm(self) -> None:
         with db.connect() as conn:
@@ -257,6 +483,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(self.service.list_records(), [])
 
     def test_manual_inventory_uses_assess_then_confirm_for_reviewed_prescription(self) -> None:
+        before = MedicineRepository().get_by_id("slot-14-oseltamivir")
+        self.assertIsNotNone(before)
         module, assessment = self._assess_manual_inventory(
             "slot-14-oseltamivir",
             request_suffix="li-oseltamivir",
@@ -270,20 +498,30 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
             "app.services.dispense_service.settings",
             self._real_dispense_settings(),
         ):
-            outcome = module.confirm(
-                ConfirmManualMedicationCommand(
-                    request_id="confirm-li-oseltamivir",
-                    safety_check_id=assessment.check_id,
-                    confirmed_safety_notice=True,
-                )
+            confirmation = ConfirmManualMedicationCommand(
+                request_id="confirm-li-oseltamivir",
+                safety_check_id=assessment.check_id,
+                confirmed_safety_notice=True,
             )
+            outcome = module.confirm(confirmation)
+            replay = module.confirm(confirmation)
 
         self.assertTrue(outcome.ok)
         self.assertEqual(outcome.dispense_status, "DISPENSED")
+        self.assertTrue(outcome.inventory_confirmation_required)
+        self.assertTrue(replay.inventory_confirmation_required)
         self.assertEqual(self.qsm.calls, [("14", 1, False)])
         record = self.service.list_records()[0]
         self.assertEqual(record.target_user_id, "li-yeye")
         self.assertEqual(record.target_user_name, "李爷爷")
+        refreshed = MedicineRepository().get_by_id(before.id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, before.stock - 1)
+        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(
+            refreshed.last_inventory_dispense_record_id,
+            outcome.dispense_record_id,
+        )
 
     def test_cloud_guidance_cannot_unlock_an_unverified_package(self) -> None:
         repository = MedicineService().repository
@@ -376,6 +614,82 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(calls, [])
 
+    def test_successful_inquiry_dispense_waits_for_physical_inventory_observation(self) -> None:
+        medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
+        self.assertIsNotNone(medicine)
+
+        result = self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="AI应急问询方案取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
+                verification_method="inquiry_confirmed",
+                expected_review_fingerprint=(
+                    MedicineKnowledgeRepository.review_fingerprint(medicine)
+                ),
+                request_id="inquiry-success-inventory-observation:option-01:0",
+            ),
+            force_dry_run=False,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertTrue(result.inventory_confirmation_required)
+        refreshed = MedicineRepository().get_by_id(medicine.id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, medicine.stock)
+        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, result.record_id)
+
+    def test_same_value_admin_stock_update_wins_over_the_in_flight_observation(self) -> None:
+        medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
+        self.assertIsNotNone(medicine)
+        service = DispenseService(
+            qsm_client=SameStockAdminUpdateQsmClient(medicine.id),
+            archive_service=self.archive,
+        )
+
+        result = service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="AI应急问询方案取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
+                verification_method="inquiry_confirmed",
+                expected_review_fingerprint=(
+                    MedicineKnowledgeRepository.review_fingerprint(medicine)
+                ),
+                request_id="inquiry-success-concurrent-inventory:option-01:0",
+            ),
+            force_dry_run=False,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.inventory_confirmation_required)
+        self.assertIn("请勿重复开柜", result.message)
+        refreshed = MedicineRepository().get_by_id(medicine.id)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.stock, medicine.stock)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
+        self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
+        with self.assertRaises(MedicineInventoryConfirmationConflictError):
+            MedicineInventoryConfirmationModule().confirm(
+                medicine.id,
+                MedicineInventoryConfirmationRequest(
+                    request_id="inventory-confirm-after-same-stock-admin",
+                    dispense_record_id=str(result.record_id),
+                    observation="HAS_REMAINING",
+                ),
+            )
+
     def test_inquiry_fingerprint_is_rechecked_immediately_before_qsm_dispense(self) -> None:
         medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
         self.assertIsNotNone(medicine)
@@ -413,6 +727,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     expected_review_fingerprint=(
                         MedicineKnowledgeRepository.review_fingerprint(medicine)
                     ),
+                    request_id="inquiry-race-review-fingerprint:option-01:0",
                 ),
                 force_dry_run=False,
             )
@@ -450,6 +765,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     expected_review_fingerprint=(
                         MedicineKnowledgeRepository.review_fingerprint(medicine)
                     ),
+                    request_id="inquiry-race-inventory-token:option-01:0",
                 ),
                 force_dry_run=False,
             )
@@ -638,6 +954,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 expected_review_fingerprint=(
                     MedicineKnowledgeRepository.review_fingerprint(medicine)
                 ),
+                request_id="inquiry-history-success:option-01:0",
             ),
             force_dry_run=False,
         )
@@ -669,6 +986,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 expected_review_fingerprint=(
                     MedicineKnowledgeRepository.review_fingerprint(medicine)
                 ),
+                request_id="inquiry-history-failed:option-01:0",
             ),
             force_dry_run=False,
         )

@@ -115,10 +115,16 @@ The script checks the local command, checks for a connected device, and attempts
 adb forward tcp:18080 tcp:8080
 adb forward tcp:18081 tcp:8081
 adb forward tcp:18082 tcp:8082
-adb forward tcp:18083 tcp:8083
+adb forward tcp:18084 tcp:6006
 adb forward tcp:18085 tcp:8085
 adb forward tcp:18086 tcp:8086
 ```
+
+The normal helper never forwards or probes the retired llama.cpp ports
+`18083/8083`. Those ports remain available only through the explicit legacy
+diagnostic scripts. Normal readiness checks require the Paraformer ASR port and
+`offline_available=true` from the main gateway's read-only
+`GET /api/audio/status`; they do not synthesize or play audio.
 
 If any step fails, it prints a clear warning and exits without killing the app. Fix the gateway connection before real-device verification.
 
@@ -289,7 +295,7 @@ Successful integrated-vitals responses preserve `heart_rate`, `spo2`, `systolic_
 
 Real dispense smoke is intentionally omitted from the generic checklist. Only run it after configuring a safe slot and confirming the device is ready.
 
-### Manual dispense idempotency
+### Physical dispense idempotency
 
 The medicine-page manual route sends a non-empty `operation_id` to the board
 `/api/dispense` boundary. The station gateway patch serializes each operation by
@@ -300,9 +306,32 @@ content fails. A stale `reserved`/`sent` record, corrupt state, transport loss o
 missing final result is reported as `result_unknown=true` and `retry_safe=false`.
 The host surfaces that as `RESULT_UNKNOWN`; neither layer automatically retries.
 
-Calls without `operation_id` remain compatible with the legacy gateway for
-non-manual paths, but do not receive the new replay guarantee. Physical smoke is
-still a separate, supervised step and is never run by automated tests.
+Scheduled-plan and AI-inquiry cabinet actions use the same replay contract.
+A plan action persists one board ID on the plan before the first QSM call and
+reuses it while the result is in progress or unknown, including across midnight
+and process restarts. A known failure may reserve a new action; a successful
+action marks the persisted ID complete with the plan. An inquiry action derives
+its ID from the server-owned inquiry session, selected
+option and medicine index; a real inquiry action without that identity fails
+closed before QSM. Transport uncertainty is preserved in both the dispense and
+inquiry responses as `result_unknown=true` and `retry_safe=false`, with explicit
+instructions to verify the cabinet on site and not retry automatically. A plan is
+not completed while its result is unknown.
+
+Administrator cabinet tests require a client `request_id`. The admin UI stores one
+pending ID per slot in session storage before sending the request and keeps it when
+the HTTP or cabinet result is uncertain, so a replay reaches QSM with the same
+`admin-*` operation ID. A known completion clears that pending ID. Admin responses
+also expose `result_unknown` and `retry_safe`, and the audit ledger records an
+uncertain action as `unknown` rather than an ordinary failure.
+
+The physical dispense HTTP request is sent once using one fixed body encoding;
+an empty response, disconnect, invalid response or HTTP failure becomes
+`result_unknown` and is never retried with a second encoding. The board also
+serializes all operation IDs at one hardware lock and returns
+`hardware_unavailable` rather than simulated success when neither UART5 nor a
+slot GPIO exists. Physical smoke is still a separate, supervised step and is
+never run by automated tests.
 
 ## AI And Recognition
 

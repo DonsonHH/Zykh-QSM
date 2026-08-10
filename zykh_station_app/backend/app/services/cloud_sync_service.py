@@ -19,6 +19,7 @@ from ..repositories.medicine_repository import MedicineRepository
 from ..repositories.sync_repository import SyncRepository
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import (
+    ServiceUser,
     ServiceUserCreateRequest,
     ServiceUserUpdateRequest,
     TodayPlanCreateRequest,
@@ -259,6 +260,8 @@ class CloudSyncWorker:
                     "spec": medicine.spec,
                     "traceCode": medicine.trace_code,
                     "quantity": medicine.stock,
+                    "inventoryState": medicine.inventory_state,
+                    "inventoryConfirmedAt": medicine.inventory_confirmed_at,
                     "expireDate": medicine.expire_date,
                     "expiryPrecision": CloudSyncWorker._expiry_precision(medicine.expire_date),
                     "lowStockLine": medicine.low_stock_line,
@@ -267,7 +270,7 @@ class CloudSyncWorker:
             medicines.append(row)
 
         records_service = RecordsService()
-        service_users = [item.model_dump(mode="json") for item in records_service.list_service_users()]
+        service_users = CloudSyncWorker._service_user_sync_projection()
         plans = [item.model_dump(mode="json") for item in records_service.list_today_plans(due_only=False)]
         inquiry_repository = InquiryRepository()
         inquiries: list[dict[str, object]] = []
@@ -311,7 +314,9 @@ class CloudSyncWorker:
                 SELECT id, temperature, heart_rate, spo2, systolic_pressure, diastolic_pressure,
                        respiratory_rate, microcirculation, fatigue, rr_interval, hrv_sdnn, hrv_rmssd,
                        body_temperature, ambient_temperature, status, source, sensor_model,
-                       error_message, measured_at
+                       error_message, measured_at, source_route, inquiry_session_id,
+                       attribution_source, service_user_id, service_user_name_snapshot,
+                       persona_generation
                 FROM vitals_records
                 WHERE source NOT LIKE '%SpO2-demo%'
                   AND sensor_model NOT LIKE '%SpO2-demo%'
@@ -327,6 +332,12 @@ class CloudSyncWorker:
                     "bodyTemp": row["temperature"],
                     "quality": row["status"],
                     "createdAt": row["measured_at"],
+                    "sourceRoute": row["source_route"],
+                    "inquirySessionId": row["inquiry_session_id"],
+                    "attributionSource": row["attribution_source"],
+                    "serviceUserId": row["service_user_id"],
+                    "serviceUserNameSnapshot": row["service_user_name_snapshot"],
+                    "personaGeneration": row["persona_generation"],
                 }
             )
             vitals.append(row)
@@ -340,6 +351,49 @@ class CloudSyncWorker:
         }
 
     @staticmethod
+    def _service_user_sync_projection() -> list[dict[str, object]]:
+        """Project active people and archived ownership tombstones for CloudBase."""
+        db.init_db()
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, age, profile, allergies, note, status,
+                       medical_conditions_json, current_medications_json,
+                       allergy_facts_json, safety_profile_revision,
+                       safety_profile_updated_at, persona_generation, archived
+                FROM service_users
+                ORDER BY id
+                """
+            ).fetchall()
+
+        def json_list(value: object) -> list[dict[str, object]]:
+            try:
+                parsed = json.loads(str(value or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return []
+            return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+        return [
+            ServiceUser(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                age=int(row["age"] or 0),
+                profile=str(row["profile"] or ""),
+                allergies=str(row["allergies"] or ""),
+                note=str(row["note"] or ""),
+                status=str(row["status"] or ""),
+                medical_conditions=json_list(row["medical_conditions_json"]),
+                current_medications=json_list(row["current_medications_json"]),
+                allergy_facts=json_list(row["allergy_facts_json"]),
+                safety_profile_revision=max(1, int(row["safety_profile_revision"] or 1)),
+                safety_profile_updated_at=str(row["safety_profile_updated_at"] or ""),
+                persona_generation=str(row["persona_generation"] or ""),
+                archived=bool(row["archived"]),
+            ).model_dump(mode="json")
+            for row in rows
+        ]
+
+    @staticmethod
     def _cloud_record_actor(name: str, user_type: str) -> str:
         if user_type == "guest":
             return name if str(name).startswith("游客") else f"游客（{name or '未登记'}）"
@@ -350,6 +404,11 @@ class CloudSyncWorker:
             return self._sync_snapshot_v1(snapshot)
 
         synced = 0
+        # Inquiry and vitals snapshots are intentionally bounded history
+        # windows.  Finalizing either window would make CloudBase delete every
+        # older row that was simply outside this upload, so those two kinds are
+        # append/update only.
+        finalize_kinds = {"medicines", "serviceUsers", "plans", "records"}
         for key in ("medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"):
             ids: list[str] = []
             for rows in self._snapshot_batches(snapshot.get(key, [])):
@@ -357,7 +416,8 @@ class CloudSyncWorker:
                 if isinstance(result, dict):
                     ids.extend(str(value) for value in result.get("ids", []))
                     synced += int(result.get("count") or 0)
-            self._request("FINALIZE_SNAPSHOT", {"kind": key, "ids": ids})
+            if key in finalize_kinds:
+                self._request("FINALIZE_SNAPSHOT", {"kind": key, "ids": ids})
         return synced
 
     @staticmethod
@@ -413,9 +473,16 @@ class CloudSyncWorker:
     @staticmethod
     def _sync_summary(snapshot: dict[str, list[dict[str, object]]]) -> dict[str, object]:
         inquiries = snapshot.get("inquiries", [])[:10]
+        active_service_users = [
+            row
+            for row in snapshot.get("serviceUsers", [])
+            if not bool(row.get("archived"))
+        ]
+        counts = {key: len(value) for key, value in snapshot.items()}
+        counts["serviceUsers"] = len(active_service_users)
         return {
-            "counts": {key: len(value) for key, value in snapshot.items()},
-            "serviceUsers": snapshot.get("serviceUsers", []),
+            "counts": counts,
+            "serviceUsers": active_service_users,
             "plans": snapshot.get("plans", []),
             "recentInquiries": [
                 {
@@ -423,6 +490,8 @@ class CloudSyncWorker:
                     "session_id": row.get("session_id") or row.get("inquiry_id"),
                     "target_user_id": row.get("target_user_id") or row.get("user_id"),
                     "target_user_name": row.get("target_user_name") or row.get("user_name"),
+                    "persona_generation": row.get("persona_generation")
+                    or row.get("personaGeneration"),
                     "title": row.get("title"),
                     "risk_level": row.get("risk_level"),
                     "risk_label": row.get("risk_label"),
@@ -563,6 +632,8 @@ class CloudSyncWorker:
 
     def _execute_command(self, command_type: str, command: dict[str, object]) -> dict[str, object]:
         payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+        if command_type in {"AI_CHAT", "UPSERT_SERVICE_USER", "UPSERT_TODAY_PLAN"}:
+            self._require_current_command_persona(command_type, payload)
         if command_type == "AUDIO_BEEP":
             return QsmClient().audio_beep(self._int(payload.get("volume")))
         if command_type == "AUDIO_SPEAK":
@@ -585,6 +656,51 @@ class CloudSyncWorker:
         if command_type == "OPEN_CABINET":
             raise CloudSyncError(REMOTE_CABINET_DISABLED_ERROR)
         raise CloudSyncError(f"不支持的云端命令：{command_type}")
+
+    @staticmethod
+    def _require_current_command_persona(
+        command_type: str,
+        payload: dict[str, object],
+    ) -> None:
+        if command_type == "UPSERT_SERVICE_USER":
+            person_id = str(
+                payload.get("id")
+                or payload.get("service_user_id")
+                or payload.get("serviceUserId")
+                or ""
+            ).strip()
+        else:
+            person_id = str(
+                payload.get("service_user_id")
+                or payload.get("serviceUserId")
+                or payload.get("target_user_id")
+                or payload.get("targetUserId")
+                or payload.get("user_id")
+                or payload.get("userId")
+                or ""
+            ).strip()
+        generation = str(
+            payload.get("persona_generation")
+            or payload.get("personaGeneration")
+            or ""
+        ).strip()
+        if not person_id or not generation:
+            raise CloudSyncError("人物命令缺少当前人物代次，已拒绝执行。")
+        db.init_db()
+        with db.connect() as conn:
+            person = conn.execute(
+                """
+                SELECT persona_generation
+                FROM service_users
+                WHERE id=? AND archived=0
+                """,
+                (person_id,),
+            ).fetchone()
+        if (
+            person is None
+            or str(person["persona_generation"] or "").strip() != generation
+        ):
+            raise CloudSyncError("人物代次已经变化，已拒绝执行该云端命令。")
 
     @staticmethod
     def _speak_reminder(payload: dict[str, object]) -> dict[str, object]:

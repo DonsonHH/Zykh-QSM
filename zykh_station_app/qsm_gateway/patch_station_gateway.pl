@@ -523,6 +523,154 @@ PERL
     $changed = 1;
 }
 
+if ($source =~ /ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1/
+        && $source =~ /sub\s+write_dispense_operation_state\s*\{/
+        && $source !~ /ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2/) {
+    my $before = <<'PERL';
+sub write_dispense_operation_state {
+    my ($path, $state) = @_;
+    my $encoded = eval { JSON::PP::encode_json($state) };
+    return (0, "无法编码出药预留：$@") unless defined $encoded;
+    my $temporary = "$path.tmp.$$";
+    open my $fh, '>:raw', $temporary
+        or return (0, "无法创建出药预留：$!");
+    if (!print {$fh} $encoded) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法写入出药预留：$error");
+    }
+    if (!close $fh) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法落盘出药预留：$error");
+    }
+    if (!rename $temporary, $path) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法提交出药预留：$error");
+    }
+    return (1, '');
+}
+PERL
+    my $after = <<'PERL';
+# ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2
+sub write_dispense_operation_state {
+    my ($path, $state) = @_;
+    my $io_handle_loaded = eval { require IO::Handle; 1 };
+    return (0, "系统不支持可靠出药预留落盘：$@") unless $io_handle_loaded;
+    my $encoded = eval { JSON::PP::encode_json($state) };
+    return (0, "无法编码出药预留：$@") unless defined $encoded;
+    my $temporary = "$path.tmp.$$";
+    open my $fh, '>:raw', $temporary
+        or return (0, "无法创建出药预留：$!");
+    if (!print {$fh} $encoded) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法写入出药预留：$error");
+    }
+    if (!$fh->flush()) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法刷新出药预留：$error");
+    }
+    if (!$fh->sync()) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法同步出药预留：$error");
+    }
+    if (!close $fh) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法关闭出药预留：$error");
+    }
+    if (!rename $temporary, $path) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法提交出药预留：$error");
+    }
+    open my $directory, '<', $DATA_DIR
+        or return (0, "无法打开出药预留目录：$!");
+    if (!$directory->sync()) {
+        my $error = $!;
+        close $directory;
+        return (0, "无法同步出药预留目录：$error");
+    }
+    if (!close $directory) {
+        return (0, "无法关闭出药预留目录：$!");
+    }
+    return (1, '');
+}
+PERL
+    my $matches = () = $source =~ /\Q$before\E/g;
+    die "Expected exactly one legacy dispense operation writer, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/\Q$before\E/$after/;
+    $changed = 1;
+}
+
+if ($source !~ /ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2/) {
+    my $pattern = qr{
+        sub\s+dispense_once\s*\{\s*
+        my\s*\(\$p\)\s*=\s*\@_;\s*
+    }x;
+    my $replacement = <<'PERL';
+sub station_dispense_executor_available {
+    my ($p) = @_;
+    my $slot = int($p->{slot} || 0);
+    my $uart_dev = $ENV{DISPENSE_UART} || '/dev/ttyS5';
+    my $mode = $ENV{DISPENSE_MODE} || 'uart';
+    my $gpio = $ENV{"SLOT${slot}_GPIO"};
+    return 1 if $mode eq 'uart' && $uart_dev && -e $uart_dev;
+    return 1 if defined($gpio) && "$gpio" =~ /^\d+$/;
+    return 0;
+}
+
+sub dispense_once {
+    my ($p) = @_;
+    $p = {} unless ref($p) eq 'HASH';
+    # ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2
+    if (!station_dispense_executor_available($p)) {
+        return {
+            ok => JSON::PP::false,
+            result => 'hardware_unavailable',
+            result_unknown => JSON::PP::false,
+            retry_safe => JSON::PP::true,
+            error => '未检测到可用 UART5 或仓位 GPIO，本次未执行开柜。',
+            detail => '未检测到可用 UART5 或仓位 GPIO，本次未执行开柜。',
+        };
+    }
+    my $hardware_lock_path = "$DATA_DIR/dispense-hardware.lock";
+    open my $hardware_lock, '>>:raw', $hardware_lock_path
+        or return {
+            ok => JSON::PP::false,
+            result => 'hardware_lock_unavailable',
+            result_unknown => JSON::PP::false,
+            retry_safe => JSON::PP::true,
+            error => "无法锁定药柜执行器：$!",
+        };
+    if (!flock($hardware_lock, 2)) {
+        my $error = $!;
+        close $hardware_lock;
+        return {
+            ok => JSON::PP::false,
+            result => 'hardware_lock_unavailable',
+            result_unknown => JSON::PP::false,
+            retry_safe => JSON::PP::true,
+            error => "无法锁定药柜执行器：$error",
+        };
+    }
+PERL
+    my $matches = () = $source =~ /$pattern/g;
+    die "Expected exactly one dispense_once implementation, found $matches\n"
+        unless $matches == 1;
+    $source =~ s/$pattern/$replacement/;
+    $changed = 1;
+}
+
 if (!$changed) {
     print "Station gateway reliability fixes already installed.\n";
     exit 0;

@@ -138,6 +138,7 @@ class AdminTodayPlanUpdateRequest(TodayPlanUpdateRequest):
 class AdminCabinetOpenRequest(BaseModel):
     confirmation: str
     reason: str = "管理员调试开柜"
+    request_id: str = Field(min_length=8, max_length=160)
 
 
 class AdminConfirmationRequest(BaseModel):

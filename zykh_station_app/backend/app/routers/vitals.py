@@ -25,9 +25,14 @@ def start_vitals_session(
     request: VitalsSessionStartRequest | None = None,
 ) -> VitalsSessionResponse:
     request = request or VitalsSessionStartRequest()
-    return VitalsSessionModule().start(
-        replace_active=request.replace_active
-    )
+    try:
+        return VitalsSessionModule().start(
+            replace_active=request.replace_active,
+            source_route=request.source_route,
+            inquiry_session_id=request.inquiry_session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/session/{session_id}", response_model=VitalsSessionResponse)

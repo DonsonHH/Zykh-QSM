@@ -690,7 +690,13 @@ class QsmClient:
             settings.qsm_dispense_path,
             method="POST",
             payload=payload,
-            body_format="auto",
+            # A dispense request is a physical write.  The generic "auto"
+            # compatibility mode may resend a failed form request as JSON,
+            # which is safe for reads but can pulse the cabinet twice when the
+            # first response is lost.  The deployed Perl gateway accepts form
+            # data, so send exactly one request and surface any ambiguous
+            # result to the caller.
+            body_format="form",
         )
         if error:
             return {

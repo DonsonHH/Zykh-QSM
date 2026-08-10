@@ -27,7 +27,7 @@ COLLECTIONS = (
     "device_memberships",
     "device_pairing_codes",
 )
-TARGET_SCHEMA_REVISION = "2.6-station-pairing-notification-worker"
+TARGET_SCHEMA_REVISION = "2.7-service-user-persona-tombstones"
 WORKER_TRIGGER_NAME = "caregiver-notification-worker-timer"
 WORKER_TRIGGER_CRON = "0 */2 * * * * *"
 DEFAULT_NOTIFICATION_PAGE = "pages/records/index"
@@ -52,6 +52,7 @@ API_SPEC = FunctionSpec(
         "index.js",
         "medicationSafetyEvents.js",
         "memberships.js",
+        "serviceUserIdentity.js",
         "package.json",
         "config.json",
     ),
@@ -519,6 +520,7 @@ def wait_for_schema(endpoint: str) -> None:
                 and capabilities.get("devicePairingIssue") == "v1"
                 and capabilities.get("caregiverNotificationOutbox") == "v1"
                 and capabilities.get("caregiverNotificationWorker") == "v1"
+                and capabilities.get("serviceUserPersonaTombstones") == "v1"
             ):
                 print(
                     f"[cloudbase] schemaRevision={TARGET_SCHEMA_REVISION}，"

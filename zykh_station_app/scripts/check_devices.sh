@@ -12,14 +12,13 @@ VITALS_HOST_PORT="${QSM_VITALS_FORWARD_HOST_PORT:-18085}"
 VITALS_DEVICE_PORT="${QSM_VITALS_FORWARD_DEVICE_PORT:-8085}"
 FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
 FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
-LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
-LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
+LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
+LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
 QSM_VITALS_BASE_URL="${QSM_VITALS_BASE_URL:-http://127.0.0.1:${VITALS_HOST_PORT}}"
 QSM_FINGERPRINT_BASE_URL="${QSM_FINGERPRINT_BASE_URL:-http://127.0.0.1:${FINGERPRINT_HOST_PORT}}"
-LOCAL_AI_BASE_URL="${LOCAL_AI_BASE_URL:-http://127.0.0.1:${LOCAL_AI_HOST_PORT}}"
 BACKEND_URL="${ZYKH_BACKEND_URL:-http://127.0.0.1:8000}"
 
 ok() {
@@ -43,6 +42,32 @@ check_http() {
     return 0
   fi
   warn "$label 暂不可访问：$url"
+  return 1
+}
+
+check_json_true() {
+  label="$1"
+  url="$2"
+  field="$3"
+  timeout_seconds="${4:-5}"
+  payload="$(curl -fsS --max-time "$timeout_seconds" "$url" 2>/dev/null || true)"
+  if printf '%s' "$payload" | grep -Eq '"'"$field"'"[[:space:]]*:[[:space:]]*true'; then
+    ok "$label 已就绪：$url"
+    return 0
+  fi
+  warn "$label 尚未就绪：$url"
+  return 1
+}
+
+check_tcp() {
+  label="$1"
+  host="$2"
+  port="$3"
+  if command -v nc >/dev/null 2>&1 && nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then
+    ok "$label 已就绪：${host}:${port}"
+    return 0
+  fi
+  warn "$label 尚未就绪：${host}:${port}"
   return 1
 }
 
@@ -87,10 +112,10 @@ if command -v adb >/dev/null 2>&1; then
     else
       warn "指纹服务转发未建立；取药时仍可改用面部确认。"
     fi
-    if $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1; then
-      ok "离线模型转发已建立：127.0.0.1:${LOCAL_AI_HOST_PORT} -> tcp:${LOCAL_AI_DEVICE_PORT}"
+    if $ADB_PREFIX forward "tcp:${LOCAL_ASR_HOST_PORT}" "tcp:${LOCAL_ASR_DEVICE_PORT}" >/dev/null 2>&1; then
+      ok "本地 Paraformer 语音识别转发已建立：127.0.0.1:${LOCAL_ASR_HOST_PORT} -> tcp:${LOCAL_ASR_DEVICE_PORT}"
     else
-      warn "离线模型转发未建立；请检查板端模型服务。"
+      warn "本地 Paraformer 语音识别转发未建立；请检查板端常驻 ASR。"
     fi
   else
     warn "未检测到外设网关设备；真实外设联调前请检查连接。"
@@ -104,7 +129,8 @@ check_http "人脸识别网关" "${QSM_FACE_BASE_URL}/api/face/status" 15 || tru
 check_http "FF Camera 麦克风" "${QSM_MIC_BASE_URL}/api/audio/capture/status" 8 || true
 check_http "QSM 体征会话网关" "${QSM_VITALS_BASE_URL}/api/vitals/session/status?session_id=health" 5 || true
 check_http "AS608 指纹模块" "${QSM_FINGERPRINT_BASE_URL}/api/fingerprint/status" 10 || true
-check_http "QSM 离线模型" "${LOCAL_AI_BASE_URL}/health" 5 || true
+check_tcp "QSM 板端离线语音识别" "127.0.0.1" "$LOCAL_ASR_HOST_PORT" || true
+check_json_true "QSM 板端离线语音合成" "${QSM_BASE_URL}/api/audio/status" "offline_available" 5 || true
 
 if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 12 -X POST "${QSM_BASE_URL}/api/camera/capture" >/dev/null 2>&1; then
   ok "外设摄像头可抓取真实画面。"

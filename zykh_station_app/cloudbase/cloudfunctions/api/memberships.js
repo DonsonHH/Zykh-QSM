@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { serviceUserDocumentId, serviceUserIdentity } = require("./serviceUserIdentity");
 
 function textList(value) {
   return Array.isArray(value)
@@ -6,16 +7,28 @@ function textList(value) {
     : [];
 }
 
+function generationMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, generation]) => [String(key || "").trim(), String(generation || "").trim()])
+    .filter(([key, generation]) => key && generation));
+}
+
+function sameGenerationMap(scopes, left, right) {
+  const expectedKeys = new Set(scopes);
+  return Object.keys(left).length === expectedKeys.size
+    && Object.keys(right).length === expectedKeys.size
+    && scopes.every(scope => left[scope] === right[scope]);
+}
+
+function isArchived(row = {}) {
+  return row.archived === true
+    || Number(row.archived) === 1
+    || String(row.archived || "").toLowerCase() === "true";
+}
+
 function sha256(value) {
   return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
-}
-
-function safeDocumentId(value) {
-  return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
-}
-
-function serviceUserDocumentId(deviceId, serviceUserId) {
-  return `${deviceId}-user-${safeDocumentId(serviceUserId)}`;
 }
 
 function expiryTime(value) {
@@ -66,6 +79,24 @@ const CAREGIVER_READ_PERMISSIONS = Object.freeze([
 ]);
 
 function createMembershipModule({ db, collections, nowText, nowEpochMs = () => Date.now() }) {
+  function allowsPersona(membership, personId, personaGeneration) {
+    const normalizedPersonId = String(personId || "").trim();
+    const scopes = textList(
+      membership.service_user_scopes || membership.serviceUserScopes,
+    );
+    if (normalizedPersonId && scopes.length && !scopes.includes(normalizedPersonId)) {
+      return false;
+    }
+    const generations = generationMap(
+      membership.service_user_generations || membership.serviceUserGenerations,
+    );
+    if (!Object.keys(generations).length) return true;
+    if (!normalizedPersonId) return false;
+    const expectedGeneration = generations[normalizedPersonId];
+    const actualGeneration = String(personaGeneration || "").trim();
+    return Boolean(expectedGeneration && actualGeneration === expectedGeneration);
+  }
+
   async function documentOrNull(collection, id) {
     try {
       const result = await collection.doc(id).get();
@@ -119,11 +150,62 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     return { ok: true, items };
   }
 
+  async function currentServiceUserGenerations(deviceId, scopes) {
+    const wanted = new Set(scopes);
+    const matches = new Map(scopes.map(scope => [scope, []]));
+    for (let offset = 0; ; offset += 100) {
+      const result = requireDatabaseSuccess(await db.collection(collections.serviceUsers)
+        .where({ deviceId })
+        .skip(offset)
+        .limit(100)
+        .get());
+      const page = result.data || [];
+      page.forEach(row => {
+        const personId = String(row.id || row.user_id || row.userId || "").trim();
+        const generation = String(row.persona_generation || row.personaGeneration || "").trim();
+        if (wanted.has(personId) && generation && !isArchived(row)) {
+          matches.get(personId).push(generation);
+        }
+      });
+      if (page.length < 100) break;
+    }
+    const resolved = {};
+    for (const scope of scopes) {
+      const generations = Array.from(new Set(matches.get(scope) || []));
+      if (generations.length !== 1) throw new Error("PAIRING_CODE_ISSUE_INVALID");
+      resolved[scope] = generations[0];
+    }
+    return resolved;
+  }
+
+  async function requireCurrentMembershipGeneration(membership, deviceId, personId) {
+    const normalizedPersonId = String(personId || "").trim();
+    if (!normalizedPersonId) return "";
+    let current;
+    try {
+      current = await currentServiceUserGenerations(deviceId, [normalizedPersonId]);
+    } catch (error) {
+      throw new Error("NOT_FOUND");
+    }
+    const currentGeneration = current[normalizedPersonId];
+    const generations = generationMap(
+      membership.service_user_generations || membership.serviceUserGenerations,
+    );
+    if (!Object.keys(generations).length) return currentGeneration;
+    const expectedGeneration = generations[normalizedPersonId];
+    if (!expectedGeneration) throw new Error("NOT_FOUND");
+    if (currentGeneration !== expectedGeneration) {
+      throw new Error("NOT_FOUND");
+    }
+    return currentGeneration;
+  }
+
   async function issuePairingCode(data = {}) {
     const deviceId = String(data.deviceId || "").trim();
     const codeHash = String(data.codeHash || "").trim();
     const ttlSeconds = Number(data.ttlSeconds);
     const serviceUserScopes = Array.from(new Set(textList(data.serviceUserScopes)));
+    const expectedGenerations = generationMap(data.serviceUserGenerations);
     const hasCallerSelectedCredentials = [
       "role",
       "permissions",
@@ -145,6 +227,11 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     if (typeof db.runTransaction !== "function") {
       throw new Error("PAIRING_CODE_ISSUE_INVALID");
     }
+    const serviceUserGenerations = await currentServiceUserGenerations(deviceId, serviceUserScopes);
+    if (
+      Object.keys(expectedGenerations).length
+      && !sameGenerationMap(serviceUserScopes, expectedGenerations, serviceUserGenerations)
+    ) throw new Error("PAIRING_CODE_ISSUE_INVALID");
     const pairingDocumentId = `pairing-${codeHash}`;
     return db.runTransaction(async transaction => {
       const pairingCollection = transaction.collection(collections.devicePairingCodes);
@@ -156,18 +243,24 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
       for (const scope of serviceUserScopes) {
         const row = await documentOrNull(
           serviceUserCollection,
-          serviceUserDocumentId(deviceId, scope),
+          serviceUserDocumentId(deviceId, {
+            id: scope,
+            persona_generation: serviceUserGenerations[scope],
+          }),
         );
-        const archived = Boolean(row) && (
-          row.archived === true
-          || Number(row.archived) === 1
-          || String(row.archived || "").toLowerCase() === "true"
-        );
+        let identity = null;
+        try {
+          identity = row ? serviceUserIdentity(row) : null;
+        } catch (error) {
+          identity = null;
+        }
         if (
           !row
           || String(row.deviceId || "").trim() !== deviceId
-          || String(row.id || row.user_id || "").trim() !== scope
-          || archived
+          || !identity
+          || identity.personId !== scope
+          || identity.generation !== serviceUserGenerations[scope]
+          || isArchived(row)
         ) throw new Error("PAIRING_CODE_ISSUE_INVALID");
       }
 
@@ -183,6 +276,7 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
             role: "CAREGIVER",
             permissions: [...CAREGIVER_READ_PERMISSIONS],
             service_user_scopes: serviceUserScopes,
+            service_user_generations: serviceUserGenerations,
             status: "UNUSED",
             expiresAt,
             createdAt: timestamp,
@@ -197,6 +291,7 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
         role: "CAREGIVER",
         permissions: [...CAREGIVER_READ_PERMISSIONS],
         serviceUserScopes,
+        serviceUserGenerations,
         status: "UNUSED",
         expiresAt,
       };
@@ -223,6 +318,23 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
       || "",
     ).trim();
     if (!initialDeviceId) throw new Error("PAIRING_CODE_INVALID");
+    const initialScopes = textList(
+      pairingBeforeTransaction.service_user_scopes || pairingBeforeTransaction.serviceUserScopes,
+    );
+    const initialGenerations = generationMap(
+      pairingBeforeTransaction.service_user_generations || pairingBeforeTransaction.serviceUserGenerations,
+    );
+    if (Object.keys(initialGenerations).length) {
+      let currentGenerations;
+      try {
+        currentGenerations = await currentServiceUserGenerations(initialDeviceId, initialScopes);
+      } catch (error) {
+        throw new Error("PAIRING_CODE_INVALID");
+      }
+      if (!sameGenerationMap(initialScopes, currentGenerations, initialGenerations)) {
+        throw new Error("PAIRING_CODE_INVALID");
+      }
+    }
     const existingMemberships = requireDatabaseSuccess(await db
       .collection(collections.deviceMemberships)
       .where({ openid: normalizedOpenId, deviceId: initialDeviceId })
@@ -247,6 +359,9 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
       const permissions = textList(pairing.permissions);
       const serviceUserScopes = textList(
         pairing.service_user_scopes || pairing.serviceUserScopes,
+      );
+      const serviceUserGenerations = generationMap(
+        pairing.service_user_generations || pairing.serviceUserGenerations,
       );
       const allowedRoles = new Set(["OWNER", "CAREGIVER", "VIEWER"]);
       const allowedPermissions = new Set([
@@ -273,8 +388,7 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
       }
 
       const timestamp = nowText();
-      requireDatabaseSuccess(await membershipCollection.doc(membershipId).set({
-        data: {
+      const membershipData = {
           membershipId,
           openid: normalizedOpenId,
           deviceId,
@@ -284,7 +398,12 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
           status: "ACTIVE",
           createdAt: timestamp,
           updatedAt: timestamp,
-        },
+      };
+      if (Object.keys(serviceUserGenerations).length) {
+        membershipData.service_user_generations = serviceUserGenerations;
+      }
+      requireDatabaseSuccess(await membershipCollection.doc(membershipId).set({
+        data: membershipData,
       }));
 
       const consumedPairing = Object.assign({}, pairing, {
@@ -304,13 +423,17 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
         await pairingCollection.doc(pairingDocumentId).set({ data: consumedPairing }),
       );
 
-      return {
+      const response = {
         ok: true,
         deviceId,
         role,
         permissions,
         serviceUserScopes,
       };
+      if (Object.keys(serviceUserGenerations).length) {
+        response.serviceUserGenerations = serviceUserGenerations;
+      }
+      return response;
     });
   }
 
@@ -328,7 +451,7 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     }
   }
 
-  async function listSafetyRecipients({ deviceId, personId }) {
+  async function listSafetyRecipients({ deviceId, personId, personaGeneration }) {
     const normalizedPersonId = String(personId || "").trim();
     const rows = await listActiveMemberships(deviceId);
     return rows
@@ -339,12 +462,16 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
         service_user_scopes: textList(
           membership.service_user_scopes || membership.serviceUserScopes,
         ),
+        service_user_generations: generationMap(
+          membership.service_user_generations || membership.serviceUserGenerations,
+        ),
       }))
       .filter(membership => membership.membershipId && membership.openid)
       .filter(membership => membership.permissions.includes("READ_SAFETY"))
-      .filter(membership => (
-        !membership.service_user_scopes.length
-        || membership.service_user_scopes.includes(normalizedPersonId)
+      .filter(membership => allowsPersona(
+        membership,
+        normalizedPersonId,
+        personaGeneration,
       ));
   }
 
@@ -354,6 +481,7 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     openid,
     deviceId,
     personId,
+    personaGeneration,
   }) {
     const membership = await documentOrNull(
       database.collection(collections.deviceMemberships),
@@ -367,14 +495,15 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     ) return false;
     const permissions = textList(membership.permissions);
     if (!permissions.includes("READ_SAFETY")) return false;
-    const scopes = textList(
-      membership.service_user_scopes || membership.serviceUserScopes,
-    );
-    const normalizedPersonId = String(personId || "").trim();
-    return !scopes.length || scopes.includes(normalizedPersonId);
+    return allowsPersona(membership, personId, personaGeneration);
   }
 
-  async function requireMembership({ openId, deviceId, personId = "" }) {
+  async function requireMembership({
+    openId,
+    deviceId,
+    personId = "",
+    personaGeneration = null,
+  }) {
     const normalizedOpenId = String(openId || "").trim();
     if (!normalizedOpenId) throw new Error("miniprogram identity required");
     const result = requireDatabaseSuccess(await db.collection(collections.deviceMemberships)
@@ -391,10 +520,20 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     if (normalizedPersonId && scopes.length && !scopes.includes(normalizedPersonId)) {
       throw new Error("NOT_FOUND");
     }
+    if (
+      normalizedPersonId
+      && personaGeneration !== null
+      && !allowsPersona(membership, normalizedPersonId, personaGeneration)
+    ) {
+      throw new Error("NOT_FOUND");
+    }
     return Object.assign({}, membership, {
       openid: normalizedOpenId,
       permissions: textList(membership.permissions),
       service_user_scopes: scopes,
+      service_user_generations: generationMap(
+        membership.service_user_generations || membership.serviceUserGenerations,
+      ),
     });
   }
 
@@ -422,10 +561,18 @@ function createMembershipModule({ db, collections, nowText, nowEpochMs = () => D
     ) {
       throw new Error("CAREGIVER_PERMISSION_DENIED");
     }
-    return membership;
+    const currentPersonaGeneration = await requireCurrentMembershipGeneration(
+      membership,
+      input.deviceId,
+      input.personId,
+    );
+    return Object.assign({}, membership, {
+      current_persona_generation: currentPersonaGeneration,
+    });
   }
 
   return {
+    allowsPersona,
     issuePairingCode,
     isCurrentSafetyRecipient,
     listMyDevices,

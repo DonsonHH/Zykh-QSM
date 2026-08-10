@@ -48,6 +48,7 @@ export function inquiryVitalsDisposition(result) {
     return {
       kind: "exit",
       outcome: {
+        vitals_session_id: result?.session_id || "",
         status: "failed",
         error_message: "血氧为演示值，本次体征未写入问询。"
       }
@@ -57,6 +58,7 @@ export function inquiryVitalsDisposition(result) {
     return {
       kind: "exit",
       outcome: {
+        vitals_session_id: result?.session_id || "",
         status: result?.status === "cancelled" ? "cancelled" : "failed",
         error_message: result?.error_message || "本次体征测量未完成。"
       }
@@ -67,6 +69,8 @@ export function inquiryVitalsDisposition(result) {
 
 export function useVitalsSession({
   embedded = false,
+  sourceRoute = "HOME",
+  inquirySessionId = "",
   notify,
   onComplete,
   onExit
@@ -237,7 +241,11 @@ export function useVitalsSession({
       if (!prepared?.hardware_started) {
         prepared = await ensurePrepared();
       }
-      const data = await startVitalsSession({ replaceActive: true });
+      const data = await startVitalsSession({
+        replaceActive: true,
+        sourceRoute,
+        inquirySessionId
+      });
       prewarmPromiseRef.current = null;
       if (requestId !== requestIdRef.current) return;
       if (!data.hardware_started) {
@@ -275,7 +283,7 @@ export function useVitalsSession({
     setSessionId("");
     setResult(null);
     setErrorMessage("");
-    if (exit) onExit?.({ status: "cancelled" });
+    if (exit) onExit?.({ status: "cancelled", vitals_session_id: currentSession || "" });
   }
 
   async function exitEmbedded() {
@@ -295,6 +303,7 @@ export function useVitalsSession({
       return;
     }
     onExit?.({
+      vitals_session_id: result?.session_id || sessionIdRef.current || sessionId || "",
       status: phase === "failed" ? "failed" : "cancelled",
       error_message: errorMessage || result?.error_message || ""
     });

@@ -13,7 +13,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
-from app.schemas.records import TodayPlanCreateRequest, TodayPlanUpdateRequest  # noqa: E402
+from app.schemas.records import (  # noqa: E402
+    ServiceUserCreateRequest,
+    ServiceUserUpdateRequest,
+    TodayPlanCreateRequest,
+    TodayPlanUpdateRequest,
+)
 from app.services.medicine_service import MedicineService  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
@@ -143,9 +148,9 @@ class TodayPlanServiceTest(unittest.TestCase):
 
         with db.connect() as conn:
             archived = {
-                str(row["id"]): int(row["archived"])
+                str(row["id"]): (int(row["archived"]), str(row["persona_generation"]))
                 for row in conn.execute(
-                    "SELECT id, archived FROM service_users WHERE id IN (?, ?)",
+                    "SELECT id, archived, persona_generation FROM service_users WHERE id IN (?, ?)",
                     (zhang_id, li_id),
                 ).fetchall()
             }
@@ -159,7 +164,13 @@ class TodayPlanServiceTest(unittest.TestCase):
                 "SELECT service_user_id FROM fingerprint_identities WHERE template_id=1145"
             ).fetchone()["service_user_id"]
 
-        self.assertEqual(archived, {zhang_id: 1, li_id: 1})
+        self.assertEqual(
+            archived,
+            {
+                zhang_id: (1, "legacy-family-demo-v6"),
+                li_id: (1, "legacy-family-demo-v6"),
+            },
+        )
         self.assertEqual(inquiry_owner, zhang_id)
         self.assertEqual(face_owner, zhang_id)
         self.assertEqual(fingerprint_owner, li_id)
@@ -207,6 +218,137 @@ class TodayPlanServiceTest(unittest.TestCase):
                 "SELECT archived FROM service_users WHERE id='wangwu'"
             ).fetchone()["archived"]
         self.assertEqual(archived, 1)
+
+    def test_startup_backfills_one_stable_generation_for_an_active_person(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  persona_generation, archived
+                ) VALUES ('active-custom', '既有服务对象', 61, '', '', '',
+                          '正常', '', 0)
+                """
+            )
+
+        db.init_db()
+        with db.connect() as conn:
+            first = str(conn.execute(
+                "SELECT persona_generation FROM service_users WHERE id='active-custom'"
+            ).fetchone()["persona_generation"])
+        db.init_db()
+        with db.connect() as conn:
+            second = str(conn.execute(
+                "SELECT persona_generation FROM service_users WHERE id='active-custom'"
+            ).fetchone()["persona_generation"])
+
+        self.assertRegex(first, r"^persona-[0-9a-f]{32}$")
+        self.assertEqual(second, first)
+
+    def test_service_user_generation_is_server_owned_on_create_and_update(self) -> None:
+        created = self.service.create_service_user(
+            ServiceUserCreateRequest(
+                name="服务端代次人物",
+                persona_generation="client-forged-generation",
+            )
+        )
+
+        self.assertRegex(created.persona_generation, r"^persona-[0-9a-f]{32}$")
+        self.assertNotEqual(created.persona_generation, "client-forged-generation")
+
+        updated = self.service.update_service_user(
+            created.id,
+            ServiceUserUpdateRequest(
+                note="普通资料更新",
+                persona_generation="client-rotated-generation",
+            ),
+        )
+
+        self.assertEqual(updated.persona_generation, created.persona_generation)
+
+    def test_startup_binds_only_legacy_blank_inquiries_to_the_persons_first_generation(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  persona_generation, archived
+                ) VALUES ('legacy-history-owner', '历史问询人物', 66, '', '', '',
+                          '正常', '', 0)
+                """
+            )
+            for session_id, generation in (
+                ("legacy-history-blank", ""),
+                ("legacy-history-existing-generation", "persona-existing"),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO inquiry_sessions(
+                      session_id, user_id, persona_generation, user_name, stage,
+                      reply, next_action, created_at, updated_at
+                    ) VALUES (?, 'legacy-history-owner', ?, '历史问询人物', 'result',
+                              '已完成', 'complete', '2026-08-10 10:00:00',
+                              '2026-08-10 10:00:00')
+                    """,
+                    (session_id, generation),
+                )
+            for record_id, generation in (
+                ("legacy-dispense-blank", ""),
+                ("legacy-dispense-existing-generation", "persona-existing"),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO dispense_records(
+                      id, medicine_id, medicine_name, slot, hardware_slot,
+                      quantity, unit, reason, dry_run, message, qsm_ok,
+                      target_user_id, target_user_name, persona_generation,
+                      created_at
+                    ) VALUES (?, 'slot-17-iodophor', '碘伏棉棒', '17', 17,
+                              1, '盒', '历史记录', 0, '已完成', 1,
+                              'legacy-history-owner', '历史问询人物', ?,
+                              '2026-08-10 10:00:00')
+                    """,
+                    (record_id, generation),
+                )
+
+        db.init_db()
+
+        with db.connect() as conn:
+            person_generation = str(conn.execute(
+                "SELECT persona_generation FROM service_users WHERE id='legacy-history-owner'"
+            ).fetchone()["persona_generation"])
+            sessions = {
+                str(row["session_id"]): str(row["persona_generation"])
+                for row in conn.execute(
+                    """
+                    SELECT session_id, persona_generation
+                    FROM inquiry_sessions
+                    WHERE user_id='legacy-history-owner'
+                    """
+                ).fetchall()
+            }
+            records = {
+                str(row["id"]): str(row["persona_generation"])
+                for row in conn.execute(
+                    """
+                    SELECT id, persona_generation
+                    FROM dispense_records
+                    WHERE target_user_id='legacy-history-owner'
+                    """
+                ).fetchall()
+            }
+
+        self.assertRegex(person_generation, r"^persona-[0-9a-f]{32}$")
+        self.assertEqual(sessions["legacy-history-blank"], person_generation)
+        self.assertEqual(
+            sessions["legacy-history-existing-generation"],
+            "persona-existing",
+        )
+        self.assertEqual(records["legacy-dispense-blank"], person_generation)
+        self.assertEqual(
+            records["legacy-dispense-existing-generation"],
+            "persona-existing",
+        )
 
     def test_application_startup_finishes_persona_and_plan_migration(self) -> None:
         self._insert_production_v6_legacy_family()
@@ -539,6 +681,95 @@ class TodayPlanServiceTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(stored["name"], "同名 ID 的真实用户")
         self.assertEqual(stored["persona_generation"], "real-person-v7")
+
+    def test_plan_keeps_the_persona_generation_from_when_it_was_created(self) -> None:
+        plan = self.service.get_today_plan("plan-demo-wang-amlodipine")
+        with db.connect() as conn:
+            stored = conn.execute(
+                "SELECT persona_generation FROM today_plans WHERE id=?",
+                (plan.id,),
+            ).fetchone()
+        self.assertEqual(stored["persona_generation"], "senior-demo-v1")
+
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE service_users
+                SET persona_generation='senior-demo-v2'
+                WHERE id='wang-nainai'
+                """
+            )
+
+        self.assertNotIn(
+            plan.id,
+            {item.id for item in self.service.list_today_plans()},
+        )
+
+    def test_deleting_a_service_user_creates_a_tombstone_and_preserves_history(self) -> None:
+        person = self.service.create_service_user(
+            ServiceUserCreateRequest(name="待归档人物")
+        )
+        MedicineService().list_medicines()
+        plan = self.service.create_today_plan(
+            TodayPlanCreateRequest(
+                time="09:30",
+                medicine_id="slot-17-iodophor",
+                service_user_id=person.id,
+            )
+        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO inquiry_sessions(
+                  session_id, user_id, persona_generation, user_name, stage,
+                  reply, next_action, created_at, updated_at
+                ) VALUES ('archived-user-history', ?, ?, ?, 'complete',
+                          '已完成', 'complete', ?, ?)
+                """,
+                (
+                    person.id,
+                    person.persona_generation,
+                    person.name,
+                    db.now_text(),
+                    db.now_text(),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO face_identities(
+                  subject, service_user_id, confidence, match_count,
+                  enrolled_at, last_seen_at
+                ) VALUES ('archive-face', ?, 0.98, 1, ?, ?)
+                """,
+                (person.id, db.now_text(), db.now_text()),
+            )
+
+        self.service.delete_service_user(person.id)
+
+        with db.connect() as conn:
+            stored_person = conn.execute(
+                "SELECT archived, persona_generation FROM service_users WHERE id=?",
+                (person.id,),
+            ).fetchone()
+            stored_plan = conn.execute(
+                "SELECT archived FROM today_plans WHERE id=?",
+                (plan.id,),
+            ).fetchone()
+            history_owner = conn.execute(
+                "SELECT user_id FROM inquiry_sessions WHERE session_id='archived-user-history'"
+            ).fetchone()
+            face_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM face_identities WHERE service_user_id=?",
+                (person.id,),
+            ).fetchone()["count"]
+
+        self.assertIsNotNone(stored_person)
+        self.assertEqual(stored_person["archived"], 1)
+        self.assertEqual(stored_person["persona_generation"], person.persona_generation)
+        self.assertEqual(stored_plan["archived"], 1)
+        self.assertEqual(history_owner["user_id"], person.id)
+        self.assertEqual(face_count, 0)
+        self.assertNotIn(person.id, {item.id for item in self.service.list_service_users()})
 
     def test_legacy_plan_with_unresolved_person_and_medicine_is_quarantined_not_deleted(self) -> None:
         with db.connect() as conn:

@@ -86,6 +86,22 @@
   background: transparent;
 }
 
+.inquiry-inventory-confirmation {
+  min-height: 390px;
+  flex: 1 0 auto;
+  display: grid;
+  border: 1px solid #d9e6f3;
+  border-radius: 20px;
+  background: #f8fbff;
+}
+
+.inquiry-inventory-confirmation .medicine-remaining-prompt {
+  width: 100%;
+  min-height: 390px;
+  box-sizing: border-box;
+  padding-inline: 26px;
+}
+
 .medication-safety-notices {
   flex: 0 0 auto;
   min-width: 0;

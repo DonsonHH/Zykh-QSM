@@ -23,6 +23,22 @@ class OfflineAsrContractTest(unittest.TestCase):
         self.assertIn("check_checksum", source)
         self.assertIn('DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"', source)
         self.assertIn("penicillin-allergy.wav", source)
+        self.assertNotIn('$REPO_ROOT/zykh_app/server.pl', source)
+        self.assertNotIn('$REPO_ROOT/zykh_app/scripts/start_zykh_server.sh', source)
+        self.assertIn("patch_station_gateway.pl", source)
+        self.assertIn("perl '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/server.pl'", source)
+        self.assertIn("请设置 ADB_SERIAL", source)
+
+        startup = source.split('log "同步板端兼容 API 并预热模型。"', 1)[1].split(
+            "$ADB_PREFIX forward", 1
+        )[0]
+        self.assertIn(" && perl ", startup)
+        self.assertIn(" && '$APP_ROOT/scripts/start_asr_service.sh' start", startup)
+        self.assertIn(" && QSM_HOME=", startup)
+        self.assertNotIn("; perl ", startup)
+        self.assertNotIn("; '$APP_ROOT/scripts/start_asr_service.sh' start", startup)
+        self.assertIn('for command in adb unzip sha256sum awk grep nc; do', source)
+        self.assertIn('nc -z -w 3 127.0.0.1 "$HOST_PORT"', source)
 
     def test_gateway_startup_preloads_resident_asr(self) -> None:
         source = (ROOT / "qsm_gateway" / "start_station_gateway.sh").read_text(encoding="utf-8")

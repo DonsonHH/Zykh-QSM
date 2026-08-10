@@ -12,8 +12,12 @@ export function prepareQsmVitals() {
   return apiPost("/api/vitals/prepare", {});
 }
 
-export function startVitalsSession({ replaceActive = true } = {}) {
-  return apiPost("/api/vitals/session/start", { replace_active: replaceActive });
+export function startVitalsSession({ replaceActive = true, sourceRoute = "HOME", inquirySessionId = "" } = {}) {
+  return apiPost("/api/vitals/session/start", {
+    replace_active: replaceActive,
+    source_route: sourceRoute,
+    inquiry_session_id: inquirySessionId
+  });
 }
 
 export function loadVitalsSession(sessionId) {

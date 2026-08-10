@@ -119,6 +119,7 @@ use warnings;
 use JSON::PP ();
 use POSIX ();
 # ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1
+# ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2
 my $req;
 my $client;
 if (!$req) {
@@ -232,6 +233,7 @@ use POSIX ();
 # ZYKH_STATION_CHILD_EMPTY_REQUEST_EXIT
 # ZYKH_STATION_CAMERA_STREAM_IDLE_EXIT
 # ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1
+# ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2
 my ($method, $path, $client, $req);
 my $DATA_DIR = "/tmp";
 if ($method eq 'POST' && $path eq '/api/audio/stream/stop') {
@@ -309,6 +311,7 @@ use POSIX ();
 # ZYKH_STATION_CAMERA_STREAM_IDLE_EXIT
 # ZYKH_STATION_QSM_TTS
 # ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1
+# ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2
 my $DATA_DIR = $ENV{TEST_DATA_DIR};
 my ($method, $path, $client, $req);
 sub route_request {
@@ -479,11 +482,13 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         self.assertTrue(replay["replay"])
         self.assertEqual(hardware_lines, ["uart state=sent slot=13 control=13"])
 
-    def test_zero_control_code_replays_without_second_gpio_pulse(self) -> None:
+    def test_zero_control_code_is_sent_once_over_uart_and_replayed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
+            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -493,8 +498,8 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "gpio",
-                "SLOT4_GPIO": "77",
+                "DISPENSE_MODE": "uart",
+                "DISPENSE_UART": str(uart),
             })
             payload = {
                 "slot": 4,
@@ -515,7 +520,86 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         self.assertFalse(responses[0]["replay"])
         self.assertTrue(responses[1]["ok"])
         self.assertTrue(responses[1]["replay"])
-        self.assertEqual(hardware_lines, ["gpio state=sent slot=77 control=500"])
+        self.assertEqual(hardware_lines, ["uart state=sent slot=4 control=0"])
+
+    def test_real_dispense_without_uart_or_gpio_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gateway = root / "server.pl"
+            gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            env = os.environ.copy()
+            env.update({
+                "TEST_DATA_DIR": str(root),
+                "DISPENSE_MODE": "uart",
+                "DISPENSE_UART": str(root / "missing-uart"),
+            })
+
+            response = json.loads(subprocess.run(
+                ["perl", str(gateway), json.dumps({
+                    "slot": 13,
+                    "quantity": 1,
+                    "operation_id": "manual-no-executor",
+                })],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            ).stdout)
+            hardware_log_exists = (root / "hardware.log").exists()
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["result"], "hardware_unavailable")
+        self.assertFalse(response.get("result_unknown", False))
+        self.assertFalse(hardware_log_exists)
+
+    def test_different_operation_ids_are_serialized_at_the_hardware_seam(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gateway = root / "server.pl"
+            uart = root / "fake-uart"
+            gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            uart.write_bytes(b"")
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            env = os.environ.copy()
+            env.update({
+                "TEST_DATA_DIR": str(root),
+                "DISPENSE_MODE": "uart",
+                "DISPENSE_UART": str(uart),
+                "FAKE_HARDWARE_DELAY": "0.30",
+            })
+            started_at = time.monotonic()
+            processes = [
+                subprocess.Popen(
+                    ["perl", str(gateway), json.dumps({
+                        "slot": slot,
+                        "quantity": 1,
+                        "operation_id": f"parallel-operation-{slot}",
+                    })],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+                for slot in (12, 13)
+            ]
+            results = [json.loads(process.communicate(timeout=3)[0]) for process in processes]
+            elapsed = time.monotonic() - started_at
+            hardware_lines = (root / "hardware.log").read_text(encoding="utf-8").splitlines()
+
+        self.assertTrue(all(result["ok"] for result in results))
+        self.assertEqual(len(hardware_lines), 2)
+        self.assertGreaterEqual(elapsed, 0.52)
 
     def test_same_operation_id_with_different_payload_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -767,7 +851,81 @@ if (@ARGV && $ARGV[0] eq 'stop') {
 
         self.assertEqual(first, second)
         self.assertIn("ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1", second)
+        self.assertIn("ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2", second)
+        writer = second.split("sub write_dispense_operation_state", 1)[1].split(
+            "sub dispense_operation_unknown_result", 1
+        )[0]
+        self.assertIn("require IO::Handle", writer)
+        self.assertIn("$fh->flush()", writer)
+        self.assertIn("$fh->sync()", writer)
+        self.assertIn("rename $temporary, $path", writer)
+        self.assertIn("open my $directory", writer)
+        self.assertIn("$directory->sync()", writer)
+        self.assertLess(writer.index("$fh->sync()"), writer.index("rename $temporary, $path"))
+        self.assertLess(writer.index("rename $temporary, $path"), writer.index("$directory->sync()"))
         self.assertIn("already installed", second_patch.stdout)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_existing_idempotency_patch_is_upgraded_to_durable_state_writes(self) -> None:
+        legacy_writer = r'''sub write_dispense_operation_state {
+    my ($path, $state) = @_;
+    my $encoded = eval { JSON::PP::encode_json($state) };
+    return (0, "无法编码出药预留：$@") unless defined $encoded;
+    my $temporary = "$path.tmp.$$";
+    open my $fh, '>:raw', $temporary
+        or return (0, "无法创建出药预留：$!");
+    if (!print {$fh} $encoded) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法写入出药预留：$error");
+    }
+    if (!close $fh) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法落盘出药预留：$error");
+    }
+    if (!rename $temporary, $path) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法提交出药预留：$error");
+    }
+    return (1, '');
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = Path(directory) / "server.pl"
+            gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            installed = gateway.read_text(encoding="utf-8")
+            writer_start = installed.index("# ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2")
+            writer_end = installed.index("sub dispense_operation_unknown_result", writer_start)
+            gateway.write_text(
+                installed[:writer_start] + legacy_writer + "\n" + installed[writer_end:],
+                encoding="utf-8",
+            )
+
+            upgraded = subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            source = gateway.read_text(encoding="utf-8")
+            syntax = subprocess.run(
+                ["perl", "-c", str(gateway)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertIn("Installed station gateway reliability fixes.", upgraded.stdout)
+        self.assertIn("ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2", source)
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
     def test_real_legacy_gateway_copy_patches_without_modifying_source(self) -> None:

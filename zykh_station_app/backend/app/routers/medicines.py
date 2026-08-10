@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas.medicine import (
     MedicineDetailResponse,
+    MedicineInventoryConfirmationRequest,
+    MedicineInventoryConfirmationResponse,
     MedicineListResponse,
     MedicineScanFrameRequest,
     MedicineScanRegisterRequest,
@@ -16,6 +18,11 @@ from ..schemas.medicine import (
     MedicineVisualRecognizeResponse,
 )
 from ..services.medicine_scan_service import MedicineScanService
+from ..services.medicine_inventory_confirmation import (
+    MedicineInventoryConfirmationConflictError,
+    MedicineInventoryConfirmationModule,
+    MedicineInventoryConfirmationNotFoundError,
+)
 from ..services.medicine_service import MedicineService
 
 router = APIRouter(prefix="/api", tags=["medicines"])
@@ -40,6 +47,22 @@ def update_medicine(medicine_id: str, request: MedicineUpdateRequest) -> Medicin
     if response is None:
         raise HTTPException(status_code=404, detail="未找到该药品。")
     return response
+
+
+@router.post(
+    "/medicines/{medicine_id}/inventory-confirmation",
+    response_model=MedicineInventoryConfirmationResponse,
+)
+def confirm_medicine_inventory(
+    medicine_id: str,
+    request: MedicineInventoryConfirmationRequest,
+) -> MedicineInventoryConfirmationResponse:
+    try:
+        return MedicineInventoryConfirmationModule().confirm(medicine_id, request)
+    except MedicineInventoryConfirmationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MedicineInventoryConfirmationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/medicine/scan", response_model=MedicineScanResult)

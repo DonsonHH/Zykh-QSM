@@ -142,7 +142,7 @@ assert.equal(
 );
 assert.match(
   vitalsSession,
-  /async function measure\([\s\S]{0,100}\)[\s\S]*startVitalsSession\(\{ replaceActive: true \}\)[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
+  /async function measure\([\s\S]{0,100}\)[\s\S]*startVitalsSession\(\{[\s\S]*replaceActive: true,[\s\S]*sourceRoute,[\s\S]*inquirySessionId[\s\S]*data\.hardware_started[\s\S]*setSessionId\(data\.session_id\)/,
   "the first measurement click does not start a hardware-confirmed QSM session"
 );
 assert.match(vitalsSession, /loadVitalsSession\(sessionId\)/, "vitals session module does not poll the active QSM session");
@@ -379,14 +379,28 @@ assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "auto-clos
 assert.match(dispenseModal, /onCancelRef\.current\(\)/, "auto-close timer does not call the latest close callback");
 assert.match(
   dispenseModal,
-  /if \(open && phase === "complete"\)[\s\S]*?\}, \[open, phase\]\);/,
+  /if \(open && phase === "complete"\)[\s\S]*?\}, \[dispenseRecordId, inventoryEligible, open, phase\]\);/,
   "inventory confirmation timer can still restart whenever a parent recreates the close callback"
 );
 assert.match(dispenseModal, /<MedicineRemainingPrompt/, "dispense flow does not ask whether medicine remains");
-assert.match(dispenseModal, /updateMedicine\(medicine\.id, \{ stock: 0 \}\)/, "depleted medicine does not trigger the inventory warning");
+assert.match(
+  dispenseModal,
+  /setInventoryEligible\(Boolean\(dispense\?\.inventory_confirmation_required\)\)[\s\S]*setInventoryEligible\(Boolean\(outcome\.inventory_confirmation_required\)\)/,
+  "inventory confirmation is not gated by the backend's successful observation binding"
+);
+assert.match(
+  dispenseModal,
+  /confirmMedicineInventory\(medicine\.id,[\s\S]*request_id:[\s\S]*dispense_record_id:[\s\S]*observation/,
+  "inventory confirmation is not bound to the successful dispense record"
+);
+assert.match(dispenseModal, /confirmInventory\("HAS_REMAINING"\)/, "remaining stock is not persisted");
+assert.match(dispenseModal, /confirmInventory\("DEPLETED"\)/, "depleted stock is not persisted");
+assert.doesNotMatch(dispenseModal, /updateMedicine\(medicine\.id, \{ stock: 0 \}\)/, "inventory still bypasses the confirmation ledger");
 const remainingPrompt = await readFile(`${sourceRoot}/components/MedicineRemainingPrompt.jsx`, "utf8");
 assert.match(remainingPrompt, /INVENTORY_CONFIRM_SECONDS\s*=\s*10/, "inventory confirmation does not keep the requested ten-second window");
-assert.match(remainingPrompt, /nextValue === 0[\s\S]*onHasStockRef\.current\(\)/, "inventory confirmation timeout does not retain stock by default");
+assert.match(remainingPrompt, /nextValue === 0[\s\S]*window\.clearInterval\(timer\)/, "inventory confirmation countdown does not stop at zero");
+assert.doesNotMatch(remainingPrompt, /onHasStockRef|nextValue === 0[\s\S]*onHasStock\(/, "an unanswered inventory prompt is still persisted as observed stock");
+assert.match(remainingPrompt, /请现场确认/, "inventory timeout does not ask for an explicit physical observation");
 assert.doesNotMatch(remainingPrompt, /\[busy, message, onHasStock, seconds\]/, "parent renders can restart the inventory timer");
 assert.match(remainingPrompt, /已经用完[\s\S]*还有药/, "inventory confirmation actions are incomplete");
 assert.match(appStyles, /remaining-progress-countdown\s+10s\s+linear/, "inventory progress ring is not smooth and linear");

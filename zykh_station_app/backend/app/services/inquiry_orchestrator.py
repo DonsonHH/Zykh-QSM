@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from .. import db
 from ..repositories.inquiry_repository import InquiryRepository
+from ..repositories.vitals_repository import VitalsRepository
 from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.inquiry import (
     InquiryClinicalAssessment,
@@ -97,6 +98,7 @@ class InquiryOrchestrator:
         session = InquirySessionResponse(
             session_id=f"inquiry-session-{uuid4().hex[:14]}",
             user_id=str(user.get("id") or ""),
+            persona_generation=str(user.get("persona_generation") or ""),
             user_name=user_name,
             user_age=int(user.get("age") or 0),
             user_profile=user_profile,
@@ -180,6 +182,10 @@ class InquiryOrchestrator:
     def attach_vitals(self, session_id: str, request: InquiryVitalsRequest) -> InquirySessionResponse:
         self._require_current_real_vitals(request)
         session = self._required_session(session_id)
+        if session.stage != "vitals" or session.next_action != "measure_vitals":
+            raise ValueError("本次问询当前不接受体征测量结果。")
+        if request.status == "complete":
+            request = self._trusted_inquiry_vitals(session, request)
         session.vitals = request.model_dump(exclude_none=True)
         self.repository.append_message(
             session_id,
@@ -484,6 +490,9 @@ class InquiryOrchestrator:
                                 if treatment_medicine.requires_existing_direction
                                 else ""
                             ),
+                            request_id=(
+                                f"{session.session_id}:{request.option_id}:{item_index}"
+                            ),
                         )
                     )
                     item = InquiryTreatmentDispenseItem(
@@ -494,6 +503,11 @@ class InquiryOrchestrator:
                         dry_run=result.dry_run,
                         message=result.message,
                         record_id=result.record_id,
+                        inventory_confirmation_required=(
+                            result.inventory_confirmation_required
+                        ),
+                        result_unknown=result.result_unknown,
+                        retry_safe=result.retry_safe,
                     )
                 except DispenseError as exc:
                     item = InquiryTreatmentDispenseItem(
@@ -551,6 +565,8 @@ class InquiryOrchestrator:
                 status=status,
                 option_id=request.option_id,
                 message=message,
+                result_unknown=item.result_unknown,
+                retry_safe=item.retry_safe,
                 items=[InquiryTreatmentDispenseItem(**value) for value in session.action_items],
                 completed_count=session.action_progress_index,
                 total_count=expected,
@@ -1661,6 +1677,38 @@ class InquiryOrchestrator:
             raise ValueError("只有本次真实测量可以进入问询体征。")
 
     @staticmethod
+    def _trusted_inquiry_vitals(
+        session: InquirySessionResponse,
+        request: InquiryVitalsRequest,
+    ) -> InquiryVitalsRequest:
+        measurement = VitalsRepository().completed_inquiry_measurement(
+            vitals_session_id=request.vitals_session_id,
+            inquiry_session_id=session.session_id,
+            service_user_id=session.user_id,
+            persona_generation=session.persona_generation,
+        )
+        if measurement is None:
+            raise ValueError("该体征测量会话不属于本次问询或当前人物代次。")
+        return request.model_copy(
+            update={
+                "temperature": measurement.temperature,
+                "heart_rate": measurement.heart_rate,
+                "spo2": measurement.spo2,
+                "temperature_source": measurement.temperature_source,
+                "heart_rate_source": measurement.heart_rate_source,
+                "spo2_source": measurement.spo2_source,
+                "spo2_demo_fallback": False,
+                "historical_fallback": False,
+                "systolic_pressure": measurement.systolic_pressure,
+                "diastolic_pressure": measurement.diastolic_pressure,
+                "respiratory_rate": measurement.respiratory_rate,
+                "hrv_sdnn": measurement.hrv_sdnn,
+                "hrv_rmssd": measurement.hrv_rmssd,
+                "measured_at": measurement.measured_at,
+            }
+        )
+
+    @staticmethod
     def _has_complete_vitals(session: InquirySessionResponse) -> bool:
         vitals = session.vitals or {}
         status = str(vitals.get("status") or "complete")
@@ -1771,7 +1819,7 @@ class InquiryOrchestrator:
         with db.connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, name, age, profile, allergies, note
+                SELECT id, name, age, profile, allergies, note, persona_generation
                 FROM service_users
                 WHERE id=? AND archived=0
                 """,
@@ -2155,9 +2203,14 @@ class InquiryOrchestrator:
         )
 
     def _history_context(self, session: InquirySessionResponse) -> InquiryHistoryContext:
+        current_user = self._load_user(session.user_id)
+        current_generation = str(current_user.get("persona_generation") or "").strip()
+        if not current_generation or current_generation != session.persona_generation:
+            return InquiryHistoryContext()
         return self.history_service.context_for(
             session.user_id,
             session.session_id,
+            persona_generation=current_generation,
         )
 
     @staticmethod

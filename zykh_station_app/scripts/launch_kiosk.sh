@@ -588,9 +588,9 @@ prepare_sim_fallback() {
 
 install_qsm_tether_helper_if_needed
 start_backend_if_needed
+sh "$ROOT_DIR/scripts/stop_qsm_offline_ai.sh" || warn "旧的板端问询模型进程未能安全清理。"
 sh "$ROOT_DIR/scripts/ensure_qsm_gateway.sh" || true
 prepare_sim_fallback
-sh "$ROOT_DIR/scripts/stop_qsm_offline_ai.sh" || warn "旧的板端问询模型进程未能安全清理。"
 start_frontend_if_needed
 prepare_kiosk_display
 start_audio_relay_if_needed

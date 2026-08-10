@@ -17,6 +17,7 @@ class DispenseConfirmRequest(BaseModel):
     today_plan_id: str = ""
     archive_identity_snapshot: bool = False
     expected_review_fingerprint: str = ""
+    request_id: str = Field(default="", max_length=160)
 
 
 class DispenseOpenRequest(BaseModel):
@@ -27,6 +28,7 @@ class DispenseOpenRequest(BaseModel):
     medicine_id: str | None = None
     target_user_id: str = ""
     target_user_name: str = ""
+    request_id: str = Field(default="", max_length=160)
 
 
 class DispenseConfirmResponse(BaseModel):
@@ -36,6 +38,8 @@ class DispenseConfirmResponse(BaseModel):
     record_id: str | None = None
     qsm_detail: str | None = None
     result_unknown: bool = False
+    retry_safe: bool = True
+    inventory_confirmation_required: bool = False
 
 
 class DispenseOpenResponse(BaseModel):
@@ -44,6 +48,8 @@ class DispenseOpenResponse(BaseModel):
     slot: int
     message: str
     qsm_detail: str | None = None
+    result_unknown: bool = False
+    retry_safe: bool = True
 
 
 class DispenseRecord(BaseModel):
@@ -60,6 +66,7 @@ class DispenseRecord(BaseModel):
     qsm_ok: bool = False
     qsm_detail: str = ""
     target_user_id: str = ""
+    persona_generation: str = ""
     target_user_name: str = "家庭成员"
     verification_method: str = "manual"
     verification_score: float | None = None

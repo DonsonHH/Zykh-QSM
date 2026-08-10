@@ -110,6 +110,7 @@ class InquiryInformationRevisionRequest(BaseModel):
 
 
 class InquiryVitalsRequest(BaseModel):
+    vitals_session_id: str = Field(default="", max_length=160)
     status: Literal["complete", "failed", "cancelled"] = "complete"
     temperature: float | None = Field(default=None, gt=0, lt=50)
     heart_rate: int | None = Field(default=None, gt=0, lt=260)
@@ -231,6 +232,7 @@ class InquiryExtractedInformation(BaseModel):
 class InquirySessionResponse(BaseModel):
     session_id: str
     user_id: str = ""
+    persona_generation: str = ""
     user_name: str
     user_age: int = 0
     user_profile: str = ""
@@ -277,6 +279,9 @@ class InquiryTreatmentDispenseItem(BaseModel):
     dry_run: bool
     message: str
     record_id: str | None = None
+    inventory_confirmation_required: bool = False
+    result_unknown: bool = False
+    retry_safe: bool = True
 
 
 class InquiryTreatmentConfirmResponse(BaseModel):
@@ -284,6 +289,8 @@ class InquiryTreatmentConfirmResponse(BaseModel):
     status: InquiryActionStatus
     option_id: str
     message: str
+    result_unknown: bool = False
+    retry_safe: bool = True
     items: list[InquiryTreatmentDispenseItem] = Field(default_factory=list)
     completed_count: int = 0
     total_count: int = 0

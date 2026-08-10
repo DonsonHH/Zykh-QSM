@@ -88,16 +88,17 @@ class RecordsService:
             raise ValueError("历史问询分页数量必须在 1 到 20 之间")
         db.init_db()
         with db.connect() as conn:
-            exists = conn.execute(
-                "SELECT id FROM service_users WHERE id=?",
+            person = conn.execute(
+                "SELECT id, persona_generation FROM service_users WHERE id=?",
                 (normalized_user_id,),
             ).fetchone()
-        if not exists:
+        if not person:
             raise ValueError("服务对象不存在")
 
         normalized_cursor = str(cursor or "").strip()
         selected, next_cursor = self.inquiry_repository.list_user_sessions_page(
             normalized_user_id,
+            persona_generation=str(person["persona_generation"] or "").strip(),
             limit=limit,
             cursor=normalized_cursor,
         )
@@ -124,14 +125,18 @@ class RecordsService:
             "high": "高风险",
             "emergency": "紧急风险",
         }.get(risk_level, "未分级")
-        if session.action_status == "complete":
+        outcome, no_medicine_reason = RecordsService._cabinet_action_outcome(session)
+        if outcome:
+            pass
+        elif session.action_status == "complete":
             outcome = "已完成用户确认的取药流程"
+            no_medicine_reason = ""
         elif session.can_view_medicines:
             outcome = "已展示候选药品信息"
-        elif risk_level in {"high", "emergency"}:
-            outcome = "已建议联系医生或现场协助人员"
+            no_medicine_reason = ""
         else:
-            outcome = "问询已记录"
+            outcome, no_medicine_reason = RecordsService._no_medicine_outcome(session)
+            outcome = outcome or "问询已记录"
         return ServiceUserInquiryHistoryItem(
             session_id=session.session_id,
             happened_at=session.updated_at,
@@ -139,9 +144,114 @@ class RecordsService:
             case_summary=case_summary[:240],
             risk_level=risk_level,
             risk_label=risk_label,
+            risk_reasons=RecordsService._public_risk_reasons(session),
             outcome=outcome,
+            no_medicine_reason=no_medicine_reason,
             final_medicine_summary=RecordsService._final_medicine_summary(session),
         )
+
+    @staticmethod
+    def _cabinet_action_outcome(session: InquirySessionResponse) -> tuple[str, str]:
+        result_unknown = any(
+            isinstance(item, dict) and item.get("result_unknown") is True
+            for item in session.action_items
+        )
+        if result_unknown:
+            return (
+                "开柜结果待现场确认",
+                "开柜结果未知，请现场核对柜门和药品，勿重复执行",
+            )
+        if session.action_status == "partial":
+            return (
+                "部分柜门已完成，其余柜门未完成",
+                "取药方案仅部分完成，请现场核对未完成柜门",
+            )
+        if session.action_status == "failed":
+            return "柜门未完成", "开柜执行失败，本次取药未完成"
+        return "", ""
+
+    @staticmethod
+    def _public_risk_reasons(session: InquirySessionResponse) -> list[str]:
+        reasons = (
+            re.sub(r"\s+", " ", str(reason or "")).strip()[:120]
+            for reason in session.risk_reasons
+        )
+        return list(dict.fromkeys(reason for reason in reasons if reason))[:5]
+
+    @staticmethod
+    def _no_medicine_outcome(session: InquirySessionResponse) -> tuple[str, str]:
+        if session.risk_level in {"high", "emergency"}:
+            reason = (
+                "检测到紧急风险信号，安全规则不允许展示候选药品"
+                if session.risk_level == "emergency"
+                else "检测到高风险信号，安全规则不允许展示候选药品"
+            )
+            return "已建议联系医生或现场协助人员", reason
+        if (
+            session.stage == "result"
+            and session.next_action == "escalate"
+            and session.model_action_intent == "escalate"
+            and not session.treatment_options
+        ):
+            return (
+                "建议医生或现场人员进一步确认",
+                "当前结论需要医生或现场人员进一步确认，本次未展示候选药品",
+            )
+        if (
+            session.stage == "clarification"
+            and session.next_action == "ask"
+            and not session.treatment_options
+            and session.action_reason == "药品匹配暂未完成，可在同一会话中重试。"
+        ):
+            return (
+                "药品匹配可重试",
+                "药品匹配服务未稳定返回结果，可在同一会话中重试",
+            )
+        if (
+            session.stage == "result"
+            and session.next_action == "complete"
+            and session.action_reason == "症状追问已达上限，但关键证据仍不足。"
+        ):
+            return (
+                "信息不足，未提供候选药品",
+                "关键症状信息不足，需要补充信息或测量后重新问询",
+            )
+        if (
+            session.stage == "result"
+            and session.next_action == "complete"
+            and not session.treatment_options
+            and bool(session.medication_safety_notices)
+        ):
+            notice_codes = {
+                str(notice.code or "").strip()
+                for notice in session.medication_safety_notices
+                if str(notice.code or "").strip()
+            }
+            profile_conflict_codes = {
+                "used_medicine_duplicate",
+                "allergy_conflict",
+                "history_contraindication",
+            }
+            if notice_codes and notice_codes <= profile_conflict_codes:
+                return (
+                    "未提供候选药品",
+                    "相关候选药品均因已用药、过敏或既往情况冲突而未通过安全核验",
+                )
+            return (
+                "未提供候选药品",
+                "候选方案未通过用药安全或受控组合核验",
+            )
+        if (
+            session.stage == "result"
+            and session.next_action == "complete"
+            and session.risk_level in {"low", "medium"}
+            and not session.treatment_options
+        ):
+            return (
+                "建议基础护理和观察",
+                "未找到与当前症状相关且通过核验的候选药品",
+            )
+        return "", ""
 
     @staticmethod
     def _final_medicine_summary(session: InquirySessionResponse) -> str:
@@ -175,7 +285,7 @@ class RecordsService:
         medical_conditions = list(request.medical_conditions)
         current_medications = list(request.current_medications)
         allergy_facts = list(request.allergy_facts)
-        persona_generation = request.persona_generation.strip()[:80]
+        persona_generation = f"persona-{uuid4().hex}"
         safety_updated_at = db.now_text()
         slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", name) or "user"
         user_id = f"user-{slug}-{db.now_text().replace(' ', '-').replace(':', '')}"
@@ -265,11 +375,7 @@ class RecordsService:
                 if request.allergy_facts is not None
                 else self._json_list(current["allergy_facts_json"])
             )
-            persona_generation = (
-                request.persona_generation
-                if request.persona_generation is not None
-                else current["persona_generation"]
-            ).strip()[:80]
+            persona_generation = str(current["persona_generation"] or "").strip()[:80]
             archived = bool(request.archived) if request.archived is not None else bool(current["archived"])
             safety_changed = any(
                 (
@@ -278,7 +384,6 @@ class RecordsService:
                     medical_conditions != self._json_list(current["medical_conditions_json"]),
                     current_medications != self._json_list(current["current_medications_json"]),
                     allergy_facts != self._json_list(current["allergy_facts_json"]),
-                    persona_generation != current["persona_generation"],
                 )
             )
             safety_profile_revision = int(current["safety_profile_revision"] or 1) + (1 if safety_changed else 0)
@@ -333,13 +438,20 @@ class RecordsService:
     def delete_service_user(self, user_id: str) -> None:
         db.init_db()
         with db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute("SELECT id FROM service_users WHERE id=?", (user_id,)).fetchone()
             if not existing:
                 raise ValueError("服务对象不存在")
             conn.execute("DELETE FROM face_identities WHERE service_user_id=?", (user_id,))
             conn.execute("DELETE FROM fingerprint_identities WHERE service_user_id=?", (user_id,))
-            conn.execute("DELETE FROM today_plans WHERE service_user_id=?", (user_id,))
-            conn.execute("DELETE FROM service_users WHERE id=?", (user_id,))
+            conn.execute(
+                "UPDATE today_plans SET archived=1, updated_at=? WHERE service_user_id=?",
+                (db.now_text(), user_id),
+            )
+            conn.execute(
+                "UPDATE service_users SET archived=1 WHERE id=?",
+                (user_id,),
+            )
 
     def list_today_plans(self, *, due_only: bool = False, reference_date: date | None = None) -> list[TodayPlan]:
         db.init_db()
@@ -350,12 +462,15 @@ class RecordsService:
                 """
                 SELECT p.id, p.time, p.timing_label, p.medicine_id, m.name AS medicine,
                        p.service_user_id, p.status, u.name AS target_user,
+                       p.persona_generation,
                        p.dose, p.updated_at, p.schedule_type, p.interval_days,
                        p.weekdays_json, p.start_date, p.last_action_date
                 FROM today_plans AS p
                 JOIN medicines AS m ON m.id=p.medicine_id
                 JOIN service_users AS u ON u.id=p.service_user_id
                 WHERE p.archived=0 AND u.archived=0
+                  AND TRIM(p.persona_generation)<>''
+                  AND p.persona_generation=u.persona_generation
                 ORDER BY p.time, p.id
                 """
             ).fetchall()
@@ -381,10 +496,11 @@ class RecordsService:
             conn.execute(
                 """
                 INSERT INTO today_plans(
-                  id, time, timing_label, medicine_id, service_user_id, dose, status,
+                  id, time, timing_label, medicine_id, service_user_id,
+                  persona_generation, dose, status,
                   medicine, target_user, updated_at, schedule_type, interval_days,
                   weekdays_json, start_date, last_action_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plan_id,
@@ -392,6 +508,7 @@ class RecordsService:
                     values["timing_label"],
                     values["medicine_id"],
                     values["service_user_id"],
+                    values["persona_generation"],
                     values["dose"],
                     values["status"],
                     values["medicine"],
@@ -428,7 +545,8 @@ class RecordsService:
             conn.execute(
                 """
                 UPDATE today_plans
-                SET time=?, timing_label=?, medicine_id=?, service_user_id=?, dose=?, status=?,
+                SET time=?, timing_label=?, medicine_id=?, service_user_id=?,
+                    persona_generation=?, dose=?, status=?,
                     medicine=?, target_user=?, updated_at=?, schedule_type=?,
                     interval_days=?, weekdays_json=?, start_date=?, last_action_date=?
                 WHERE id=?
@@ -438,6 +556,7 @@ class RecordsService:
                     values["timing_label"],
                     values["medicine_id"],
                     values["service_user_id"],
+                    values["persona_generation"],
                     values["dose"],
                     values["status"],
                     values["medicine"],
@@ -479,13 +598,157 @@ class RecordsService:
             raise ValueError(f"该计划属于{plan.target_user}，当前身份不能执行")
         return plan
 
-    def complete_today_plan(self, plan_id: str, medicine_id: str, service_user_id: str) -> TodayPlan:
+    @staticmethod
+    def pending_plan_dispense_operation(
+        plan_id: str,
+        medicine_id: str,
+        service_user_id: str,
+    ) -> str:
+        """Return an unresolved physical action without re-evaluating its schedule day."""
+        db.init_db()
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT p.dispense_operation_id, p.dispense_operation_state,
+                       p.medicine_id, p.service_user_id, p.status,
+                       u.archived AS user_archived
+                FROM today_plans AS p
+                JOIN service_users AS u ON u.id=p.service_user_id
+                WHERE p.id=? AND p.archived=0
+                """,
+                (plan_id,),
+            ).fetchone()
+        if (
+            row is None
+            or bool(row["user_archived"])
+            or str(row["medicine_id"]) != medicine_id
+            or str(row["service_user_id"]) != service_user_id
+            or str(row["status"] or "") != "待执行"
+            or str(row["dispense_operation_state"] or "")
+            not in {"in_progress", "result_unknown"}
+        ):
+            return ""
+        return str(row["dispense_operation_id"] or "").strip()
+
+    def reserve_plan_dispense_operation(
+        self,
+        plan_id: str,
+        medicine_id: str,
+        service_user_id: str,
+    ) -> str:
+        """Persist one physical action ID before QSM, reusing unresolved actions."""
+        pending_operation_id = self.pending_plan_dispense_operation(
+            plan_id,
+            medicine_id,
+            service_user_id,
+        )
+        if pending_operation_id:
+            return pending_operation_id
         self.validate_dispense_plan(plan_id, medicine_id, service_user_id)
         with db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT p.medicine_id, p.service_user_id, p.status,
+                       p.last_action_date, p.dispense_operation_id,
+                       p.dispense_operation_state, u.archived AS user_archived
+                FROM today_plans AS p
+                JOIN service_users AS u ON u.id=p.service_user_id
+                WHERE p.id=? AND p.archived=0
+                """,
+                (plan_id,),
+            ).fetchone()
+            today = date.today().isoformat()
+            if (
+                row is None
+                or bool(row["user_archived"])
+                or str(row["medicine_id"]) != medicine_id
+                or str(row["service_user_id"]) != service_user_id
+                or (
+                    str(row["last_action_date"] or "") == today
+                    and str(row["status"] or "") in {"已执行", "已跳过"}
+                )
+            ):
+                raise ValueError("该用药计划已经变化，请刷新后重试")
+            operation_id = str(row["dispense_operation_id"] or "").strip()
+            state = str(row["dispense_operation_state"] or "").strip()
+            if operation_id and state in {"in_progress", "result_unknown"}:
+                return operation_id
+            operation_id = f"plan-{uuid4().hex}"
             conn.execute(
-                "UPDATE today_plans SET status='已执行', last_action_date=?, updated_at=? WHERE id=?",
-                (date.today().isoformat(), db.now_text(), plan_id),
+                """
+                UPDATE today_plans
+                SET dispense_operation_id=?, dispense_operation_date=?,
+                    dispense_operation_state='in_progress', updated_at=?
+                WHERE id=?
+                """,
+                (operation_id, today, db.now_text(), plan_id),
             )
+        return operation_id
+
+    def mark_plan_dispense_operation(
+        self,
+        plan_id: str,
+        operation_id: str,
+        state: str,
+    ) -> None:
+        if state not in {"failed", "result_unknown"}:
+            raise ValueError("计划取药动作状态不支持")
+        with db.connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE today_plans
+                SET dispense_operation_state=?, updated_at=?
+                WHERE id=? AND dispense_operation_id=?
+                """,
+                (state, db.now_text(), plan_id, operation_id),
+            ).rowcount
+        if updated != 1:
+            raise ValueError("计划取药动作已经变化，请勿重复开柜")
+
+    def complete_today_plan(
+        self,
+        plan_id: str,
+        medicine_id: str,
+        service_user_id: str,
+        *,
+        dispense_operation_id: str = "",
+    ) -> TodayPlan:
+        if dispense_operation_id:
+            with db.connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                updated = conn.execute(
+                    """
+                    UPDATE today_plans AS p
+                    SET status='已执行', last_action_date=?, updated_at=?,
+                        dispense_operation_state='complete'
+                    WHERE id=? AND medicine_id=? AND service_user_id=?
+                      AND status='待执行' AND archived=0
+                      AND dispense_operation_id=?
+                      AND dispense_operation_state IN ('in_progress', 'result_unknown')
+                      AND EXISTS (
+                        SELECT 1 FROM service_users AS u
+                        WHERE u.id=p.service_user_id AND u.archived=0
+                      )
+                    """,
+                    (
+                        date.today().isoformat(),
+                        db.now_text(),
+                        plan_id,
+                        medicine_id,
+                        service_user_id,
+                        dispense_operation_id,
+                    ),
+                ).rowcount
+                if updated != 1:
+                    raise ValueError("计划取药动作已经变化，请勿重复开柜")
+        else:
+            self.validate_dispense_plan(plan_id, medicine_id, service_user_id)
+            with db.connect() as conn:
+                conn.execute(
+                    "UPDATE today_plans SET status='已执行', last_action_date=?, updated_at=? WHERE id=?",
+                    (date.today().isoformat(), db.now_text(), plan_id),
+                )
         return self.get_today_plan(plan_id)
 
     def _validated_plan_values(
@@ -525,7 +788,11 @@ class RecordsService:
         with db.connect() as conn:
             medicine = conn.execute("SELECT id, name FROM medicines WHERE id=?", (medicine_id,)).fetchone()
             user = conn.execute(
-                "SELECT id, name FROM service_users WHERE id=? AND archived=0",
+                """
+                SELECT id, name, persona_generation
+                FROM service_users
+                WHERE id=? AND archived=0 AND TRIM(persona_generation)<>''
+                """,
                 (service_user_id,),
             ).fetchone()
         if not medicine:
@@ -537,6 +804,7 @@ class RecordsService:
             "timing_label": normalized_timing_label,
             "medicine_id": str(medicine["id"]),
             "service_user_id": str(user["id"]),
+            "persona_generation": str(user["persona_generation"]),
             "dose": normalized_dose,
             "status": normalized_status,
             "medicine": str(medicine["name"]),
@@ -570,6 +838,7 @@ class RecordsService:
             medicine_id=str(row["medicine_id"]),
             medicine=str(row["medicine"]),
             service_user_id=str(row["service_user_id"]),
+            persona_generation=str(row.get("persona_generation") or ""),
             status=status,
             target_user=str(row["target_user"]),
             dose=str(row.get("dose") or "按说明"),
@@ -666,7 +935,12 @@ class RecordsService:
             users = {
                 str(row["id"]): row
                 for row in conn.execute(
-                    "SELECT id, name FROM service_users WHERE id IN ('wang-nainai', 'li-yeye') AND archived=0"
+                    """
+                    SELECT id, name, persona_generation
+                    FROM service_users
+                    WHERE id IN ('wang-nainai', 'li-yeye')
+                      AND archived=0 AND TRIM(persona_generation)<>''
+                    """
                 ).fetchall()
             }
             if set(users) != {"wang-nainai", "li-yeye"}:
@@ -684,10 +958,11 @@ class RecordsService:
                 conn.execute(
                     """
                     INSERT INTO today_plans(
-                      id, time, timing_label, medicine_id, service_user_id, dose, status,
+                      id, time, timing_label, medicine_id, service_user_id,
+                      persona_generation, dose, status,
                       medicine, target_user, updated_at, schedule_type,
                       interval_days, weekdays_json, start_date, last_action_date
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO NOTHING
                     """,
                     (
@@ -696,6 +971,7 @@ class RecordsService:
                         timing_label,
                         medicine["id"],
                         user["id"],
+                        user["persona_generation"],
                         dose,
                         "待执行",
                         medicine["name"],
@@ -728,6 +1004,7 @@ class RecordsService:
                     )
                       AND p.archived=0
                       AND u.archived=0
+                      AND p.persona_generation=u.persona_generation
                     """
                 ).fetchall()
             }

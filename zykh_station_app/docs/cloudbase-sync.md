@@ -25,6 +25,15 @@ SQLite / QSM 外设
 - 家庭取药记录。
 - 人物—药品安全核查及物理结果（独立 append-only 事件，不属于快照）。
 
+人物同步不是普通的“当前列表”覆盖：Station 会把活动人物和归档 tombstone 一起
+写入 `service_users`。每行都必须有稳定 `persona_generation`；文档键由
+`deviceId + personId + generation digest` 组成。同一人物 ID 的不同代次不会互相
+覆盖。`GET_SNAPSHOT` 与 `GET_DEVICE.syncSummary` 只公开未归档人物，但 tombstone
+保留在云存储中用于隔离历史所有权。
+计划和取药记录也携带生成时的 `persona_generation`；问询、体征和安全事件沿用
+各自持久化的人物代次。带 generation map 的 membership 只可读取代次完全一致
+的行，缺失或不一致的旧行均失败关闭，不会因为复用相同 person ID 泄露给新人物。
+
 线上仍是旧版云函数时，终端自动使用 v1 兼容动作。药品写入 `medicines`，其余新增业务数据以结构化记录写入 `records`。部署 v2 云函数后会自动切换到 `service_users`、`today_plans`、`inquiries` 等独立集合。v2 还会锁定 schema 2 主代理：旧 `cloud_agent.pl` 不能再覆盖设备状态，也不能抢先拉取新命令。
 
 ## 部署 v2 云函数
@@ -57,7 +66,7 @@ Event 云函数并创建或更新独立 `caregiverNotificationWorker`。原 `/ap
 路由不会被重建，测试文件不会进入 ZIP，也不依赖容易超时的 COS 上传。
 
 worker 的唯一受管定时器会在更新代码前关闭；部署器只有在 API 返回
-`schemaRevision=2.6-station-pairing-notification-worker`、配对签发与通知 worker
+`schemaRevision=2.7-service-user-persona-tombstones`、人物 tombstone、配对签发与通知 worker
 能力齐全，且 worker 自身无副作用运行探针通过后，才可能执行最后的显式启用。
 默认部署始终保持定时器关闭，部署或探针失败也不会留下 OPEN timer。
 
@@ -78,12 +87,20 @@ curl -sS -H 'Content-Type: application/json' \
 ```
 
 返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为
-`2.6-station-pairing-notification-worker`，并声明
+`2.7-service-user-persona-tombstones`，并声明
 `medicationSafetyEvents=v1`、`caregiverMembership=v1`、`devicePairing=v1`、
 `devicePairingIssue=v1`、`caregiverNotificationOutbox=v1`、
-`caregiverNotificationWorker=v1`、`inquiryDetail=v1` 与 `snapshotBatch=v2`。
+`caregiverNotificationWorker=v1`、`inquiryDetail=v1`、`snapshotBatch=v2` 与
+`serviceUserPersonaTombstones=v1`。
 终端把 revision 纳入 snapshot hash；后续云函数清理或映射逻辑升级后会自动
 触发一次完整重同步。
+
+人物迁移必须按“云先、Station 后”的顺序部署。2.7 云函数先兼容旧的
+`<device>-user-<person>` 文档键；收到带代次的新行并成功写入 canonical 文档后，
+只删除 `deviceId/personId` 精确匹配且代次为空或相同的旧键。无关、身份不匹配的
+ownerless 文档不会被 `FINALIZE_SNAPSHOT` 或兼容迁移删除。随后部署 Station 并
+触发一次完整同步，确认王奶奶、李爷爷为活动人物，旧张三、李四、王五为归档
+tombstone，再发布依赖该能力的小程序版本。
 
 ## 小程序反向命令
 
@@ -112,7 +129,9 @@ membership 已授权且人物范围匹配的分区；权限数组为空时不返
 
 同一 `CREATE_COMMAND.requestId` 在事务中绑定规范化请求摘要：相同内容安全重放，
 不同内容返回 `IDEMPOTENCY_CONFLICT`，并发请求也不能互相覆盖。只读角色或缺少
-`CREATE_COMMAND` 权限的 membership 不能下发命令。
+`CREATE_COMMAND` 权限的 membership 不能下发命令。人物命令执行前还会从当前
+唯一活动人物行重验 membership 绑定的代次，并由服务端把该代次写入命令；旧代次
+授权不能向同 ID 的新人物发送问询或资料/计划更新。
 
 ## 微信设备绑定
 
@@ -125,14 +144,23 @@ membership 已授权且人物范围匹配的分区；权限数组为空时不返
 `device_pairing_codes` 是服务端专用集合。Station 受保护管理台的“家属配对”
 区域会为选定的活动服务对象生成 256-bit CSPRNG 一次性原文；原文只在当前
 页面显示至过期，管理员审计只记录授权对象与 TTL。Station 只把 SHA-256、
-人物范围和 5–15 分钟 TTL 通过设备认证通道交给云端，文档 ID 为
+人物范围、每个人物的期望 `persona_generation` 和 5–15 分钟 TTL 通过设备认证
+通道交给云端，文档 ID 为
 `pairing-<sha256(raw_code)>`，字段包含同一 `codeHash`、`deviceId`、`role`、
-`permissions`、`service_user_scopes`、`status=UNUSED` 和带时区的 `expiresAt`；
+`permissions`、`service_user_scopes`、`service_user_generations`、
+`status=UNUSED` 和带时区的 `expiresAt`；
 不得保存原文。兑换请求只提交 `pairingCode`，云函数忽略调用者伪造的设备、角色
 或权限，并在一个事务中重新校验哈希、未使用状态和过期时间，创建 ACTIVE
 membership 后把码置为 `CONSUMED`。重复、过期、未知、已绑定或并发败方统一
 返回 `PAIRING_CODE_INVALID`；`GET_MY_DEVICES` 只枚举当前 OPENID 的 ACTIVE
 membership。
+
+云端以当前唯一未归档人物行解析并复核代次；Station 提交的期望代次陈旧、同一
+ID 同时存在多个活动代次、人物已归档或 canonical 文档缺失时均拒绝签发。新版
+pairing/membership 会保存 generation map；以后同一人物 ID 启用新代次时，旧
+membership 不会自动获得新人物卡、计划、记录、问询、体征、安全事件或命令权限。
+安全事件通知收件人在写回执和 outbox 的事务中也会复核事件代次。为保证云先部署，旧 pairing 文档与旧
+membership 仍可完成原兼容流程，但重新签发后即进入代次绑定契约。
 
 签发 action 只接受当前 `deviceId` 在服务端 `DEVICE_SECRETS` 中配置的独立密钥；
 共享 `DEVICE_SECRET` 不能签发配对码。外部 Windows 小程序工程的扫码/输入和设备

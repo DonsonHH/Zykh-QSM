@@ -41,6 +41,7 @@ try {
   );
   assert.deepEqual(
     module.inquiryVitalsDisposition({
+      session_id: "vitals-demo-session",
       status: "complete",
       temperature: 36.6,
       heart_rate: 72,
@@ -51,6 +52,7 @@ try {
     {
       kind: "exit",
       outcome: {
+        vitals_session_id: "vitals-demo-session",
         status: "failed",
         error_message: "血氧为演示值，本次体征未写入问询。"
       }
@@ -59,6 +61,7 @@ try {
   );
   assert.deepEqual(
     module.inquiryVitalsDisposition({
+      session_id: "vitals-failed-session",
       status: "failed",
       historical_fallback: true,
       historical_temperature: 36.4,
@@ -69,6 +72,7 @@ try {
     {
       kind: "exit",
       outcome: {
+        vitals_session_id: "vitals-failed-session",
         status: "failed",
         error_message: "手指信号未稳定。"
       }
@@ -82,6 +86,7 @@ try {
     "inquiry must preserve metric provenance at its persistence boundary"
   );
   const inquiryPayload = inquiryModule.buildInquiryVitalsPayload({
+    session_id: "vitals-live-session",
     temperature: 36.6,
     heart_rate: 72,
     spo2: 97,
@@ -92,6 +97,7 @@ try {
     measured_at: "2026-08-05T00:15:00+08:00"
   });
   assert.equal(inquiryPayload.spo2_source, "demo_fallback");
+  assert.equal(inquiryPayload.vitals_session_id, "vitals-live-session");
   assert.equal(inquiryPayload.spo2_demo_fallback, true);
   assert.equal(
     Object.keys(inquiryPayload).some((key) => key.startsWith("historical_")),

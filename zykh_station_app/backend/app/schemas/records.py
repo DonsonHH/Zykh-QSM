@@ -61,7 +61,9 @@ class ServiceUserInquiryHistoryItem(BaseModel):
     case_summary: str
     risk_level: str
     risk_label: str
+    risk_reasons: list[str] = Field(default_factory=list)
     outcome: str
+    no_medicine_reason: str = ""
     final_medicine_summary: str = ""
 
 
@@ -82,7 +84,6 @@ class ServiceUserCreateRequest(BaseModel):
     medical_conditions: list[dict[str, object]] = Field(default_factory=list)
     current_medications: list[dict[str, object]] = Field(default_factory=list)
     allergy_facts: list[dict[str, object]] = Field(default_factory=list)
-    persona_generation: str = ""
 
 
 class ServiceUserUpdateRequest(BaseModel):
@@ -95,7 +96,6 @@ class ServiceUserUpdateRequest(BaseModel):
     medical_conditions: list[dict[str, object]] | None = None
     current_medications: list[dict[str, object]] | None = None
     allergy_facts: list[dict[str, object]] | None = None
-    persona_generation: str | None = None
     archived: bool | None = None
 
 
@@ -106,6 +106,7 @@ class TodayPlan(BaseModel):
     medicine_id: str
     medicine: str
     service_user_id: str
+    persona_generation: str = ""
     status: str
     target_user: str
     dose: str = "按说明"

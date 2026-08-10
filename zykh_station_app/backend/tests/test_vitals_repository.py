@@ -74,6 +74,23 @@ class VitalsRepositoryTest(unittest.TestCase):
                         measured_at="2026-07-14 10:02:00",
                     )
                 )
+                repository.append(
+                    VitalsRecord(
+                        id="newer-other-route",
+                        temperature=36.6,
+                        heart_rate=74,
+                        spo2=98,
+                        status="available",
+                        source="real",
+                        measured_at="2026-07-14 10:03:00",
+                        source_route="INQUIRY",
+                        inquiry_session_id="inquiry-other-route",
+                        attribution_source="INQUIRY_SESSION",
+                        service_user_id="person-other-route",
+                        service_user_name_snapshot="其他人物",
+                        persona_generation="persona-other-route",
+                    )
+                )
 
                 latest = repository.latest_complete_core()
             finally:

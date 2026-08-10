@@ -14,8 +14,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
-from app.routers.admin import admin_issue_pairing_code  # noqa: E402
-from app.schemas.admin import AdminPairingCodeIssueRequest  # noqa: E402
 from app.services.pairing_code_issuer import (  # noqa: E402
     CAREGIVER_READ_PERMISSIONS,
     PairingCodeIssueError,
@@ -45,6 +43,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
             return {
                 "expiresAt": "2026-08-10T12:10:00+08:00",
                 "serviceUserScopes": ["wang-nainai"],
+                "serviceUserGenerations": {"wang-nainai": "senior-demo-v1"},
                 "role": "CAREGIVER",
                 "permissions": list(CAREGIVER_READ_PERMISSIONS),
                 "status": "UNUSED",
@@ -70,6 +69,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
                 {
                     "codeHash": "313cbcaa996cfeb1d82bf42258227129db77d12a54bead2641d9a002c0cb3111",
                     "serviceUserScopes": ["wang-nainai"],
+                    "serviceUserGenerations": {"wang-nainai": "senior-demo-v1"},
                     "ttlSeconds": 600,
                 }
             ],
@@ -115,6 +115,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
             return {
                 "expiresAt": "2026-08-10T12:10:00+08:00",
                 "serviceUserScopes": ["wang-nainai"],
+                "serviceUserGenerations": {"wang-nainai": "senior-demo-v1"},
                 "role": "CAREGIVER",
                 "permissions": list(CAREGIVER_READ_PERMISSIONS),
                 "status": "UNUSED",
@@ -153,6 +154,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
             publish=lambda _: {
                 "expiresAt": "2026-08-10T12:10:00+08:00",
                 "serviceUserScopes": ["wang-nainai"],
+                "serviceUserGenerations": {"wang-nainai": "senior-demo-v1"},
                 "role": "OWNER",
                 "permissions": [*CAREGIVER_READ_PERMISSIONS, "CREATE_COMMAND"],
                 "status": "UNUSED",
@@ -171,6 +173,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
             return {
                 "expiresAt": expires_at,
                 "serviceUserScopes": ["wang-nainai"],
+                "serviceUserGenerations": {"wang-nainai": "senior-demo-v1"},
                 "role": "CAREGIVER",
                 "permissions": list(CAREGIVER_READ_PERMISSIONS),
                 "status": "UNUSED",
@@ -192,6 +195,8 @@ class PairingCodeIssuerTest(unittest.TestCase):
                     )
 
     def test_admin_issue_route_reuses_admin_auth_and_has_a_constrained_request(self) -> None:
+        from app.schemas.admin import AdminPairingCodeIssueRequest
+
         request = AdminPairingCodeIssueRequest(
             service_user_ids=["wang-nainai"],
             ttl_minutes=10,
@@ -211,6 +216,9 @@ class PairingCodeIssuerTest(unittest.TestCase):
         self.assertIn("PairingCodeIssuer().issue(", router_source)
 
     def test_admin_issue_route_audits_scope_without_recording_the_plaintext_code(self) -> None:
+        from app.routers.admin import admin_issue_pairing_code
+        from app.schemas.admin import AdminPairingCodeIssueRequest
+
         request = AdminPairingCodeIssueRequest(
             service_user_ids=["wang-nainai"],
             ttl_minutes=10,

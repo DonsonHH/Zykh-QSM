@@ -14,7 +14,31 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app import db  # noqa: E402
 from app.services.admin_service import AdminService, AdminServiceError  # noqa: E402
 from app.schemas.inquiry import InquirySessionCreateRequest  # noqa: E402
+from app.services.dispense_service import DispenseService  # noqa: E402
 from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
+
+
+class UnknownThenReplayAdminQsmClient:
+    def __init__(self) -> None:
+        self.operation_ids: list[str] = []
+
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del slot, quantity, dry_run
+        self.operation_ids.append(operation_id)
+        if len(self.operation_ids) == 1:
+            return {
+                "ok": False,
+                "detail": "response connection closed",
+                "result_unknown": True,
+                "retry_safe": False,
+            }
+        return {"ok": True, "detail": "replayed completed operation"}
 
 
 class AdminServiceTest(unittest.TestCase):
@@ -52,6 +76,42 @@ class AdminServiceTest(unittest.TestCase):
     def test_system_action_rejects_unknown_commands(self) -> None:
         with self.assertRaises(AdminServiceError):
             AdminService().system_action("rm -rf", "anything")
+
+    def test_admin_cabinet_unknown_reuses_client_action_id_and_audits_unknown(self) -> None:
+        qsm = UnknownThenReplayAdminQsmClient()
+        dispense = DispenseService(qsm_client=qsm)
+        real_settings = SimpleNamespace(
+            dispense_dry_run=False,
+            enable_real_dispense=True,
+            real_dispense_test_slot="",
+        )
+        with (
+            patch("app.services.admin_service.DispenseService", return_value=dispense),
+            patch("app.services.dispense_service.settings", real_settings),
+        ):
+            first = AdminService().open_cabinet(
+                8,
+                "OPEN 8",
+                "管理员调试开柜",
+                "admin-ui-action-001",
+            )
+            replay = AdminService().open_cabinet(
+                8,
+                "OPEN 8",
+                "管理员调试开柜",
+                "admin-ui-action-001",
+            )
+
+        self.assertFalse(first.ok)
+        self.assertTrue(first.result_unknown)
+        self.assertFalse(first.retry_safe)
+        self.assertIn("请勿自动重试", first.message)
+        self.assertTrue(replay.ok)
+        self.assertEqual(len(qsm.operation_ids), 2)
+        self.assertTrue(qsm.operation_ids[0].startswith("admin-"))
+        self.assertEqual(qsm.operation_ids[0], qsm.operation_ids[1])
+        audit = AdminService().recent_audit(2)
+        self.assertEqual({record.result for record in audit}, {"unknown", "success"})
 
     def test_overview_collects_all_device_statuses_and_network(self) -> None:
         service = AdminService()

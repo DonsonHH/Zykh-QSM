@@ -22,6 +22,7 @@ import {
   sendInquiryTurn
 } from "../api/inquiry.js";
 import { stopAudioPlayback } from "../api/audio.js";
+import { confirmMedicineInventory } from "../api/medicines.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
@@ -71,6 +72,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const [sending, setSending] = useState(false);
   const [openingTreatment, setOpeningTreatment] = useState(false);
   const [treatmentAction, setTreatmentAction] = useState(null);
+  const [inventoryConfirmation, setInventoryConfirmation] = useState(null);
+  const [inventoryConfirmationBusy, setInventoryConfirmationBusy] = useState(false);
+  const [inventoryConfirmationError, setInventoryConfirmationError] = useState("");
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
   const [resultConfirmed, setResultConfirmed] = useState(false);
   const [revisingResult, setRevisingResult] = useState(false);
@@ -81,6 +85,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const creatingRef = useRef(false);
   const mountedRef = useRef(false);
   const openingTreatmentRef = useRef(false);
+  const inventoryConfirmationBusyRef = useRef(false);
+  const confirmedInventoryRecordsRef = useRef(new Set());
   const attachingVitalsRef = useRef(false);
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
@@ -173,6 +179,23 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       && session?.treatment_options?.length
     );
   }, [resultConfirmed, session]);
+
+  useEffect(() => {
+    const item = session?.action_items?.[session.action_items.length - 1];
+    if (
+      !item?.ok
+      || item.dry_run
+      || !item.inventory_confirmation_required
+      || confirmedInventoryRecordsRef.current.has(item.record_id)
+    ) return;
+    setInventoryConfirmation((current) => current?.record_id === item.record_id ? current : {
+      ...item,
+      option_id: session.selected_option_id,
+      next_item_index: Number(session.action_progress_index || 0),
+      should_continue: session.action_status === "opening"
+    });
+    setInventoryConfirmationError("");
+  }, [session]);
 
   useEffect(() => {
     refreshUsers();
@@ -324,21 +347,22 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
 
   const handleVitalsExit = useCallback((outcome) => {
     return submitVitalsOutcome({
+      vitals_session_id: outcome?.vitals_session_id || "",
       status: outcome?.status === "failed" ? "failed" : "cancelled",
       error_message: outcome?.error_message || "",
       measured_at: new Date().toISOString()
     });
   }, [submitVitalsOutcome]);
 
-  const handleTreatmentConfirm = useCallback(async (optionId) => {
+  const runTreatmentSequence = useCallback(async (optionId, initialItemIndex, resetAction = false) => {
     if (!sessionId || openingTreatmentRef.current) return;
     openingTreatmentRef.current = true;
     setOpeningTreatment(true);
-    setTreatmentAction(null);
+    if (resetAction) setTreatmentAction(null);
     setManualReviewOpen(false);
     setRevisingResult(false);
     try {
-      let expectedItemIndex = Number(session?.action_progress_index || 0);
+      let expectedItemIndex = Number(initialItemIndex || 0);
       while (mountedRef.current) {
         const data = await confirmInquiryTreatment(sessionId, optionId, expectedItemIndex);
         setTreatmentAction(data);
@@ -349,6 +373,20 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
           window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
             detail: { medicine_id: completedItem.medicine_id }
           }));
+        }
+        if (
+          completedItem?.ok
+          && !completedItem.dry_run
+          && completedItem.inventory_confirmation_required
+        ) {
+          setInventoryConfirmation({
+            ...completedItem,
+            option_id: optionId,
+            next_item_index: Number(data.completed_count || expectedItemIndex + 1),
+            should_continue: data.status === "opening"
+          });
+          setInventoryConfirmationError("");
+          break;
         }
         if (data.status !== "opening") break;
         expectedItemIndex = Number(data.completed_count || 0);
@@ -367,7 +405,61 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       openingTreatmentRef.current = false;
       setOpeningTreatment(false);
     }
-  }, [notify, session?.action_progress_index, sessionId]);
+  }, [notify, sessionId]);
+
+  const handleTreatmentConfirm = useCallback(async (optionId) => {
+    await runTreatmentSequence(
+      optionId,
+      Number(session?.action_progress_index || 0),
+      true
+    );
+  }, [runTreatmentSequence, session?.action_progress_index]);
+
+  const handleInventoryConfirmation = useCallback(async (observation) => {
+    const pending = inventoryConfirmation;
+    if (!pending || inventoryConfirmationBusyRef.current) return;
+    if (!pending.record_id) {
+      setInventoryConfirmationError("缺少本次取药记录，无法确认库存；请联系值守员核对。");
+      return;
+    }
+    inventoryConfirmationBusyRef.current = true;
+    setInventoryConfirmationBusy(true);
+    setInventoryConfirmationError("");
+    try {
+      const response = await confirmMedicineInventory(pending.medicine_id, {
+        request_id: buildInquiryInventoryRequestId(pending.record_id),
+        dispense_record_id: pending.record_id,
+        observation
+      });
+      confirmedInventoryRecordsRef.current.add(pending.record_id);
+      window.dispatchEvent(new CustomEvent("zykh:medicine-updated", {
+        detail: {
+          id: pending.medicine_id,
+          name: pending.medicine_name,
+          slot: pending.slot,
+          stock: response.stock,
+          inventory_state: response.inventory_state,
+          inventory_confirmed_at: response.inventory_confirmed_at,
+          last_inventory_request_id: buildInquiryInventoryRequestId(pending.record_id),
+          last_inventory_dispense_record_id: pending.record_id
+        }
+      }));
+      setInventoryConfirmation(null);
+      notify(response.message || (observation === "DEPLETED" ? "已记录药品用完" : "已确认柜内还有药"));
+      if (pending.should_continue) {
+        await runTreatmentSequence(
+          pending.option_id,
+          pending.next_item_index,
+          false
+        );
+      }
+    } catch (error) {
+      setInventoryConfirmationError(error.message || "库存确认未保存，请重新选择或联系值守员核对");
+    } finally {
+      inventoryConfirmationBusyRef.current = false;
+      setInventoryConfirmationBusy(false);
+    }
+  }, [inventoryConfirmation, notify, runTreatmentSequence]);
 
   function resetFlow() {
     creatingRef.current = false;
@@ -380,6 +472,11 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     setOpeningTreatment(false);
     openingTreatmentRef.current = false;
     setTreatmentAction(null);
+    setInventoryConfirmation(null);
+    setInventoryConfirmationBusy(false);
+    setInventoryConfirmationError("");
+    inventoryConfirmationBusyRef.current = false;
+    confirmedInventoryRecordsRef.current.clear();
     setVitalsFlow("chat");
     setAttachingVitals(false);
     attachingVitalsRef.current = false;
@@ -478,6 +575,8 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         {vitalsFlow === "measuring" ? (
           <Vitals
             embedded
+            sourceRoute="INQUIRY"
+            inquirySessionId={sessionId}
             notify={notify}
             onComplete={handleVitalsComplete}
             onExit={handleVitalsExit}
@@ -503,7 +602,12 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             result={session}
             opening={openingTreatment}
             actionResult={treatmentAction}
+            inventoryConfirmation={inventoryConfirmation}
+            inventoryConfirmationBusy={inventoryConfirmationBusy}
+            inventoryConfirmationError={inventoryConfirmationError}
             onConfirmTreatment={handleTreatmentConfirm}
+            onInventoryHasStock={() => handleInventoryConfirmation("HAS_REMAINING")}
+            onInventoryDepleted={() => handleInventoryConfirmation("DEPLETED")}
             onRestart={resetFlow}
             onHome={() => onNavigate("home")}
           />
@@ -530,6 +634,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
 
 export function buildInquiryVitalsPayload(vitals) {
   return {
+    vitals_session_id: vitals.session_id || "",
     status: "complete",
     temperature: vitals.temperature,
     heart_rate: vitals.heart_rate,
@@ -545,6 +650,10 @@ export function buildInquiryVitalsPayload(vitals) {
     hrv_rmssd: vitals.hrv_rmssd || null,
     measured_at: vitals.measured_at || new Date().toISOString()
   };
+}
+
+export function buildInquiryInventoryRequestId(dispenseRecordId) {
+  return `inquiry-inventory:${dispenseRecordId}`.slice(0, 128);
 }
 
 const symptomDimensionLabels = {

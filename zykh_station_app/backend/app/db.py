@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 from .config import settings
 
@@ -94,6 +95,39 @@ def init_db() -> None:
         _ensure_column(conn, "medicines", "safety_review_status", "TEXT NOT NULL DEFAULT 'draft'")
         _ensure_column(conn, "medicines", "safety_reviewed_by", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "medicines", "safety_reviewed_at", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "inventory_state", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "inventory_confirmed_at", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "last_inventory_request_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicines", "inventory_revision", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(
+            conn,
+            "medicines",
+            "last_inventory_dispense_record_id",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        conn.execute(
+            """
+            UPDATE medicines
+            SET inventory_state=CASE WHEN stock > 0 THEN 'AVAILABLE' ELSE 'DEPLETED' END
+            WHERE inventory_state NOT IN ('AVAILABLE', 'DEPLETED', 'UNKNOWN')
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medicine_inventory_confirmations (
+              request_id TEXT PRIMARY KEY,
+              request_payload_digest TEXT NOT NULL,
+              medicine_id TEXT NOT NULL,
+              dispense_record_id TEXT NOT NULL UNIQUE,
+              observation TEXT NOT NULL,
+              inventory_state TEXT NOT NULL,
+              stock_after INTEGER NOT NULL,
+              confirmed_at TEXT NOT NULL,
+              FOREIGN KEY(medicine_id) REFERENCES medicines(id),
+              FOREIGN KEY(dispense_record_id) REFERENCES dispense_records(id)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS approved_medicine_combinations (
@@ -203,6 +237,7 @@ def init_db() -> None:
         _ensure_column(conn, "dispense_records", "verification_score", "REAL")
         _ensure_column(conn, "dispense_records", "target_user_type", "TEXT NOT NULL DEFAULT 'registered'")
         _ensure_column(conn, "dispense_records", "today_plan_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "dispense_records", "persona_generation", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS dispense_identity_archives (
@@ -245,6 +280,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS inquiry_sessions (
               session_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL DEFAULT '',
+              persona_generation TEXT NOT NULL DEFAULT '',
               user_name TEXT NOT NULL,
               user_age INTEGER NOT NULL DEFAULT 0,
               user_profile TEXT NOT NULL DEFAULT '',
@@ -296,6 +332,7 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(conn, "inquiry_sessions", "persona_generation", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "inquiry_sessions", "reasoning_summary", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "inquiry_sessions", "model_action_intent", "TEXT NOT NULL DEFAULT 'ask'")
         _ensure_column(conn, "inquiry_sessions", "action_reason", "TEXT NOT NULL DEFAULT ''")
@@ -331,6 +368,29 @@ def init_db() -> None:
         _ensure_column(conn, "vitals_records", "body_temperature", "REAL")
         _ensure_column(conn, "vitals_records", "ambient_temperature", "REAL")
         _ensure_column(conn, "vitals_records", "sensor_model", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "source_route", "TEXT NOT NULL DEFAULT 'HOME'")
+        _ensure_column(conn, "vitals_records", "inquiry_session_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "attribution_source", "TEXT NOT NULL DEFAULT 'UNREGISTERED'")
+        _ensure_column(conn, "vitals_records", "service_user_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "service_user_name_snapshot", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "persona_generation", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "temperature_source", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "heart_rate_source", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "spo2_source", "TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vitals_session_contexts (
+              session_id TEXT PRIMARY KEY,
+              source_route TEXT NOT NULL,
+              inquiry_session_id TEXT NOT NULL DEFAULT '',
+              attribution_source TEXT NOT NULL,
+              service_user_id TEXT NOT NULL DEFAULT '',
+              service_user_name_snapshot TEXT NOT NULL DEFAULT '',
+              persona_generation TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sync_state (
@@ -518,6 +578,7 @@ def init_db() -> None:
               time TEXT NOT NULL,
               medicine_id TEXT NOT NULL DEFAULT '',
               service_user_id TEXT NOT NULL DEFAULT '',
+              persona_generation TEXT NOT NULL DEFAULT '',
               dose TEXT NOT NULL DEFAULT '按说明',
               status TEXT NOT NULL,
               medicine TEXT NOT NULL DEFAULT '',
@@ -528,6 +589,7 @@ def init_db() -> None:
         )
         _ensure_column(conn, "today_plans", "medicine_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "service_user_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "persona_generation", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "dose", "TEXT NOT NULL DEFAULT '按说明'")
         _ensure_column(conn, "today_plans", "timing_label", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "updated_at", "TEXT NOT NULL DEFAULT ''")
@@ -536,9 +598,14 @@ def init_db() -> None:
         _ensure_column(conn, "today_plans", "weekdays_json", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "today_plans", "start_date", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "last_action_date", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "dispense_operation_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "dispense_operation_date", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "dispense_operation_state", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "archived", "INTEGER NOT NULL DEFAULT 0")
         _migrate_today_plans(conn)
         _seed_service_data(conn)
+        _backfill_persona_generations(conn)
+        _backfill_today_plan_persona_generations(conn)
         conn.execute(
             """
             UPDATE today_plans SET archived=1
@@ -629,6 +696,78 @@ def _migrate_today_plans(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE today_plans SET start_date=? WHERE start_date=''", (today,))
     conn.execute("UPDATE today_plans SET interval_days=1 WHERE interval_days<1")
     conn.execute("UPDATE today_plans SET schedule_type='daily' WHERE schedule_type NOT IN ('daily', 'interval', 'weekly')")
+
+
+def _backfill_persona_generations(conn: sqlite3.Connection) -> None:
+    """Give every valid legacy person one persisted ownership generation."""
+    rows = conn.execute(
+        """
+        SELECT id FROM service_users
+        WHERE TRIM(id)<>''
+          AND TRIM(name)<>''
+          AND TRIM(persona_generation)=''
+        """
+    ).fetchall()
+    for row in rows:
+        generation = f"persona-{uuid4().hex}"
+        conn.execute(
+            """
+            UPDATE service_users
+            SET persona_generation=?
+            WHERE id=? AND TRIM(persona_generation)=''
+            """,
+            (generation, str(row["id"])),
+        )
+        _bind_blank_persona_generations(
+            conn,
+            user_id=str(row["id"]),
+            persona_generation=generation,
+        )
+
+
+def _bind_blank_persona_generations(
+    conn: sqlite3.Connection,
+    *,
+    user_id: str,
+    persona_generation: str,
+) -> None:
+    """Bind only pre-generation inquiry rows to a person's first generation."""
+    conn.execute(
+        """
+        UPDATE inquiry_sessions
+        SET persona_generation=?
+        WHERE user_id=? AND TRIM(persona_generation)=''
+        """,
+        (persona_generation, user_id),
+    )
+    conn.execute(
+        """
+        UPDATE dispense_records
+        SET persona_generation=?
+        WHERE target_user_id=? AND TRIM(persona_generation)=''
+        """,
+        (persona_generation, user_id),
+    )
+
+
+def _backfill_today_plan_persona_generations(conn: sqlite3.Connection) -> None:
+    """Bind legacy plans once; never derive their owner generation at read time."""
+    conn.execute(
+        """
+        UPDATE today_plans
+        SET persona_generation=(
+          SELECT persona_generation
+          FROM service_users
+          WHERE service_users.id=today_plans.service_user_id
+        )
+        WHERE TRIM(persona_generation)=''
+          AND EXISTS (
+            SELECT 1 FROM service_users
+            WHERE service_users.id=today_plans.service_user_id
+              AND TRIM(service_users.persona_generation)<>''
+          )
+        """
+    )
 
 
 def health_check() -> dict[str, object]:
@@ -831,8 +970,17 @@ def _archive_exact_legacy_v6_personas(conn: sqlite3.Connection) -> None:
         if not unchanged:
             continue
         conn.execute(
-            "UPDATE service_users SET archived=1 WHERE id=? AND archived=0",
+            """
+            UPDATE service_users
+            SET archived=1, persona_generation='legacy-family-demo-v6'
+            WHERE id=? AND archived=0 AND TRIM(persona_generation)=''
+            """,
             (row["id"],),
+        )
+        _bind_blank_persona_generations(
+            conn,
+            user_id=str(row["id"]),
+            persona_generation="legacy-family-demo-v6",
         )
 
 

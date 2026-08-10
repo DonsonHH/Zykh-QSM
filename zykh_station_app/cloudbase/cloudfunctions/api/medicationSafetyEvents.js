@@ -43,6 +43,10 @@ function eventPersonId(event) {
   return textValue(event.service_user_id, event.serviceUserId, event.personId);
 }
 
+function eventPersonaGeneration(event) {
+  return textValue(event.persona_generation, event.personaGeneration);
+}
+
 function eventIdentifier(event) {
   return textValue(event.eventId, event.event_id);
 }
@@ -199,6 +203,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
     const recipients = await memberships.listSafetyRecipients({
       deviceId,
       personId: eventPersonId(event),
+      personaGeneration: eventPersonaGeneration(event),
     });
     const deliveredOpenIds = new Set();
     for (const recipient of recipients) {
@@ -216,6 +221,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
           openid: recipient.openid,
           deviceId,
           personId: eventPersonId(event),
+          personaGeneration: eventPersonaGeneration(event),
         });
         if (!stillAuthorized) return false;
 
@@ -302,6 +308,8 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
     const payloadEventId = requiredText(event.event_id || event.eventId, "event.event_id");
     const eventId = requiredText(data.eventId || data.event_id || payloadEventId, "eventId");
     if (payloadEventId !== eventId) throw new Error("eventId does not match event payload");
+    requiredText(eventPersonId(event), "event.service_user_id");
+    requiredText(eventPersonaGeneration(event), "event.persona_generation");
 
     const providedDigest = requiredText(
       data.payloadDigest || data.payload_digest,
@@ -370,6 +378,11 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
     const events = eventRows
       .filter(event => !requestedPersonId || eventPersonId(event) === requestedPersonId)
       .filter(event => !scopes.length || scopes.includes(eventPersonId(event)))
+      .filter(event => memberships.allowsPersona(
+        membership,
+        eventPersonId(event),
+        eventPersonaGeneration(event),
+      ))
       .filter(event => !requestedCheckStatus || projectListItem(event, false).checkStatus === requestedCheckStatus)
       .filter(event => !unreadOnly || !readEventIds.has(eventIdentifier(event)))
       .sort(compareEvents)
@@ -402,6 +415,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
       openId: wxContext.OPENID,
       deviceId: data.deviceId,
       personId: eventPersonId(event),
+      personaGeneration: eventPersonaGeneration(event),
     });
     const read = await receiptIsRead(data.deviceId, eventId, membership.openid);
     return { ok: true, event: projectDetail(event, read) };
@@ -429,6 +443,7 @@ function createMedicationSafetyEventModule({ db, collections, memberships, nowTe
       openId: wxContext.OPENID,
       deviceId: data.deviceId,
       personId: eventPersonId(event),
+      personaGeneration: eventPersonaGeneration(event),
     });
     const receiptId = `${safeId(data.deviceId)}-${safeId(eventId)}-${safeId(membership.openid)}`;
 

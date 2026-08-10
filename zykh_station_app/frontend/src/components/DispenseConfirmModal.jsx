@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { AlertTriangle, CheckCircle2, Fingerprint, History, LoaderCircle, RotateCcw, ScanFace, ShieldCheck, UserRound, X, XCircle } from "lucide-react";
 import { identifyFingerprint } from "../api/fingerprint.js";
 import { verifyDispenseIdentity } from "../api/identity.js";
-import { updateMedicine } from "../api/medicines.js";
+import { confirmMedicineInventory } from "../api/medicines.js";
 import { activateIdentity } from "../hooks/useFaceIdentity.js";
 import { useExitPresence } from "../hooks/useExitPresence.js";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
@@ -80,6 +80,10 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
   const [verificationFrameReady, setVerificationFrameReady] = useState(false);
   const [inventoryUpdating, setInventoryUpdating] = useState(false);
   const [inventoryMessage, setInventoryMessage] = useState("");
+  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryConfirmedState, setInventoryConfirmedState] = useState("");
+  const [dispenseRecordId, setDispenseRecordId] = useState("");
+  const [inventoryEligible, setInventoryEligible] = useState(false);
   const [manualAssessment, setManualAssessment] = useState(null);
   const sessionRef = useRef(0);
   const verificationAttemptRef = useRef(0);
@@ -87,6 +91,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
   const previewReadyTimerRef = useRef(null);
   const previewReadyWaiterRef = useRef(null);
   const autoCloseTimerRef = useRef(null);
+  const inventoryRequestIdRef = useRef("");
   const spokenAnnouncementsRef = useRef(new Set());
   const onCancelRef = useRef(onCancel);
   const manualInventory = Boolean(manualAccess);
@@ -130,6 +135,11 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       setVerificationFrameReady(false);
       setInventoryUpdating(false);
       setInventoryMessage("");
+      setInventoryError("");
+      setInventoryConfirmedState("");
+      setDispenseRecordId("");
+      setInventoryEligible(false);
+      inventoryRequestIdRef.current = "";
       setManualAssessment(null);
       spokenAnnouncementsRef.current.clear();
     } else {
@@ -164,12 +174,16 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
   useEffect(() => {
     if (open && phase === "complete") {
       autoCloseTimerRef.current = window.setTimeout(() => {
-        setPhase("inventory_check");
+        if (inventoryEligible && dispenseRecordId) {
+          setPhase("inventory_check");
+        } else {
+          cancelSession();
+        }
       }, DISPENSE_COMPLETE_HOLD_MS);
       return () => window.clearTimeout(autoCloseTimerRef.current);
     }
     return undefined;
-  }, [open, phase]);
+  }, [dispenseRecordId, inventoryEligible, open, phase]);
 
   useEffect(() => {
     if (!open || !medicine) return undefined;
@@ -367,6 +381,9 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     }
     if (session === sessionRef.current) {
       setGuestTrigger("");
+      setDispenseRecordId(String(dispense?.record_id || ""));
+      setInventoryEligible(Boolean(dispense?.inventory_confirmation_required));
+      inventoryRequestIdRef.current = createManualRequestId("inventory");
       setPhase("complete");
     }
   }
@@ -435,6 +452,9 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       });
       if (session !== sessionRef.current) return;
       if (outcome?.ok && outcome.dispense_status === "DISPENSED") {
+        setDispenseRecordId(String(outcome.dispense_record_id || ""));
+        setInventoryEligible(Boolean(outcome.inventory_confirmation_required));
+        inventoryRequestIdRef.current = createManualRequestId("inventory");
         setPhase("complete");
         return;
       }
@@ -629,18 +649,37 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     onCancelRef.current();
   }
 
-  async function markMedicineDepleted() {
+  async function confirmInventory(observation) {
     if (inventoryUpdating) return;
+    if (!dispenseRecordId) {
+      setInventoryError("缺少本次取药记录，无法更新库存；请联系值守员核对。");
+      return;
+    }
     setInventoryUpdating(true);
+    setInventoryError("");
     try {
-      const response = await updateMedicine(medicine.id, { stock: 0 });
-      const updatedMedicine = response.medicine || { ...medicine, stock: 0 };
+      if (!inventoryRequestIdRef.current) {
+        inventoryRequestIdRef.current = createManualRequestId("inventory");
+      }
+      const response = await confirmMedicineInventory(medicine.id, {
+        request_id: inventoryRequestIdRef.current,
+        dispense_record_id: dispenseRecordId,
+        observation
+      });
+      const updatedMedicine = {
+        ...medicine,
+        stock: response.stock,
+        inventory_state: response.inventory_state,
+        inventory_confirmed_at: response.inventory_confirmed_at,
+        last_inventory_request_id: inventoryRequestIdRef.current,
+        last_inventory_dispense_record_id: dispenseRecordId
+      };
       window.dispatchEvent(new CustomEvent("zykh:medicine-updated", { detail: updatedMedicine }));
-      setInventoryMessage("已触发库存警告");
+      setInventoryConfirmedState(response.inventory_state);
+      setInventoryMessage(response.message || (observation === "DEPLETED" ? "已触发库存警告" : "已确认柜内还有药"));
       autoCloseTimerRef.current = window.setTimeout(cancelSession, 900);
     } catch (requestError) {
-      setInventoryMessage(requestError.message || "库存警告记录失败，请在设置中核对库存");
-      autoCloseTimerRef.current = window.setTimeout(cancelSession, 1800);
+      setInventoryError(requestError.message || "库存确认未保存，请重新选择或联系值守员核对");
     } finally {
       setInventoryUpdating(false);
     }
@@ -734,8 +773,10 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
             medicine={medicine}
             busy={inventoryUpdating}
             message={inventoryMessage}
-            onHasStock={cancelSession}
-            onDepleted={markMedicineDepleted}
+            error={inventoryError}
+            confirmedState={inventoryConfirmedState}
+            onHasStock={() => confirmInventory("HAS_REMAINING")}
+            onDepleted={() => confirmInventory("DEPLETED")}
           />
         ) : <div className="biometric-dispense-grid">
           <div className="dispense-summary-column">

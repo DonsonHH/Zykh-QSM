@@ -4,11 +4,16 @@ const {
   createMedicationSafetyEventModule,
 } = require("./medicationSafetyEvents");
 const { createMembershipModule } = require("./memberships");
+const {
+  legacyServiceUserDocumentId,
+  serviceUserDocumentId,
+  serviceUserIdentity,
+} = require("./serviceUserIdentity");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.6-station-pairing-notification-worker";
+const schemaRevision = "2.7-service-user-persona-tombstones";
 const capabilities = Object.freeze({
   medicationSafetyEvents: "v1",
   caregiverMembership: "v1",
@@ -18,6 +23,7 @@ const capabilities = Object.freeze({
   devicePairingIssue: "v1",
   caregiverNotificationOutbox: "v1",
   caregiverNotificationWorker: "v1",
+  serviceUserPersonaTombstones: "v1",
 });
 
 const collections = {
@@ -122,6 +128,27 @@ function cleanData(value) {
 
 function safeId(value) {
   return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
+}
+
+async function migrateExactLegacyServiceUserDocument(deviceId, row, canonicalId) {
+  const legacyId = legacyServiceUserDocumentId(deviceId, row);
+  if (legacyId === canonicalId) return;
+  let legacy;
+  try {
+    legacy = (await db.collection(collections.serviceUsers).doc(legacyId).get()).data || null;
+  } catch (error) {
+    return;
+  }
+  const { personId, generation } = serviceUserIdentity(row);
+  const legacyPersonId = String(firstPresent(legacy.id, legacy.user_id, legacy.userId) || "").trim();
+  const legacyGeneration = String(firstPresent(legacy.persona_generation, legacy.personaGeneration) || "").trim();
+  if (
+    String(legacy.deviceId || "").trim() === deviceId
+    && legacyPersonId === personId
+    && (!legacyGeneration || legacyGeneration === generation)
+  ) {
+    await db.collection(collections.serviceUsers).doc(legacyId).remove();
+  }
 }
 
 function normalizeVitals(vitals = {}) {
@@ -337,7 +364,7 @@ async function listAllDeviceRows(collection, deviceId, maximum = 2000) {
   return rows;
 }
 
-async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
+async function replaceDeviceRows(collection, deviceId, rows, idForRow, afterSet = null) {
   const ids = [];
   for (const row of rows || []) {
     const id = idForRow(row);
@@ -347,6 +374,7 @@ async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
       syncOwner: "zykh_station_app",
       updatedAt: nowText(),
     }));
+    if (afterSet) await afterSet(row, id);
   }
   const existing = await listAllDeviceRows(collection, deviceId);
   const keep = new Set(ids);
@@ -354,6 +382,18 @@ async function replaceDeviceRows(collection, deviceId, rows, idForRow) {
     .filter(item => item.syncOwner === "zykh_station_app" && !keep.has(item._id))
     .map(item => db.collection(collection).doc(item._id).remove()));
   return ids.length;
+}
+
+async function upsertDeviceRows(collection, deviceId, rows, idForRow) {
+  for (const row of rows || []) {
+    const id = idForRow(row);
+    await setDocument(collection, id, Object.assign(cleanData(row), {
+      deviceId,
+      syncOwner: "zykh_station_app",
+      updatedAt: nowText(),
+    }));
+  }
+  return (rows || []).length;
 }
 
 async function listRows(collection, deviceId, limit = 100, order = "updatedAt", direction = "desc") {
@@ -414,6 +454,13 @@ function commandToInquiry(command = {}) {
     sourceCommandId: commandId,
     target_user_id: firstPresent(payload.target_user_id, payload.user_id, ""),
     target_user_name: firstPresent(payload.target_user_name, payload.user_name, payload.patient_name, "家庭成员"),
+    persona_generation: firstPresent(
+      command.persona_generation,
+      command.personaGeneration,
+      payload.persona_generation,
+      payload.personaGeneration,
+      "",
+    ),
     title: question || "AI 问诊",
     topic: question || "AI 问诊",
     symptoms_summary: question || "AI 问诊",
@@ -486,9 +533,23 @@ function membershipScopes(membership = {}) {
     : [];
 }
 
+function membershipGenerations(membership = {}) {
+  const value = membership.service_user_generations || membership.serviceUserGenerations;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, generation]) => [String(key || "").trim(), String(generation || "").trim()])
+    .filter(([key, generation]) => key && generation));
+}
+
 function membershipHasPermission(membership = {}, permission) {
   return Array.isArray(membership.permissions)
     && membership.permissions.includes(permission);
+}
+
+function rowIsArchived(row = {}) {
+  return row.archived === true
+    || Number(row.archived) === 1
+    || String(row.archived || "").toLowerCase() === "true";
 }
 
 function rowPersonId(row = {}, kind = "") {
@@ -517,10 +578,29 @@ function rowPersonId(row = {}, kind = "") {
 }
 
 function rowsVisibleToMembership(rows, membership, kind = "") {
+  const publicRows = kind === "serviceUsers"
+    ? (rows || []).filter(row => !rowIsArchived(row))
+    : (rows || []);
   const scopes = membershipScopes(membership);
-  if (!scopes.length) return rows;
+  if (!scopes.length) return publicRows;
   const allowed = new Set(scopes);
-  return (rows || []).filter(row => allowed.has(rowPersonId(row, kind)));
+  const generations = membershipGenerations(membership);
+  return publicRows.filter(row => {
+    const personId = rowPersonId(row, kind);
+    if (!allowed.has(personId)) return false;
+    const expectedGeneration = generations[personId];
+    if (Object.keys(generations).length && !expectedGeneration) return false;
+    if (!expectedGeneration) return true;
+    const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+    const actualGeneration = String(firstPresent(
+      row.persona_generation,
+      row.personaGeneration,
+      payload.persona_generation,
+      payload.personaGeneration,
+    ) || "").trim();
+    if (!actualGeneration) return false;
+    return actualGeneration === expectedGeneration;
+  });
 }
 
 function deviceVisibleToMembership(device, membership) {
@@ -705,16 +785,22 @@ async function uploadSnapshot(data) {
     counts.medicines = await replaceDeviceRows(collections.medicines, deviceId, snapshot.medicines || [], row => `${deviceId}-slot-${Number(row.slot || row.hardware_slot || 0)}`);
   }
   if (Object.prototype.hasOwnProperty.call(snapshot, "serviceUsers")) {
-    counts.serviceUsers = await replaceDeviceRows(collections.serviceUsers, deviceId, snapshot.serviceUsers || [], row => `${deviceId}-user-${safeId(row.id || row.user_id || row.name)}`);
+    counts.serviceUsers = await replaceDeviceRows(
+      collections.serviceUsers,
+      deviceId,
+      snapshot.serviceUsers || [],
+      row => serviceUserDocumentId(deviceId, row),
+      (row, id) => migrateExactLegacyServiceUserDocument(deviceId, row, id),
+    );
   }
   if (Object.prototype.hasOwnProperty.call(snapshot, "plans")) {
     counts.plans = await replaceDeviceRows(collections.plans, deviceId, snapshot.plans || [], row => `${deviceId}-plan-${safeId(row.id)}`);
   }
   if (Object.prototype.hasOwnProperty.call(snapshot, "inquiries")) {
-    counts.inquiries = await replaceDeviceRows(collections.inquiries, deviceId, snapshot.inquiries || [], row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.session_id || row.id)}`);
+    counts.inquiries = await upsertDeviceRows(collections.inquiries, deviceId, snapshot.inquiries || [], row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.session_id || row.id)}`);
   }
   if (Object.prototype.hasOwnProperty.call(snapshot, "vitals")) {
-    counts.vitals = await replaceDeviceRows(collections.vitals, deviceId, snapshot.vitals || [], row => `${deviceId}-vitals-${safeId(row.id || row.measured_at || row.createdAt)}`);
+    counts.vitals = await upsertDeviceRows(collections.vitals, deviceId, snapshot.vitals || [], row => `${deviceId}-vitals-${safeId(row.id || row.measured_at || row.createdAt)}`);
   }
   if (Object.prototype.hasOwnProperty.call(snapshot, "records")) {
     counts.records = await replaceDeviceRows(collections.records, deviceId, snapshot.records || [], row => `${deviceId}-record-${safeId(row.id || row.created_at || row.createdAt)}`);
@@ -725,7 +811,7 @@ async function uploadSnapshot(data) {
 function snapshotKind(kind, deviceId) {
   const map = {
     medicines: [collections.medicines, row => `${deviceId}-slot-${Number(row.slot || row.hardware_slot || 0)}`],
-    serviceUsers: [collections.serviceUsers, row => `${deviceId}-user-${safeId(row.id || row.user_id || row.name)}`],
+    serviceUsers: [collections.serviceUsers, row => serviceUserDocumentId(deviceId, row)],
     plans: [collections.plans, row => `${deviceId}-plan-${safeId(row.id)}`],
     inquiries: [collections.inquiries, row => `${deviceId}-inquiry-${safeId(row.inquiry_id || row.session_id || row.id)}`],
     vitals: [collections.vitals, row => `${deviceId}-vitals-${safeId(row.id || row.measured_at || row.createdAt)}`],
@@ -757,11 +843,18 @@ async function upsertSnapshotBatch(data) {
       syncOwner: "zykh_station_app",
       updatedAt: nowText(),
     }));
+    if (data.kind === "serviceUsers") {
+      await migrateExactLegacyServiceUserDocument(data.deviceId, row, id);
+    }
   }
   return { kind: data.kind, ids, count: ids.length };
 }
 
 async function finalizeSnapshot(data) {
+  if (data.kind === "inquiries" || data.kind === "vitals") {
+    snapshotKind(data.kind, data.deviceId);
+    return { kind: data.kind, removed: 0, appendOnly: true };
+  }
   const [collection] = snapshotKind(data.kind, data.deviceId);
   const keep = new Set(data.ids || []);
   const existing = await listAllDeviceRows(collection, data.deviceId);
@@ -853,17 +946,21 @@ async function createCommand(data, wxContext, isHttp) {
     deviceId: data.deviceId,
     personId,
   });
-  if (
-    personScopedTypes.has(data.type)
-    && membershipScopes(membership).length
-    && !personId
-  ) throw new Error("NOT_FOUND");
+  if (personScopedTypes.has(data.type) && !personId) throw new Error("NOT_FOUND");
   if (!allowedCommandTypes.has(data.type)) throw new Error("unsupported command type");
-  if (data.type === "UPSERT_MEDICINE") validateMedicineCommand(data.payload || {});
+  const commandPayload = Object.assign({}, data.payload || {});
+  const personaGeneration = String(
+    membership.current_persona_generation || "",
+  ).trim();
+  if (personScopedTypes.has(data.type) && personaGeneration) {
+    commandPayload.persona_generation = personaGeneration;
+  }
+  if (data.type === "UPSERT_MEDICINE") validateMedicineCommand(commandPayload);
   const row = {
     deviceId: data.deviceId,
     type: data.type,
-    payload: data.payload || {},
+    payload: commandPayload,
+    persona_generation: personaGeneration,
     status: "pending",
     source: "miniprogram",
     sourceOpenId: wxContext.OPENID || "",
@@ -875,7 +972,7 @@ async function createCommand(data, wxContext, isHttp) {
     const requestPayloadDigest = canonicalPayloadDigest({
       deviceId: data.deviceId,
       type: data.type,
-      payload: data.payload || {},
+      payload: commandPayload,
     });
     row.requestPayloadDigest = requestPayloadDigest;
     if (typeof db.runTransaction !== "function") {

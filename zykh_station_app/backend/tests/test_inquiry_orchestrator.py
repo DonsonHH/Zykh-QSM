@@ -23,6 +23,7 @@ from app.schemas.inquiry import (  # noqa: E402
     InquiryVitalsRequest,
 )
 from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
+from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.dispense_service import DispenseError  # noqa: E402
 from app.services.inquiry_dialogue_policy import infer_question_topic  # noqa: E402
 from app.services.inquiry_orchestrator import InquiryOrchestrator  # noqa: E402
@@ -242,6 +243,31 @@ class FakeDispenseService:
         )
 
 
+class UnknownResultDispenseService(FakeDispenseService):
+    def confirm(self, request):
+        self.requests.append(request)
+        return DispenseConfirmResponse(
+            ok=False,
+            dry_run=False,
+            message="柜门结果待现场确认，请勿自动重试。",
+            record_id="record-unknown-1",
+            result_unknown=True,
+            retry_safe=False,
+        )
+
+
+class InventoryConfirmationDispenseService(FakeDispenseService):
+    def confirm(self, request):
+        self.requests.append(request)
+        return DispenseConfirmResponse(
+            ok=True,
+            dry_run=False,
+            message=f"{request.slot}号柜门已打开。",
+            record_id="record-needs-inventory-confirmation",
+            inventory_confirmation_required=True,
+        )
+
+
 class FakeGuestArchiveService:
     def __init__(self) -> None:
         self.requests = []
@@ -338,6 +364,45 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquirySessionCreateRequest(service_user_id=service_user_id)
         )
 
+    def trusted_vitals_request(
+        self,
+        session,
+        *,
+        temperature: float = 36.5,
+        heart_rate: int = 76,
+        spo2: int = 98,
+    ) -> InquiryVitalsRequest:
+        vitals_session_id = f"trusted-{session.session_id}"
+        VitalsRepository().append(
+            VitalsRecord(
+                id=f"vitals-session-{vitals_session_id}",
+                temperature=temperature,
+                heart_rate=heart_rate,
+                spo2=spo2,
+                status="available",
+                source="UART8-vitals-24B+GY-614",
+                measured_at="2026-08-10 12:00:00",
+                source_route="INQUIRY",
+                inquiry_session_id=session.session_id,
+                attribution_source="INQUIRY_SESSION",
+                service_user_id=session.user_id,
+                service_user_name_snapshot=session.user_name,
+                persona_generation=session.persona_generation,
+                temperature_source="gy614_sensor",
+                heart_rate_source="uart8_sensor",
+                spo2_source="uart8_sensor",
+            )
+        )
+        return InquiryVitalsRequest(
+            vitals_session_id=vitals_session_id,
+            temperature=temperature,
+            heart_rate=heart_rate,
+            spo2=spo2,
+            temperature_source="gy614_sensor",
+            heart_rate_source="uart8_sensor",
+            spo2_source="uart8_sensor",
+        )
+
     def test_orchestrator_rejects_bypassed_failed_demo_without_side_effects(self) -> None:
         service, interpreter = self.service([case(action="analyze")])
         session = self.create(service)
@@ -418,6 +483,50 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 (session.session_id,),
             ).fetchone()["count"]
         self.assertEqual(tool_messages, 0)
+
+    def test_complete_vitals_from_an_unbound_measurement_session_are_rejected(self) -> None:
+        service, _ = self.service(
+            [
+                case(
+                    action="measure_vitals",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="请先测量额温、心率和血氧。",
+                    used="未使用",
+                    allergy="无",
+                ),
+                case(
+                    action="ask",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="体征已经记录。",
+                    used="未使用",
+                    allergy="无",
+                ),
+            ]
+        )
+        session = self.create(service)
+        pending = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
+        )
+        self.assertEqual(pending.next_action, "measure_vitals")
+
+        with self.assertRaisesRegex(ValueError, "测量会话.*本次问询"):
+            service.attach_vitals(
+                session.session_id,
+                InquiryVitalsRequest(
+                    vitals_session_id="vitals-session-from-another-inquiry",
+                    temperature=36.5,
+                    heart_rate=76,
+                    spo2=98,
+                    temperature_source="gy614_sensor",
+                    heart_rate_source="uart8_sensor",
+                    spo2_source="uart8_sensor",
+                ),
+            )
+
+        self.assertIsNone(service.get_session(session.session_id).vitals)
 
     def test_registered_identity_is_loaded_once_per_session(self) -> None:
         service, _ = self.service([])
@@ -624,9 +733,18 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 ],
             },
         )
-        session = service.create_session(
-            InquirySessionCreateRequest(service_user_id="", guest_name="访客")
-        )
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status, persona_generation
+                ) VALUES (
+                  'vitals-flow-user', '体征流程测试人物', 66, '', '', '',
+                  '已登记', 'vitals-flow-persona-v1'
+                )
+                """
+            )
+        session = self.create(service, service_user_id="vitals-flow-user")
         for transcript in ("中暑头晕", "刚才在太阳下走了很久", "可以正常喝水", "还没量体温"):
             result = service.process_turn(
                 session.session_id,
@@ -652,14 +770,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         result = service.attach_vitals(
             session.session_id,
-            InquiryVitalsRequest(
-                status="complete",
+            self.trusted_vitals_request(
+                result,
                 temperature=36.4,
                 heart_rate=78,
                 spo2=98,
-                temperature_source="gy614_sensor",
-                heart_rate_source="uart8_sensor",
-                spo2_source="uart8_sensor",
             ),
         )
         self.assertEqual(result.next_action, "show_recommendation")
@@ -885,13 +1000,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         resumed = service.attach_vitals(
             session.session_id,
-            InquiryVitalsRequest(
+            self.trusted_vitals_request(
+                pending,
                 temperature=36.5,
                 heart_rate=76,
                 spo2=98,
-                temperature_source="gy614_sensor",
-                heart_rate_source="uart8_sensor",
-                spo2_source="uart8_sensor",
             ),
         )
 
@@ -1317,6 +1430,42 @@ class InquiryOrchestratorTest(unittest.TestCase):
             )
         self.assertEqual(revoked.exception.status_code, 409)
         self.assertEqual(len(dispense.requests), 1)
+
+    def test_inquiry_transport_unknown_is_preserved_with_stable_action_identity(self) -> None:
+        dispense = UnknownResultDispenseService()
+        service, _interpreter = self.service(
+            [low_risk_watery_diarrhea_interpretation()],
+            ranking=echo_authorized_diarrhea_combination,
+            dispense=dispense,
+        )
+        session = self.create(service, service_user_id="wang-nainai")
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript=GROUNDED_DIARRHEA_TRANSCRIPT),
+        )
+        option = result.treatment_options[0]
+
+        confirmed = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id=option.option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+
+        self.assertFalse(confirmed.ok)
+        self.assertEqual(confirmed.status, "failed")
+        self.assertTrue(confirmed.result_unknown)
+        self.assertFalse(confirmed.retry_safe)
+        self.assertTrue(confirmed.items[0].result_unknown)
+        self.assertFalse(confirmed.items[0].retry_safe)
+        self.assertIn("现场确认", confirmed.items[0].message)
+        self.assertIn("请勿自动重试", confirmed.message)
+        self.assertEqual(
+            dispense.requests[0].request_id,
+            f"{session.session_id}:{option.option_id}:0",
+        )
 
     def test_fabricated_red_flag_absences_do_not_authorize_a_real_combination(
         self,
@@ -1903,6 +2052,54 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(response.status, "complete")
         self.assertEqual(dispense.requests[0].medicine_id, "slot-08-huoxiang-zhengqi")
 
+    def test_real_inquiry_dispense_exposes_required_inventory_confirmation(self) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud",
+            "options": [
+                {
+                    "medicine_ids": ["slot-08-huoxiang-zhengqi"],
+                    "label": "主方案",
+                    "reason": "更贴近当前的暑湿不适。",
+                }
+            ],
+        }
+        dispense = InventoryConfirmationDispenseService()
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="暑湿不适",
+                    evidence="头晕恶心",
+                    duration="半天",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+            dispense=dispense,
+        )
+        session = self.create(service)
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="头晕恶心半天，没用药，没有过敏"),
+        )
+
+        response = service.confirm_treatment(
+            session.session_id,
+            InquiryTreatmentConfirmRequest(
+                option_id=result.treatment_options[0].option_id,
+                confirmed_safety_notice=True,
+                expected_item_index=0,
+            ),
+        )
+
+        self.assertTrue(response.items[0].inventory_confirmation_required)
+        self.assertEqual(
+            response.items[0].record_id,
+            "record-needs-inventory-confirmation",
+        )
+
     def test_inventory_change_after_display_fails_closed_before_hardware(self) -> None:
         ranking = {
             "ok": True,
@@ -2444,6 +2641,61 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertTrue(history)
         self.assertIn("case_summary", history[0])
         self.assertNotIn("dimension_counts", history[0])
+
+    def test_model_recent_history_is_scoped_to_the_current_persona_generation(self) -> None:
+        old_service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="旧代次症状",
+                    evidence="旧代次症状持续两天",
+                    duration="两天",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking={"ok": True, "source": "cloud", "options": []},
+        )
+        old_session = self.create(old_service, service_user_id="li-yeye")
+        old_service.process_turn(
+            old_session.session_id,
+            InquiryTurnRequest(transcript="旧代次症状持续两天，没用药，没有过敏"),
+        )
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE service_users SET persona_generation='senior-demo-v2' WHERE id='li-yeye'"
+            )
+
+        current_service, current_interpreter = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="新代次症状",
+                    evidence="新代次症状持续一天",
+                    duration="一天",
+                    used="未使用",
+                    allergy="无",
+                ),
+                case(action="ask", reply="请继续说明这次的不适。"),
+            ],
+            ranking={"ok": True, "source": "cloud", "options": []},
+        )
+        first_current = self.create(current_service, service_user_id="li-yeye")
+        current_service.process_turn(
+            first_current.session_id,
+            InquiryTurnRequest(transcript="新代次症状持续一天，没用药，没有过敏"),
+        )
+        second_current = self.create(current_service, service_user_id="li-yeye")
+        current_service.process_turn(
+            second_current.session_id,
+            InquiryTurnRequest(transcript="这次又有一点不舒服"),
+        )
+
+        self.assertEqual(current_interpreter.contexts[0]["recent_history"], [])
+        later_history = current_interpreter.contexts[1]["recent_history"]
+        self.assertEqual(len(later_history), 1)
+        self.assertIn("新代次症状", later_history[0]["case_summary"])
+        self.assertNotIn("旧代次症状", str(later_history))
 
     def test_confirmation_still_requires_explicit_safety_acknowledgement(self) -> None:
         service, _ = self.service([])

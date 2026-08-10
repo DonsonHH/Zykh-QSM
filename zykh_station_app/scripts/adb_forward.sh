@@ -11,8 +11,6 @@ VITALS_HOST_PORT="${QSM_VITALS_FORWARD_HOST_PORT:-18085}"
 VITALS_DEVICE_PORT="${QSM_VITALS_FORWARD_DEVICE_PORT:-8085}"
 FINGERPRINT_HOST_PORT="${QSM_FINGERPRINT_FORWARD_HOST_PORT:-18086}"
 FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
-LOCAL_AI_HOST_PORT="${QSM_LOCAL_AI_FORWARD_HOST_PORT:-18083}"
-LOCAL_AI_DEVICE_PORT="${QSM_LOCAL_AI_FORWARD_DEVICE_PORT:-8083}"
 LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
 LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 AUDIO_STREAM_HOST_PORT="${QSM_AUDIO_STREAM_HOST_PORT:-19001}"
@@ -84,11 +82,6 @@ if $ADB_PREFIX forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1; 
     ok "指纹识别端口转发已建立：127.0.0.1:${FINGERPRINT_HOST_PORT}。"
   else
     warn "指纹识别端口转发失败，其他外设仍可继续使用。"
-  fi
-  if $ADB_PREFIX forward "tcp:${LOCAL_AI_HOST_PORT}" "tcp:${LOCAL_AI_DEVICE_PORT}" >/dev/null 2>&1; then
-    ok "离线模型端口转发已建立：127.0.0.1:${LOCAL_AI_HOST_PORT}。"
-  else
-    warn "离线模型端口转发失败，云端与安全规则仍可继续使用。"
   fi
   if $ADB_PREFIX shell 'test -x /userdata/zykh_app/scripts/start_asr_service.sh' >/dev/null 2>&1; then
     $ADB_PREFIX shell '/userdata/zykh_app/scripts/start_asr_service.sh start' >/dev/null 2>&1 \

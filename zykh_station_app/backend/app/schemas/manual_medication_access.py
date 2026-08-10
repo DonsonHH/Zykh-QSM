@@ -55,6 +55,7 @@ class ManualMedicationOutcome(BaseModel):
     dispense_status: DispenseStatus
     message: str
     dispense_record_id: str = ""
+    inventory_confirmation_required: bool = False
 
 
 class ManualDispenseExecutionCommand(BaseModel):
@@ -80,3 +81,4 @@ class ManualDispenseExecutionResult(BaseModel):
     dispense_status: Literal["DISPENSED", "HARDWARE_FAILED", "RESULT_UNKNOWN"]
     message: str
     dispense_record_id: str = ""
+    inventory_confirmation_required: bool = False

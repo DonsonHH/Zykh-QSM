@@ -11,11 +11,26 @@ const vitalsAdapter = await readFile(`${root}src/adapters/vitalsSessionAdapter.j
 const sessionUtils = await readFile(`${root}src/utils/inquirySession.js`, "utf8");
 
 assert.match(inquiry, /<Vitals\s+embedded/, "AI inquiry must render vitals as an embedded tool step");
+assert.match(
+  inquiry,
+  /<Vitals\s+embedded[\s\S]*sourceRoute="INQUIRY"[\s\S]*inquirySessionId=\{sessionId\}/,
+  "AI inquiry vitals must bind measurement ownership to the server-side inquiry session"
+);
 assert.match(inquiry, /onReplyPlaybackStart=\{handleReplyPlaybackStart\}/, "vitals opens without a playback start signal");
 assert.match(inquiry, /3000/, "vitals must open three seconds after spoken guidance starts");
 assert.doesNotMatch(inquiry, /InquiryVitalsTransition/, "AI inquiry still renders an intermediate vitals page");
 assert.doesNotMatch(inquiry, /setVitalsFlow\("transition"\)/, "AI inquiry still enters the intermediate transition state");
 assert.match(inquiry, /status:\s*"complete"/, "complete vitals are not attached to the active inquiry session");
+assert.match(
+  inquiry,
+  /vitals_session_id:\s*vitals\.session_id/,
+  "complete vitals do not carry the server-issued measurement session identity"
+);
+assert.match(
+  vitalsSession,
+  /vitals_session_id:\s*result\?\.session_id[\s\S]*onExit/,
+  "failed vitals do not preserve their measurement session identity"
+);
 assert.match(inquiry, /"failed"\s*:\s*"cancelled"/, "failed and cancelled measurements do not return to AI");
 assert.match(inquiry, /setVitalsFlow\("processing"\)/, "vitals handoff does not leave the completed measurement immediately");
 assert.match(inquiry, /inquiry-vitals-handoff[\s\S]*正在整理体征与问询信息/, "vitals handoff has no visible pending state");
@@ -45,6 +60,11 @@ assert.match(
 assert.match(vitalsSession, /onExit\?\.\(\{\s*status:\s*"cancelled"/, "cancelled vitals do not return to AI");
 assert.match(vitalsSession, /prepareQsmVitals/, "shared vitals session module does not own device prewarm");
 assert.match(vitalsSession, /startVitalsSession/, "shared vitals session module does not own measurement start");
+assert.match(
+  vitalsSession,
+  /startVitalsSession\(\{[\s\S]*sourceRoute,[\s\S]*inquirySessionId/,
+  "vitals start does not forward the attribution route and inquiry session"
+);
 assert.match(vitalsSession, /loadVitalsSession/, "shared vitals session module does not own session polling");
 assert.match(vitalsAdapter, /cancelVitalsSession/, "vitals session adapter does not own cancellation transport");
 assert.match(vitals, /useVitalsSession/, "Vitals page does not consume the shared session module");

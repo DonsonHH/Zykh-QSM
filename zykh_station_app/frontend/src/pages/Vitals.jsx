@@ -126,6 +126,8 @@ export function Vitals({
   returnPage = "home",
   notify,
   embedded = false,
+  sourceRoute = "HOME",
+  inquirySessionId = "",
   onComplete,
   onExit
 }) {
@@ -139,7 +141,14 @@ export function Vitals({
     measure,
     cancel,
     exitEmbedded
-  } = useVitalsSession({ embedded, notify, onComplete, onExit });
+  } = useVitalsSession({
+    embedded,
+    sourceRoute,
+    inquirySessionId,
+    notify,
+    onComplete,
+    onExit
+  });
 
   const status = useMemo(() => describeVitals(result, errorMessage, phase), [errorMessage, phase, result]);
   const auxiliaryMetrics = useMemo(() => buildAuxiliaryMetrics(result), [result]);

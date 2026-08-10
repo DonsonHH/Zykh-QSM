@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -40,6 +42,10 @@ class Medicine(BaseModel):
     safety_reviewed_at: str = ""
     review_fingerprint: str = ""
     dispense_count: int = 0
+    inventory_state: Literal["AVAILABLE", "DEPLETED", "UNKNOWN"] = "UNKNOWN"
+    inventory_confirmed_at: str = ""
+    last_inventory_request_id: str = ""
+    last_inventory_dispense_record_id: str = ""
 
 
 class MedicineListResponse(BaseModel):
@@ -82,6 +88,24 @@ class MedicineUpdateResponse(BaseModel):
     ok: bool = True
     message: str
     medicine: Medicine
+
+
+class MedicineInventoryConfirmationRequest(BaseModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    dispense_record_id: str = Field(min_length=1, max_length=128)
+    observation: Literal["HAS_REMAINING", "DEPLETED"]
+
+
+class MedicineInventoryConfirmationResponse(BaseModel):
+    ok: bool = True
+    replayed: bool = False
+    medicine_id: str
+    dispense_record_id: str
+    observation: Literal["HAS_REMAINING", "DEPLETED"]
+    stock: int
+    inventory_state: Literal["AVAILABLE", "DEPLETED", "UNKNOWN"]
+    inventory_confirmed_at: str
+    message: str
 
 
 class MedicineCombinationApplicability(BaseModel):

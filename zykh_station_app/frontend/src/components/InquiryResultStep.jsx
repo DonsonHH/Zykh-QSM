@@ -16,6 +16,7 @@ import {
   X
 } from "lucide-react";
 import { RiskBadge } from "./RiskBadge.jsx";
+import { MedicineRemainingPrompt } from "./MedicineRemainingPrompt.jsx";
 import { aiSourcePresentation } from "../utils/ai.js";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
@@ -33,7 +34,12 @@ export function InquiryResultStep({
   result,
   opening,
   actionResult,
+  inventoryConfirmation,
+  inventoryConfirmationBusy,
+  inventoryConfirmationError,
   onConfirmTreatment,
+  onInventoryHasStock,
+  onInventoryDepleted,
   onRestart,
   onHome
 }) {
@@ -45,7 +51,7 @@ export function InquiryResultStep({
   const actionStatus = actionResult?.status || result?.action_status || "idle";
   const actionMessage = actionResult?.message || result?.action_message || "";
   const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
-  const actionFinished = terminalStatuses.has(actionStatus);
+  const actionFinished = terminalStatuses.has(actionStatus) && !inventoryConfirmation;
   const activelyOpening = opening;
   const resumePending = !opening && actionStatus === "opening";
   const selectedOption = useMemo(
@@ -115,7 +121,7 @@ export function InquiryResultStep({
   }, [countdown, onConfirmTreatment, selectedOptionId]);
 
   function beginConfirmation() {
-    if (!selectedOptionId || activelyOpening || actionFinished) return;
+    if (!selectedOptionId || activelyOpening || inventoryConfirmation || actionFinished) return;
     const cabinetText = selectedOption?.medicines?.map((medicine) => `${medicine.slot}号柜`).join("、") || "对应药柜";
     playResultSpeech(
       `方案已确认，三秒后将依次打开${cabinetText}，请准备取药。`,
@@ -131,7 +137,7 @@ export function InquiryResultStep({
           {result?.risk_level === "low" ? <ShieldCheck size={38} /> : <AlertTriangle size={38} />}
         </span>
         <div>
-          <h2>{requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
+          <h2>{inventoryConfirmation ? "请确认柜内库存" : requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
         </div>
         <div className="treatment-result-meta">
           <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
@@ -140,7 +146,19 @@ export function InquiryResultStep({
       </header>
 
       <div className={`treatment-result-body ${showAssessment ? "with-assessment" : ""}`}>
-        {medicationSafetyNotices.length ? (
+        {inventoryConfirmation ? (
+          <section className="inquiry-inventory-confirmation" aria-label="本次取药库存确认">
+            <MedicineRemainingPrompt
+              medicine={inventoryConfirmation}
+              busy={inventoryConfirmationBusy}
+              error={inventoryConfirmationError}
+              onHasStock={onInventoryHasStock}
+              onDepleted={onInventoryDepleted}
+            />
+          </section>
+        ) : (
+          <>
+          {medicationSafetyNotices.length ? (
           <section className="medication-safety-notices" aria-label="用药安全核验提醒">
             <header><AlertTriangle size={19} aria-hidden="true" /><strong>用药安全核验提醒</strong></header>
             <ul>
@@ -205,13 +223,15 @@ export function InquiryResultStep({
           </div>
         )}
 
-        {showAssessment ? (
-          <ClinicalAssessmentCard assessment={assessment} riskLevel={result?.risk_level} />
-        ) : null}
+          {showAssessment ? (
+            <ClinicalAssessmentCard assessment={assessment} riskLevel={result?.risk_level} />
+          ) : null}
+          </>
+        )}
       </div>
 
       <div className="treatment-result-footer-row">
-        {canProceed && !actionFinished ? (
+        {!inventoryConfirmation && canProceed && !actionFinished ? (
           <div className="treatment-confirm-bar with-notice">
             <div className="treatment-confirm-notice">
               <ShieldCheck size={20} />

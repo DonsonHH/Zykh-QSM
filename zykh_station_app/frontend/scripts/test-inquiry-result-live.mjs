@@ -51,7 +51,7 @@ const sessionFixture = {
   can_view_medicines: true,
   action_status: "ready",
   action_progress_index: 0,
-  action_total_items: 1,
+  action_total_items: 2,
   action_items: [],
   selected_option_id: "",
   messages: [],
@@ -111,6 +111,20 @@ const sessionFixture = {
           recommended_usage: "开水冲服，一次1至2袋，一日2次",
           match_reason: "针对你吞咽时明显的咽喉疼痛",
           requires_existing_direction: false
+        },
+        {
+          id: "slot-22-cotton-swab",
+          name: "医用棉签",
+          category: "外用护理",
+          slot: "22",
+          stock: 1,
+          unit: "包",
+          safety_note: "仅供外用",
+          indications: "用于局部清洁",
+          dosage: "按需外用",
+          recommended_usage: "按需外用",
+          match_reason: "用于辅助局部护理",
+          requires_existing_direction: false
         }
       ]
     },
@@ -144,6 +158,8 @@ let socket;
 let nextMessageId = 0;
 let interceptionError = null;
 const pending = new Map();
+const treatmentRequests = [];
+const inventoryRequests = [];
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -152,6 +168,7 @@ function delay(milliseconds) {
 async function fulfillApiRequest({ requestId, request }) {
   const url = new URL(request.url);
   let payload = { ok: true };
+  let responseCode = 200;
   if (url.pathname === "/api/dashboard") {
     payload = mockDashboard;
   } else if (url.pathname === "/api/network/status") {
@@ -175,12 +192,108 @@ async function fulfillApiRequest({ requestId, request }) {
     payload = sessionFixture;
   } else if (url.pathname === "/api/inquiry/sessions/qa-inquiry-result/information") {
     payload = { ...sessionFixture, updated_at: "2026-08-08T12:00:01+08:00" };
+  } else if (url.pathname === "/api/inquiry/sessions/qa-inquiry-result/treatment/confirm") {
+    const body = JSON.parse(request.postData || "{}");
+    treatmentRequests.push(body);
+    if (body.expected_item_index === 0) {
+      const item = {
+        medicine_id: "slot-07-yinhuang",
+        medicine_name: "银黄颗粒",
+        slot: "7",
+        ok: true,
+        dry_run: false,
+        message: "7号柜门已打开。",
+        record_id: "qa-dispense-record-1",
+        inventory_confirmation_required: true,
+        result_unknown: false,
+        retry_safe: true
+      };
+      const session = {
+        ...sessionFixture,
+        selected_option_id: "A",
+        action_status: "opening",
+        action_progress_index: 1,
+        action_items: [item]
+      };
+      payload = {
+        ok: true,
+        status: "opening",
+        option_id: "A",
+        message: "已打开 1/2：7号柜；下一步打开 22号柜。",
+        items: [item],
+        completed_count: 1,
+        total_count: 2,
+        next_medicine: sessionFixture.treatment_options[0].medicines[1],
+        session
+      };
+    } else {
+      const firstItem = {
+        medicine_id: "slot-07-yinhuang",
+        medicine_name: "银黄颗粒",
+        slot: "7",
+        ok: true,
+        dry_run: false,
+        message: "7号柜门已打开。",
+        record_id: "qa-dispense-record-1",
+        inventory_confirmation_required: true,
+        result_unknown: false,
+        retry_safe: true
+      };
+      const dryRunItem = {
+        medicine_id: "slot-22-cotton-swab",
+        medicine_name: "医用棉签",
+        slot: "22",
+        ok: true,
+        dry_run: true,
+        message: "本地测试记录已完成。",
+        record_id: "qa-dispense-record-2",
+        inventory_confirmation_required: false,
+        result_unknown: false,
+        retry_safe: true
+      };
+      const items = [firstItem, dryRunItem];
+      payload = {
+        ok: true,
+        status: "complete",
+        option_id: "A",
+        message: "方案 A 的 1 个药柜已按顺序完成开柜。",
+        items,
+        completed_count: 2,
+        total_count: 2,
+        next_medicine: null,
+        session: {
+          ...sessionFixture,
+          selected_option_id: "A",
+          action_status: "complete",
+          action_progress_index: 2,
+          action_items: items
+        }
+      };
+    }
+  } else if (url.pathname === "/api/medicines/slot-07-yinhuang/inventory-confirmation") {
+    const body = JSON.parse(request.postData || "{}");
+    inventoryRequests.push(body);
+    if (inventoryRequests.length === 1) {
+      responseCode = 503;
+      payload = { detail: "库存确认暂未保存，请重试" };
+    } else {
+      payload = {
+        ok: true,
+        medicine_id: "slot-07-yinhuang",
+        dispense_record_id: "qa-dispense-record-1",
+        observation: body.observation,
+        stock: 1,
+        inventory_state: "AVAILABLE",
+        inventory_confirmed_at: "2026-08-08T12:01:00+08:00",
+        message: "已确认柜内还有药"
+      };
+    }
   } else if (url.pathname === "/api/qsm/capabilities") {
     payload = { camera: "unavailable", vitals: "available" };
   }
   await cdp("Fetch.fulfillRequest", {
     requestId,
-    responseCode: 200,
+    responseCode,
     responseHeaders: [{ name: "Content-Type", value: "application/json; charset=utf-8" }],
     body: Buffer.from(JSON.stringify(payload)).toString("base64")
   });
@@ -368,7 +481,57 @@ try {
     }
   }
 
+  const confirmationFlow = await evaluate(`(async () => {
+    const waitFor = async (predicate, label) => {
+      const deadline = performance.now() + 9000;
+      while (performance.now() < deadline) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Timed out waiting for ' + label);
+    };
+    document.querySelector('.treatment-open-button').click();
+    const prompt = await waitFor(
+      () => document.querySelector('.inquiry-inventory-confirmation .medicine-remaining-prompt'),
+      'explicit inventory confirmation after the first cabinet'
+    );
+    const hasStock = () => [...prompt.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('还有药'));
+    hasStock().click();
+    const error = await waitFor(
+      () => prompt.querySelector('[role="alert"]'),
+      'retryable inventory error'
+    );
+    const failureStayedOnPrompt = Boolean(
+      document.querySelector('.inquiry-inventory-confirmation')
+      && error.textContent.includes('请重试')
+    );
+    hasStock().click();
+    const complete = await waitFor(
+      () => document.querySelector('.treatment-action-result.complete'),
+      'automatic continuation after explicit inventory confirmation'
+    );
+    return {
+      failureStayedOnPrompt,
+      completed: complete.textContent.includes('完成开柜'),
+      promptCleared: !document.querySelector('.inquiry-inventory-confirmation')
+    };
+  })()`);
+
   if (interceptionError) throw interceptionError;
+  assert.equal(confirmationFlow.failureStayedOnPrompt, true, "inventory API failure did not stay on the explicit confirmation prompt");
+  assert.equal(confirmationFlow.completed, true, "dry-run or no-confirmation item did not continue automatically after explicit confirmation");
+  assert.equal(confirmationFlow.promptCleared, true, "inventory prompt remained after a successful explicit confirmation");
+  assert.deepEqual(
+    treatmentRequests.map((request) => request.expected_item_index),
+    [0, 1],
+    "the first cabinet was repeated or the next cabinet started before inventory confirmation"
+  );
+  assert.equal(inventoryRequests.length, 2, "failed inventory confirmation was not retried exactly once");
+  assert.equal(inventoryRequests[0].request_id, inventoryRequests[1].request_id, "inventory retry changed its idempotency key");
+  assert.equal(inventoryRequests[0].dispense_record_id, "qa-dispense-record-1", "inventory confirmation lost the dispense record identity");
+  assert.equal(inventoryRequests[0].observation, "HAS_REMAINING", "inventory confirmation changed the explicit operator observation");
   for (const result of measurements) {
     assert.ok(result.flow.left >= 0 && result.flow.right <= result.viewport.width + 1, "inquiry flow exceeds the viewport horizontally");
     assert.ok(result.flow.top >= 0 && result.flow.bottom <= result.viewport.height + 1, "inquiry flow exceeds the viewport vertically");

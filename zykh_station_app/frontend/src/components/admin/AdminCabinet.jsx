@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { DoorOpen, Package, RefreshCw, Save } from "lucide-react";
-import { loadAdminMedicines, openAdminCabinet, updateAdminMedicine } from "../../api/admin.js";
+import {
+  clearAdminCabinetRequestId,
+  loadAdminMedicines,
+  openAdminCabinet,
+  pendingAdminCabinetRequestId,
+  updateAdminMedicine
+} from "../../api/admin.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
 
 const EMPTY_MEDICINE = {
@@ -71,10 +77,12 @@ export function AdminCabinet({ notify, onSessionExpired }) {
 
   function openDoor(value) {
     setBusy(true);
-    openAdminCabinet(selectedSlot, value)
+    const requestId = pendingAdminCabinetRequestId(selectedSlot);
+    openAdminCabinet(selectedSlot, value, "管理员调试开柜", requestId)
       .then((result) => {
         notify(result.message || (result.ok ? `${selectedSlot} 号柜已打开` : "开柜失败"));
-        if (result.ok) setConfirmOpen(false);
+        if (!result.result_unknown) clearAdminCabinetRequestId(selectedSlot);
+        if (result.ok || result.result_unknown) setConfirmOpen(false);
       })
       .catch(handleError)
       .finally(() => setBusy(false));

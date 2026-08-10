@@ -6865,6 +6865,13 @@ a:focus-visible {
   font-weight: 800;
 }
 
+.user-inquiry-history-reasons {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 .user-inquiry-history-load-more {
   min-height: 50px;
   border: 1px solid #bcd0e7;

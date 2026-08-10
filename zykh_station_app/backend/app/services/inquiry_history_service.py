@@ -56,6 +56,8 @@ class InquiryHistoryService:
         user_id: str,
         current_session_id: str,
         _legacy_dimensions: list[str] | None = None,
+        *,
+        persona_generation: str = "",
     ) -> InquiryHistoryContext:
         if not user_id:
             return InquiryHistoryContext()
@@ -63,6 +65,7 @@ class InquiryHistoryService:
             self._history_item(session)
             for session in self.repository.list_user_sessions(
                 user_id,
+                persona_generation=persona_generation,
                 exclude_session_id=current_session_id,
                 limit=6,
             )

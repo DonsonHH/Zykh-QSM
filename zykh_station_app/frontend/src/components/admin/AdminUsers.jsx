@@ -140,7 +140,7 @@ export function AdminUsers({ notify, onSessionExpired }) {
                 </div>
               )}
               <footer className="admin-editor-actions">
-                {!creating && <button type="button" className="admin-button danger ghost" onClick={() => setConfirm({ kind: "delete-user", title: "删除服务对象", expected: `DELETE ${selected.name}`, description: "基础资料和生物识别绑定将被删除，既有取药记录保留。", action: (value) => deleteAdminUser(selected.id, value), success: "服务对象已删除" })}><Trash2 size={17} />删除</button>}
+                {!creating && <button type="button" className="admin-button danger ghost" onClick={() => setConfirm({ kind: "delete-user", title: "归档服务对象", expected: `DELETE ${selected.name}`, description: "人物和计划将归档，生物识别绑定将删除；既有问询与取药记录保留。", action: (value) => deleteAdminUser(selected.id, value), success: "服务对象已归档" })}><Trash2 size={17} />归档</button>}
                 {creating && <button type="button" className="admin-button secondary" onClick={() => { setCreating(false); setSelectedId(data.users[0]?.id || ""); }}>取消</button>}
                 <button type="button" className="admin-button primary" onClick={save} disabled={busy || !form.name.trim()}><Save size={17} />{busy ? "保存中" : "保存资料"}</button>
               </footer>

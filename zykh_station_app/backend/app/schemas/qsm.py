@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QsmStatus(BaseModel):
@@ -110,10 +112,20 @@ class VitalsSessionResponse(BaseModel):
     historical_spo2: int | None = None
     historical_source: str | None = None
     historical_measured_at: str | None = None
+    source_route: Literal["HOME", "INQUIRY"] = "HOME"
+    inquiry_session_id: str = ""
+    attribution_source: Literal["UNREGISTERED", "INQUIRY_SESSION"] = "UNREGISTERED"
+    service_user_id: str = ""
+    service_user_name_snapshot: str = ""
+    persona_generation: str = ""
 
 
 class VitalsSessionStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     replace_active: bool = True
+    source_route: Literal["HOME", "INQUIRY"] = "HOME"
+    inquiry_session_id: str = ""
 
 
 class QsmCameraRecognition(BaseModel):
