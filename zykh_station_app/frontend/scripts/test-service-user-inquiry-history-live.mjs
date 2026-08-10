@@ -108,7 +108,7 @@ async function fulfillApiRequest({ requestId, request }) {
           title: "头晕问询",
           case_summary: "午后短暂头晕，休息后缓解",
           risk_level: "low",
-          risk_label: "低风险",
+          risk_label: "核验完成",
           risk_reasons: ["未触发硬性危险信号"],
           outcome: "建议基础护理和观察",
           no_medicine_reason: "未找到与当前症状相关且通过核验的候选药品",
@@ -322,6 +322,8 @@ try {
   const pagedSummary = await evaluate(`document.querySelector('[role="dialog"]')?.innerText || ''`);
   assert.match(pagedSummary, /咳嗽复查/, "load more replaced the first page");
   assert.match(pagedSummary, /头晕问询/, "load more did not append the second page");
+  assert.match(pagedSummary, /核验完成/, "normal history does not show the completed-check label");
+  assert.doesNotMatch(pagedSummary, /低风险/, "normal history still exposes the internal low-risk state");
   assert.match(pagedSummary, /未提供药品原因/, "summary does not label the no-medicine reason");
   assert.match(
     pagedSummary,

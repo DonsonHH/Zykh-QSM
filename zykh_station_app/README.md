@@ -33,7 +33,7 @@
 
 ## 安全边界
 
-系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。低风险和中风险可展示通过库存、有效期与禁忌核验的 OTC 药品；处方药只有在该服务对象当天已有待执行用药计划时才进入候选，并在开柜时再次核验同一计划。每次最多展示一个优先方案和一个备选方案；高风险和紧急风险不展示方案，并提示联系医生或救援人员。模型负责整理证据、提出下一步动作并在已通过硬性安全过滤的候选内生成分析与排序；危险信号拦截、候选准入、禁忌复核和开柜权限仍由本地确定性规则控制。用户选择一个互斥方案、确认安全提示并完成 3 秒可取消倒计时后，后端会再次核验当前状态，再通过既有开柜服务执行所选方案。该流程不替代诊断或处方。
+系统只提供应急问询、风险提示、药品信息匹配、禁忌核验、取药确认和安全出药执行能力。未触发高风险或紧急风险拦截时，只要存在通过相关性、库存、有效期与禁忌核验的药品，结果页就展示可取药方案；没有合适药品时明确说明未匹配到方案。处方药只有在该服务对象当天已有待执行用药计划时才进入候选，并在开柜时再次核验同一计划。每次最多展示一个优先方案和一个备选方案；高风险和紧急风险不展示方案，并提示联系医生或救援人员。模型负责整理证据、提出下一步动作并在已通过硬性安全过滤的候选内生成分析与排序；危险信号拦截、候选准入、禁忌复核和开柜权限仍由本地确定性规则控制。用户选择一个互斥方案、确认安全提示并完成 3 秒可取消倒计时后，后端会再次核验当前状态，再通过既有开柜服务执行所选方案。该流程不替代诊断或处方。
 
 ## 运行方式
 
@@ -134,7 +134,7 @@ sh scripts/open_kiosk.sh
 ## 微信小程序与云同步
 
 FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和真实取药记录，并拉取允许的非开柜命令。心跳中的近期问询只发送摘要和消息数；完整数据走独立快照集合。一次人物—药品核查只对应一条稳定安全事件：拦截/核查失败在核查终态进入 append-only outbox，通过项则等开柜终态后把核查与物理结果合并上报为同一条 `medication_safety_events`，不会混入取药记录，也不会被 `FINALIZE_SNAPSHOT` 删除。网络中断不影响本地拦截，恢复后按 `event_id + payload_digest` 幂等补传。
-每次真实开柜后必须由现场用户明确选择“还有药/已经用完”，并与本次真实取药记录一起写入幂等库存确认账本；倒计时结束不会替用户推定库存。最后一个计数被取用但尚未确认时为 `UNKNOWN`，不会直接伪装成缺货。首页体征保持未归属，问询内体征则由后端按持久化会话绑定人物和 `persona_generation`。问询与体征上传的是有界历史窗口，因此只追加/更新，绝不对这两类调用 `FINALIZE_SNAPSHOT` 删除窗口外旧记录。
+固定 23 仓的库存值表示“是否还有药”，不是逐盒递减计数：正常状态稳定为 `stock=1 / AVAILABLE`，真实开柜不会自动减为零。现场用户可在确认页明确选择“还有药/已经用完”；前者保持 1，只有后者把库存写为 `stock=0 / DEPLETED`。确认操作与本次真实取药记录一起写入幂等账本，倒计时结束不会替用户判断已经用完。首页体征保持未归属，问询内体征则由后端按持久化会话绑定人物和 `persona_generation`。问询与体征上传的是有界历史窗口，因此只追加/更新，绝不对这两类调用 `FINALIZE_SNAPSHOT` 删除窗口外旧记录。
 CloudBase 2.7 要求所有健康数据读取先通过 ACTIVE membership，并按人物范围隔离人物、计划、问询、记录、体征和安全事件；安全事件还要求 `READ_SAFETY`。人物同步同时发送活动人物与带稳定 `persona_generation` 的归档 tombstone，云文档 canonical key 绑定设备、人物和代次，普通快照与摘要只公开未归档人物；计划、取药记录、问询、体征与安全事件也携带生成时的人物代次。旧无 `syncOwner` 的人物键仅在设备和人物精确匹配时迁移。新版配对与 membership 绑定签发时的活动人物代次；读取、人物命令和通知收件人都会重验完全一致的代次，缺失或不一致时失败关闭，不能因复用同一人物 ID 自动继承新档案。问询详情沿用同一范围，越权不泄露是否存在。通用命令的 request ID 在事务中绑定请求摘要，只读家属不能下发命令。小程序侧只有只读安全事件能力；`OPEN_CABINET` 已从云端允许列表、内嵌 helper 和板端执行器中移除，历史命令也会失败关闭且不触碰 QSM。Station 上报必须携带服务端配置的设备密钥，缺少密钥时失败关闭。
 受保护的 Station 管理台可按服务对象生成一次性、限时家属配对码；原文只在当前页面显示一次，云端仅保存 SHA-256，并固定授予受范围约束的只读权限。签发要求 `DEVICE_SECRETS` 中存在当前设备的独立密钥，并写管理员审计但不记录原码。微信端仍只用当前 OPENID 兑换，调用者输入的 deviceId、角色或权限不构成授权。
 安全事件上报会为当时有效的家属幂等写入最小化通知 outbox。仓内独立 worker 会在发送前重新核对事件、membership、人物范围、订阅授权和未读回执，并用不含姓名、药名或病史的中性文案发送；不确定结果不会自动重试。部署器默认让定时器保持关闭，只有明确提供已审核模板、真实页面路径并确认 OpenAPI 与订阅授权后才允许启用。本仓仍不包含外部 Windows 小程序页面、`requestSubscribeMessage` 授权流程或真实云规则/索引；代码与本地契约通过不等于已部署或已送达。
@@ -169,7 +169,8 @@ AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
 AI_MODEL=deepseek-v4-flash
 AI_ENABLE_THINKING=true
-AI_INQUIRY_REASONING_EFFORT=high
+AI_INQUIRY_REASONING_EFFORT=off
+AI_INQUIRY_MAX_ATTEMPTS=1
 AI_CONNECTIVITY_TIMEOUT_SECONDS=2
 INQUIRY_SPO2_EMERGENCY_BELOW=90
 INQUIRY_SPO2_HIGH_MAX=93
@@ -220,7 +221,7 @@ sh scripts/deploy_qsm_vitals.sh
 
 当前 InspireFace 社区模型许可仅限学术用途；用于商业产品前必须替换为具有相应授权的模型。
 
-AI 云通道使用 DeepSeek Chat Completions 完成逐轮语义抽取，最终分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到同一云端模型的 Chat Completions JSON 契约。`AI_INQUIRY_REASONING_EFFORT` 统一控制逐轮抽取、Responses 最终分析和 Chat 回退，支持 `off`、`low`、`high`、`max`，默认 `high`。旧配置 `AI_INQUIRY_ENABLE_THINKING=true/false` 仅在新配置缺失时兼容映射为 `high/off`。最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
+AI 云通道使用 DeepSeek Chat Completions 完成逐轮语义抽取，最终分析与候选排序优先使用配置的 Responses 端点；Responses 只进行一次 12–15 秒的限时尝试，端点超时、不可用或返回无效结构时立即回退到同一云端模型的 Chat Completions JSON 契约。`AI_INQUIRY_REASONING_EFFORT` 统一控制逐轮抽取、Responses 最终分析和 Chat 回退，支持 `off`、`low`、`high`、`max`。终端默认 `off` 并只尝试一次，以优先保证现场响应速度；如需更长的推理链可由受控部署显式开启。旧配置 `AI_INQUIRY_ENABLE_THINKING=true/false` 仅在新配置缺失时兼容映射为 `high/off`。最终分析返回带证据引用的结构化 assessment，任何药品仍必须通过本地确定性安全校验。密钥只从环境变量或本机私有文件读取，例如：
 
 ```bash
 export AI_API_KEY_FILE="$PWD/backend/data/ai-api-key.txt"

@@ -106,15 +106,18 @@ Returns a single medicine detail.
 Reconciles the physical remainder after the latest successful, non-dry cabinet
 action for this medicine. The request contains a stable `request_id`, the
 server-issued `dispense_record_id`, and exactly one observation:
-`HAS_REMAINING` or `DEPLETED`. The first restores an `AVAILABLE` truth with a
-minimum quantity of one; the second records quantity zero and `DEPLETED`.
+`HAS_REMAINING` or `DEPLETED`. Fixed-cabinet stock is an availability flag, not
+a decrementing package count: the first keeps `stock=1 / AVAILABLE`, and only
+the second records `stock=0 / DEPLETED`.
 
 The request is stored in a SQLite idempotency ledger. Replaying the same ID and
 payload returns the saved result; changing its medicine, dispense record or
 observation returns HTTP 409. A stale/nonmatching/failed/dry-run dispense record,
 or a second confirmation for the same physical action, also returns HTTP 409.
-Until this observation is saved, a physical action that consumes the last
-counted unit is exposed as `inventory_state=UNKNOWN`, not as proven depletion.
+Until an explicit `DEPLETED` observation is saved, a successful physical action
+keeps the normal `stock=1 / AVAILABLE` truth and remains linked to the latest
+dispense record for optional confirmation. A cabinet action alone never proves
+that the medicine has run out.
 
 ### POST /api/dispense/confirm
 
@@ -255,7 +258,7 @@ values and immediately replaces the tool with a visible processing state while
 the final model analysis is pending; the information-review view appears when the
 response arrives. Cloud turn extraction, Responses final analysis and
 the Chat Completions final fallback share `AI_INQUIRY_REASONING_EFFORT` (default
-`high`); legacy `AI_INQUIRY_ENABLE_THINKING` applies only when the new setting is
+`off` for kiosk latency); legacy `AI_INQUIRY_ENABLE_THINKING` applies only when the new setting is
 absent.
 
 Before recommendation, deterministic code can only raise risk for non-negotiable

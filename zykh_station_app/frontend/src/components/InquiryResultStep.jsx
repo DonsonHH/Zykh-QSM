@@ -22,7 +22,6 @@ import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
 
 const riskLabels = {
-  low: "低风险",
   medium: "中风险",
   high: "高风险",
   emergency: "紧急风险"
@@ -51,6 +50,11 @@ export function InquiryResultStep({
   const actionStatus = actionResult?.status || result?.action_status || "idle";
   const actionMessage = actionResult?.message || result?.action_message || "";
   const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
+  const resultStatusLabel = result?.risk_level === "medium"
+    ? riskLabels.medium
+    : highRisk
+      ? riskLabels[result?.risk_level] || "需要协助"
+      : canProceed ? "可取药" : "核验完成";
   const actionFinished = terminalStatuses.has(actionStatus) && !inventoryConfirmation;
   const activelyOpening = opening;
   const resumePending = !opening && actionStatus === "opening";
@@ -140,7 +144,7 @@ export function InquiryResultStep({
           <h2>{inventoryConfirmation ? "请确认柜内库存" : requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
         </div>
         <div className="treatment-result-meta">
-          <RiskBadge level={result?.risk_level} label={riskLabels[result?.risk_level] || "待核验"} />
+          <RiskBadge level={result?.risk_level} label={resultStatusLabel} />
           <ResultSource source={result?.source} />
         </div>
       </header>

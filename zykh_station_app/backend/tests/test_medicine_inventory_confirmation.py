@@ -110,11 +110,14 @@ class MedicineInventoryConfirmationTest(unittest.TestCase):
         )
         refreshed = repository.get_by_id(self.medicine.id)
         assert refreshed is not None
-        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_dispense_record_id, latest.id)
 
     def test_has_remaining_restores_a_minimum_truth_after_the_last_physical_dispense(self) -> None:
         record = self.successful_dispense(stock_after=0)
+        repository = MedicineRepository()
+        self.assertTrue(repository.inventory_confirmation_required(record.id))
 
         response = MedicineInventoryConfirmationModule().confirm(
             self.medicine.id,
@@ -134,6 +137,7 @@ class MedicineInventoryConfirmationTest(unittest.TestCase):
         self.assertEqual(refreshed.stock, 1)
         self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_request_id, "inventory-confirm-001")
+        self.assertFalse(repository.inventory_confirmation_required(record.id))
         cloud_row = next(
             row
             for row in CloudSyncWorker._build_snapshot()["medicines"]

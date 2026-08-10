@@ -107,7 +107,8 @@ class MedicineInventoryConfirmationModule:
                         "本次取药已经完成库存确认，不能再次修改。"
                     )
                 if (
-                    medicine["inventory_state"] != "UNKNOWN"
+                    medicine["inventory_state"] != "AVAILABLE"
+                    or int(medicine["stock"]) != 1
                     or medicine["last_inventory_dispense_record_id"] != dispense["id"]
                 ):
                     raise MedicineInventoryConfirmationConflictError(

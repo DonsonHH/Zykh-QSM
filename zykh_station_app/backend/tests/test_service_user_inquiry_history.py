@@ -606,6 +606,7 @@ class ServiceUserInquiryHistoryTest(unittest.TestCase):
             cursor=None,
         ).inquiries[0].model_dump(mode="json")
 
+        self.assertEqual(public_summary["risk_label"], "核验完成")
         self.assertEqual(public_summary["outcome"], "开柜结果待现场确认")
         self.assertEqual(
             public_summary["no_medicine_reason"],

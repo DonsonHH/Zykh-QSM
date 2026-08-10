@@ -47,7 +47,7 @@ def _resolve_inquiry_reasoning_effort(
     if normalized in {"off", "low", "high", "max"}:
         return normalized
     if legacy_enable_thinking is None:
-        return "high"
+        return "off"
     legacy_enabled = str(legacy_enable_thinking).strip().lower() in {
         "1",
         "true",
@@ -239,7 +239,7 @@ class Settings:
     ai_inquiry_attempt_timeout_seconds: float = float(
         _env("AI_INQUIRY_ATTEMPT_TIMEOUT_SECONDS", "12")
     )
-    ai_inquiry_max_attempts: int = int(_env("AI_INQUIRY_MAX_ATTEMPTS", "2"))
+    ai_inquiry_max_attempts: int = int(_env("AI_INQUIRY_MAX_ATTEMPTS", "1"))
     ai_inquiry_retry_delay_seconds: float = float(
         _env("AI_INQUIRY_RETRY_DELAY_SECONDS", "0.25")
     )

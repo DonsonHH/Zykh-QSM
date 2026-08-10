@@ -199,7 +199,6 @@ class DispenseService:
                 "问询取药缺少稳定动作标识，本次柜门未打开；请返回原问询会话重试。",
                 status_code=409,
             )
-        stock_reserved = False
         if validated_manual and not dry_run:
             if manual_execution is None:
                 raise DispenseError(
@@ -212,7 +211,6 @@ class DispenseService:
                 )
             except ManualExecutionPreconditionError as exc:
                 raise DispenseError(str(exc), status_code=409) from exc
-            stock_reserved = True
         inventory_token = None
         if not dry_run:
             inventory_token = self.medicine_repository.get_inventory_observation_token(
@@ -265,20 +263,10 @@ class DispenseService:
         retry_safe = bool(qsm_result.get("retry_safe", not result_unknown))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if not dry_run and (not qsm_ok or result_unknown):
-            stock_restore_conflict = False
-            if stock_reserved and not result_unknown:
-                stock_restore_conflict = not self.medicine_repository.restore_reserved_stock(
-                    medicine.id,
-                    request.quantity,
-                    expected_stock=manual_execution.expected_stock,
-                    expected_inventory_revision=inventory_token.revision,
-                )
             if result_unknown:
                 message = "柜门结果待现场确认，请勿自动重试。"
             else:
                 message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
-                if stock_restore_conflict:
-                    message += "；库存已被其他操作更新，请人工核对当前库存。"
             if request.today_plan_id and qsm_operation_id:
                 if plan_records_service is None:
                     from .records_service import RecordsService

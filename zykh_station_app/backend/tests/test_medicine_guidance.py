@@ -171,12 +171,13 @@ class MedicineGuidanceTest(unittest.TestCase):
         self.assertEqual(result.medicine.indications, "结构化适用症状")
         self.assertFalse(result.medicine.package_verified)
 
-    def test_stock_change_does_not_refresh_guidance(self) -> None:
+    def test_fixed_cabinet_positive_stock_is_normalized_to_available_one(self) -> None:
         medicine = self.service.get_medicine("slot-08-huoxiang-zhengqi")
         result = self.service.update_medicine(medicine.id, MedicineUpdateRequest(stock=4))
 
         self.assertEqual(self.guidance.calls, [])
-        self.assertEqual(result.medicine.stock, 4)
+        self.assertEqual(result.medicine.stock, 1)
+        self.assertEqual(result.medicine.inventory_state, "AVAILABLE")
 
     def test_dynamic_scan_enrichment_persists_safety_facts_as_unreviewed_draft(self) -> None:
         scanned = self.repository.create_from_scan(

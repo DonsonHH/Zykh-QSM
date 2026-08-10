@@ -1513,7 +1513,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(result.risk_level, "low")
         self.assertEqual(result.stage, "result")
         self.assertEqual(result.next_action, "complete")
-        self.assertIn("基础护理", result.reply)
+        self.assertIn("没有检测到合适药物", result.reply)
         self.assertNotIn("不要自行新增用药", result.reply)
         self.assertFalse(result.can_view_medicines)
 
@@ -1679,7 +1679,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 medicine.id,
                 {"stock": 1 if medicine.id == "slot-13-ibuprofen" else 0},
             )
-        service, _ = self.service(
+        service, interpreter = self.service(
             [
                 case(
                     action="analyze",
@@ -1708,6 +1708,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
         self.assertNotIn("匹配服务", result.reply)
         self.assertIn("安全提醒", result.reply)
+        self.assertEqual(
+            interpreter.rank_candidates_seen,
+            [],
+            "an empty deterministic safe pool must not wait for cloud ranking",
+        )
 
     def test_deterministic_safety_notice_is_identical_across_interpreter_sources(self) -> None:
         notices_by_source: dict[str, list[tuple[str, str]]] = {}

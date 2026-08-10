@@ -662,10 +662,10 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(outcome.dispense_status, "DISPENSED")
         self.assertEqual(qsm.calls, [("14", 1, False, "manual-op-001")])
 
-    def test_manual_qsm_seam_reserves_the_last_stock_for_only_one_operation(self) -> None:
+    def test_distinct_manual_operations_keep_the_availability_flag_at_one(self) -> None:
         from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
         from app.schemas.manual_medication_access import ManualDispenseExecutionCommand
-        from app.services.dispense_service import DispenseError, DispenseService
+        from app.services.dispense_service import DispenseService
         from app.services.manual_dispense_adapter import DispenseServiceManualAdapter
 
         class RecordingQsm:
@@ -706,24 +706,27 @@ class ManualMedicationAccessTest(unittest.TestCase):
 
         with patch("app.services.dispense_service.settings", fake_settings):
             first = adapter.confirm_manual(command)
-            with self.assertRaisesRegex(DispenseError, "库存"):
-                adapter.confirm_manual(
-                    command.model_copy(
-                        update={"qsm_operation_id": "manual-last-stock-002"}
-                    )
+            second = adapter.confirm_manual(
+                command.model_copy(
+                    update={"qsm_operation_id": "manual-last-stock-002"}
                 )
+            )
 
         self.assertEqual(first.dispense_status, "DISPENSED")
+        self.assertEqual(second.dispense_status, "DISPENSED")
         self.assertEqual(
             qsm.calls,
-            [("14", 1, False, "manual-last-stock-001")],
+            [
+                ("14", 1, False, "manual-last-stock-001"),
+                ("14", 1, False, "manual-last-stock-002"),
+            ],
         )
         self.assertEqual(
             MedicineRepository().get_by_id(medicine.id).stock,
-            0,
+            1,
         )
 
-    def test_known_manual_hardware_failure_releases_reserved_stock(self) -> None:
+    def test_known_manual_hardware_failure_keeps_the_availability_flag(self) -> None:
         from app.services.dispense_service import DispenseService
         from app.services.manual_dispense_adapter import DispenseServiceManualAdapter
 
@@ -771,7 +774,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
 
-    def test_hardware_failure_does_not_overwrite_stock_changed_after_reservation(self) -> None:
+    def test_hardware_failure_does_not_overwrite_a_concurrent_stock_change(self) -> None:
         from app.services.dispense_service import DispenseService
         from app.services.manual_dispense_adapter import DispenseServiceManualAdapter
 
@@ -816,14 +819,13 @@ class ManualMedicationAccessTest(unittest.TestCase):
             ).confirm_manual(command)
 
         self.assertEqual(outcome.dispense_status, "HARDWARE_FAILED")
-        self.assertIn("库存", outcome.message)
-        self.assertIn("人工核对", outcome.message)
+        self.assertIn("外设开柜失败", outcome.message)
         self.assertEqual(
             MedicineRepository().get_by_id(command.medicine_id).stock,
             5,
         )
 
-    def test_unknown_manual_hardware_result_keeps_stock_reserved(self) -> None:
+    def test_unknown_manual_hardware_result_keeps_stable_available_stock(self) -> None:
         from app.services.dispense_service import DispenseService
         from app.services.manual_dispense_adapter import DispenseServiceManualAdapter
 
@@ -868,8 +870,8 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertFalse(outcome.inventory_confirmation_required)
         refreshed = MedicineRepository().get_by_id(command.medicine_id)
         self.assertIsNotNone(refreshed)
-        self.assertEqual(refreshed.stock, 0)
-        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_dispense_record_id, "")
 
     def test_manual_dry_run_does_not_reserve_stock(self) -> None:

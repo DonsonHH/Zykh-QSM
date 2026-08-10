@@ -1754,7 +1754,12 @@ class MedicineRepository:
                 ]
                 continue
             if key == "stock":
-                next_values[key] = max(int(value), 0)
+                requested_stock = max(int(value), 0)
+                next_values[key] = (
+                    1
+                    if medicine_id in BUNDLED_LABEL_SAFETY_IDS and requested_stock > 0
+                    else requested_stock
+                )
                 stock_explicitly_updated = True
                 next_values["inventory_state"] = (
                     "AVAILABLE" if next_values[key] > 0 else "DEPLETED"
@@ -2091,21 +2096,6 @@ class MedicineRepository:
                 return slot
         return 23
 
-    def decrement_stock(self, medicine_id: str, quantity: int) -> None:
-        with db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE medicines
-                SET stock=MAX(stock - ?, 0),
-                    inventory_state=CASE WHEN stock - ? > 0 THEN 'AVAILABLE' ELSE 'UNKNOWN' END,
-                    inventory_confirmed_at='', last_inventory_request_id='',
-                    last_inventory_dispense_record_id='',
-                    inventory_revision=inventory_revision+1, updated_at=?
-                WHERE id=?
-                """,
-                (quantity, quantity, db.now_text(), medicine_id),
-            )
-
     def get_inventory_observation_token(
         self,
         medicine_id: str,
@@ -2132,8 +2122,8 @@ class MedicineRepository:
             row = conn.execute(
                 """
                 SELECT 1 FROM medicines
-                WHERE inventory_state='UNKNOWN'
-                  AND last_inventory_dispense_record_id=?
+                WHERE last_inventory_dispense_record_id=?
+                  AND COALESCE(last_inventory_request_id, '')=''
                 LIMIT 1
                 """,
                 (normalized_record_id,),
@@ -2148,7 +2138,12 @@ class MedicineRepository:
         expected_stock: int,
         expected_inventory_revision: int,
     ) -> bool:
-        """Bind unknown physical inventory to a successful dispense if stock is unchanged."""
+        """Bind a successful dispense to its optional depleted observation.
+
+        Stock is an availability flag for the station's fixed cabinet catalog. A
+        successful cabinet action therefore keeps the normal truth at one and
+        AVAILABLE; only an explicit DEPLETED observation may clear it.
+        """
         normalized_medicine_id = str(medicine_id or "").strip()
         normalized_record_id = str(dispense_record_id or "").strip()
         normalized_stock = int(expected_stock)
@@ -2182,7 +2177,7 @@ class MedicineRepository:
         cursor = conn.execute(
             """
             UPDATE medicines
-            SET inventory_state='UNKNOWN', inventory_confirmed_at='',
+            SET stock=1, inventory_state='AVAILABLE', inventory_confirmed_at='',
                 last_inventory_request_id='', last_inventory_dispense_record_id=?,
                 updated_at=?
             WHERE id=? AND stock=? AND inventory_revision=?
@@ -2202,41 +2197,6 @@ class MedicineRepository:
                 medicine_id,
             ),
         )
-        return cursor.rowcount == 1
-
-    def restore_reserved_stock(
-        self,
-        medicine_id: str,
-        quantity: int,
-        *,
-        expected_stock: int,
-        expected_inventory_revision: int,
-    ) -> bool:
-        """Release a reservation only after the hardware reports a known failure."""
-        normalized_quantity = int(quantity)
-        if normalized_quantity < 1:
-            return False
-        reserved_stock = int(expected_stock) - normalized_quantity
-        if reserved_stock < 0:
-            return False
-        with db.connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute(
-                """
-                UPDATE medicines
-                SET stock=?, inventory_state='AVAILABLE', inventory_confirmed_at='',
-                    last_inventory_request_id='', last_inventory_dispense_record_id='',
-                    inventory_revision=inventory_revision+1, updated_at=?
-                WHERE id=? AND stock=? AND inventory_revision=?
-                """,
-                (
-                    int(expected_stock),
-                    db.now_text(),
-                    medicine_id,
-                    reserved_stock,
-                    int(expected_inventory_revision),
-                ),
-            )
         return cursor.rowcount == 1
 
     def _ensure_seeded(self) -> None:

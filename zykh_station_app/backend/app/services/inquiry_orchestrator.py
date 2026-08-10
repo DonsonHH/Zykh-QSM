@@ -855,7 +855,7 @@ class InquiryOrchestrator:
                 medication_safety_notices and not ranking_pool
             )
             ranker = getattr(self.interpreter, "rank_candidates", None)
-            if callable(ranker):
+            if callable(ranker) and ranking_pool:
                 ranking = self._invoke_ranker(
                     ranker,
                     ranking_context,
@@ -942,7 +942,7 @@ class InquiryOrchestrator:
                         )
                 else:
                     rank_failed = True
-            else:
+            elif ranking_pool:
                 rank_failed = True
         if rank_assessment.summary or rank_assessment.possible_conditions:
             extracted.final_assessment = rank_assessment
@@ -1030,7 +1030,7 @@ class InquiryOrchestrator:
                 session.stage = "result"
                 session.next_action = "complete"
                 session.reply = (
-                    "目前更适合先做基础护理和观察，暂时没有需要打开的家庭药柜。"
+                    "本次没有检测到合适药物，因此不打开药柜；可以先做基础护理和观察。"
                     "如果出现红肿、持续疼痛、发热或症状明显加重，请及时联系医生或家人。"
                 )
         else:

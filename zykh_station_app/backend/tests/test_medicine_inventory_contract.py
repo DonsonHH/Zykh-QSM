@@ -1273,7 +1273,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         plans = {item.id: item for item in records.list_today_plans(due_only=False)}
 
         self.assertEqual(upgraded["slot-08-huoxiang-zhengqi"].manufacturer, "管理员核验厂家")
-        self.assertEqual(upgraded["slot-08-huoxiang-zhengqi"].stock, 7)
+        self.assertEqual(upgraded["slot-08-huoxiang-zhengqi"].stock, 1)
         self.assertEqual(upgraded[scanned.id].name, "管理员扫码药品")
         self.assertNotIn("slot-03-ganmao-qingre", upgraded)
         self.assertNotIn("slot-13-sodium-hyaluronate-eye", upgraded)

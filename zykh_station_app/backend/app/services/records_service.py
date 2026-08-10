@@ -120,7 +120,7 @@ class RecordsService:
         )
         risk_level = session.risk_level or ""
         risk_label = {
-            "low": "低风险",
+            "low": "核验完成",
             "medium": "中风险",
             "high": "高风险",
             "emergency": "紧急风险",

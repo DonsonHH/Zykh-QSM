@@ -81,6 +81,8 @@ const checks = [
   [result.includes("setCountdown(3)"), "three-second cancellable countdown is missing"],
   [result.includes("confirmed_safety_notice") === false, "safety confirmation must stay in the API adapter"],
   [result.includes("treatment_options"), "result does not render backend treatment options"],
+  [!result.includes('low: "低风险"'), "normal inquiry results must not expose an internal low-risk label"],
+  [result.includes('canProceed ? "可取药" : "核验完成"'), "normal inquiry results must state whether a medicine plan is available"],
   [result.includes("取消开柜倒计时"), "countdown cancellation control is missing"],
   [result.includes("treatment-opening-progress") && result.includes("正在逐柜处理"), "cabinet progress is not visible"],
   [result.includes("resumePending") && result.includes("继续打开下一柜"), "interrupted cabinet sequence cannot be resumed safely"],

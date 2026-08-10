@@ -524,8 +524,9 @@ class AiService:
             "max_output_tokens": 8192,
         }
         reasoning_effort = self._inquiry_reasoning_effort()
-        if reasoning_effort != "off":
-            payload["reasoning"] = {"effort": reasoning_effort}
+        payload["reasoning"] = {
+            "effort": "none" if reasoning_effort == "off" else reasoning_effort
+        }
         parsed, cloud_error = self._request_json_response(
             payload,
             key,

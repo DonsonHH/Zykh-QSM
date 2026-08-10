@@ -122,7 +122,12 @@ class ManualMedicationAccessRepository:
         self,
         command: ManualDispenseExecutionCommand,
     ) -> None:
-        """Atomically revalidate every manual grant input and reserve real stock."""
+        """Atomically revalidate every manual grant input before cabinet access.
+
+        The fixed cabinet stock value is an availability flag, not a decrementing
+        package count. One-time execution ownership is persisted by begin_confirm;
+        this final recheck must not turn an available medicine into zero.
+        """
         if int(command.quantity) < 1:
             raise ManualExecutionPreconditionError("取药数量无效，本次柜门未打开。")
         db.init_db()
@@ -187,7 +192,10 @@ class ManualMedicationAccessRepository:
                 raise ManualExecutionPreconditionError(
                     "药品仓位映射已经变化，请重新核查。"
                 )
-            if medicine.stock != command.expected_stock:
+            if (
+                medicine.stock != command.expected_stock
+                or medicine.stock < command.quantity
+            ):
                 raise ManualExecutionPreconditionError(
                     "药品库存记录已经变化，请重新核查。"
                 )
@@ -198,34 +206,6 @@ class ManualMedicationAccessRepository:
             ):
                 raise ManualExecutionPreconditionError(
                     "药品身份或安全资料已经变化，请重新核查。"
-                )
-            cursor = conn.execute(
-                """
-                UPDATE medicines
-                SET stock=stock-?,
-                    inventory_state=CASE
-                      WHEN stock-? > 0 THEN 'AVAILABLE'
-                      ELSE 'UNKNOWN'
-                    END,
-                    inventory_confirmed_at='',
-                    last_inventory_request_id='',
-                    last_inventory_dispense_record_id='',
-                    inventory_revision=inventory_revision+1,
-                    updated_at=?
-                WHERE id=? AND stock=? AND stock>=?
-                """,
-                (
-                    command.quantity,
-                    command.quantity,
-                    checked_at,
-                    command.medicine_id,
-                    command.expected_stock,
-                    command.quantity,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ManualExecutionPreconditionError(
-                    "药品库存记录已经变化，请重新核查。"
                 )
 
     @classmethod

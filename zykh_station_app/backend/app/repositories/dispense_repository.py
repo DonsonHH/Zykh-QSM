@@ -72,7 +72,7 @@ class DispenseRepository:
         expected_stock: int,
         expected_inventory_revision: int,
     ) -> tuple[DispenseRecord, bool]:
-        """Persist a real success and bind its pending inventory observation atomically."""
+        """Persist a real success and bind its inventory confirmation atomically."""
         db.init_db()
         with db.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

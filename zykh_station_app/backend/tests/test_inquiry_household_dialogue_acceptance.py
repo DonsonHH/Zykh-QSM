@@ -410,9 +410,13 @@ class HouseholdDialogueAcceptanceTest(unittest.TestCase):
                             )
                         transcript = self._offline_answer(session.reply)
 
-                    self.assertEqual(session.stage, "clarification")
-                    self.assertEqual(session.next_action, "ask")
-                    self.assertIn("重新匹配", session.reply)
+                    self.assertIn(session.stage, {"clarification", "result"})
+                    if session.stage == "clarification":
+                        self.assertEqual(session.next_action, "ask")
+                        self.assertIn("重新匹配", session.reply)
+                    else:
+                        self.assertEqual(session.next_action, "complete")
+                        self.assertIn("没有检测到合适药物", session.reply)
                     self.assertFalse(session.can_view_medicines)
                     self.assertEqual(session.treatment_options, [])
                     current_user_messages = [

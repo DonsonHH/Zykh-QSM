@@ -18,7 +18,7 @@ AI_MODE=cloud
 AI_API_BASE=https://api.deepseek.com/chat/completions
 AI_RESPONSES_API_BASE=https://api.deepseek.com/responses
 AI_MODEL=deepseek-v4-flash
-AI_INQUIRY_REASONING_EFFORT=high
+AI_INQUIRY_REASONING_EFFORT=off
 OFFLINE_INQUIRY_MODE=rules
 ```
 

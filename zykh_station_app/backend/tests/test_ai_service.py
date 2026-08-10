@@ -184,8 +184,8 @@ class AiServiceTest(unittest.TestCase):
         self.assertFalse(rejected["ok"])
         self.assertIn("安全资料", rejected["error_message"])
 
-    def test_reasoning_effort_defaults_high_and_honors_the_legacy_boolean(self) -> None:
-        self.assertEqual(_resolve_inquiry_reasoning_effort(None, None), "high")
+    def test_reasoning_effort_defaults_off_for_fast_inquiry_and_honors_the_legacy_boolean(self) -> None:
+        self.assertEqual(_resolve_inquiry_reasoning_effort(None, None), "off")
         self.assertEqual(_resolve_inquiry_reasoning_effort(None, "false"), "off")
         self.assertEqual(_resolve_inquiry_reasoning_effort(None, "true"), "high")
         self.assertEqual(_resolve_inquiry_reasoning_effort("low", "false"), "low")
@@ -594,6 +594,7 @@ class AiServiceTest(unittest.TestCase):
         model_input = json.loads(request_payload["input"])
         self.assertEqual(model_input["allowed_combinations"], [authorized])
         self.assertIn("不能自由拼接多个药品", request_payload["instructions"])
+        self.assertEqual(request_payload["reasoning"], {"effort": "none"})
 
     def test_final_ranking_contract_rejects_free_form_multi_medicine_options(self) -> None:
         base = {

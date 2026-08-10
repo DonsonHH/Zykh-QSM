@@ -252,8 +252,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.get_today_plan(plan.id).status, "已执行")
         refreshed = MedicineRepository().get_by_id(medicine.id)
         self.assertIsNotNone(refreshed)
-        self.assertEqual(refreshed.stock, medicine.stock)
-        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_dispense_record_id, result.record_id)
         saved = self.service.list_records()[0]
         self.assertEqual(saved.target_user_name, plan.target_user)
@@ -516,8 +516,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(record.target_user_name, "李爷爷")
         refreshed = MedicineRepository().get_by_id(before.id)
         self.assertIsNotNone(refreshed)
-        self.assertEqual(refreshed.stock, before.stock - 1)
-        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(
             refreshed.last_inventory_dispense_record_id,
             outcome.dispense_record_id,
@@ -614,7 +614,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(calls, [])
 
-    def test_successful_inquiry_dispense_waits_for_physical_inventory_observation(self) -> None:
+    def test_successful_inquiry_dispense_keeps_stable_available_stock_until_depleted_is_reported(self) -> None:
         medicine = MedicineService().get_medicine("slot-12-hydrotalcite")
         self.assertIsNotNone(medicine)
 
@@ -641,8 +641,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertTrue(result.inventory_confirmation_required)
         refreshed = MedicineRepository().get_by_id(medicine.id)
         self.assertIsNotNone(refreshed)
-        self.assertEqual(refreshed.stock, medicine.stock)
-        self.assertEqual(refreshed.inventory_state, "UNKNOWN")
+        self.assertEqual(refreshed.stock, 1)
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
         self.assertEqual(refreshed.last_inventory_dispense_record_id, result.record_id)
 
     def test_same_value_admin_stock_update_wins_over_the_in_flight_observation(self) -> None:
