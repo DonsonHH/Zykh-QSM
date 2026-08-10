@@ -29,3 +29,4 @@ class FingerprintActionResponse(BaseModel):
     event: str | None = None
     message: str
     error_message: str | None = None
+    verification_assertion_id: str = ""

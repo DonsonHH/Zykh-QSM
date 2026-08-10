@@ -58,7 +58,9 @@ async function request(path, options) {
 async function readJsonResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.detail || `请求失败：${response.status}`);
+    const error = new Error(data.detail || `请求失败：${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }

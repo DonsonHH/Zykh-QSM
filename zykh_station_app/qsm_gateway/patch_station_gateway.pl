@@ -320,6 +320,209 @@ PERL
     $changed = 1;
 }
 
+if ($source !~ /ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1/) {
+    my $anchor = "sub dispense {\n";
+    my $replacement = <<'PERL';
+# ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1
+sub dispense_operation_file_key {
+    my ($operation_id) = @_;
+    my $key = "$operation_id";
+    $key =~ s/([^A-Za-z0-9_.-])/sprintf('%%%02X', ord($1))/ge;
+    return $key;
+}
+
+sub read_dispense_operation_state {
+    my ($path) = @_;
+    return (undef, '') unless -f $path;
+    open my $fh, '<:raw', $path
+        or return (undef, "无法读取既有出药预留：$!");
+    local $/;
+    my $raw = <$fh>;
+    close $fh;
+    my $state = eval { JSON::PP::decode_json($raw || '') };
+    return (undef, '既有出药预留已损坏') unless ref($state) eq 'HASH';
+    return ($state, '');
+}
+
+sub write_dispense_operation_state {
+    my ($path, $state) = @_;
+    my $encoded = eval { JSON::PP::encode_json($state) };
+    return (0, "无法编码出药预留：$@") unless defined $encoded;
+    my $temporary = "$path.tmp.$$";
+    open my $fh, '>:raw', $temporary
+        or return (0, "无法创建出药预留：$!");
+    if (!print {$fh} $encoded) {
+        my $error = $!;
+        close $fh;
+        unlink $temporary;
+        return (0, "无法写入出药预留：$error");
+    }
+    if (!close $fh) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法落盘出药预留：$error");
+    }
+    if (!rename $temporary, $path) {
+        my $error = $!;
+        unlink $temporary;
+        return (0, "无法提交出药预留：$error");
+    }
+    return (1, '');
+}
+
+sub dispense_operation_unknown_result {
+    my ($operation_id, $detail) = @_;
+    return {
+        ok => JSON::PP::false,
+        result => 'result_unknown',
+        result_unknown => JSON::PP::true,
+        retry_safe => JSON::PP::false,
+        operation_id => $operation_id,
+        detail => $detail || '上次出药可能已经发送，结果待现场确认；禁止自动重试。',
+    };
+}
+
+sub dispense {
+    my ($p) = @_;
+    $p = {} unless ref($p) eq 'HASH';
+    my $operation_id = exists $p->{operation_id} ? "$p->{operation_id}" : '';
+    return dispense_once($p) if $operation_id eq '';
+    return {
+        ok => JSON::PP::false,
+        result => 'invalid_operation_id',
+        operation_id => $operation_id,
+        error => 'operation_id 格式不合法',
+    } unless $operation_id =~ /\A[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\z/;
+
+    my $slot = int($p->{slot} || 0);
+    return { ok => JSON::PP::false, error => '仓位必填', operation_id => $operation_id }
+        if $slot <= 0;
+    return { ok => JSON::PP::false, error => '仓位超出范围：1-23', operation_id => $operation_id }
+        if $slot > 23;
+    my $quantity_text = exists $p->{quantity} ? "$p->{quantity}" : '1';
+    return {
+        ok => JSON::PP::false,
+        result => 'invalid_quantity',
+        operation_id => $operation_id,
+        error => '取药数量必须为正整数',
+    } unless $quantity_text =~ /\A\d+\z/ && int($quantity_text) > 0;
+    my $quantity = int($quantity_text);
+    my $control_code = exists $p->{control_code} && "$p->{control_code}" =~ /^\d+$/
+        ? int($p->{control_code})
+        : cabinet_control_code($slot);
+    return { ok => JSON::PP::false, error => '控制码超出范围：0-22', operation_id => $operation_id }
+        if $control_code < 0 || $control_code > 22;
+
+    my $key = dispense_operation_file_key($operation_id);
+    my $state_path = "$DATA_DIR/dispense-operation-$key.json";
+    my $lock_path = "$DATA_DIR/dispense-operation-$key.lock";
+    open my $lock, '>>:raw', $lock_path
+        or return dispense_operation_unknown_result($operation_id, "无法锁定出药预留：$!");
+    if (!flock($lock, 2)) {
+        my $error = $!;
+        close $lock;
+        return dispense_operation_unknown_result($operation_id, "无法锁定出药预留：$error");
+    }
+
+    my ($existing, $read_error) = read_dispense_operation_state($state_path);
+    if ($read_error) {
+        close $lock;
+        return dispense_operation_unknown_result($operation_id, $read_error);
+    }
+    if ($existing) {
+        my $same_payload =
+            ($existing->{operation_id} || '') eq $operation_id
+            && int($existing->{slot} || 0) == $slot
+            && int($existing->{quantity} || 0) == $quantity
+            && defined($existing->{control_code})
+            && int($existing->{control_code}) == $control_code;
+        if (!$same_payload) {
+            close $lock;
+            return {
+                ok => JSON::PP::false,
+                result => 'idempotency_conflict',
+                idempotency_conflict => JSON::PP::true,
+                operation_id => $operation_id,
+                error => '同一 operation_id 的仓位、数量或控制码不一致',
+            };
+        }
+        if (($existing->{state} || '') eq 'final' && ref($existing->{final_result}) eq 'HASH') {
+            my %replayed = %{$existing->{final_result}};
+            $replayed{operation_id} = $operation_id;
+            $replayed{replay} = JSON::PP::true;
+            close $lock;
+            return \%replayed;
+        }
+        close $lock;
+        return dispense_operation_unknown_result(
+            $operation_id,
+            '上次出药已预留或已发送，但没有最终结果；请现场确认，禁止自动重试。',
+        );
+    }
+
+    my $timestamp = now_text();
+    my $state = {
+        schema_version => 1,
+        operation_id => $operation_id,
+        slot => $slot,
+        quantity => $quantity,
+        control_code => $control_code,
+        state => 'reserved',
+        created_at => $timestamp,
+        updated_at => $timestamp,
+    };
+    my ($reserved, $reserve_error) = write_dispense_operation_state($state_path, $state);
+    if (!$reserved) {
+        close $lock;
+        return {
+            ok => JSON::PP::false,
+            result => 'reservation_failed',
+            operation_id => $operation_id,
+            error => $reserve_error,
+        };
+    }
+
+    $state->{state} = 'sent';
+    $state->{updated_at} = now_text();
+    my ($sent, $sent_error) = write_dispense_operation_state($state_path, $state);
+    if (!$sent) {
+        close $lock;
+        return dispense_operation_unknown_result($operation_id, $sent_error);
+    }
+
+    my $result;
+    my $completed = eval {
+        $result = dispense_once($p);
+        1;
+    };
+    if (!$completed || ref($result) ne 'HASH') {
+        my $detail = $@ || '出药执行没有返回有效结果';
+        close $lock;
+        return dispense_operation_unknown_result($operation_id, $detail);
+    }
+    my %final_result = %$result;
+    $final_result{operation_id} = $operation_id;
+    $final_result{replay} = JSON::PP::false;
+    $state->{state} = 'final';
+    $state->{final_result} = \%final_result;
+    $state->{updated_at} = now_text();
+    my ($finalized, $finalize_error) = write_dispense_operation_state($state_path, $state);
+    if (!$finalized) {
+        close $lock;
+        return dispense_operation_unknown_result($operation_id, $finalize_error);
+    }
+    close $lock;
+    return \%final_result;
+}
+
+sub dispense_once {
+PERL
+    my $matches = () = $source =~ /\Q$anchor\E/g;
+    die "Expected exactly one dispense implementation, found $matches\n" unless $matches == 1;
+    $source =~ s/\Q$anchor\E/$replacement/;
+    $changed = 1;
+}
+
 if (!$changed) {
     print "Station gateway reliability fixes already installed.\n";
     exit 0;

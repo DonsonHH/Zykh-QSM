@@ -21,11 +21,11 @@
 - 真实设备联调检查脚本和终端内系统检查入口。
 - QSM UART8 综合体征模块，支持心率、血氧、血压参考、呼吸频率和 HRV 数据。
 - QSM 摄像头实时预览、条码连续核验、FF Camera 麦克风采集和板端人脸身份确认。
-- QSM AS608 指纹确认：指纹模板保留在模块内，本机只保存服务对象映射；取药时指纹确认成功即可记录使用人并开柜。
-- 取药、问询和今日用药关联已确认的服务对象；取药按钮单击一次后自动完成指纹或面部核验、核对计划归属并打开对应柜门，不要求第二次点击。
+- QSM AS608 指纹确认：指纹模板保留在模块内，本机只保存服务对象映射；成功匹配会签发短时身份断言，供后续用药核查使用。
+- 今日计划、AI 问询和药品页自助取药是三条隔离路径。药品页先确认已登记人物，再由后端核查人物档案、药品审核事实、库存、仓位和有效期；只有短时 `PASSED` 结果在用户再次确认说明后才能开柜。`BLOCKED`、`CHECK_FAILED`、访客或资料变化都不会调用 QSM。
 - 今日用药计划支持每天、每隔若干天和每周指定日；计划前后 1 小时内息屏页会突出显示姓名、药品、时间与用量，同一时段有多人待取药时自动轮播，其余时间显示常态心脏动效。
 - 药品页按功效区分图标，并展示功能主治、用法用量和禁忌提醒；23 项固定资料按独立版本迁移且不重置库存，来源与维护边界见 [家庭药柜说明资料来源](docs/medicine-reference.md)。
-- 未识别到已登记人脸的访客完成确认并真实取药时，会从识别预览保留一张低分辨率现场图，供受保护的管理员调试台追溯；留档失败不阻断开柜。
+- 未识别到已登记档案的访客不能通过药品页自助取药；系统返回 `PROFILE_UNAVAILABLE / CHECK_FAILED` 并明确显示柜门未打开。
 - 家庭取药记录只展示真实成功开柜的记录，并明确区分已登记服务对象与游客；dry-run 和失败记录仅保留在调试审计接口。
 - 终端空闲后进入唤醒页；下一位用户轻触屏幕后会清除上一位身份并重新进行人脸确认。
 - 面向家庭用户的终端设置页自动保存联网/本地显示与同步模式、音量、亮度和自动息屏；真实 Wi-Fi 与数据网络控制位于独立管理员调试台，调试台同时负责人员、生物识别、今日用药、药柜、设备与实时日志维护。
@@ -115,9 +115,26 @@ KIOSK_BROWSER_LOG=terminal sh scripts/launch_kiosk.sh
 sh scripts/open_kiosk.sh
 ```
 
+## 家庭演示人物与计划
+
+受控迁移会新建两个独立人物 ID：`wang-nainai`（王奶奶，72 岁）和
+`li-yeye`（李爷爷，74 岁），并分别维护结构化病史、当前用药、过敏事实、
+`safety_profile_revision` 与 `persona_generation=senior-demo-v1`。旧的张三、
+李四、王五演示人物只做归档，既有问询与生物特征仍留在原 ID，绝不改名或
+复用给新人物。
+
+演示计划固定为四条：王奶奶 08:00 氨氯地平、21:00 布地奈德鼻喷雾剂；
+李爷爷 07:30 乳果糖、20:30 枸地氯雷他定。种子只补缺失记录，不覆盖管理
+员已经调整的时间、剂量或完成状态，也不会在人物缺失时回退绑定到任意用户。
+记录页人物卡可打开该人物自己的问询摘要时间线；归档人物不出现在普通列表，
+但其历史仍可按明确 ID 读取。归档人物关联的旧计划同步归档，不能重新显示、
+编辑或进入开柜路径。
+
 ## 微信小程序与云同步
 
-FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和取药记录，并拉取小程序命令。心跳中的近期问询只发送摘要和消息数；完整数据走独立快照集合。药品命令以硬件仓位为身份，支持不覆盖未提交字段的嵌套补丁，并在 SQLite、CloudBase 与小程序间保留规格、追溯码、`0` 库存、低库存线和有效期月/日精度。网络中断不影响本地使用，恢复后自动补传。
+FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和真实取药记录，并拉取允许的非开柜命令。心跳中的近期问询只发送摘要和消息数；完整数据走独立快照集合。一次人物—药品核查只对应一条稳定安全事件：拦截/核查失败在核查终态进入 append-only outbox，通过项则等开柜终态后把核查与物理结果合并上报为同一条 `medication_safety_events`，不会混入取药记录，也不会被 `FINALIZE_SNAPSHOT` 删除。网络中断不影响本地拦截，恢复后按 `event_id + payload_digest` 幂等补传。
+CloudBase 2.5 要求所有健康数据读取先通过 ACTIVE membership，并按人物范围隔离人物、计划、问询、记录、体征和安全事件；安全事件还要求 `READ_SAFETY`。问询详情沿用同一范围，越权不泄露是否存在。通用命令的 request ID 在事务中绑定请求摘要，只读家属不能下发命令。小程序侧只有只读安全事件能力；`OPEN_CABINET` 已从云端允许列表、内嵌 helper 和板端执行器中移除，历史命令也会失败关闭且不触碰 QSM。Station 上报必须携带服务端配置的设备密钥，缺少密钥时失败关闭。
+设备绑定通过当前微信 OPENID 兑换服务端 SHA-256 定位的一次性、限时配对码；事务只从配对文档授予角色、人物范围和权限，调用者输入的 deviceId 不构成授权。安全事件上报会给当时有效的家属幂等写入最小化通知 outbox，但不等待或伪造微信推送成功。本仓只提供云函数与嵌入 helper；配对码生成管理端、实际小程序页面、数据库规则/索引、订阅消息模板和发送 worker 仍需在外部工程接入并部署验收。
 小程序下发 `AUDIO_SPEAK` 时，终端会把姓名和药品名称整理成服药提醒并通过 QSM 喇叭播报；小程序端无需访问终端局域网地址。
 
 ```bash
@@ -272,7 +289,7 @@ sh scripts/adb_forward.sh
 QSM_MODE=real QSM_BASE_URL=http://127.0.0.1:18080 sh scripts/start_backend.sh
 ```
 
-默认真实开柜联动：`DISPENSE_DRY_RUN=false` 且 `ENABLE_REAL_DISPENSE=1`。用户在取药弹窗单击“确认身份并开柜”后，界面自动完成指纹或面部确认；若该操作来自今日计划，还会核对识别到的服务对象、药品与计划，随后直接调用外设网关 `/api/dispense`。如需限制测试仓位，可设置 `REAL_DISPENSE_TEST_SLOT=1`；如需演示 dry-run，可临时设置 `DISPENSE_DRY_RUN=true`。
+默认真实开柜联动：`DISPENSE_DRY_RUN=false` 且 `ENABLE_REAL_DISPENSE=1`。今日计划和问询继续使用既有确认凭据；药品页自助取药必须依次调用 `/api/manual-medication-access/assess` 与 `/api/manual-medication-access/confirm`，不能直接借 `/api/dispense/confirm` 绕过核查。每个确认使用一次性 `qsm_operation_id`，请求已发出但无法确认结果时记为 `RESULT_UNKNOWN` 且禁止自动重试。如需限制测试仓位，可设置 `REAL_DISPENSE_TEST_SLOT=1`；如需演示 dry-run，可临时设置 `DISPENSE_DRY_RUN=true`。
 
 AS608 原始指纹模板只保存在模块内部，人脸特征由 QSM 本地识别组件保存。主机 SQLite 仅保存模板/主体与服务对象的映射、确认次数、最近确认时间及“谁在何时取走什么药”的记录，不保存原始指纹图像或摄像头视频。
 
@@ -322,13 +339,22 @@ curl http://127.0.0.1:8000/api/qsm/capabilities
 curl http://127.0.0.1:8000/api/device/check
 ```
 
-真实取药确认会调用外设网关。测试前请确认柜门附近安全：
+药品页自助取药不能直接调用 `/api/dispense/confirm`。真实测试必须先在 UI
+完成已登记人物的面部或指纹确认，取得短时 assertion，再用当前药品响应中的
+`review_fingerprint` 完成核查。测试前请确认柜门附近安全：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/dispense/confirm \
+curl -X POST http://127.0.0.1:8000/api/manual-medication-access/assess \
   -H "Content-Type: application/json" \
-  -d '{"medicine_id":"aspirin-enteric","slot":"A01","quantity":1,"reason":"真实联调确认","confirmed_safety_notice":true,"confirm_real_dispense":true}'
+  -d '{"request_id":"现场唯一核查编号","medicine_id":"当前药品ID","slot":"当前显示仓位","service_user_id":"已识别人物ID","verification_method":"face","verification_assertion_id":"刚签发的身份断言","expected_review_fingerprint":"当前审核指纹"}'
+
+curl -X POST http://127.0.0.1:8000/api/manual-medication-access/confirm \
+  -H "Content-Type: application/json" \
+  -d '{"request_id":"现场唯一确认编号","safety_check_id":"上一步PASSED返回的check_id","confirmed_safety_notice":true}'
 ```
+
+只有第一步明确返回 `PASSED` 才能执行第二步。`RESULT_UNKNOWN` 表示柜门结果
+无法证明，必须现场核对，禁止换 request ID 自动重试。
 
 ## 验证
 

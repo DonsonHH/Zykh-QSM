@@ -35,6 +35,7 @@ class DispenseConfirmResponse(BaseModel):
     message: str
     record_id: str | None = None
     qsm_detail: str | None = None
+    result_unknown: bool = False
 
 
 class DispenseOpenResponse(BaseModel):

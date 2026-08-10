@@ -45,22 +45,12 @@ async function loadStationSnapshot() {
   }
 }
 
-function collectionQuery(name, deviceId) {
-  let query = wx.cloud.database().collection(name).where({ deviceId });
-  if (name === "devices") query = wx.cloud.database().collection(name).where({ _id: deviceId });
-  if (name === "medicines") return query.limit(100);
-  if (["vitals", "records"].includes(name)) return query.orderBy("createdAt", "desc").limit(1);
-  if (name === "commands") return query.orderBy("updatedAt", "desc").limit(1);
-  return query.limit(100);
-}
-
 function subscribeStationSnapshot(onSnapshot, onError, intervalMs = 5000) {
   let active = true;
   let refreshTimer = null;
   let fallbackTimer = null;
   let refreshing = false;
   let refreshAgain = false;
-  const watchers = [];
 
   const refresh = async () => {
     if (!active) return;
@@ -92,42 +82,14 @@ function subscribeStationSnapshot(onSnapshot, onError, intervalMs = 5000) {
     }, delay);
   };
 
-  const attachWatchers = async () => {
-    let schemaVersion = 1;
-    try {
-      const ping = await cloudAction("PING");
-      schemaVersion = Number((ping && ping.schemaVersion) || 1);
-    } catch (error) {
-      // Periodic refresh remains active when realtime watch setup is unavailable.
-    }
-    if (!active) return;
-    const names = ["devices", "medicines", "vitals", "records", "commands"];
-    if (schemaVersion >= 2) names.push("service_users", "today_plans", "inquiries");
-    names.forEach(name => {
-      try {
-        const watcher = collectionQuery(name, currentDeviceId()).watch({
-          onChange: () => queueRefresh(),
-          onError: error => {
-            if (active && onError) onError(error);
-          },
-        });
-        watchers.push(watcher);
-      } catch (error) {
-        if (active && onError) onError(error);
-      }
-    });
-  };
-
   refresh();
-  attachWatchers();
+  // Health collections are never watched directly: a deviceId locates data but
+  // does not authorize it. Poll only through membership-checked cloud actions.
   fallbackTimer = setInterval(refresh, Math.max(3000, Number(intervalMs) || 5000));
   return () => {
     active = false;
     if (refreshTimer) clearTimeout(refreshTimer);
     if (fallbackTimer) clearInterval(fallbackTimer);
-    watchers.forEach(watcher => {
-      try { watcher.close(); } catch (error) { /* already closed */ }
-    });
   };
 }
 

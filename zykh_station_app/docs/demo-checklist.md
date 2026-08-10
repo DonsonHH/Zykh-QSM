@@ -72,17 +72,40 @@ curl http://127.0.0.1:8000/api/device/check
 
 1. Verify the homepage loads with today medication and emergency inquiry cards.
 2. Verify the medicines page loads inventory.
-3. Open the medicines page and inspect the 取药确认 modal. Submit physical cabinet open only when the selected slot is safe to test.
-4. Verify the inquiry page returns `source=cloud_responses` or
+3. Verify the ordinary service-user list contains only `王奶奶` and `李爷爷`,
+   and the four demo plans match their exact IDs, medicines, times and dose
+   snapshots. Existing administrator edits must remain unchanged after restart.
+4. Open the medicines page and verify the manual path is identity → checking →
+   passed/blocked/check-failed. A passed result still requires the explicit
+   “确认取药并开柜” action; blocked, failed and guest results must say the cabinet
+   was not opened.
+5. In a hardware-isolated run, verify `王奶奶 + S13 布洛芬` and
+   `李爷爷 + S05 蜜炼川贝枇杷膏` both return
+   `BLOCKED / CONDITION_CONTRAINDICATION`, create one safety event and call the
+   fake QSM zero times.
+6. Verify the inquiry page returns `source=cloud_responses` or
    `source=cloud_chat_fallback` while the cloud route is healthy.
-5. Select local mode and verify inquiry still returns one of those cloud sources,
+7. Select local mode and verify inquiry still returns one of those cloud sources,
    the top bar shows local state, mini-program realtime sync pauses, and speech
    uses QSM offline TTS.
-6. Verify all 23 fixed rows have the v5 controlled safety metadata; an expired, empty, unverified or prescription-only row may still be excluded after evaluation.
-7. In a controlled test session, verify a qualifying shallow-wound or adult watery-diarrhea case exposes only the exact authorized combination; revoking that combination before confirmation must return HTTP 409 without opening another cabinet.
-8. Verify the Scan page can show the QSM-camera capture state.
-9. Verify the records page shows local records and pending sync state.
-10. Physical cabinet smoke requires `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1` and request confirmation. Set `REAL_DISPENSE_TEST_SLOT` when you need to restrict testing to one slot.
+8. Verify all 23 fixed rows have the v5 controlled safety metadata; an expired,
+   empty or unverified row may still be excluded after evaluation. Prescription
+   attributes alone do not create a caregiver-approval state in the manual path.
+9. In a controlled test session, verify a qualifying shallow-wound or adult
+   watery-diarrhea case exposes only the exact authorized combination; revoking
+   that combination before confirmation must return HTTP 409 without opening
+   another cabinet.
+10. Verify the Scan page can show the QSM-camera capture state.
+11. Select each person card on Records and verify its history drawer supports
+    loading, empty, error, refresh and cursor pagination without showing messages,
+    prompts or reasoning.
+12. With a fake CloudBase adapter, verify safety events are append-only and
+    idempotent, scoped caregivers can list/get/mark-read, and `OPEN_CABINET` is
+    rejected in cloud, helper and Station layers with QSM call count zero.
+13. Physical cabinet smoke requires `DISPENSE_DRY_RUN=false`,
+    `ENABLE_REAL_DISPENSE=1` and request confirmation. Set
+    `REAL_DISPENSE_TEST_SLOT` when you need to restrict testing to one slot. A
+    timeout must show `RESULT_UNKNOWN`; do not press confirm again.
 
 ## Expected Degradation
 

@@ -103,26 +103,84 @@ Returns a single medicine detail.
 
 ### POST /api/dispense/confirm
 
-Requires the safety notice confirmation flag and writes a local 取药确认 record. By default it calls the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`, and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is optional; when configured, only the matching slot can open.
+This public endpoint is the existing PLAN cabinet boundary. Inquiry dispensing
+must use the original inquiry session confirmation endpoint; a client-supplied
+`verification_method=inquiry_confirmed` is rejected here before the cabinet
+service is reached. The boundary requires the safety
+notice confirmation flag and writes a local 取药确认 record. By default it calls
+the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`,
+and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is
+optional; when configured, only the matching slot can open. A medicine-page
+`MANUAL_INVENTORY` request without a server-consumed safety check is rejected
+with HTTP 409 before QSM is called.
 
-An inquiry-originated confirmation (`verification_method=inquiry_confirmed`) also
+An inquiry-originated confirmation created inside the persisted inquiry session also
 requires reviewed safety metadata and carries the exact review fingerprint that
 the user saw. The dispense boundary reloads both that fingerprint and live stock
 immediately before the QSM call; a changed identity, safety review or depleted
-stock returns HTTP 409 without calling the cabinet. `draft` is specifically an AI
-candidate gate: ordinary medicine-page and existing-plan workflows still use
-their package verification, expiry, prescription-plan and registered-allergy
-checks rather than treating an AI metadata draft as a universal cabinet lock.
+stock returns HTTP 409 without calling the cabinet. `draft` remains an AI
+candidate gate for PLAN/INQUIRY behavior. The separate manual-access module
+requires reviewed medicine facts because it performs a person-medicine safety
+assessment before opening a cabinet.
 
-For an unregistered or unidentified face, the frontend sends
-`archive_identity_snapshot=true` after explicit guest confirmation. A successful
-real dispense then retains a small preview frame for the protected administrator
-overview. Registered users and dry-run actions do not create this photo archive;
-photo conversion failure never blocks an already confirmed cabinet action.
+### POST /api/manual-medication-access/assess
+
+Runs the deterministic medicine-page check after a registered face or fingerprint
+match. The request binds `service_user_id`, the short-lived
+`verification_assertion_id`, medicine ID, display slot and the server-provided
+`expected_review_fingerprint` to a unique `request_id`.
+
+The response separates business state from transport state:
+
+- `PASSED`: no registered conflict was found; returns a 90-second, one-time
+  `check_id`, but does not call QSM;
+- `BLOCKED`: a reviewed allergy, condition contraindication, duplicate active
+  ingredient, interaction or actual expiry matched; QSM is not called;
+- `CHECK_FAILED`: identity, profile, package, review, effective-date or inventory
+  evidence was insufficient; QSM is not called.
+
+Business blocks use HTTP 200 and stable `reason_codes`. Replaying the same
+`request_id` and payload returns the original result; using the key for different
+content returns HTTP 409.
+
+### POST /api/manual-medication-access/confirm
+
+Consumes one matching `PASSED` check after the user confirms the medicine notice.
+Immediately before the physical boundary it reloads the identity assertion,
+person generation/revision, medicine review fingerprint, display and hardware
+slots, exact stock snapshot, expiry and reviewed state. Any change returns HTTP
+409 without calling QSM.
+
+The physical result is independent from `check_status` and is one of
+`DISPENSED`, `HARDWARE_FAILED`, or `RESULT_UNKNOWN`. The last state means the
+request may have reached the cabinet but its result cannot be proven; the same
+operation is never automatically retried. Confirm request IDs are idempotent and
+the passed check is consumed once. Concurrent calls with the same request ID and
+payload wait for the active owner and replay its terminal result; a payload
+mismatch returns HTTP 409. The host forwards a stable `qsm_operation_id`
+to the board. The board persists `reserved`, `sent`, and final states under a
+file lock: identical replays return the saved result, payload mismatches conflict,
+and an interrupted or unprovable execution returns `RESULT_UNKNOWN` without a
+second UART/GPIO pulse.
+
+One safety check maps to one stable caregiver event. `BLOCKED` and
+`CHECK_FAILED` checks enter the outbox at assessment time; `PASSED` checks enter
+it only after confirmation reaches a physical terminal state. The single event
+therefore carries both check and dispense axes together, plus person profile
+revision, medicine review fingerprint and QSM operation ID when present.
 
 ### GET /api/dispense/records
 
 Returns local dispense confirmation records.
+
+### GET /api/records/service-users/{user_id}/inquiries
+
+Returns a user-scoped read-only history projection with at most 20 items per page
+and an opaque session cursor. Items contain only session ID, time, title, case
+summary, risk level/label, outcome and final medicine summary. Messages, prompts,
+provider source, reasoning and debug fields are never returned. Archived people
+remain explicitly readable by their original ID while being hidden from the
+ordinary service-user list.
 
 ### POST /api/inquiry/evaluate
 

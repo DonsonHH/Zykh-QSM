@@ -38,6 +38,7 @@ class Medicine(BaseModel):
     safety_review_status: str = "draft"
     safety_reviewed_by: str = ""
     safety_reviewed_at: str = ""
+    review_fingerprint: str = ""
     dispense_count: int = 0
 
 

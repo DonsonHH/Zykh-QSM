@@ -2,14 +2,20 @@ from __future__ import annotations
 
 from .. import db
 from ..config import settings
+from ..repositories.identity_assertion_repository import IdentityAssertionRepository
 from ..schemas.fingerprint import FingerprintActionResponse, FingerprintStatusResponse
 from ..schemas.records import ServiceUser
 from .qsm_fingerprint_client import QsmFingerprintClient
 
 
 class FingerprintService:
-    def __init__(self, client: QsmFingerprintClient | None = None) -> None:
+    def __init__(
+        self,
+        client: QsmFingerprintClient | None = None,
+        identity_assertions: IdentityAssertionRepository | None = None,
+    ) -> None:
         self.client = client or QsmFingerprintClient()
+        self.identity_assertions = identity_assertions or IdentityAssertionRepository()
 
     def status(self) -> FingerprintStatusResponse:
         result = self.client.status()
@@ -66,6 +72,11 @@ class FingerprintService:
                 "SELECT match_count, last_seen_at FROM fingerprint_identities WHERE template_id=?",
                 (template_id,),
             ).fetchone()
+        assertion = self.identity_assertions.issue(
+            service_user_id=user.id,
+            verification_method="fingerprint",
+            verification_score=score,
+        )
         return FingerprintActionResponse(
             ok=True,
             status="matched",
@@ -75,6 +86,7 @@ class FingerprintService:
             match_count=int(usage["match_count"]) if usage else 1,
             last_seen_at=str(usage["last_seen_at"]) if usage else now,
             message=f"指纹已确认：{user.name}",
+            verification_assertion_id=assertion.assertion_id,
         )
 
     def standby(self) -> FingerprintActionResponse:
@@ -265,7 +277,7 @@ class FingerprintService:
     def _get_user(user_id: str) -> ServiceUser | None:
         db.init_db()
         with db.connect() as conn:
-            row = conn.execute("SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=?", (user_id,)).fetchone()
+            row = conn.execute("SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=? AND archived=0", (user_id,)).fetchone()
         return ServiceUser(**dict(row)) if row else None
 
     def _user_for_template(self, template_id: int) -> ServiceUser | None:
@@ -275,7 +287,7 @@ class FingerprintService:
                 """
                 SELECT u.id, u.name, u.age, u.profile, u.allergies, u.note, u.status
                 FROM fingerprint_identities f JOIN service_users u ON u.id=f.service_user_id
-                WHERE f.template_id=?
+                WHERE f.template_id=? AND u.archived=0
                 """,
                 (template_id,),
             ).fetchone()

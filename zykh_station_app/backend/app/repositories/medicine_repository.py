@@ -2032,6 +2032,31 @@ class MedicineRepository:
                 (quantity, db.now_text(), medicine_id),
             )
 
+    def restore_reserved_stock(
+        self,
+        medicine_id: str,
+        quantity: int,
+        *,
+        expected_stock: int,
+    ) -> bool:
+        """Release a reservation only after the hardware reports a known failure."""
+        normalized_quantity = int(quantity)
+        if normalized_quantity < 1:
+            return False
+        reserved_stock = int(expected_stock) - normalized_quantity
+        if reserved_stock < 0:
+            return False
+        with db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE medicines SET stock=?, updated_at=?
+                WHERE id=? AND stock=?
+                """,
+                (int(expected_stock), db.now_text(), medicine_id, reserved_stock),
+            )
+        return cursor.rowcount == 1
+
     def _ensure_seeded(self) -> None:
         db.init_db()
         with db.connect() as conn:
@@ -2681,7 +2706,7 @@ class MedicineRepository:
 
     @staticmethod
     def _row_to_medicine(row: object) -> Medicine:
-        return Medicine(
+        medicine = Medicine(
             id=row["id"],
             slot=row["slot"],
             hardware_slot=int(row["hardware_slot"]),
@@ -2713,6 +2738,9 @@ class MedicineRepository:
             safety_review_status=row["safety_review_status"] or "draft",
             safety_reviewed_by=row["safety_reviewed_by"] or "",
             safety_reviewed_at=row["safety_reviewed_at"] or "",
+        )
+        return medicine.model_copy(
+            update={"review_fingerprint": MedicineRepository.review_fingerprint(medicine)}
         )
 
     @staticmethod

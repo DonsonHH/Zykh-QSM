@@ -350,3 +350,69 @@ class InquiryRepository:
                 (user_id, exclude_session_id, max(1, min(limit, 30))),
             ).fetchall()
         return [session for row in rows if (session := self.get_session(str(row["session_id"]))) is not None]
+
+    def list_user_sessions_page(
+        self,
+        user_id: str,
+        *,
+        limit: int = 20,
+        cursor: str = "",
+    ) -> tuple[list[InquirySessionResponse], str | None]:
+        """Read a stable, user-scoped history page without truncating old sessions."""
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            return [], None
+        page_limit = max(1, min(int(limit), 20))
+        normalized_cursor = str(cursor or "").strip()
+        db.init_db()
+        with db.connect() as conn:
+            cursor_row = None
+            if normalized_cursor:
+                cursor_row = conn.execute(
+                    """
+                    SELECT session_id, updated_at
+                    FROM inquiry_sessions
+                    WHERE session_id=? AND user_id=? AND risk_level<>''
+                    """,
+                    (normalized_cursor, normalized_user_id),
+                ).fetchone()
+                if cursor_row is None:
+                    raise ValueError("历史问询游标无效或已失效")
+            if cursor_row is None:
+                rows = conn.execute(
+                    """
+                    SELECT session_id
+                    FROM inquiry_sessions
+                    WHERE user_id=? AND risk_level<>''
+                    ORDER BY updated_at DESC, session_id DESC
+                    LIMIT ?
+                    """,
+                    (normalized_user_id, page_limit + 1),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT session_id
+                    FROM inquiry_sessions
+                    WHERE user_id=? AND risk_level<>''
+                      AND (updated_at<? OR (updated_at=? AND session_id<?))
+                    ORDER BY updated_at DESC, session_id DESC
+                    LIMIT ?
+                    """,
+                    (
+                        normalized_user_id,
+                        str(cursor_row["updated_at"]),
+                        str(cursor_row["updated_at"]),
+                        normalized_cursor,
+                        page_limit + 1,
+                    ),
+                ).fetchall()
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+        sessions = [
+            session
+            for row in page_rows
+            if (session := self.get_session(str(row["session_id"]))) is not None
+        ]
+        next_cursor = str(page_rows[-1]["session_id"]) if page_rows and has_more else None
+        return sessions, next_cursor

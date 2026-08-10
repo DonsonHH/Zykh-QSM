@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, Fingerprint, History, RotateCcw, ScanFace, ShieldCheck, UserRound, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Fingerprint, History, LoaderCircle, RotateCcw, ScanFace, ShieldCheck, UserRound, X, XCircle } from "lucide-react";
 import { identifyFingerprint } from "../api/fingerprint.js";
 import { verifyDispenseIdentity } from "../api/identity.js";
 import { updateMedicine } from "../api/medicines.js";
@@ -30,6 +30,12 @@ const anonymousGuest = {
   status: "游客"
 };
 
+function createManualRequestId(kind) {
+  const suffix = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `manual-${kind}-${suffix}`;
+}
+
 function isGuestIdentity(identity) {
   return !identity?.id || identity.id.startsWith("guest-") || ["访客", "游客"].includes(identity.status);
 }
@@ -57,7 +63,7 @@ function faceFailureOutcome(verification = {}) {
   };
 }
 
-export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, open, submitting, result, error, onCancel, onSubmit }) {
+export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, manualAccess = false, open, submitting, result, error, onCancel, onSubmit, onAssessManual, onConfirmManual }) {
   const medicineRef = useRef(currentMedicine);
   if (currentMedicine) medicineRef.current = currentMedicine;
   const medicine = currentMedicine || medicineRef.current;
@@ -74,6 +80,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   const [verificationFrameReady, setVerificationFrameReady] = useState(false);
   const [inventoryUpdating, setInventoryUpdating] = useState(false);
   const [inventoryMessage, setInventoryMessage] = useState("");
+  const [manualAssessment, setManualAssessment] = useState(null);
   const sessionRef = useRef(0);
   const verificationAttemptRef = useRef(0);
   const previewRetryTimerRef = useRef(null);
@@ -82,7 +89,25 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   const autoCloseTimerRef = useRef(null);
   const spokenAnnouncementsRef = useRef(new Set());
   const onCancelRef = useRef(onCancel);
-  const busy = ["verifying", "recognized", "opening"].includes(phase) || submitting;
+  const manualInventory = Boolean(manualAccess);
+  const busy = ["verifying", "recognized", "checking", "opening"].includes(phase) || submitting;
+  const manualIdentityLocked = manualInventory && [
+    "recognized",
+    "checking",
+    "passed",
+    "blocked",
+    "check_failed",
+    "opening",
+    "complete",
+    "dispense_failed",
+    "result_unknown"
+  ].includes(phase);
+  const manualTerminalFailure = manualInventory && [
+    "blocked",
+    "check_failed",
+    "dispense_failed",
+    "result_unknown"
+  ].includes(phase);
 
   useEffect(() => {
     onCancelRef.current = onCancel;
@@ -105,6 +130,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
       setVerificationFrameReady(false);
       setInventoryUpdating(false);
       setInventoryMessage("");
+      setManualAssessment(null);
       spokenAnnouncementsRef.current.clear();
     } else {
       sessionRef.current += 1;
@@ -188,7 +214,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
   }
 
   function selectMethod(nextMethod) {
-    if (busy || phase === "guest_confirm" || nextMethod === method) {
+    if (busy || manualIdentityLocked || phase === "guest_confirm" || nextMethod === method) {
       return;
     }
     verificationAttemptRef.current += 1;
@@ -345,6 +371,113 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     }
   }
 
+  async function assessManualAccess(identity, verification, verificationMethod, session, attempt) {
+    setPreviewActive(false);
+    setVerificationError("");
+    setPhase("checking");
+    const assertionId = String(verification?.verification_assertion_id || "").trim();
+    const reviewFingerprint = String(medicine.review_fingerprint || "").trim();
+    if (!identity?.id || !assertionId || !reviewFingerprint || !onAssessManual) {
+      if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
+      setManualAssessment({
+        check_status: "CHECK_FAILED",
+        reason_codes: ["PROFILE_UNAVAILABLE"],
+        message: "身份凭据或药品核验资料不完整，本次柜门未打开。",
+        persisted: false
+      });
+      setPhase("check_failed");
+      return;
+    }
+    try {
+      const assessment = await onAssessManual({
+        request_id: createManualRequestId("assess"),
+        medicine_id: medicine.id,
+        slot: String(medicine.slot),
+        service_user_id: identity.id,
+        verification_method: verificationMethod,
+        verification_assertion_id: assertionId,
+        expected_review_fingerprint: reviewFingerprint
+      });
+      if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
+      const status = String(assessment?.check_status || "CHECK_FAILED").toUpperCase();
+      setManualAssessment(assessment
+        ? { ...assessment, persisted: true }
+        : {
+          check_status: "CHECK_FAILED",
+          reason_codes: ["MEDICINE_DATA_UNREVIEWED"],
+          message: "未能完成可靠核查，本次柜门未打开。",
+          persisted: false
+        });
+      setPhase(status === "PASSED" ? "passed" : status === "BLOCKED" ? "blocked" : "check_failed");
+    } catch (requestError) {
+      if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
+      const message = requestError.message || "个人用药安全核查失败";
+      setManualAssessment({
+        check_status: "CHECK_FAILED",
+        reason_codes: ["PROFILE_UNAVAILABLE"],
+        message: `${message}，本次柜门未打开。`,
+        persisted: false
+      });
+      setPhase("check_failed");
+    }
+  }
+
+  async function confirmManualAccess() {
+    if (phase !== "passed" || !manualAssessment?.check_id || !onConfirmManual) return;
+    const session = sessionRef.current;
+    setVerificationError("");
+    setPhase("opening");
+    try {
+      const outcome = await onConfirmManual({
+        request_id: createManualRequestId("confirm"),
+        safety_check_id: manualAssessment.check_id,
+        confirmed_safety_notice: true
+      });
+      if (session !== sessionRef.current) return;
+      if (outcome?.ok && outcome.dispense_status === "DISPENSED") {
+        setPhase("complete");
+        return;
+      }
+      setManualAssessment((current) => ({
+        ...current,
+        dispense_status: outcome?.dispense_status || "HARDWARE_FAILED",
+        message: outcome?.message || "柜门未能打开，请联系值守员。"
+      }));
+      setPhase(outcome?.dispense_status === "RESULT_UNKNOWN" ? "result_unknown" : "dispense_failed");
+    } catch (requestError) {
+      if (session !== sessionRef.current) return;
+      const responseStatus = Number(requestError.status);
+      if (!Number.isInteger(responseStatus) || responseStatus >= 500) {
+        const detail = requestError.message || "开柜服务未返回可确认结果";
+        setManualAssessment((current) => ({
+          ...current,
+          dispense_status: "RESULT_UNKNOWN",
+          message: `${detail}。开柜结果暂无法确认，请勿重复操作。`
+        }));
+        setPhase("result_unknown");
+        return;
+      }
+      if (responseStatus >= 400 && responseStatus < 500) {
+        const detail = requestError.message || "本次安全核查确认未通过";
+        setManualAssessment((current) => ({
+          ...current,
+          check_status: "CHECK_FAILED",
+          dispense_status: "NOT_STARTED",
+          message: `${detail}，本次柜门未打开。`,
+          persisted: false
+        }));
+        setPhase("check_failed");
+        return;
+      }
+      setManualAssessment((current) => ({
+        ...current,
+        dispense_status: "HARDWARE_FAILED",
+        message: requestError.message || "柜门未能打开，请联系值守员。"
+      }));
+      setPhase("dispense_failed");
+    }
+  }
+
   async function performVerification(selectedMethod) {
     const session = sessionRef.current;
     const attempt = verificationAttemptRef.current + 1;
@@ -388,7 +521,17 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     if (!verification?.ok || !verification?.user) {
       if (selectedMethod === "face") {
         const outcome = faceFailureOutcome(verification);
-        if (outcome.allowGuest) {
+        if (outcome.allowGuest && manualInventory) {
+          setPreviewActive(false);
+          setVerifiedIdentity(anonymousGuest);
+          setManualAssessment({
+            check_status: "CHECK_FAILED",
+            reason_codes: ["PROFILE_UNAVAILABLE"],
+            message: "未确认到可用于个人用药核查的已登记身份，本次柜门未打开。",
+            persisted: false
+          });
+          setPhase("check_failed");
+        } else if (outcome.allowGuest) {
           requestGuestConfirmation(anonymousGuest, outcome.message, "recognition_failed");
         } else {
           requestFaceRetryOnly(outcome.message);
@@ -402,6 +545,13 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
 
     const guest = Boolean(verification.new_guest) || isGuestIdentity(verification.user);
     if (guest) {
+      if (manualInventory) {
+        setVerifiedIdentity(verification.user);
+        setPhase("recognized");
+        setPreviewActive(false);
+        await assessManualAccess(verification.user, verification, selectedMethod, session, attempt);
+        return;
+      }
       requestGuestConfirmation(
         verification.user,
         "未匹配到已登记家庭成员",
@@ -428,6 +578,10 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
     if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) {
       return;
     }
+    if (manualInventory) {
+      await assessManualAccess(verification.user, verification, selectedMethod, session, attempt);
+      return;
+    }
     try {
       await submitDispense(verification.user, selectedMethod, verification.score, session);
     } catch (requestError) {
@@ -443,6 +597,10 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
 
   async function verifyAndOpen() {
     if (busy || phase === "complete") {
+      return;
+    }
+    if (phase === "passed") {
+      await confirmManualAccess();
       return;
     }
     const session = sessionRef.current;
@@ -497,6 +655,18 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
         ? "面部识别未完成"
       : phase === "guest_confirm"
         ? "访客取药确认"
+      : phase === "checking"
+        ? "正在核查个人用药安全"
+      : phase === "passed"
+        ? "个人用药安全核查通过"
+      : phase === "blocked"
+        ? "已阻止本次取药"
+      : phase === "check_failed"
+        ? "本次核查未完成"
+      : phase === "dispense_failed"
+        ? "柜门未能打开"
+      : phase === "result_unknown"
+        ? "柜门结果待现场确认"
       : phase === "recognized"
         ? `${verifiedIdentity?.name || "使用人"}，身份已确认`
         : phase === "opening"
@@ -519,6 +689,10 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
         : "正在确认面部"
       : phase === "guest_confirm"
         ? "确认访客取药并开柜"
+      : phase === "checking"
+        ? "正在核查"
+      : phase === "passed"
+        ? "确认取药并开柜"
       : phase === "opening"
         ? "正在打开柜门"
         : phase === "recognized"
@@ -606,11 +780,11 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
 
           <div className="biometric-confirm-column">
             <div className="biometric-method-toggle" aria-label="身份确认方式">
-              <button type="button" className={method === "fingerprint" ? "active" : ""} onClick={() => selectMethod("fingerprint")} disabled={busy || phase === "guest_confirm"}>
+              <button type="button" className={method === "fingerprint" ? "active" : ""} onClick={() => selectMethod("fingerprint")} disabled={busy || manualIdentityLocked || phase === "guest_confirm"}>
                 <Fingerprint size={22} aria-hidden="true" />
                 指纹
               </button>
-              <button type="button" className={method === "face" ? "active" : ""} onClick={() => selectMethod("face")} disabled={busy || phase === "guest_confirm"}>
+              <button type="button" className={method === "face" ? "active" : ""} onClick={() => selectMethod("face")} disabled={busy || manualIdentityLocked || phase === "guest_confirm"}>
                 <ScanFace size={22} aria-hidden="true" />
                 面部
               </button>
@@ -641,9 +815,21 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
                 <span className="biometric-confirmed-glyph guest" aria-hidden="true">
                   <UserRound size={88} strokeWidth={1.8} />
                 </span>
-              ) : ["recognized", "complete"].includes(phase) ? (
+              ) : ["recognized", "passed", "complete"].includes(phase) ? (
                 <span className="biometric-confirmed-glyph" aria-hidden="true">
                   <CheckCircle2 size={88} strokeWidth={1.8} />
+                </span>
+              ) : phase === "checking" ? (
+                <span className="manual-access-state-glyph checking" aria-hidden="true">
+                  <LoaderCircle className="manual-access-stage-spinner" size={76} strokeWidth={1.8} />
+                </span>
+              ) : phase === "blocked" ? (
+                <span className="manual-access-state-glyph blocked" aria-hidden="true">
+                  <AlertTriangle size={76} strokeWidth={1.8} />
+                </span>
+              ) : ["check_failed", "dispense_failed", "result_unknown"].includes(phase) ? (
+                <span className="manual-access-state-glyph failed" aria-hidden="true">
+                  <XCircle size={76} strokeWidth={1.8} />
                 </span>
               ) : (
                 <StrokeDrawIcon
@@ -664,15 +850,51 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, o
               ) : null}
             </div>
 
+            {phase === "checking" ? (
+              <p className="manual-access-progress" role="status" aria-live="polite">
+                正在核查已登记档案与药品安全信息…
+              </p>
+            ) : null}
             {!result && (verificationError || error) && (
               <p className={`modal-message ${phase === "guest_confirm" ? "guest" : "error"}`}>
                 {verificationError || error}
               </p>
             )}
             {result && <p className="modal-message success">{result}</p>}
+            {manualAssessment && ["passed", "blocked", "check_failed", "dispense_failed", "result_unknown"].includes(phase) ? (
+              <div
+                className="manual-access-result"
+                data-status={phase}
+                role={phase === "passed" ? "status" : "alert"}
+              >
+                <strong>{phase === "passed"
+                  ? "核查通过"
+                  : phase === "blocked"
+                    ? "已阻止取药"
+                    : phase === "check_failed"
+                      ? "未能完成核查"
+                      : phase === "result_unknown"
+                        ? "请勿重复操作"
+                        : "开柜未完成"}</strong>
+                <p>{manualAssessment.message}</p>
+                {(phase === "blocked" || phase === "check_failed") && manualAssessment.persisted
+                  ? <small>已记录并将同步家属</small>
+                  : null}
+                {phase === "result_unknown" ? <small>请联系值守员现场确认柜门状态</small> : null}
+              </div>
+            ) : null}
 
-            <div className={`biometric-action-row ${faceVerificationActive || failedGuestConfirmation ? "split" : ""}`}>
-              {faceVerificationActive ? (
+            <div className={`biometric-action-row ${(!manualInventory && faceVerificationActive) || failedGuestConfirmation ? "split" : ""}`}>
+              {manualTerminalFailure ? (
+                <button className="primary-action biometric-confirm-action" type="button" onClick={cancelSession}>
+                  <span>返回药品列表</span>
+                </button>
+              ) : faceVerificationActive && manualInventory ? (
+                <button className="primary-action biometric-confirm-action" type="button" disabled>
+                  <ScanFace size={24} aria-hidden="true" />
+                  <span>正在确认面部</span>
+                </button>
+              ) : faceVerificationActive ? (
                 <>
                   <button className="primary-action biometric-confirm-action" type="button" disabled>
                     <ScanFace size={24} aria-hidden="true" />

@@ -289,6 +289,21 @@ Successful integrated-vitals responses preserve `heart_rate`, `spo2`, `systolic_
 
 Real dispense smoke is intentionally omitted from the generic checklist. Only run it after configuring a safe slot and confirming the device is ready.
 
+### Manual dispense idempotency
+
+The medicine-page manual route sends a non-empty `operation_id` to the board
+`/api/dispense` boundary. The station gateway patch serializes each operation by
+that ID and atomically persists `reserved -> sent -> final` around the original
+UART/GPIO call. Replaying the same normalized slot, quantity and control code
+returns the stored result without another pulse; reusing an ID with different
+content fails. A stale `reserved`/`sent` record, corrupt state, transport loss or
+missing final result is reported as `result_unknown=true` and `retry_safe=false`.
+The host surfaces that as `RESULT_UNKNOWN`; neither layer automatically retries.
+
+Calls without `operation_id` remain compatible with the legacy gateway for
+non-manual paths, but do not receive the new replay guarantee. Physical smoke is
+still a separate, supervised step and is never run by automated tests.
+
 ## AI And Recognition
 
 Medicine scan follows this order:

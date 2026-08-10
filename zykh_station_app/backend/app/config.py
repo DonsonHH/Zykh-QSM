@@ -322,7 +322,7 @@ class Settings:
     )
     cloud_sync_interval_seconds: float = float(_env("CLOUD_SYNC_INTERVAL_SECONDS", "2"))
     cloud_sync_timeout_seconds: float = float(_env("CLOUD_SYNC_TIMEOUT_SECONDS", "12"))
-    cloud_remote_cabinet_enabled: bool = _env("CLOUD_REMOTE_CABINET_ENABLED", "true").strip().lower() in {
+    cloud_remote_cabinet_enabled: bool = _env("CLOUD_REMOTE_CABINET_ENABLED", "false").strip().lower() in {
         "1",
         "true",
         "yes",

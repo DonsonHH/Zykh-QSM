@@ -15,7 +15,17 @@ from pathlib import Path
 from typing import Any
 
 
-COLLECTIONS = ("service_users", "today_plans", "inquiries")
+COLLECTIONS = (
+    "service_users",
+    "today_plans",
+    "inquiries",
+    "medication_safety_events",
+    "caregiver_event_receipts",
+    "caregiver_notification_outbox",
+    "device_memberships",
+    "device_pairing_codes",
+)
+TARGET_SCHEMA_REVISION = "2.5-caregiver-safety-events"
 
 
 class DeployError(RuntimeError):
@@ -93,7 +103,13 @@ class CloudBaseCli:
 
 
 def source_zip(function_dir: Path) -> bytes:
-    required = ("index.js", "package.json", "config.json")
+    required = (
+        "index.js",
+        "medicationSafetyEvents.js",
+        "memberships.js",
+        "package.json",
+        "config.json",
+    )
     missing = [name for name in required if not (function_dir / name).is_file()]
     if missing:
         raise DeployError(f"云函数目录缺少文件：{', '.join(missing)}")
@@ -187,13 +203,25 @@ def wait_for_schema(endpoint: str) -> None:
             )
             with urllib.request.urlopen(request, timeout=10) as response:
                 result = json.load(response)
-            if int(result.get("schemaVersion") or 0) == 2:
-                print("[cloudbase] schemaVersion=2，云函数部署完成。")
+            capabilities = result.get("capabilities") or {}
+            if (
+                int(result.get("schemaVersion") or 0) == 2
+                and result.get("schemaRevision") == TARGET_SCHEMA_REVISION
+                and capabilities.get("devicePairing") == "v1"
+                and capabilities.get("caregiverNotificationOutbox") == "v1"
+            ):
+                print(
+                    f"[cloudbase] schemaRevision={TARGET_SCHEMA_REVISION}，"
+                    "secure pairing / notification outbox 能力已生效。"
+                )
                 return
         except (OSError, ValueError, json.JSONDecodeError):
             pass
         time.sleep(3)
-    raise DeployError("云函数更新后 90 秒内未返回 schemaVersion=2。")
+    raise DeployError(
+        f"云函数更新后 90 秒内未返回 schemaRevision={TARGET_SCHEMA_REVISION} "
+        "及 secure pairing / notification outbox 能力。"
+    )
 
 
 def main() -> int:

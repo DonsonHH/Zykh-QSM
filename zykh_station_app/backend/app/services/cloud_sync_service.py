@@ -17,7 +17,6 @@ from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.medicine_repository import MedicineRepository
 from ..repositories.sync_repository import SyncRepository
-from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import (
     ServiceUserCreateRequest,
@@ -27,9 +26,12 @@ from ..schemas.records import (
 )
 from ..schemas.sync import SyncStatus
 from .ai_service import AiService
-from .dispense_service import DispenseService
+from .medication_safety_outbox import MedicationSafetyOutbox
 from .qsm_client import QsmClient
 from .speech_service import SpeechService
+
+
+REMOTE_CABINET_DISABLED_ERROR = "远程开柜已禁用，请在终端现场完成身份确认和用药核查。"
 
 
 class CloudSyncError(RuntimeError):
@@ -45,6 +47,7 @@ class CloudSyncWorker:
         self._last_snapshot_hash = ""
         self._cloud_schema_version: int | None = None
         self._cloud_schema_revision = ""
+        self._cloud_capabilities: dict[str, object] = {}
         self._cloud_schema_checked_at = 0.0
         self._connected = False
         self._last_error = ""
@@ -118,6 +121,10 @@ class CloudSyncWorker:
 
             encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             schema_version = self._detect_schema_version()
+            safety_events_sent = MedicationSafetyOutbox().flush(
+                self._request,
+                capabilities=self._cloud_capabilities,
+            )
             snapshot_hash = hashlib.sha256(
                 f"{schema_version}:{self._cloud_schema_revision}:{encoded}".encode("utf-8")
             ).hexdigest()
@@ -128,13 +135,15 @@ class CloudSyncWorker:
                 synced_count = self._sync_snapshot(snapshot)
                 self._last_snapshot_hash = snapshot_hash
                 db.set_setting("cloud_snapshot_hash", snapshot_hash)
+            synced_count += safety_events_sent
 
             now = db.now_text()
             current = SyncRepository().get_status()
+            pending_safety_events = MedicationSafetyOutbox().pending_count()
             SyncRepository().save_status(
                 SyncStatus(
-                    sync_status="已同步",
-                    pending_count=0,
+                    sync_status="已同步" if pending_safety_events == 0 else "待同步",
+                    pending_count=pending_safety_events,
                     last_sync_at=now,
                     network_mode=current.network_mode or "家庭网络",
                     connected=True,
@@ -365,6 +374,8 @@ class CloudSyncWorker:
             ping = self._request("PING", {})
             self._cloud_schema_version = int(ping.get("schemaVersion") or 1) if isinstance(ping, dict) else 1
             self._cloud_schema_revision = str(ping.get("schemaRevision") or "") if isinstance(ping, dict) else ""
+            capabilities = ping.get("capabilities") if isinstance(ping, dict) else {}
+            self._cloud_capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
             self._cloud_schema_checked_at = now
         return self._cloud_schema_version
 
@@ -453,6 +464,16 @@ class CloudSyncWorker:
         if not command_id:
             return
         existing = self._command_history(command_id)
+        if command_type == "OPEN_CABINET":
+            result = {"error": REMOTE_CABINET_DISABLED_ERROR}
+            created_at = str(existing["created_at"] if existing else db.now_text())
+            self._save_command(command_id, command_type, "failed_unacked", result, created_at)
+            try:
+                self._ack(command_id, "failed", result)
+            except CloudSyncError:
+                raise
+            self._save_command(command_id, command_type, "failed", result, created_at)
+            return
         if existing and existing["status"] in {"done", "done_unacked", "failed", "failed_unacked"}:
             final_status = "done" if str(existing["status"]).startswith("done") else "failed"
             result = json.loads(existing["result_json"] or "{}")
@@ -495,8 +516,19 @@ class CloudSyncWorker:
                 """
             ).fetchall()
         for row in rows:
-            final_status = "done" if str(row["status"]).startswith("done") else "failed"
-            result = json.loads(row["result_json"] or "{}")
+            if str(row["command_type"]) == "OPEN_CABINET":
+                final_status = "failed"
+                result = {"error": REMOTE_CABINET_DISABLED_ERROR}
+                self._save_command(
+                    str(row["command_id"]),
+                    str(row["command_type"]),
+                    "failed_unacked",
+                    result,
+                    str(row["created_at"]),
+                )
+            else:
+                final_status = "done" if str(row["status"]).startswith("done") else "failed"
+                result = json.loads(row["result_json"] or "{}")
             self._ack(str(row["command_id"]), final_status, result)
             self._save_command(
                 str(row["command_id"]),
@@ -542,7 +574,7 @@ class CloudSyncWorker:
         if command_type == "UPSERT_TODAY_PLAN":
             return self._upsert_today_plan(payload)
         if command_type == "OPEN_CABINET":
-            return self._open_cabinet(payload, command)
+            raise CloudSyncError(REMOTE_CABINET_DISABLED_ERROR)
         raise CloudSyncError(f"不支持的云端命令：{command_type}")
 
     @staticmethod
@@ -787,60 +819,6 @@ class CloudSyncWorker:
         else:
             plan = service.create_today_plan(TodayPlanCreateRequest(**payload))
         return {"plan": plan.model_dump(mode="json")}
-
-    @staticmethod
-    def _open_cabinet(payload: dict[str, object], command: dict[str, object]) -> dict[str, object]:
-        if not settings.cloud_remote_cabinet_enabled:
-            raise CloudSyncError("远程开柜功能未启用。")
-        if payload.get("remote_confirmed") is not True:
-            raise CloudSyncError("远程开柜缺少明确确认。")
-        source_identity = str(command.get("sourceOpenId") or command.get("_openid") or "").strip()
-        if not source_identity:
-            raise CloudSyncError("远程开柜命令缺少小程序身份。")
-        slot = CloudSyncWorker._int(payload.get("slot"))
-        if slot is None or not 1 <= slot <= 23:
-            raise CloudSyncError("远程开柜仓位无效。")
-        if CloudSyncWorker._recent_remote_open(slot):
-            raise CloudSyncError("同一仓位刚刚已执行远程开柜，重复请求已拒绝。")
-        response = DispenseService().open_cabinet(
-            DispenseOpenRequest(
-                slot=slot,
-                quantity=max(1, CloudSyncWorker._int(payload.get("quantity")) or 1),
-                reason=str(payload.get("reason") or "家属端远程开柜"),
-                confirmed_open=True,
-                medicine_id=str(payload.get("medicine_id") or "") or None,
-                target_user_id=str(payload.get("target_user_id") or ""),
-                target_user_name=str(payload.get("target_user_name") or payload.get("actor_name") or "家属端"),
-            )
-        )
-        return response.model_dump(mode="json")
-
-    @staticmethod
-    def _recent_remote_open(slot: int, seconds: int = 10) -> bool:
-        from datetime import datetime
-
-        db.init_db()
-        with db.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT result_json, updated_at
-                FROM cloud_command_history
-                WHERE command_type='OPEN_CABINET' AND status IN ('done', 'done_unacked')
-                ORDER BY updated_at DESC LIMIT 8
-                """
-            ).fetchall()
-        now = datetime.now()
-        for row in rows:
-            try:
-                age = (now - datetime.strptime(str(row["updated_at"]), "%Y-%m-%d %H:%M:%S")).total_seconds()
-                result = json.loads(row["result_json"] or "{}")
-            except (ValueError, TypeError, json.JSONDecodeError):
-                continue
-            if age > seconds:
-                continue
-            if int(result.get("slot") or 0) == slot:
-                return True
-        return False
 
     def _ack(self, command_id: str, status: str, result: dict[str, object]) -> None:
         self._request("ACK_COMMAND", {"commandId": command_id, "status": status, "result": result})

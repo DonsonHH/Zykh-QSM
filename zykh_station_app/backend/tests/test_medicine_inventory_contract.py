@@ -799,7 +799,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
             TodayPlanCreateRequest(
                 time="09:15",
                 medicine_id=medicine.id,
-                service_user_id="zhangsan",
+                service_user_id="wang-nainai",
             )
         )
 
@@ -920,17 +920,17 @@ class MedicineInventoryContractTest(unittest.TestCase):
         slot_3_plan = records.create_today_plan(TodayPlanCreateRequest(
             time="10:30",
             medicine_id="slot-03-diosmectite",
-            service_user_id="zhangsan",
+            service_user_id="wang-nainai",
         ))
         slot_13_plan = records.create_today_plan(TodayPlanCreateRequest(
             time="11:30",
             medicine_id="slot-13-ibuprofen",
-            service_user_id="zhangsan",
+            service_user_id="wang-nainai",
         ))
         preserved_plan = records.create_today_plan(TodayPlanCreateRequest(
             time="12:30",
             medicine_id="slot-08-huoxiang-zhengqi",
-            service_user_id="zhangsan",
+            service_user_id="wang-nainai",
         ))
 
         with db.connect() as conn:

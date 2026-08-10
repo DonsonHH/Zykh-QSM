@@ -4,8 +4,12 @@ export function confirmDispense(payload) {
   return apiPost("/api/dispense/confirm", payload);
 }
 
-export function openCabinet(payload) {
-  return apiPost("/api/dispense", payload);
+export function assessManualMedication(payload) {
+  return apiPost("/api/manual-medication-access/assess", payload);
+}
+
+export function confirmManualMedication(payload) {
+  return apiPost("/api/manual-medication-access/confirm", payload);
 }
 
 export function loadDispenseRecords() {

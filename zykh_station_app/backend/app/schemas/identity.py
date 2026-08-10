@@ -16,6 +16,7 @@ class IdentityResponse(BaseModel):
     message: str
     error_message: str | None = None
     new_guest: bool = False
+    verification_assertion_id: str = ""
 
 
 class FaceEnrollmentResponse(IdentityResponse):

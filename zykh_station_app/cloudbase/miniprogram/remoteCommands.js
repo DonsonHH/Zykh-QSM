@@ -3,49 +3,15 @@ function deviceId() {
   return app.globalData.deviceId || wx.getStorageSync("deviceId") || "zykh-qsm-001";
 }
 
-function nowText() {
-  const date = new Date();
-  const pad = value => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function safeId(value) {
-  return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
-}
-
-async function createLegacyCommand(type, payload, requestId) {
-  const currentDeviceId = deviceId();
-  const row = {
-    deviceId: currentDeviceId,
-    type,
-    payload,
-    status: "pending",
-    source: "miniprogram",
-    createdAt: nowText(),
-    updatedAt: nowText(),
-  };
-  const collection = wx.cloud.database().collection("commands");
-  if (requestId) {
-    const documentId = `${currentDeviceId}-request-${safeId(requestId)}`;
-    try {
-      const existing = await collection.doc(documentId).get();
-      if (existing && existing.data) return existing.data;
-    } catch (error) {
-      // A missing document is created below. CloudBase adds _openid itself.
-    }
-    await collection.doc(documentId).set({ data: row });
-    return Object.assign({ _id: documentId, compatibilityMode: true }, row);
-  }
-  const result = await collection.add({ data: row });
-  return Object.assign({ _id: result._id, compatibilityMode: true }, row);
-}
-
 function isMissingCreateCommandAction(error) {
   const message = String(error && error.message ? error.message : error || "");
   return /unknown action\s*:\s*CREATE_COMMAND\b/i.test(message);
 }
 
 async function createCommand(type, payload = {}, requestId = "") {
+  if (type === "OPEN_CABINET") {
+    throw new Error("远程开柜已禁用，请在终端现场完成操作。");
+  }
   try {
     const response = await wx.cloud.callFunction({
       name: "api",
@@ -63,33 +29,10 @@ async function createCommand(type, payload = {}, requestId = "") {
     return response.result;
   } catch (error) {
     if (isMissingCreateCommandAction(error)) {
-      // Only a confirmed v1 API compatibility miss may use the legacy write.
-      // Timeouts, permission errors and payload validation failures must remain
-      // visible to the caller instead of being presented as successful submits.
-      return createLegacyCommand(type, payload, requestId);
+      throw new Error("云端版本过旧，无法安全校验家属权限，请升级后重试。");
     }
     throw error;
   }
-}
-
-let pendingCabinetOpen = null;
-
-function requestCabinetOpen({ slot, medicineId = "", targetUserId = "", targetUserName = "", reason = "家属端远程开柜" }) {
-  if (pendingCabinetOpen) return pendingCabinetOpen;
-  const requestId = `open-${Date.now()}-${Number(slot)}`;
-  pendingCabinetOpen = createCommand("OPEN_CABINET", {
-      slot: Number(slot),
-      quantity: 1,
-      medicine_id: medicineId,
-      target_user_id: targetUserId,
-      target_user_name: targetUserName,
-      actor_name: targetUserName || "家属端",
-      reason,
-      remote_confirmed: true,
-      request_id: requestId,
-    }, requestId)
-    .finally(() => { pendingCabinetOpen = null; });
-  return pendingCabinetOpen;
 }
 
 function requestVitals() {
@@ -100,4 +43,4 @@ function requestBeep(volume) {
   return createCommand("AUDIO_BEEP", volume == null ? {} : { volume: Number(volume) });
 }
 
-module.exports = { createCommand, requestCabinetOpen, requestVitals, requestBeep };
+module.exports = { createCommand, requestVitals, requestBeep };

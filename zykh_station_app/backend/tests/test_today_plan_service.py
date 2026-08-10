@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
-from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,41 +30,62 @@ class TodayPlanServiceTest(unittest.TestCase):
         self.db_patch.stop()
         self.temp_dir.cleanup()
 
-    def test_default_plans_seed_two_people_with_three_labeled_tasks_each(self) -> None:
-        plans = self.service.list_today_plans()
+    def test_default_plans_seed_exact_2026_08_10_senior_contract(self) -> None:
+        plans = {plan.id: plan for plan in self.service.list_today_plans()}
+        users = {user.id: user for user in self.service.list_service_users()}
 
-        self.assertEqual(len(plans), 6)
-        self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "李四": 3})
+        self.assertEqual(set(users), {"wang-nainai", "li-yeye"})
         self.assertEqual(
-            {plan.timing_label for plan in plans},
-            {"早餐时", "早餐后", "早晨", "午饭后", "睡前"},
-        )
-        self.assertIn("slot-21-amlodipine", {plan.medicine_id for plan in plans})
-        self.assertTrue(all(plan.status == "待执行" for plan in plans))
-        users = {user.name: user for user in self.service.list_service_users()}
-        self.assertEqual(users["张三"].age, 70)
-        self.assertIn("常年性过敏性鼻炎", users["张三"].profile)
-        self.assertIn("李四的爷爷", users["张三"].profile)
-        self.assertEqual(users["张三"].allergies, "头孢类药物禁忌")
-        self.assertEqual(users["张三"].status, "家庭监护人")
-        self.assertEqual(users["李四"].age, 8)
-        self.assertIn("体重约25公斤", users["李四"].profile)
-        self.assertIn("季节性过敏性鼻炎", users["李四"].profile)
-        self.assertIn("功能性便秘", users["李四"].profile)
-        self.assertEqual(users["李四"].status, "儿童家庭成员")
-
-        child_plans = [plan for plan in plans if plan.target_user == "李四"]
-        self.assertEqual(
-            Counter(plan.medicine_id for plan in child_plans),
-            {"slot-18-budesonide-nasal": 2, "slot-06-lactulose": 1},
-        )
-        self.assertIn("10毫升（维持量）", {plan.dose for plan in child_plans})
-        self.assertTrue(
-            all(
-                "监护人协助" in plan.dose
-                for plan in child_plans
-                if plan.medicine_id == "slot-18-budesonide-nasal"
-            )
+            {
+                plan_id: (
+                    plan.service_user_id,
+                    plan.target_user,
+                    plan.medicine_id,
+                    plan.time,
+                    plan.timing_label,
+                    plan.dose,
+                    plan.status,
+                )
+                for plan_id, plan in plans.items()
+            },
+            {
+                "plan-demo-wang-amlodipine": (
+                    "wang-nainai",
+                    "王奶奶",
+                    "slot-21-amlodipine",
+                    "08:00",
+                    "早餐后",
+                    "1 片（按既往有效医嘱）",
+                    "待执行",
+                ),
+                "plan-demo-wang-budesonide": (
+                    "wang-nainai",
+                    "王奶奶",
+                    "slot-18-budesonide-nasal",
+                    "21:00",
+                    "睡前",
+                    "每侧鼻孔 1 喷（按既往有效医嘱）",
+                    "待执行",
+                ),
+                "plan-demo-li-lactulose": (
+                    "li-yeye",
+                    "李爷爷",
+                    "slot-06-lactulose",
+                    "07:30",
+                    "早餐时",
+                    "10 毫升（按既往有效医嘱）",
+                    "待执行",
+                ),
+                "plan-demo-li-desloratadine": (
+                    "li-yeye",
+                    "李爷爷",
+                    "slot-23-desloratadine",
+                    "20:30",
+                    "睡前",
+                    "每次 1 粒（按既往有效医嘱）",
+                    "待执行",
+                ),
+            },
         )
 
     def test_plan_crud_keeps_normalized_links_and_does_not_reseed_after_delete(self) -> None:
@@ -75,12 +95,12 @@ class TodayPlanServiceTest(unittest.TestCase):
                 time="20:30",
                 timing_label="晚饭后",
                 medicine_id="slot-02-centrum",
-                service_user_id="lisi",
-                dose="1片",
+                service_user_id="li-yeye",
+                dose="1 片",
                 status="待执行",
             )
         )
-        self.assertEqual(created.target_user, "李四")
+        self.assertEqual(created.target_user, "李爷爷")
         self.assertEqual(created.medicine, "多维元素片")
         self.assertEqual(created.timing_label, "晚饭后")
 
@@ -97,9 +117,13 @@ class TodayPlanServiceTest(unittest.TestCase):
             self.service.delete_today_plan(plan.id)
         self.assertEqual(self.service.list_today_plans(), [])
 
-    def test_seed_upgrade_preserves_existing_plans_and_completion_state(self) -> None:
-        default_plans = self.service.list_today_plans()
-        completed_plan = default_plans[0]
+    def test_seed_upgrade_preserves_admin_edits_custom_plans_and_completion(self) -> None:
+        default_plans = {plan.id: plan for plan in self.service.list_today_plans()}
+        completed_plan = default_plans["plan-demo-wang-amlodipine"]
+        self.service.update_today_plan(
+            completed_plan.id,
+            TodayPlanUpdateRequest(time="08:20", dose="管理员确认剂量"),
+        )
         self.service.complete_today_plan(
             completed_plan.id,
             completed_plan.medicine_id,
@@ -110,7 +134,7 @@ class TodayPlanServiceTest(unittest.TestCase):
                 time="16:20",
                 timing_label="下午",
                 medicine_id="slot-08-huoxiang-zhengqi",
-                service_user_id="zhangsan",
+                service_user_id="wang-nainai",
                 dose="1丸",
                 status="待执行",
             )
@@ -129,9 +153,11 @@ class TodayPlanServiceTest(unittest.TestCase):
 
         self.assertIn(custom.id, plans)
         self.assertEqual(plans[completed_plan.id].status, "已执行")
+        self.assertEqual(plans[completed_plan.id].time, "08:20")
+        self.assertEqual(plans[completed_plan.id].dose, "管理员确认剂量")
         self.assertEqual(plans[custom.id].medicine, "藿香正气丸")
 
-    def test_v2_empty_table_is_repaired_once_without_future_reseeding(self) -> None:
+    def test_legacy_empty_table_is_repaired_once_without_future_reseeding(self) -> None:
         with db.connect() as conn:
             conn.execute("DELETE FROM today_plans")
             conn.execute(
@@ -144,13 +170,21 @@ class TodayPlanServiceTest(unittest.TestCase):
             )
 
         repaired = self.service.list_today_plans()
-        self.assertEqual(len(repaired), 6)
+        self.assertEqual(
+            {plan.id for plan in repaired},
+            {
+                "plan-demo-wang-amlodipine",
+                "plan-demo-wang-budesonide",
+                "plan-demo-li-lactulose",
+                "plan-demo-li-desloratadine",
+            },
+        )
 
         for plan in repaired:
             self.service.delete_today_plan(plan.id)
         self.assertEqual(self.service.list_today_plans(), [])
 
-    def test_default_plans_bind_to_existing_people_when_canonical_ids_changed(self) -> None:
+    def test_default_plans_are_not_reassigned_when_canonical_people_are_missing(self) -> None:
         with db.connect() as conn:
             conn.execute("DELETE FROM today_plans")
             conn.execute("DELETE FROM service_users")
@@ -160,8 +194,8 @@ class TodayPlanServiceTest(unittest.TestCase):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("user-dynamic-zhangsan", "张三", 65, "高血压", "头孢过敏", "", "重点关注"),
-                    ("user-dynamic-zuoyue", "左越", 61, "家庭成员", "", "", "已登记"),
+                    ("user-dynamic-a", "临时人物甲", 65, "高血压", "头孢过敏", "", "重点关注"),
+                    ("user-dynamic-b", "临时人物乙", 61, "家庭成员", "", "", "已登记"),
                 ],
             )
             conn.execute(
@@ -175,9 +209,111 @@ class TodayPlanServiceTest(unittest.TestCase):
 
         plans = self.service.list_today_plans()
 
-        self.assertEqual(len(plans), 6)
-        self.assertEqual(Counter(plan.target_user for plan in plans), {"张三": 3, "左越": 3})
-        self.assertTrue(all(plan.service_user_id.startswith("user-dynamic-") for plan in plans))
+        self.assertEqual(plans, [])
+
+    def test_default_plans_are_not_bound_to_a_different_person_reusing_a_demo_id(self) -> None:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM service_users WHERE id='wang-nainai'")
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, safety_profile_revision,
+                  safety_profile_updated_at, persona_generation, archived
+                ) VALUES (
+                  'wang-nainai', '同名 ID 的真实用户', 56, '普通家庭成员', '', '',
+                  '已登记', '[]', '[]', '[]', 7, ?, 'real-person-v7', 0
+                )
+                """,
+                (db.now_text(),),
+            )
+
+        plans = self.service.list_today_plans()
+
+        self.assertEqual(plans, [])
+        with db.connect() as conn:
+            stored = conn.execute(
+                "SELECT name, persona_generation FROM service_users WHERE id='wang-nainai'"
+            ).fetchone()
+        self.assertEqual(stored["name"], "同名 ID 的真实用户")
+        self.assertEqual(stored["persona_generation"], "real-person-v7")
+
+    def test_legacy_plan_with_unresolved_person_and_medicine_is_quarantined_not_deleted(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO today_plans(
+                  id, time, medicine, target_user, status,
+                  medicine_id, service_user_id
+                ) VALUES (
+                  'legacy-unresolved-plan', '09:15', '历史手工录入药品',
+                  '历史手工录入人物', '待执行', '', ''
+                )
+                """
+            )
+
+        db.init_db()
+
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, medicine, target_user, medicine_id, service_user_id, archived
+                FROM today_plans WHERE id='legacy-unresolved-plan'
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["medicine"], "历史手工录入药品")
+        self.assertEqual(row["target_user"], "历史手工录入人物")
+        self.assertEqual(row["medicine_id"], "")
+        self.assertEqual(row["service_user_id"], "")
+        self.assertEqual(row["archived"], 1)
+        self.assertNotIn(
+            "legacy-unresolved-plan",
+            {plan.id for plan in self.service.list_today_plans()},
+        )
+
+    def test_archived_person_plans_are_quarantined_and_cannot_be_created(self) -> None:
+        self.service.list_today_plans()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(id, name, age, profile, allergies, note, status, archived)
+                VALUES ('lisi', '李四', 68, '历史演示人物', '', '', '已归档', 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO today_plans(
+                  id, time, medicine_id, service_user_id, dose, status,
+                  medicine, target_user, updated_at, archived
+                ) VALUES (
+                  'custom-old-child-plan', '09:10', 'slot-21-amlodipine', 'lisi',
+                  '1片', '待执行', '苯磺酸氨氯地平片', '李四', ?, 0
+                )
+                """,
+                (db.now_text(),),
+            )
+
+        db.init_db()
+
+        self.assertNotIn(
+            "custom-old-child-plan",
+            {plan.id for plan in self.service.list_today_plans()},
+        )
+        with db.connect() as conn:
+            stored = conn.execute(
+                "SELECT archived FROM today_plans WHERE id='custom-old-child-plan'"
+            ).fetchone()
+        self.assertEqual(stored["archived"], 1)
+        with self.assertRaisesRegex(ValueError, "服务对象不存在"):
+            self.service.create_today_plan(
+                TodayPlanCreateRequest(
+                    time="10:00",
+                    medicine_id="slot-21-amlodipine",
+                    service_user_id="lisi",
+                )
+            )
 
     def test_invalid_user_or_medicine_is_rejected(self) -> None:
         self.service.list_today_plans()
@@ -186,7 +322,7 @@ class TodayPlanServiceTest(unittest.TestCase):
                 TodayPlanCreateRequest(
                     time="09:00",
                     medicine_id="missing",
-                    service_user_id="zhangsan",
+                    service_user_id="wang-nainai",
                 )
             )
 
@@ -197,7 +333,7 @@ class TodayPlanServiceTest(unittest.TestCase):
             TodayPlanCreateRequest(
                 time="09:30",
                 medicine_id="slot-02-centrum",
-                service_user_id="lisi",
+                service_user_id="li-yeye",
                 schedule_type="interval",
                 interval_days=2,
                 start_date=start.isoformat(),
@@ -207,7 +343,7 @@ class TodayPlanServiceTest(unittest.TestCase):
             TodayPlanCreateRequest(
                 time="21:00",
                 medicine_id="slot-08-huoxiang-zhengqi",
-                service_user_id="wangwu",
+                service_user_id="wang-nainai",
                 schedule_type="weekly",
                 weekdays=[start.isoweekday()],
                 start_date=start.isoformat(),

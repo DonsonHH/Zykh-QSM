@@ -135,9 +135,8 @@ def qsm_camera_capture() -> QsmCameraCaptureResponse:
 @router.post("/dispense/dry-run", response_model=QsmDryRunResponse)
 def qsm_dispense_dry_run(request: QsmDryRunRequest) -> QsmDryRunResponse:
     client = QsmClient()
-    client.dispense(request.slot, request.quantity, dry_run=True)
     try:
-        result = DispenseService().confirm(
+        result = DispenseService(qsm_client=client).confirm_debug_dry_run(
             DispenseConfirmRequest(
                 medicine_id=request.medicine_id,
                 slot=request.slot,
@@ -145,7 +144,6 @@ def qsm_dispense_dry_run(request: QsmDryRunRequest) -> QsmDryRunResponse:
                 reason=request.reason,
                 confirmed_safety_notice=True,
             ),
-            force_dry_run=True,
         )
     except DispenseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

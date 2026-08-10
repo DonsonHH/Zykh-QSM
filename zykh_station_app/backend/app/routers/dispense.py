@@ -10,6 +10,7 @@ from ..schemas.dispense import (
     DispenseRecordsResponse,
 )
 from ..services.dispense_service import DispenseError, DispenseService
+from ..services.dispense_route import classify_dispense_route
 
 router = APIRouter(prefix="/api/dispense", tags=["dispense"])
 
@@ -19,12 +20,17 @@ def open_cabinet(request: DispenseOpenRequest) -> DispenseOpenResponse:
     del request
     raise HTTPException(
         status_code=403,
-        detail="直接开柜接口已停用；请使用安全取药确认、管理员二次确认或已认证的远程命令。",
+        detail="直接开柜接口已停用；请使用现场安全取药确认或管理员调试台。",
     )
 
 
 @router.post("/confirm", response_model=DispenseConfirmResponse)
 def confirm_dispense(request: DispenseConfirmRequest) -> DispenseConfirmResponse:
+    if classify_dispense_route(request) == "INQUIRY":
+        raise HTTPException(
+            status_code=409,
+            detail="问询方案必须通过原问询会话的确认接口取药。",
+        )
     try:
         return DispenseService().confirm(request)
     except DispenseError as exc:

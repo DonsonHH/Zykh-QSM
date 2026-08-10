@@ -20,6 +20,15 @@ export function loadServiceUsers() {
   return apiGet("/api/records/service-users");
 }
 
+export function loadServiceUserInquiries(userId, { limit = 20, cursor = "" } = {}) {
+  const encodedUserId = encodeURIComponent(String(userId || "").trim());
+  const query = new URLSearchParams({
+    limit: String(limit),
+    cursor: String(cursor || "")
+  });
+  return apiGet(`/api/records/service-users/${encodedUserId}/inquiries?${query.toString()}`);
+}
+
 export function createServiceUser(payload) {
   return apiPost("/api/records/service-users", payload);
 }

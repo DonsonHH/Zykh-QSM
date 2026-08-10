@@ -11,11 +11,14 @@ from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.vitals_repository import VitalsRepository
 from ..schemas.dispense import DispenseRecord
+from ..schemas.inquiry import InquirySessionResponse
 from ..schemas.records import (
     RecentRecord,
     RecordsSummary,
     ServiceUser,
     ServiceUserCreateRequest,
+    ServiceUserInquiryHistoryItem,
+    ServiceUserInquiryHistoryResponse,
     ServiceUserUpdateRequest,
     TodayPlan,
     TodayPlanCreateRequest,
@@ -59,9 +62,107 @@ class RecordsService:
         db.init_db()
         with db.connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, age, profile, allergies, note, status FROM service_users ORDER BY id"
+                """
+                SELECT id, name, age, profile, allergies, note, status,
+                       medical_conditions_json, current_medications_json,
+                       allergy_facts_json, safety_profile_revision,
+                       safety_profile_updated_at, persona_generation, archived
+                FROM service_users
+                WHERE archived=0
+                ORDER BY id
+                """
             ).fetchall()
-        return [ServiceUser(**dict(row)) for row in rows]
+        return [self._service_user_from_row(row) for row in rows]
+
+    def list_service_user_inquiries(
+        self,
+        user_id: str,
+        *,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> ServiceUserInquiryHistoryResponse:
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("服务对象不存在")
+        if not 1 <= int(limit) <= 20:
+            raise ValueError("历史问询分页数量必须在 1 到 20 之间")
+        db.init_db()
+        with db.connect() as conn:
+            exists = conn.execute(
+                "SELECT id FROM service_users WHERE id=?",
+                (normalized_user_id,),
+            ).fetchone()
+        if not exists:
+            raise ValueError("服务对象不存在")
+
+        normalized_cursor = str(cursor or "").strip()
+        selected, next_cursor = self.inquiry_repository.list_user_sessions_page(
+            normalized_user_id,
+            limit=limit,
+            cursor=normalized_cursor,
+        )
+        return ServiceUserInquiryHistoryResponse(
+            user_id=normalized_user_id,
+            inquiries=[self._service_user_inquiry_item(session) for session in selected],
+            next_cursor=next_cursor,
+        )
+
+    @staticmethod
+    def _service_user_inquiry_item(
+        session: InquirySessionResponse,
+    ) -> ServiceUserInquiryHistoryItem:
+        extracted = session.extracted_information
+        case_summary = (
+            extracted.case_summary.strip()
+            or extracted.symptoms_text.strip()
+            or "未形成病例摘要"
+        )
+        risk_level = session.risk_level or ""
+        risk_label = {
+            "low": "低风险",
+            "medium": "中风险",
+            "high": "高风险",
+            "emergency": "紧急风险",
+        }.get(risk_level, "未分级")
+        if session.action_status == "complete":
+            outcome = "已完成用户确认的取药流程"
+        elif session.can_view_medicines:
+            outcome = "已展示候选药品信息"
+        elif risk_level in {"high", "emergency"}:
+            outcome = "已建议联系医生或现场协助人员"
+        else:
+            outcome = "问询已记录"
+        return ServiceUserInquiryHistoryItem(
+            session_id=session.session_id,
+            happened_at=session.updated_at,
+            title=session.title,
+            case_summary=case_summary[:240],
+            risk_level=risk_level,
+            risk_label=risk_label,
+            outcome=outcome,
+            final_medicine_summary=RecordsService._final_medicine_summary(session),
+        )
+
+    @staticmethod
+    def _final_medicine_summary(session: InquirySessionResponse) -> str:
+        names = [
+            str(item.get("medicine_name") or item.get("name") or "").strip()
+            for item in session.action_items
+            if isinstance(item, dict) and item.get("ok") is not False
+        ]
+        if not any(names) and session.selected_option_id:
+            selected = next(
+                (
+                    option
+                    for option in session.treatment_options
+                    if option.option_id == session.selected_option_id
+                ),
+                None,
+            )
+            if selected is not None:
+                names = [medicine.name.strip() for medicine in selected.medicines]
+        unique_names = list(dict.fromkeys(name for name in names if name))
+        return "、".join(unique_names)[:160]
 
     def create_service_user(self, request: ServiceUserCreateRequest) -> ServiceUser:
         db.init_db()
@@ -71,26 +172,71 @@ class RecordsService:
         allergies = request.allergies.strip()[:80]
         note = request.note.strip()[:120] or "AI问询新建"
         status = request.status.strip()[:20] or "待完善"
+        medical_conditions = list(request.medical_conditions)
+        current_medications = list(request.current_medications)
+        allergy_facts = list(request.allergy_facts)
+        persona_generation = request.persona_generation.strip()[:80]
+        safety_updated_at = db.now_text()
         slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", name) or "user"
         user_id = f"user-{slug}-{db.now_text().replace(' ', '-').replace(':', '')}"
         with db.connect() as conn:
-            existing = conn.execute("SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE name=?", (name,)).fetchone()
+            existing = conn.execute(
+                """
+                SELECT id, name, age, profile, allergies, note, status,
+                       medical_conditions_json, current_medications_json,
+                       allergy_facts_json, safety_profile_revision,
+                       safety_profile_updated_at, persona_generation, archived
+                FROM service_users WHERE name=? AND archived=0
+                """,
+                (name,),
+            ).fetchone()
             if existing:
-                return ServiceUser(**dict(existing))
+                return self._service_user_from_row(existing)
             conn.execute(
                 """
-                INSERT INTO service_users(id, name, age, profile, allergies, note, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status,
+                  medical_conditions_json, current_medications_json,
+                  allergy_facts_json, safety_profile_revision,
+                  safety_profile_updated_at, persona_generation, archived
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0)
                 """,
-                (user_id, name, age, profile, allergies, note, status),
+                (
+                    user_id, name, age, profile, allergies, note, status,
+                    json.dumps(medical_conditions, ensure_ascii=False),
+                    json.dumps(current_medications, ensure_ascii=False),
+                    json.dumps(allergy_facts, ensure_ascii=False),
+                    safety_updated_at,
+                    persona_generation,
+                ),
             )
-        return ServiceUser(id=user_id, name=name, age=age, profile=profile, allergies=allergies, note=note, status=status)
+        return ServiceUser(
+            id=user_id,
+            name=name,
+            age=age,
+            profile=profile,
+            allergies=allergies,
+            note=note,
+            status=status,
+            medical_conditions=medical_conditions,
+            current_medications=current_medications,
+            allergy_facts=allergy_facts,
+            safety_profile_revision=1,
+            safety_profile_updated_at=safety_updated_at,
+            persona_generation=persona_generation,
+        )
 
     def update_service_user(self, user_id: str, request: ServiceUserUpdateRequest) -> ServiceUser:
         db.init_db()
         with db.connect() as conn:
             existing = conn.execute(
-                "SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=?",
+                """
+                SELECT id, name, age, profile, allergies, note, status,
+                       medical_conditions_json, current_medications_json,
+                       allergy_facts_json, safety_profile_revision,
+                       safety_profile_updated_at, persona_generation, archived
+                FROM service_users WHERE id=?
+                """,
                 (user_id,),
             ).fetchone()
             if not existing:
@@ -104,6 +250,39 @@ class RecordsService:
             allergies = (request.allergies if request.allergies is not None else current["allergies"]).strip()[:80]
             note = (request.note if request.note is not None else current["note"]).strip()[:120]
             status = (request.status if request.status is not None else current["status"]).strip()[:20] or "待完善"
+            medical_conditions = (
+                list(request.medical_conditions)
+                if request.medical_conditions is not None
+                else self._json_list(current["medical_conditions_json"])
+            )
+            current_medications = (
+                list(request.current_medications)
+                if request.current_medications is not None
+                else self._json_list(current["current_medications_json"])
+            )
+            allergy_facts = (
+                list(request.allergy_facts)
+                if request.allergy_facts is not None
+                else self._json_list(current["allergy_facts_json"])
+            )
+            persona_generation = (
+                request.persona_generation
+                if request.persona_generation is not None
+                else current["persona_generation"]
+            ).strip()[:80]
+            archived = bool(request.archived) if request.archived is not None else bool(current["archived"])
+            safety_changed = any(
+                (
+                    profile != current["profile"],
+                    allergies != current["allergies"],
+                    medical_conditions != self._json_list(current["medical_conditions_json"]),
+                    current_medications != self._json_list(current["current_medications_json"]),
+                    allergy_facts != self._json_list(current["allergy_facts_json"]),
+                    persona_generation != current["persona_generation"],
+                )
+            )
+            safety_profile_revision = int(current["safety_profile_revision"] or 1) + (1 if safety_changed else 0)
+            safety_profile_updated_at = db.now_text() if safety_changed else str(current["safety_profile_updated_at"] or "")
 
             duplicate = conn.execute(
                 "SELECT id FROM service_users WHERE name=? AND id<>?",
@@ -115,13 +294,41 @@ class RecordsService:
             conn.execute(
                 """
                 UPDATE service_users
-                SET name=?, age=?, profile=?, allergies=?, note=?, status=?
+                SET name=?, age=?, profile=?, allergies=?, note=?, status=?,
+                    medical_conditions_json=?, current_medications_json=?,
+                    allergy_facts_json=?, safety_profile_revision=?,
+                    safety_profile_updated_at=?, persona_generation=?, archived=?
                 WHERE id=?
                 """,
-                (name, age, profile, allergies, note, status, user_id),
+                (
+                    name, age, profile, allergies, note, status,
+                    json.dumps(medical_conditions, ensure_ascii=False),
+                    json.dumps(current_medications, ensure_ascii=False),
+                    json.dumps(allergy_facts, ensure_ascii=False),
+                    safety_profile_revision,
+                    safety_profile_updated_at,
+                    persona_generation,
+                    int(archived),
+                    user_id,
+                ),
             )
 
-        return ServiceUser(id=user_id, name=name, age=age, profile=profile, allergies=allergies, note=note, status=status)
+        return ServiceUser(
+            id=user_id,
+            name=name,
+            age=age,
+            profile=profile,
+            allergies=allergies,
+            note=note,
+            status=status,
+            medical_conditions=medical_conditions,
+            current_medications=current_medications,
+            allergy_facts=allergy_facts,
+            safety_profile_revision=safety_profile_revision,
+            safety_profile_updated_at=safety_profile_updated_at,
+            persona_generation=persona_generation,
+            archived=archived,
+        )
 
     def delete_service_user(self, user_id: str) -> None:
         db.init_db()
@@ -148,6 +355,7 @@ class RecordsService:
                 FROM today_plans AS p
                 JOIN medicines AS m ON m.id=p.medicine_id
                 JOIN service_users AS u ON u.id=p.service_user_id
+                WHERE p.archived=0 AND u.archived=0
                 ORDER BY p.time, p.id
                 """
             ).fetchall()
@@ -316,7 +524,10 @@ class RecordsService:
             raise ValueError("计划起始日期必须为 YYYY-MM-DD") from exc
         with db.connect() as conn:
             medicine = conn.execute("SELECT id, name FROM medicines WHERE id=?", (medicine_id,)).fetchone()
-            user = conn.execute("SELECT id, name FROM service_users WHERE id=?", (service_user_id,)).fetchone()
+            user = conn.execute(
+                "SELECT id, name FROM service_users WHERE id=? AND archived=0",
+                (service_user_id,),
+            ).fetchone()
         if not medicine:
             raise ValueError("计划药品不存在")
         if not user:
@@ -409,75 +620,68 @@ class RecordsService:
         return "每天"
 
     @staticmethod
+    def _json_list(value: object) -> list[dict[str, object]]:
+        try:
+            parsed = json.loads(str(value or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+    @classmethod
+    def _service_user_from_row(cls, row: object) -> ServiceUser:
+        values = dict(row)
+        return ServiceUser(
+            id=str(values["id"]),
+            name=str(values["name"]),
+            age=int(values["age"] or 0),
+            profile=str(values["profile"] or ""),
+            allergies=str(values["allergies"] or ""),
+            note=str(values["note"] or ""),
+            status=str(values["status"] or ""),
+            medical_conditions=cls._json_list(values.get("medical_conditions_json")),
+            current_medications=cls._json_list(values.get("current_medications_json")),
+            allergy_facts=cls._json_list(values.get("allergy_facts_json")),
+            safety_profile_revision=max(1, int(values.get("safety_profile_revision") or 1)),
+            safety_profile_updated_at=str(values.get("safety_profile_updated_at") or ""),
+            persona_generation=str(values.get("persona_generation") or ""),
+            archived=bool(values.get("archived")),
+        )
+
+    @staticmethod
     def _ensure_default_today_plan() -> None:
         from .medicine_service import MedicineService
 
         MedicineService().list_medicines()
-        seed_version = "family-demo-v6-grandparent-child"
+        seed_version = "family-demo-v7-senior-safety"
         demo_plans = (
-            ("plan-demo-zhangsan-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "zhangsan", "1片（按既往处方）"),
-            ("plan-demo-zhangsan-centrum", "12:30", "午饭后", "slot-02-centrum", "zhangsan", "1片"),
-            ("plan-demo-zhangsan-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "zhangsan", "每侧鼻孔1喷"),
-            ("plan-demo-lisi-lactulose", "07:30", "早餐时", "slot-06-lactulose", "lisi", "10毫升（维持量）"),
-            ("plan-demo-lisi-budesonide-morning", "08:00", "早晨", "slot-18-budesonide-nasal", "lisi", "每侧鼻孔1喷（监护人协助）"),
-            ("plan-demo-lisi-budesonide-evening", "20:30", "睡前", "slot-18-budesonide-nasal", "lisi", "每侧鼻孔1喷（监护人协助）"),
+            ("plan-demo-wang-amlodipine", "08:00", "早餐后", "slot-21-amlodipine", "wang-nainai", "1 片（按既往有效医嘱）"),
+            ("plan-demo-wang-budesonide", "21:00", "睡前", "slot-18-budesonide-nasal", "wang-nainai", "每侧鼻孔 1 喷（按既往有效医嘱）"),
+            ("plan-demo-li-lactulose", "07:30", "早餐时", "slot-06-lactulose", "li-yeye", "10 毫升（按既往有效医嘱）"),
+            ("plan-demo-li-desloratadine", "20:30", "睡前", "slot-23-desloratadine", "li-yeye", "每次 1 粒（按既往有效医嘱）"),
         )
         with db.connect() as conn:
             seed = conn.execute("SELECT value FROM app_settings WHERE key='today_plan_seed_version'").fetchone()
             if seed and seed["value"] == seed_version:
                 return
-            users = conn.execute("SELECT id, name FROM service_users ORDER BY name, id").fetchall()
-
-            def resolve_user(preferred_id: str, preferred_name: str, excluded_ids: set[str]) -> object | None:
-                for user in users:
-                    if user["id"] == preferred_id and user["id"] not in excluded_ids:
-                        return user
-                for user in users:
-                    if user["name"] == preferred_name and user["id"] not in excluded_ids:
-                        return user
-                return next((user for user in users if user["id"] not in excluded_ids), None)
-
-            primary_user = resolve_user("zhangsan", "张三", set())
-            primary_ids = {str(primary_user["id"])} if primary_user else set()
-            secondary_user = resolve_user("lisi", "李四", primary_ids)
-            demo_users = {
-                "zhangsan": primary_user,
-                "lisi": secondary_user,
+            users = {
+                str(row["id"]): row
+                for row in conn.execute(
+                    "SELECT id, name FROM service_users WHERE id IN ('wang-nainai', 'li-yeye') AND archived=0"
+                ).fetchall()
             }
-            if primary_user and str(primary_user["name"]) == "张三":
-                conn.execute(
-                    """
-                    UPDATE service_users
-                    SET age=70,
-                        profile='高血压；常年性过敏性鼻炎；李四的爷爷和主要照护人',
-                        allergies='头孢类药物禁忌',
-                        note='父母外出工作时负责照护李四；本人降压药和鼻喷剂按既往医嘱使用',
-                        status='家庭监护人'
-                    WHERE id=?
-                    """,
-                    (primary_user["id"],),
-                )
-            if secondary_user and str(secondary_user["name"]) == "李四":
-                conn.execute(
-                    """
-                    UPDATE service_users
-                    SET age=8,
-                        profile='8岁儿童；体重约25公斤；季节性过敏性鼻炎；功能性便秘',
-                        allergies='无已知药物过敏',
-                        note='张三的孙子；父母工作日外出，由张三照护；儿童用药需由监护人核验',
-                        status='儿童家庭成员'
-                    WHERE id=?
-                    """,
-                    (secondary_user["id"],),
-                )
+            if set(users) != {"wang-nainai", "li-yeye"}:
+                return
+            if not db.has_exact_senior_demo_personas(conn):
+                return
             conn.execute(
                 """
                 DELETE FROM today_plans
-                WHERE id IN ('plan-demo-lisi-bifid', 'plan-demo-lisi-hydrotalcite')
+                WHERE id LIKE 'plan-demo-zhangsan-%'
+                   OR id LIKE 'plan-demo-lisi-%'
                 """
             )
             for plan_id, time_value, timing_label, medicine_id, user_id, dose in demo_plans:
-                user = demo_users.get(user_id)
+                user = users.get(user_id)
                 medicine = conn.execute(
                     "SELECT id, name FROM medicines WHERE id=? LIMIT 1",
                     (medicine_id,),
@@ -491,22 +695,7 @@ class RecordsService:
                       medicine, target_user, updated_at, schedule_type,
                       interval_days, weekdays_json, start_date, last_action_date
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                      time=excluded.time,
-                      timing_label=excluded.timing_label,
-                      medicine_id=excluded.medicine_id,
-                      service_user_id=excluded.service_user_id,
-                      dose=excluded.dose,
-                      medicine=excluded.medicine,
-                      target_user=excluded.target_user,
-                      updated_at=excluded.updated_at,
-                      schedule_type=excluded.schedule_type,
-                      interval_days=excluded.interval_days,
-                      weekdays_json=excluded.weekdays_json,
-                      start_date=CASE
-                        WHEN today_plans.start_date='' THEN excluded.start_date
-                        ELSE today_plans.start_date
-                      END
+                    ON CONFLICT(id) DO NOTHING
                     """,
                     (
                         plan_id,

@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,12 +14,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
+from app.config import Settings, settings  # noqa: E402
 from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
 from app.schemas.sync import SyncStatus  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
 from app.services.cloud_sync_service import CloudSyncError, CloudSyncWorker  # noqa: E402
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
+from app.services.qsm_client import QsmClient  # noqa: E402
 
 
 class FakeCloudSyncWorker(CloudSyncWorker):
@@ -49,6 +52,28 @@ class FakeV2CloudSyncWorker(FakeCloudSyncWorker):
         if action == "UPSERT_SNAPSHOT_BATCH":
             rows = data.get("rows", [])
             return {"ok": True, "count": len(rows), "ids": [f"id-{index}" for index, _ in enumerate(rows)]}
+        return {"ok": True}
+
+
+class FakeSafetyEventCloudSyncWorker(FakeV2CloudSyncWorker):
+    def _call(self, action: str, data: dict[str, object]):
+        self.calls.append((action, data))
+        if action == "PING":
+            return {
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": "2.5-caregiver-safety-events",
+                "capabilities": {"medicationSafetyEvents": "v1"},
+            }
+        if action == "PULL_COMMANDS":
+            return []
+        if action == "UPSERT_SNAPSHOT_BATCH":
+            rows = data.get("rows", [])
+            return {
+                "ok": True,
+                "count": len(rows),
+                "ids": [f"id-{index}" for index, _ in enumerate(rows)],
+            }
         return {"ok": True}
 
 
@@ -105,8 +130,8 @@ class PauseAfterPullWorker(FakeCloudSyncWorker):
             return [
                 {
                     "id": "must-not-run",
-                    "type": "OPEN_CABINET",
-                    "payload": {"slot": 1},
+                    "type": "AUDIO_BEEP",
+                    "payload": {},
                 }
             ]
         return {"ok": True}
@@ -126,6 +151,9 @@ class CloudSyncServiceTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.db_patch.stop()
         self.temp_dir.cleanup()
+
+    def test_remote_cabinet_is_disabled_by_default(self) -> None:
+        self.assertFalse(Settings().cloud_remote_cabinet_enabled)
 
     def test_v1_cloud_uses_compatible_actions_and_marks_synced(self) -> None:
         worker = FakeCloudSyncWorker()
@@ -187,6 +215,64 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(ack[0]["commandId"], "command-1")
         self.assertEqual(ack[0]["status"], "done")
 
+    def test_legacy_completed_remote_open_is_reclassified_as_failed_when_redelivered(self) -> None:
+        worker = FakeCloudSyncWorker()
+        now = db.now_text()
+        worker._save_command("legacy-open-done", "OPEN_CABINET", "done", {"ok": True}, now)
+
+        with patch.object(QsmClient, "dispense") as qsm_dispense:
+            worker._handle_command(
+                {
+                    "_id": "legacy-open-done",
+                    "type": "OPEN_CABINET",
+                    "payload": {"slot": 8, "remote_confirmed": True},
+                }
+            )
+
+        acknowledgements = [payload for action, payload in worker.calls if action == "ACK_COMMAND"]
+        self.assertEqual(len(acknowledgements), 1)
+        self.assertEqual(acknowledgements[0]["status"], "failed")
+        self.assertIn("远程开柜已禁用", acknowledgements[0]["result"]["error"])
+        self.assertEqual(worker._command_history("legacy-open-done")["status"], "failed")
+        qsm_dispense.assert_not_called()
+
+    def test_legacy_unacked_remote_open_is_flushed_as_failed(self) -> None:
+        worker = FakeCloudSyncWorker()
+        worker._save_command(
+            "legacy-open-unacked",
+            "OPEN_CABINET",
+            "done_unacked",
+            {"ok": True, "slot": 8},
+            db.now_text(),
+        )
+
+        with patch.object(QsmClient, "dispense") as qsm_dispense:
+            worker._flush_unacked_commands()
+
+        acknowledgements = [payload for action, payload in worker.calls if action == "ACK_COMMAND"]
+        self.assertEqual(len(acknowledgements), 1)
+        self.assertEqual(acknowledgements[0]["status"], "failed")
+        self.assertIn("远程开柜已禁用", acknowledgements[0]["result"]["error"])
+        self.assertEqual(worker._command_history("legacy-open-unacked")["status"], "failed")
+        qsm_dispense.assert_not_called()
+
+    def test_legacy_remote_open_is_locally_reclassified_before_failed_ack_retry(self) -> None:
+        worker = AckFailureWorker()
+        worker._save_command(
+            "legacy-open-ack-retry",
+            "OPEN_CABINET",
+            "done_unacked",
+            {"ok": True, "slot": 8},
+            db.now_text(),
+        )
+
+        with self.assertRaises(CloudSyncError):
+            worker._flush_unacked_commands()
+
+        history = worker._command_history("legacy-open-ack-retry")
+        self.assertEqual(history["status"], "failed_unacked")
+        self.assertIn("远程开柜已禁用", history["result_json"])
+
     def test_v2_cloud_sends_bounded_batches_and_finalizes_each_collection(self) -> None:
         worker = FakeV2CloudSyncWorker()
 
@@ -198,6 +284,41 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(set(finalized), {"medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"})
         self.assertTrue(all(len(payload["rows"]) <= 20 for payload in batches))
         self.assertTrue(all(len(__import__("json").dumps(payload, ensure_ascii=False).encode("utf-8")) < 60_000 for payload in batches))
+
+    def test_v2_capability_flushes_safety_outbox_outside_snapshot_finalize(self) -> None:
+        payload = {
+            "event_id": "event-sync-001",
+            "check_id": "safety-check-sync-001",
+            "check_status": "BLOCKED",
+        }
+        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = __import__("hashlib").sha256(payload_json.encode("utf-8")).hexdigest()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO medication_safety_outbox(
+                  event_id, aggregate_id, event_type, payload_json, payload_digest,
+                  status, attempts, next_attempt_at, created_at, sent_at
+                ) VALUES ('event-sync-001', 'safety-check-sync-001',
+                          'MEDICATION_SAFETY_EVENT_RECORDED', ?, ?,
+                          'pending', 0, ?, ?, '')
+                """,
+                (payload_json, digest, db.now_text(), db.now_text()),
+            )
+        worker = FakeSafetyEventCloudSyncWorker()
+
+        worker.run_once()
+
+        reports = [data for action, data in worker.calls if action == "REPORT_MEDICATION_SAFETY_EVENT"]
+        finalized = [data["kind"] for action, data in worker.calls if action == "FINALIZE_SNAPSHOT"]
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["payloadDigest"], digest)
+        self.assertNotIn("medicationSafetyEvents", finalized)
+        with db.connect() as conn:
+            status = conn.execute(
+                "SELECT status FROM medication_safety_outbox WHERE event_id='event-sync-001'"
+            ).fetchone()["status"]
+        self.assertEqual(status, "sent")
 
     def test_schema_revision_change_forces_full_snapshot_resync(self) -> None:
         first = FakeV2CloudSyncWorker("2.1")
@@ -803,20 +924,20 @@ class CloudSyncServiceTest(unittest.TestCase):
 
     def test_ack_failure_never_reexecutes_completed_hardware_command(self) -> None:
         worker = AckFailureWorker()
-        command = {"_id": "open-1", "type": "OPEN_CABINET", "payload": {}}
+        command = {"_id": "beep-1", "type": "AUDIO_BEEP", "payload": {}}
 
         with self.assertRaises(CloudSyncError):
             worker._handle_command(command)
 
         self.assertEqual(worker.executions, 1)
-        self.assertEqual(worker._command_history("open-1")["status"], "done_unacked")
+        self.assertEqual(worker._command_history("beep-1")["status"], "done_unacked")
 
         worker.fail_ack = False
         worker._flush_unacked_commands()
         worker._handle_command(command)
 
         self.assertEqual(worker.executions, 1)
-        self.assertEqual(worker._command_history("open-1")["status"], "done")
+        self.assertEqual(worker._command_history("beep-1")["status"], "done")
 
     def test_restart_marks_inflight_command_ambiguous_instead_of_retrying(self) -> None:
         worker = FakeCloudSyncWorker()
@@ -828,41 +949,32 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(history["status"], "failed_unacked")
         self.assertIn("禁止自动重试", history["result_json"])
 
-    def test_recent_remote_open_blocks_only_the_same_slot(self) -> None:
-        worker = FakeCloudSyncWorker()
-        worker._save_command("open-8", "OPEN_CABINET", "done", {"ok": True, "slot": 8}, db.now_text())
-
-        self.assertTrue(worker._recent_remote_open(8))
-        self.assertFalse(worker._recent_remote_open(9))
-
-    def test_remote_cabinet_requires_confirmation_and_miniprogram_identity(self) -> None:
-        worker = FakeCloudSyncWorker()
-
-        with self.assertRaisesRegex(CloudSyncError, "明确确认"):
-            worker._open_cabinet({"slot": 8}, {"_openid": "wechat-user"})
-        with self.assertRaisesRegex(CloudSyncError, "小程序身份"):
-            worker._open_cabinet({"slot": 8, "remote_confirmed": True}, {})
-
-    def test_confirmed_miniprogram_command_reaches_dispense_service(self) -> None:
-        worker = FakeCloudSyncWorker()
-        response = SimpleNamespace(model_dump=lambda mode: {"ok": True, "slot": 8, "mode": mode})
-        with patch("app.services.cloud_sync_service.DispenseService") as service_class:
-            service_class.return_value.open_cabinet.return_value = response
-            result = worker._open_cabinet(
-                {
+    def test_legacy_remote_cabinet_command_is_rejected_without_touching_qsm(self) -> None:
+        worker = MedicineRoundTripWorker(
+            {
+                "_id": "legacy-open-cabinet",
+                "type": "OPEN_CABINET",
+                "payload": {
                     "slot": 8,
                     "remote_confirmed": True,
                     "target_user_name": "张三",
-                    "reason": "家属端远程开柜",
                 },
-                {"_openid": "wechat-user"},
-            )
+                "_openid": "legacy-wechat-user",
+            }
+        )
+        legacy_enabled_settings = replace(settings, cloud_remote_cabinet_enabled=True)
 
-        request = service_class.return_value.open_cabinet.call_args.args[0]
-        self.assertEqual(result["slot"], 8)
-        self.assertEqual(request.slot, 8)
-        self.assertTrue(request.confirmed_open)
-        self.assertEqual(request.target_user_name, "张三")
+        with (
+            patch("app.services.cloud_sync_service.settings", legacy_enabled_settings),
+            patch.object(QsmClient, "dispense") as qsm_dispense,
+        ):
+            worker.run_once()
+
+        acknowledgements = [payload for action, payload in worker.calls if action == "ACK_COMMAND"]
+        self.assertEqual(len(acknowledgements), 1)
+        self.assertEqual(acknowledgements[0]["status"], "failed")
+        self.assertIn("远程开柜已禁用", acknowledgements[0]["result"]["error"])
+        qsm_dispense.assert_not_called()
 
     def test_miniprogram_speak_command_announces_the_named_reminder(self) -> None:
         worker = FakeCloudSyncWorker()

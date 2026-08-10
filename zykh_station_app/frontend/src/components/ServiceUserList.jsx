@@ -1,7 +1,7 @@
 import React from "react";
 import { UserRound } from "lucide-react";
 
-export function ServiceUserList({ users = [] }) {
+export function ServiceUserList({ users = [], onSelectUser }) {
   return (
     <section className="records-panel service-users-panel">
       <div className="records-panel-heading">
@@ -9,7 +9,13 @@ export function ServiceUserList({ users = [] }) {
       </div>
       <div className="service-user-list">
         {users.map((user) => (
-          <article key={user.id} className="service-user-card">
+          <button
+            key={user.id}
+            type="button"
+            className="service-user-card"
+            aria-label={`查看${user.name}的历史问询`}
+            onClick={(event) => onSelectUser?.(user, event.currentTarget)}
+          >
             <div className="service-user-card-header">
               <span className="service-user-icon" aria-hidden="true">
                 <UserRound size={24} />
@@ -21,7 +27,7 @@ export function ServiceUserList({ users = [] }) {
             </div>
             <p>{user.age}岁 · {user.profile}</p>
             <small>{user.note}</small>
-          </article>
+          </button>
         ))}
         {users.length === 0 && <p className="empty-list-note">暂无服务对象记录</p>}
       </div>

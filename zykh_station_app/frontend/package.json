@@ -9,6 +9,8 @@
     "test:voice": "node scripts/test-voice-session.mjs",
     "test:dispense-speech": "node scripts/test-dispense-speech.mjs",
     "test:medicine-guard": "node scripts/test-medicine-dispense-guard.mjs",
+    "test:manual-access-live": "node scripts/test-manual-medication-access-live.mjs",
+    "test:service-user-history-live": "node scripts/test-service-user-inquiry-history-live.mjs",
     "test:home-medication": "node scripts/test-home-medication-plans.mjs",
     "test:inquiry-treatment": "node scripts/test-inquiry-treatment.mjs",
     "test:inquiry-guest": "node scripts/test-inquiry-guest-session.mjs",

@@ -1770,7 +1770,11 @@ class InquiryOrchestrator:
         db.init_db()
         with db.connect() as conn:
             row = conn.execute(
-                "SELECT id, name, age, profile, allergies, note FROM service_users WHERE id=?",
+                """
+                SELECT id, name, age, profile, allergies, note
+                FROM service_users
+                WHERE id=? AND archived=0
+                """,
                 (user_id,),
             ).fetchone()
         return dict(row) if row else {}

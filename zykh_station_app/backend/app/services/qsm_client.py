@@ -659,8 +659,16 @@ class QsmClient:
 
         return QsmCameraService(self.base_url).capture()
 
-    def dispense(self, slot: str, quantity: int, dry_run: bool = True) -> dict[str, Any]:
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = True,
+        operation_id: str = "",
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"slot": slot, "quantity": quantity}
+        if operation_id:
+            payload["operation_id"] = operation_id
         try:
             numeric_slot = int(slot)
             if 1 <= numeric_slot <= 23:
@@ -685,14 +693,27 @@ class QsmClient:
             body_format="auto",
         )
         if error:
-            return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": error}
+            return {
+                "ok": False,
+                "dry_run": False,
+                "slot": slot,
+                "quantity": quantity,
+                "detail": error,
+                # Once an HTTP write is attempted, a timeout/disconnect cannot
+                # prove whether the cabinet gateway acted. Callers must not retry.
+                "result_unknown": True,
+                "retry_safe": False,
+            }
         ok = bool(payload.get("ok", payload.get("result") == "success"))
+        result_unknown = bool(payload.get("result_unknown"))
         return {
             "ok": ok,
             "dry_run": False,
             "slot": slot,
             "quantity": quantity,
             "detail": payload.get("message") or payload.get("detail") or payload.get("error") or payload.get("result") or "外设网关已返回。",
+            "result_unknown": result_unknown,
+            "retry_safe": bool(payload.get("retry_safe", not result_unknown)),
             "raw": payload,
         }
 

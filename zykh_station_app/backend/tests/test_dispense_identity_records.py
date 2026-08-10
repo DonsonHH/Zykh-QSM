@@ -4,33 +4,90 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
-
-from fastapi import HTTPException
-
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
+try:
+    import fastapi  # noqa: F401
+except ModuleNotFoundError:
+    fastapi_stub = ModuleType("fastapi")
+
+    class _APIRouter:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        def __getattr__(self, _name):
+            def route(*args, **kwargs):
+                del args, kwargs
+
+                def decorate(function):
+                    return function
+
+                return decorate
+
+            return route
+
+    class _HTTPException(Exception):
+        def __init__(self, status_code: int, detail: str) -> None:
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    fastapi_stub.APIRouter = _APIRouter
+    fastapi_stub.HTTPException = _HTTPException
+    sys.modules["fastapi"] = fastapi_stub
+
+from fastapi import HTTPException  # noqa: E402
+
 from app import db  # noqa: E402
-from app.routers.dispense import open_cabinet  # noqa: E402
+from app.repositories.identity_assertion_repository import IdentityAssertionRepository  # noqa: E402
+from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository  # noqa: E402
+from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
+from app.routers.dispense import confirm_dispense, open_cabinet  # noqa: E402
 from app.schemas.dispense import DispenseConfirmRequest, DispenseOpenRequest  # noqa: E402
+from app.schemas.manual_medication_access import (  # noqa: E402
+    AssessManualMedicationCommand,
+    ConfirmManualMedicationCommand,
+    ManualMedicationAssessment,
+)
 from app.schemas.medicine import MedicineScanRegisterRequest  # noqa: E402
 from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.services.dispense_service import DispenseError, DispenseService  # noqa: E402
+from app.services.manual_dispense_adapter import DispenseServiceManualAdapter  # noqa: E402
+from app.services.manual_medication_access_module import ManualMedicationAccessModule  # noqa: E402
 from app.services.medicine_service import MedicineService  # noqa: E402
 from app.services.medicine_knowledge_repository import MedicineKnowledgeRepository  # noqa: E402
 from app.services.records_service import RecordsService  # noqa: E402
 
 
 class SuccessfulQsmClient:
-    def dispense(self, slot: str, quantity: int, dry_run: bool = False) -> dict[str, object]:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, bool]] = []
+
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del operation_id
+        self.calls.append((slot, quantity, dry_run))
         return {"ok": True, "detail": f"slot={slot} quantity={quantity} dry_run={dry_run}"}
 
 
 class FailedQsmClient:
-    def dispense(self, slot: str, quantity: int, dry_run: bool = False) -> dict[str, object]:
+    def dispense(
+        self,
+        slot: str,
+        quantity: int,
+        dry_run: bool = False,
+        operation_id: str = "",
+    ) -> dict[str, object]:
+        del operation_id
         return {"ok": False, "detail": "mock cabinet failure"}
 
 
@@ -53,17 +110,58 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         MedicineService().list_medicines()
         self.records = RecordsService()
         self.archive = RecordingArchiveService()
-        self.service = DispenseService(qsm_client=SuccessfulQsmClient(), archive_service=self.archive)
+        self.qsm = SuccessfulQsmClient()
+        self.service = DispenseService(qsm_client=self.qsm, archive_service=self.archive)
 
     def tearDown(self) -> None:
         self.db_patch.stop()
         self.temp_dir.cleanup()
 
-    def test_scheduled_dispense_requires_expected_person_and_completes_plan(self) -> None:
-        plan = next(
-            item for item in self.records.list_today_plans(due_only=True)
-            if item.target_user == "张三"
+    def _assess_manual_inventory(
+        self,
+        medicine_id: str,
+        *,
+        request_suffix: str,
+        service_user_id: str = "li-yeye",
+        verification_method: str = "face",
+    ) -> tuple[ManualMedicationAccessModule, ManualMedicationAssessment]:
+        medicine = MedicineRepository().get_by_id(medicine_id)
+        self.assertIsNotNone(medicine)
+        assertions = IdentityAssertionRepository()
+        assertion = assertions.issue(
+            service_user_id=service_user_id,
+            verification_method=verification_method,
+            verification_score=0.97,
         )
+        module = ManualMedicationAccessModule(
+            repository=ManualMedicationAccessRepository(),
+            identity_assertions=assertions,
+            dispense_adapter=DispenseServiceManualAdapter(self.service),
+        )
+        assessment = module.assess(
+            AssessManualMedicationCommand(
+                request_id=f"assess-{request_suffix}",
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                service_user_id=service_user_id,
+                verification_method=verification_method,
+                verification_assertion_id=assertion.assertion_id,
+                expected_review_fingerprint=MedicineRepository.review_fingerprint(medicine),
+            )
+        )
+        return module, assessment
+
+    @staticmethod
+    def _real_dispense_settings() -> SimpleNamespace:
+        return SimpleNamespace(
+            dispense_dry_run=False,
+            enable_real_dispense=True,
+            real_dispense_test_slot="",
+        )
+
+    def test_scheduled_dispense_requires_expected_person_and_completes_plan(self) -> None:
+        plan = self.records.get_today_plan("plan-demo-wang-amlodipine")
+        self.assertIsNotNone(plan)
         medicine = MedicineService().get_medicine(plan.medicine_id)
         self.assertIsNotNone(medicine)
         request = DispenseConfirmRequest(
@@ -91,63 +189,101 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(DispenseError, "已经处理"):
             self.service.confirm(request, force_dry_run=False)
 
-    def test_guest_dispense_is_explicitly_labeled_as_guest(self) -> None:
+    def test_archived_person_plan_cannot_reach_qsm(self) -> None:
         with db.connect() as conn:
             conn.execute(
-                "INSERT INTO service_users(id, name, age, profile, allergies, note, status) VALUES (?, ?, 0, '未登记', '', '', '游客')",
-                ("guest-test", "游客 0716-2100"),
+                """
+                INSERT INTO service_users(id, name, age, profile, allergies, note, status, archived)
+                VALUES ('lisi', '李四', 68, '历史演示人物', '', '', '已归档', 1)
+                """
             )
-        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
+            conn.execute(
+                """
+                INSERT INTO today_plans(
+                  id, time, medicine_id, service_user_id, dose, status,
+                  medicine, target_user, updated_at, archived
+                ) VALUES (
+                  'custom-old-child-plan', '09:10', 'slot-21-amlodipine', 'lisi',
+                  '1片', '待执行', '苯磺酸氨氯地平片', '李四', ?, 0
+                )
+                """,
+                (db.now_text(),),
+            )
+        db.init_db()
+        medicine = MedicineService().get_medicine("slot-21-amlodipine")
+
+        with self.assertRaisesRegex(DispenseError, "身份记录不存在|用药计划不存在"):
+            self.service.confirm(
+                DispenseConfirmRequest(
+                    medicine_id=medicine.id,
+                    slot=medicine.slot,
+                    quantity=1,
+                    reason="历史计划取药",
+                    confirmed_safety_notice=True,
+                    confirm_real_dispense=True,
+                    target_user_id="lisi",
+                    target_user_name="李四",
+                    verification_method="fingerprint",
+                    today_plan_id="custom-old-child-plan",
+                ),
+                force_dry_run=False,
+            )
+
+        self.assertEqual(self.qsm.calls, [])
+        self.assertEqual(self.service.list_records(), [])
+
+    def test_public_manual_inventory_confirm_fails_closed_before_qsm(self) -> None:
+        medicine = MedicineService().get_medicine("slot-17-iodophor")
         self.assertIsNotNone(medicine)
 
-        self.service.confirm(
-            DispenseConfirmRequest(
-                medicine_id=medicine.id,
-                slot=medicine.slot,
-                quantity=1,
-                reason="家庭药柜取药确认",
-                confirmed_safety_notice=True,
-                confirm_real_dispense=True,
-                target_user_id="guest-test",
-                target_user_name="错误的前端名称",
-                verification_method="face",
-            ),
-            force_dry_run=False,
+        request = DispenseConfirmRequest(
+            medicine_id=medicine.id,
+            slot=medicine.slot,
+            quantity=1,
+            reason="药品页普通库存取药",
+            confirmed_safety_notice=True,
+            confirm_real_dispense=True,
+            target_user_id="li-yeye",
+            target_user_name="李爷爷",
+            verification_method="face",
+        )
+        with patch("app.routers.dispense.DispenseService", return_value=self.service):
+            with self.assertRaises(HTTPException) as raised:
+                confirm_dispense(request)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("身份确认和个人用药安全核查", raised.exception.detail)
+        self.assertEqual(self.qsm.calls, [])
+        self.assertEqual(self.service.list_records(), [])
+
+    def test_manual_inventory_uses_assess_then_confirm_for_reviewed_prescription(self) -> None:
+        module, assessment = self._assess_manual_inventory(
+            "slot-14-oseltamivir",
+            request_suffix="li-oseltamivir",
         )
 
-        record = self.service.list_records()[0]
-        recent = self.records.get_recent_records()[0]
-        self.assertEqual(record.target_user_name, "游客 0716-2100")
-        self.assertEqual(record.target_user_type, "guest")
-        self.assertEqual(recent.target_user, "游客 0716-2100")
-        self.assertEqual(recent.title, medicine.name)
-        self.assertRegex(recent.time, r"\d{2}-\d{2} \d{2}:\d{2}")
-        self.assertEqual(recent.target_user_type, "guest")
+        self.assertEqual(assessment.check_status, "PASSED")
+        self.assertEqual(assessment.dispense_status, "NOT_STARTED")
+        self.assertEqual(self.qsm.calls, [])
 
-    def test_manual_dispense_rejects_pending_expired_and_prescription_inventory(self) -> None:
-        blocked = (
-            ("slot-15-mupirocin", "已过有效期"),
-            ("slot-14-oseltamivir", "处方或既往用药计划"),
-        )
-
-        for medicine_id, message in blocked:
-            medicine = MedicineService().get_medicine(medicine_id)
-            self.assertIsNotNone(medicine)
-            request = DispenseConfirmRequest(
-                medicine_id=medicine.id,
-                slot=medicine.slot,
-                quantity=1,
-                reason="药品页手动取药",
-                confirmed_safety_notice=True,
-                confirm_real_dispense=True,
-                target_user_id="zhangsan",
-                target_user_name="张三",
-                verification_method="face",
+        with patch(
+            "app.services.dispense_service.settings",
+            self._real_dispense_settings(),
+        ):
+            outcome = module.confirm(
+                ConfirmManualMedicationCommand(
+                    request_id="confirm-li-oseltamivir",
+                    safety_check_id=assessment.check_id,
+                    confirmed_safety_notice=True,
+                )
             )
 
-            with self.subTest(medicine_id=medicine_id):
-                with self.assertRaisesRegex(DispenseError, message):
-                    self.service.confirm(request, force_dry_run=False)
+        self.assertTrue(outcome.ok)
+        self.assertEqual(outcome.dispense_status, "DISPENSED")
+        self.assertEqual(self.qsm.calls, [("14", 1, False)])
+        record = self.service.list_records()[0]
+        self.assertEqual(record.target_user_id, "li-yeye")
+        self.assertEqual(record.target_user_name, "李爷爷")
 
     def test_cloud_guidance_cannot_unlock_an_unverified_package(self) -> None:
         repository = MedicineService().repository
@@ -163,20 +299,15 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         medicine = MedicineService().get_medicine(scanned.id)
         self.assertIsNotNone(medicine)
         self.assertFalse(medicine.package_verified)
-        request = DispenseConfirmRequest(
-            medicine_id=medicine.id,
-            slot=medicine.slot,
-            quantity=1,
-            reason="药品页手动取药",
-            confirmed_safety_notice=True,
-            confirm_real_dispense=True,
-            target_user_id="zhangsan",
-            target_user_name="张三",
-            verification_method="face",
+        _module, assessment = self._assess_manual_inventory(
+            medicine.id,
+            request_suffix="unverified-package",
         )
 
-        with self.assertRaisesRegex(DispenseError, "包装规格尚未人工核验"):
-            self.service.confirm(request, force_dry_run=False)
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PACKAGE_UNVERIFIED"])
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(self.qsm.calls, [])
 
     def test_unreviewed_inquiry_medicine_is_rejected_before_qsm_dispense(self) -> None:
         medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
@@ -206,8 +337,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     reason="AI应急问询方案取药",
                     confirmed_safety_notice=True,
                     confirm_real_dispense=True,
-                    target_user_id="zhangsan",
-                    target_user_name="张三",
+                    target_user_id="li-yeye",
+                    target_user_name="李爷爷",
                     verification_method="inquiry_confirmed",
                 ),
                 force_dry_run=False,
@@ -235,6 +366,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     reason="AI应急问询方案取药",
                     confirmed_safety_notice=True,
                     confirm_real_dispense=True,
+                    target_user_id="li-yeye",
+                    target_user_name="李爷爷",
                     verification_method="inquiry_confirmed",
                 ),
                 force_dry_run=False,
@@ -274,6 +407,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     reason="AI应急问询方案取药",
                     confirmed_safety_notice=True,
                     confirm_real_dispense=True,
+                    target_user_id="li-yeye",
+                    target_user_name="李爷爷",
                     verification_method="inquiry_confirmed",
                     expected_review_fingerprint=(
                         MedicineKnowledgeRepository.review_fingerprint(medicine)
@@ -309,6 +444,8 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                     reason="AI应急问询方案取药",
                     confirmed_safety_notice=True,
                     confirm_real_dispense=True,
+                    target_user_id="li-yeye",
+                    target_user_name="李爷爷",
                     verification_method="inquiry_confirmed",
                     expected_review_fingerprint=(
                         MedicineKnowledgeRepository.review_fingerprint(medicine)
@@ -334,7 +471,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 time="10:00",
                 timing_label="医生确认",
                 medicine_id="slot-14-oseltamivir",
-                service_user_id="zhangsan",
+                service_user_id="li-yeye",
                 dose="按本次处方",
             )
         )
@@ -366,13 +503,13 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 time="10:30",
                 timing_label="医生确认",
                 medicine_id="slot-04-amoxicillin",
-                service_user_id="zhangsan",
+                service_user_id="wang-nainai",
                 dose="按本次处方",
             )
         )
         with db.connect() as conn:
             conn.execute(
-                "UPDATE service_users SET allergies='青霉素过敏' WHERE id='zhangsan'"
+                "UPDATE service_users SET allergies='青霉素过敏' WHERE id='wang-nainai'"
             )
         medicine = MedicineService().get_medicine(plan.medicine_id)
         self.assertIsNotNone(medicine)
@@ -394,58 +531,30 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 force_dry_run=False,
             )
 
-    def test_anonymous_face_fallback_is_recorded_as_named_visitor(self) -> None:
-        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
-        self.assertIsNotNone(medicine)
+    def test_guest_manual_inventory_assessment_fails_closed_before_qsm(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(id, name, age, profile, allergies, note, status)
+                VALUES ('guest-manual-records', '游客测试', 0, '未登记', '', '', '游客')
+                """
+            )
 
-        self.service.confirm(
-            DispenseConfirmRequest(
-                medicine_id=medicine.id,
-                slot=medicine.slot,
-                quantity=1,
-                reason="游客二次确认取药",
-                confirmed_safety_notice=True,
-                confirm_real_dispense=True,
-                target_user_id="",
-                target_user_name="游客（未识别人脸）",
-                verification_method="face_guest_confirmed",
-                archive_identity_snapshot=True,
-            ),
-            force_dry_run=False,
+        _module, assessment = self._assess_manual_inventory(
+            "slot-17-iodophor",
+            request_suffix="guest-profile",
+            service_user_id="guest-manual-records",
         )
 
-        recent = self.records.get_recent_records()[0]
-        self.assertEqual(recent.target_user, "游客（未识别人脸）")
-        self.assertEqual(recent.target_user_type, "guest")
-        self.assertEqual(len(self.archive.records), 1)
-        self.assertEqual(self.archive.records[0].target_user_name, "游客（未识别人脸）")
-
-    def test_registered_dispense_does_not_archive_identity_snapshot(self) -> None:
-        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
-        self.assertIsNotNone(medicine)
-
-        self.service.confirm(
-            DispenseConfirmRequest(
-                medicine_id=medicine.id,
-                slot=medicine.slot,
-                quantity=1,
-                reason="登记成员取药",
-                confirmed_safety_notice=True,
-                confirm_real_dispense=True,
-                target_user_id="zhangsan",
-                target_user_name="张三",
-                verification_method="face",
-                archive_identity_snapshot=True,
-            ),
-            force_dry_run=False,
-        )
-
-        self.assertEqual(self.archive.records, [])
+        self.assertEqual(assessment.check_status, "CHECK_FAILED")
+        self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
+        self.assertIn("柜门未打开", assessment.message)
+        self.assertEqual(self.qsm.calls, [])
 
     def test_user_records_hide_dry_run_entries(self) -> None:
         medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
         self.assertIsNotNone(medicine)
-        self.service.confirm(
+        self.service.confirm_debug_dry_run(
             DispenseConfirmRequest(
                 medicine_id=medicine.id,
                 slot=medicine.slot,
@@ -453,11 +562,10 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 reason="接口调试",
                 confirmed_safety_notice=True,
                 confirm_real_dispense=False,
-                target_user_id="zhangsan",
-                target_user_name="张三",
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
                 verification_method="fingerprint",
-            ),
-            force_dry_run=True,
+            )
         )
 
         self.assertEqual(len(self.service.list_records()), 1)
@@ -465,69 +573,87 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.get_summary().local_record_count, 0)
 
     def test_medicine_history_count_includes_successful_confirmation_variants_only(self) -> None:
-        medicine = MedicineService().get_medicine("slot-08-huoxiang-zhengqi")
-        self.assertIsNotNone(medicine)
-        MedicineService().repository.update(
-            medicine.id,
-            {
-                "active_ingredients": ["测试用已审核藿香正气成分"],
-                "safety_review_status": "reviewed",
-                "safety_reviewed_by": "test-pharmacist-fixture",
-                "safety_reviewed_at": "2026-08-08T00:00:00+08:00",
-            },
-        )
-        medicine = MedicineService().get_medicine(medicine.id)
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE medicines SET stock=3 WHERE id='slot-17-iodophor'"
+            )
+        medicine = MedicineService().get_medicine("slot-17-iodophor")
         self.assertIsNotNone(medicine)
         plan = self.records.create_today_plan(
             TodayPlanCreateRequest(
                 time="11:45",
                 timing_label="医生确认",
                 medicine_id=medicine.id,
-                service_user_id="zhangsan",
-                dose="1丸",
+                service_user_id="li-yeye",
+                dose="外用一次",
             )
         )
-        entry_modes = (
-            ("药品页手动取药", "face", ""),
-            ("今日计划一键取药", "fingerprint", plan.id),
-            ("AI应急问询方案取药", "inquiry_confirmed", ""),
-        )
 
-        for reason, verification_method, today_plan_id in entry_modes:
-            result = self.service.confirm(
-                DispenseConfirmRequest(
-                    medicine_id=medicine.id,
-                    slot=medicine.slot,
-                    quantity=1,
-                    reason=reason,
+        module, assessment = self._assess_manual_inventory(
+            medicine.id,
+            request_suffix="history-manual",
+        )
+        self.assertEqual(assessment.check_status, "PASSED")
+        with patch(
+            "app.services.dispense_service.settings",
+            self._real_dispense_settings(),
+        ):
+            manual = module.confirm(
+                ConfirmManualMedicationCommand(
+                    request_id="confirm-history-manual",
+                    safety_check_id=assessment.check_id,
                     confirmed_safety_notice=True,
-                    confirm_real_dispense=True,
-                    target_user_id="zhangsan",
-                    target_user_name="张三",
-                    verification_method=verification_method,
-                    today_plan_id=today_plan_id,
-                    expected_review_fingerprint=(
-                        MedicineKnowledgeRepository.review_fingerprint(medicine)
-                        if verification_method == "inquiry_confirmed"
-                        else ""
-                    ),
-                ),
-                force_dry_run=False,
+                )
             )
-            self.assertTrue(result.ok)
+        self.assertEqual(manual.dispense_status, "DISPENSED")
 
-        self.service.confirm(
+        plan_result = self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="今日计划一键取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
+                verification_method="fingerprint",
+                today_plan_id=plan.id,
+            ),
+            force_dry_run=False,
+        )
+        self.assertTrue(plan_result.ok)
+
+        inquiry_result = self.service.confirm(
+            DispenseConfirmRequest(
+                medicine_id=medicine.id,
+                slot=medicine.slot,
+                quantity=1,
+                reason="AI应急问询方案取药",
+                confirmed_safety_notice=True,
+                confirm_real_dispense=True,
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
+                verification_method="inquiry_confirmed",
+                expected_review_fingerprint=(
+                    MedicineKnowledgeRepository.review_fingerprint(medicine)
+                ),
+            ),
+            force_dry_run=False,
+        )
+        self.assertTrue(inquiry_result.ok)
+
+        self.service.confirm_debug_dry_run(
             DispenseConfirmRequest(
                 medicine_id=medicine.id,
                 slot=medicine.slot,
                 quantity=1,
                 reason="接口演练",
                 confirmed_safety_notice=True,
-                target_user_id="zhangsan",
-                target_user_name="张三",
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
                 verification_method="fingerprint",
-            ),
-            force_dry_run=True,
+            )
         )
         failed = DispenseService(qsm_client=FailedQsmClient(), archive_service=self.archive).confirm(
             DispenseConfirmRequest(
@@ -537,13 +663,27 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
                 reason="开柜失败记录",
                 confirmed_safety_notice=True,
                 confirm_real_dispense=True,
-                target_user_id="zhangsan",
-                target_user_name="张三",
-                verification_method="face",
+                target_user_id="li-yeye",
+                target_user_name="李爷爷",
+                verification_method="inquiry_confirmed",
+                expected_review_fingerprint=(
+                    MedicineKnowledgeRepository.review_fingerprint(medicine)
+                ),
             ),
             force_dry_run=False,
         )
         self.assertFalse(failed.ok)
+
+        successful = [
+            record
+            for record in self.service.list_records()
+            if not record.dry_run and record.qsm_ok
+        ]
+        self.assertEqual(len(successful), 3)
+        self.assertEqual(
+            {record.verification_method for record in successful},
+            {"face", "fingerprint", "inquiry_confirmed"},
+        )
 
         refreshed = MedicineService().get_medicine(medicine.id)
         listed = next(item for item in MedicineService().list_medicines().medicines if item.id == medicine.id)

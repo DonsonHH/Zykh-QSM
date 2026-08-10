@@ -6,14 +6,20 @@ from datetime import datetime
 from uuid import uuid4
 
 from .. import db
+from ..repositories.identity_assertion_repository import IdentityAssertionRepository
 from ..schemas.identity import FaceEnrollmentResponse, IdentityResponse, IdentityStatusResponse
 from ..schemas.records import ServiceUser
 from .qsm_face_client import QsmFaceClient
 
 
 class IdentityService:
-    def __init__(self, face_client: QsmFaceClient | None = None) -> None:
+    def __init__(
+        self,
+        face_client: QsmFaceClient | None = None,
+        identity_assertions: IdentityAssertionRepository | None = None,
+    ) -> None:
         self.face_client = face_client or QsmFaceClient()
+        self.identity_assertions = identity_assertions or IdentityAssertionRepository()
 
     def resolve(self) -> IdentityResponse:
         result = self.face_client.identify()
@@ -35,6 +41,11 @@ class IdentityService:
                     error_message=message,
                 )
             match_count, last_seen_at = self._touch(subject, confidence)
+            assertion = self.identity_assertions.issue(
+                service_user_id=user.id,
+                verification_method="face",
+                verification_score=confidence,
+            )
             return IdentityResponse(
                 ok=True,
                 status="matched",
@@ -44,6 +55,7 @@ class IdentityService:
                 match_count=match_count,
                 last_seen_at=last_seen_at,
                 message=f"已确认使用人：{user.name}",
+                verification_assertion_id=assertion.assertion_id,
             )
 
         if status == "unknown":
@@ -121,6 +133,10 @@ class IdentityService:
                 error_message=message,
             )
         self._bind(subject, user.id, None)
+        assertion = self.identity_assertions.issue(
+            service_user_id=user.id,
+            verification_method="face",
+        )
         return IdentityResponse(
             ok=True,
             status="created",
@@ -128,6 +144,7 @@ class IdentityService:
             subject=subject,
             message=f"已建立本地访客记录：{user.name}",
             new_guest=True,
+            verification_assertion_id=assertion.assertion_id,
         )
 
     def status(self) -> IdentityStatusResponse:
@@ -191,7 +208,7 @@ class IdentityService:
                 SELECT u.id, u.name, u.age, u.profile, u.allergies, u.note, u.status
                 FROM face_identities f
                 JOIN service_users u ON u.id=f.service_user_id
-                WHERE f.subject=?
+                WHERE f.subject=? AND u.archived=0
                 """,
                 (subject,),
             ).fetchone()
@@ -202,7 +219,7 @@ class IdentityService:
         db.init_db()
         with db.connect() as conn:
             row = conn.execute(
-                "SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=?",
+                "SELECT id, name, age, profile, allergies, note, status FROM service_users WHERE id=? AND archived=0",
                 (user_id,),
             ).fetchone()
         return ServiceUser(**dict(row)) if row else None

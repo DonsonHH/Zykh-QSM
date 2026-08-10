@@ -40,11 +40,36 @@ class ServiceUser(BaseModel):
     allergies: str = ""
     note: str
     status: str
+    medical_conditions: list[dict[str, object]] = Field(default_factory=list)
+    current_medications: list[dict[str, object]] = Field(default_factory=list)
+    allergy_facts: list[dict[str, object]] = Field(default_factory=list)
+    safety_profile_revision: int = 1
+    safety_profile_updated_at: str = ""
+    persona_generation: str = ""
+    archived: bool = False
 
 
 class ServiceUsersResponse(BaseModel):
     ok: bool = True
     users: list[ServiceUser]
+
+
+class ServiceUserInquiryHistoryItem(BaseModel):
+    session_id: str
+    happened_at: str
+    title: str
+    case_summary: str
+    risk_level: str
+    risk_label: str
+    outcome: str
+    final_medicine_summary: str = ""
+
+
+class ServiceUserInquiryHistoryResponse(BaseModel):
+    ok: bool = True
+    user_id: str
+    inquiries: list[ServiceUserInquiryHistoryItem]
+    next_cursor: str | None = None
 
 
 class ServiceUserCreateRequest(BaseModel):
@@ -54,6 +79,10 @@ class ServiceUserCreateRequest(BaseModel):
     allergies: str = ""
     note: str = "AI问询新建"
     status: str = "待完善"
+    medical_conditions: list[dict[str, object]] = Field(default_factory=list)
+    current_medications: list[dict[str, object]] = Field(default_factory=list)
+    allergy_facts: list[dict[str, object]] = Field(default_factory=list)
+    persona_generation: str = ""
 
 
 class ServiceUserUpdateRequest(BaseModel):
@@ -63,6 +92,11 @@ class ServiceUserUpdateRequest(BaseModel):
     allergies: str | None = None
     note: str | None = None
     status: str | None = None
+    medical_conditions: list[dict[str, object]] | None = None
+    current_medications: list[dict[str, object]] | None = None
+    allergy_facts: list[dict[str, object]] | None = None
+    persona_generation: str | None = None
+    archived: bool | None = None
 
 
 class TodayPlan(BaseModel):

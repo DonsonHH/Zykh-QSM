@@ -4,7 +4,13 @@
 
 `zykh_station_app` is the local master application. It owns the UI, station workflow, local persistence, safety rules, inquiry records, dispense records, local sync queue, medicine recognition and service-user identity mapping. QSM368ZP-WF remains an external gateway for camera/face processing, vitals, audio, cabinet control and offline speech synthesis, and is accessed only through the backend service boundary. Both presentation modes use the cloud inquiry model; the legacy board language-model assets are diagnostic-only and are stopped by the normal kiosk launch path.
 
-SQLite is initialized with the local operational tables needed by the terminal: medicines, dispense records, device actions, inquiry records, vitals records, service users, today plans and sync state. `today_plans` stores service-user and medicine IDs, while display names remain snapshots; invalid legacy name-only rows are removed during migration instead of appearing as valid plans.
+SQLite is initialized with the local operational tables needed by the terminal:
+medicines, dispense records, device actions, inquiry records, vitals records,
+service users, today plans, identity assertions, one-time medicine safety checks,
+an append-only safety-event outbox and sync state. `today_plans` stores
+service-user and medicine IDs, while display names remain snapshots; invalid
+legacy name-only rows are removed during migration instead of appearing as valid
+plans.
 
 ## Backend layers
 
@@ -12,6 +18,9 @@ SQLite is initialized with the local operational tables needed by the terminal: 
 - `routers/`: HTTP endpoints and request/response schemas.
 - `modules/`: deep application modules. `VitalsSessionModule` owns host-side session response modeling, provenance/data-truth gates, historical references and persistence/sync policy behind `prepare / start / get / cancel`.
 - `services/`: station, dashboard, QSM gateway, inquiry, records and sync use cases.
+  `ManualMedicationAccessModule` is a deep application module kept here for
+  compatibility with the existing service layout; its public surface is only
+  `assess(command)` and `confirm(command)`.
 - `repositories/`: SQLite persistence adapters.
 - `schemas/`: Pydantic input/output contracts.
 - `core/`: constants and safety language.
@@ -28,7 +37,12 @@ The gateway adapter supports:
 - the QSM sherpa-onnx Paraformer ASR service listens on board port `6006` and is forwarded to `18084`; local recognition uploads one complete utterance and returns one final transcript.
 - online TTS sends incremental 24 kHz PCM to the QSM speaker stream on `19001`; local presentation mode calls the QSM `/api/audio/speak` route, which runs the bundled Sherpa-ONNX VITS assets on the board and plays the generated WAV through the managed QSM audio path.
 - structured failure responses when the gateway is unavailable.
-- `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1` as the real-device default, with explicit identity confirmation after biometric matching, optional `REAL_DISPENSE_TEST_SLOT`, and local audit record for every cabinet action.
+- `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1` as the real-device default,
+  with explicit identity confirmation after biometric matching, optional
+  `REAL_DISPENSE_TEST_SLOT`, and local audit record for every cabinet action.
+  Manual-inventory calls carry a stable `operation_id`; the board reserves it
+  before UART/GPIO output, replays the stored result for the same payload and
+  never retries an in-flight/ambiguous operation.
 
 Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Failed real calls are not replaced by fake success data.
 
@@ -113,4 +127,26 @@ The root terminal opens on a wake screen. After a configurable idle period (`VIT
 
 ## Safety boundary
 
-High-risk inquiry outcomes remain blocked from 取药确认. Physical cabinet actions must keep the confirmation step plus local audit record; `REAL_DISPENSE_TEST_SLOT` can be set when a run must be restricted to one agreed safe slot.
+The server classifies cabinet work as PLAN, INQUIRY or MANUAL_INVENTORY. PLAN and
+INQUIRY retain their existing credentials and deterministic revalidation.
+MANUAL_INVENTORY cannot call the shared dispense endpoint directly: a registered
+face/fingerprint assertion must first produce a short-lived, one-time `PASSED`
+check bound to person generation/revision, medicine review fingerprint, display
+and hardware slots, exact stock and expiry. `BLOCKED`, `CHECK_FAILED`, unconfirmed
+or changed checks call QSM zero times.
+
+The check state and physical state are separate. A confirmed check may become
+`DISPENSED`, `HARDWARE_FAILED` or `RESULT_UNKNOWN`; the last value is persisted
+before returning and is never automatically retried. High-risk inquiry outcomes
+remain blocked from 取药确认. `REAL_DISPENSE_TEST_SLOT` can restrict a controlled
+physical smoke to one agreed safe slot.
+
+Safety events are written transactionally to a local append-only outbox and sent
+only when CloudBase advertises `medicationSafetyEvents=v1`. They are not dispense
+records and never participate in snapshot finalization. Caregiver reads are
+membership- and person-scope-authorized; cloud/mobile code has no cabinet-open,
+approval or unblock action.
+Each check owns one stable event ID: terminal assessment failures are queued
+immediately, while a passed check is queued only after its dispense outcome is
+known. This prevents the assessment and cabinet result from appearing as two
+caregiver records.

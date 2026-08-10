@@ -1,9 +1,22 @@
 const cloud = require("wx-server-sdk");
+const {
+  canonicalPayloadDigest,
+  createMedicationSafetyEventModule,
+} = require("./medicationSafetyEvents");
+const { createMembershipModule } = require("./memberships");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.4-medicine-safety-contract";
+const schemaRevision = "2.5-caregiver-safety-events";
+const capabilities = Object.freeze({
+  medicationSafetyEvents: "v1",
+  caregiverMembership: "v1",
+  inquiryDetail: "v1",
+  snapshotBatch: "v2",
+  devicePairing: "v1",
+  caregiverNotificationOutbox: "v1",
+});
 
 const collections = {
   devices: "devices",
@@ -14,7 +27,21 @@ const collections = {
   serviceUsers: "service_users",
   plans: "today_plans",
   inquiries: "inquiries",
+  medicationSafetyEvents: "medication_safety_events",
+  caregiverEventReceipts: "caregiver_event_receipts",
+  caregiverNotificationOutbox: "caregiver_notification_outbox",
+  deviceMemberships: "device_memberships",
+  devicePairingCodes: "device_pairing_codes",
 };
+
+const memberships = createMembershipModule({ db, collections, nowText });
+const medicationSafetyEvents = createMedicationSafetyEventModule({
+  db,
+  collections,
+  memberships,
+  nowText,
+  safeId,
+});
 
 const boardActions = new Set([
   "REPORT_DEVICE",
@@ -36,8 +63,22 @@ const readActions = new Set([
   "LIST_RECORDS",
   "LIST_COMMANDS",
   "LIST_INQUIRIES",
+  "GET_INQUIRY_DETAIL",
   "GET_SNAPSHOT",
+  "LIST_MEDICATION_SAFETY_EVENTS",
+  "GET_MEDICATION_SAFETY_EVENT",
+  "MARK_MEDICATION_SAFETY_EVENT_READ",
 ]);
+
+const readActionPermissions = Object.freeze({
+  GET_LATEST_VITALS: "READ_VITALS",
+  GET_INQUIRY_DETAIL: "READ_INQUIRY",
+  LIST_MEDICINES: "READ_MEDICINE",
+  LIST_COMMANDS: "CREATE_COMMAND",
+  LIST_INQUIRIES: "READ_INQUIRY",
+  LIST_RECORDS: "READ_RECORD",
+  LIST_VITALS: "READ_VITALS",
+});
 
 const allowedCommandTypes = new Set([
   "AUDIO_BEEP",
@@ -47,7 +88,6 @@ const allowedCommandTypes = new Set([
   "UPSERT_MEDICINE",
   "UPSERT_SERVICE_USER",
   "UPSERT_TODAY_PLAN",
-  "OPEN_CABINET",
 ]);
 
 function nowText() {
@@ -194,7 +234,16 @@ function expectedDeviceSecret(deviceId) {
 function validateDevice(data) {
   if (!data || !data.deviceId) return { ok: false, error: "deviceId required" };
   const expected = expectedDeviceSecret(data.deviceId);
-  if (expected && data.deviceSecret !== expected) return { ok: false, error: "unauthorized" };
+  if (!expected) return { ok: false, error: "device secret is not configured" };
+  if (data.deviceSecret !== expected) return { ok: false, error: "unauthorized" };
+  return null;
+}
+
+function validateSafetyEventReporter(data) {
+  if (!data || !data.deviceId) return { ok: false, error: "deviceId required" };
+  const expected = expectedDeviceSecret(data.deviceId);
+  if (!expected) return { ok: false, error: "device secret is not configured" };
+  if (data.deviceSecret !== expected) return { ok: false, error: "unauthorized" };
   return null;
 }
 
@@ -376,9 +425,9 @@ function inquiryTime(row = {}) {
 }
 
 async function listInquiries(data) {
-  const limit = Math.min(Number(data.limit) || 100, 100);
-  const rows = await tryListRows(collections.inquiries, data.deviceId, limit, "updatedAt");
-  const commandRows = (await tryListRows(collections.commands, data.deviceId, 100, "updatedAt"))
+  const limit = Math.min(Math.max(Number(data.limit) || 100, 1), 2000);
+  const rows = await listAllDeviceRows(collections.inquiries, data.deviceId);
+  const commandRows = (await listAllDeviceRows(collections.commands, data.deviceId))
     .filter(command => command.type === "AI_CHAT")
     .map(commandToInquiry);
   let summaryRows = [];
@@ -401,6 +450,174 @@ async function listInquiries(data) {
   return Array.from(map.values())
     .sort((a, b) => inquiryTime(b) - inquiryTime(a))
     .slice(0, limit);
+}
+
+function membershipScopes(membership = {}) {
+  const value = membership.service_user_scopes || membership.serviceUserScopes;
+  return Array.isArray(value)
+    ? value.map(item => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function membershipHasPermission(membership = {}, permission) {
+  return Array.isArray(membership.permissions)
+    && membership.permissions.includes(permission);
+}
+
+function rowPersonId(row = {}, kind = "") {
+  if (kind === "serviceUsers") {
+    return String(firstPresent(row.id, row.user_id, row.userId, row.service_user_id, row.serviceUserId) || "").trim();
+  }
+  const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+  return String(firstPresent(
+    row.service_user_id,
+    row.serviceUserId,
+    row.user_id,
+    row.userId,
+    row.target_user_id,
+    row.targetUserId,
+    row.person_id,
+    row.personId,
+    payload.service_user_id,
+    payload.serviceUserId,
+    payload.user_id,
+    payload.userId,
+    payload.target_user_id,
+    payload.targetUserId,
+    payload.person_id,
+    payload.personId,
+  ) || "").trim();
+}
+
+function rowsVisibleToMembership(rows, membership, kind = "") {
+  const scopes = membershipScopes(membership);
+  if (!scopes.length) return rows;
+  const allowed = new Set(scopes);
+  return (rows || []).filter(row => allowed.has(rowPersonId(row, kind)));
+}
+
+function deviceVisibleToMembership(device, membership) {
+  if (!device) return device;
+  const source = device.syncSummary && typeof device.syncSummary === "object"
+    ? device.syncSummary
+    : {};
+  const syncSummary = { counts: {} };
+  if (membershipHasPermission(membership, "READ_PROFILE")) {
+    syncSummary.serviceUsers = rowsVisibleToMembership(
+      Array.isArray(source.serviceUsers) ? source.serviceUsers : [],
+      membership,
+      "serviceUsers",
+    );
+    syncSummary.counts.serviceUsers = syncSummary.serviceUsers.length;
+  }
+  if (membershipHasPermission(membership, "READ_PLAN")) {
+    syncSummary.plans = rowsVisibleToMembership(
+      Array.isArray(source.plans) ? source.plans : [],
+      membership,
+      "plans",
+    );
+    syncSummary.counts.plans = syncSummary.plans.length;
+  }
+  if (membershipHasPermission(membership, "READ_INQUIRY")) {
+    syncSummary.recentInquiries = rowsVisibleToMembership(
+      Array.isArray(source.recentInquiries) ? source.recentInquiries : [],
+      membership,
+      "inquiries",
+    );
+    syncSummary.counts.inquiries = syncSummary.recentInquiries.length;
+  }
+  return Object.assign(cleanData(device), { syncSummary });
+}
+
+function commandPersonId(type, payload = {}) {
+  if (type === "UPSERT_SERVICE_USER") {
+    return String(firstPresent(
+      payload.id,
+      payload.service_user_id,
+      payload.serviceUserId,
+      payload.user_id,
+      payload.userId,
+    ) || "").trim();
+  }
+  return rowPersonId({ payload }, "commands");
+}
+
+function requestedLimit(data, fallback = 20) {
+  return Math.min(Math.max(Number(data.limit) || fallback, 1), 100);
+}
+
+async function scopedRows(collection, data, membership, order, direction = "desc", kind = "") {
+  const rows = await listAllDeviceRows(collection, data.deviceId);
+  const multiplier = direction === "asc" ? 1 : -1;
+  rows.sort((left, right) => {
+    const byOrder = String(left[order] || "").localeCompare(String(right[order] || ""));
+    if (byOrder) return byOrder * multiplier;
+    return String(left._id || "").localeCompare(String(right._id || "")) * multiplier;
+  });
+  return rowsVisibleToMembership(rows, membership, kind).slice(0, requestedLimit(data));
+}
+
+async function snapshotVisibleToMembership(data, membership) {
+  const snapshot = {};
+  if (membershipHasPermission(membership, "READ_PROFILE")) {
+    snapshot.serviceUsers = rowsVisibleToMembership(
+      await listAllDeviceRows(collections.serviceUsers, data.deviceId),
+      membership,
+      "serviceUsers",
+    );
+  }
+  if (membershipHasPermission(membership, "READ_PLAN")) {
+    snapshot.plans = rowsVisibleToMembership(
+      await listAllDeviceRows(collections.plans, data.deviceId),
+      membership,
+      "plans",
+    );
+  }
+  if (membershipHasPermission(membership, "READ_INQUIRY")) {
+    snapshot.inquiries = rowsVisibleToMembership(
+      await listInquiries(Object.assign({}, data, { limit: 2000 })),
+      membership,
+      "inquiries",
+    );
+  }
+  if (membershipHasPermission(membership, "READ_VITALS")) {
+    snapshot.vitals = rowsVisibleToMembership(
+      await listAllDeviceRows(collections.vitals, data.deviceId),
+      membership,
+      "vitals",
+    );
+  }
+  return snapshot;
+}
+
+async function getInquiryDetail(data, membership) {
+  const inquiryId = String(data.inquiryId || data.inquiry_id || data.sessionId || data.session_id || "").trim();
+  if (!inquiryId) throw new Error("inquiryId required");
+
+  const storedRows = await listAllDeviceRows(collections.inquiries, data.deviceId);
+  const commandRows = (await listAllDeviceRows(collections.commands, data.deviceId))
+    .filter(command => command.type === "AI_CHAT")
+    .map(commandToInquiry);
+  let summaryRows = [];
+  try {
+    const device = (await db.collection(collections.devices).doc(data.deviceId).get()).data || {};
+    summaryRows = summaryInquiryRows(Object.assign({ deviceId: data.deviceId }, device));
+  } catch (error) {
+    summaryRows = [];
+  }
+  const visible = rowsVisibleToMembership(
+    storedRows.concat(commandRows, summaryRows),
+    membership,
+    "inquiries",
+  );
+  const row = visible.find(item => [
+    item._id,
+    item.inquiry_id,
+    item.session_id,
+    item.sourceCommandId,
+  ].some(value => String(value || "") === inquiryId));
+  if (!row) throw new Error("NOT_FOUND");
+  return row;
 }
 
 async function reportDevice(data) {
@@ -598,11 +815,24 @@ async function ackCommand(data) {
 async function createCommand(data, wxContext, isHttp) {
   if (isHttp) throw new Error("miniprogram function invocation required");
   if (!wxContext.OPENID) throw new Error("miniprogram identity required");
+  const personScopedTypes = new Set([
+    "AI_CHAT",
+    "UPSERT_SERVICE_USER",
+    "UPSERT_TODAY_PLAN",
+  ]);
+  const personId = commandPersonId(data.type, data.payload || {});
+  const membership = await memberships.requireCommandAccess({
+    openId: wxContext.OPENID,
+    deviceId: data.deviceId,
+    personId,
+  });
+  if (
+    personScopedTypes.has(data.type)
+    && membershipScopes(membership).length
+    && !personId
+  ) throw new Error("NOT_FOUND");
   if (!allowedCommandTypes.has(data.type)) throw new Error("unsupported command type");
   if (data.type === "UPSERT_MEDICINE") validateMedicineCommand(data.payload || {});
-  if (data.type === "OPEN_CABINET" && (!data.payload || data.payload.remote_confirmed !== true)) {
-    throw new Error("remote cabinet confirmation required");
-  }
   const row = {
     deviceId: data.deviceId,
     type: data.type,
@@ -615,31 +845,75 @@ async function createCommand(data, wxContext, isHttp) {
   };
   if (data.requestId) {
     const documentId = `${data.deviceId}-request-${safeId(data.requestId)}`;
-    try {
-      const existing = (await db.collection(collections.commands).doc(documentId).get()).data;
-      if (existing) return existing;
-    } catch (error) {
-      // A missing document is created below.
+    const requestPayloadDigest = canonicalPayloadDigest({
+      deviceId: data.deviceId,
+      type: data.type,
+      payload: data.payload || {},
+    });
+    row.requestPayloadDigest = requestPayloadDigest;
+    if (typeof db.runTransaction !== "function") {
+      throw new Error("database transaction is unavailable");
     }
-    await setDocument(collections.commands, documentId, row);
-    return Object.assign({ _id: documentId }, row);
+    return db.runTransaction(async transaction => {
+      const document = transaction.collection(collections.commands).doc(documentId);
+      try {
+        const existing = (await document.get()).data;
+        if (existing) {
+          const existingDigest = String(existing.requestPayloadDigest || "");
+          if (!existingDigest || existingDigest !== requestPayloadDigest) {
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          }
+          return existing;
+        }
+      } catch (error) {
+        if (error && error.message === "IDEMPOTENCY_CONFLICT") throw error;
+        // A missing document is created below while the transaction holds the key.
+      }
+      await document.set({ data: cleanData(row) });
+      return Object.assign({ _id: documentId }, row);
+    });
   }
   const result = await db.collection(collections.commands).add({ data: row });
   return Object.assign({ _id: result._id }, row);
 }
 
+function requireMiniprogramIdentity(wxContext, isHttp) {
+  if (isHttp) throw new Error("miniprogram function invocation required");
+  const openId = String((wxContext && wxContext.OPENID) || "").trim();
+  if (!openId) throw new Error("miniprogram identity required");
+  return openId;
+}
+
 async function handleAction(payload, wxContext, isHttp = false) {
   const action = payload.action;
   const data = payload.data || {};
+  const safetyReadActions = new Set([
+    "LIST_MEDICATION_SAFETY_EVENTS",
+    "GET_MEDICATION_SAFETY_EVENT",
+    "MARK_MEDICATION_SAFETY_EVENT_READ",
+  ]);
+  let readMembership = null;
   if (action === "PING") {
-    return { ok: true, time: nowText(), schemaVersion: 2, schemaRevision, collections };
+    return { ok: true, time: nowText(), schemaVersion: 2, schemaRevision, capabilities, collections };
   }
-  if (boardActions.has(action)) {
+  if (action === "REPORT_MEDICATION_SAFETY_EVENT") {
+    const error = validateSafetyEventReporter(data);
+    if (error) return error;
+  } else if (boardActions.has(action)) {
     const error = validateDevice(data);
     if (error) return error;
   } else if (readActions.has(action) || action === "CREATE_COMMAND") {
     const error = validateDeviceId(data);
     if (error) return error;
+    if (readActions.has(action) && !safetyReadActions.has(action)) {
+      const membershipInput = {
+        openId: wxContext.OPENID,
+        deviceId: data.deviceId,
+      };
+      readMembership = readActionPermissions[action]
+        ? await memberships.requirePermission(membershipInput, readActionPermissions[action])
+        : await memberships.requireMembership(membershipInput);
+    }
   }
 
   switch (action) {
@@ -652,26 +926,40 @@ async function handleAction(payload, wxContext, isHttp = false) {
     case "FINALIZE_SNAPSHOT": return finalizeSnapshot(data);
     case "PULL_COMMANDS": return pullCommands(data);
     case "ACK_COMMAND": return ackCommand(data);
+    case "REPORT_MEDICATION_SAFETY_EVENT": return medicationSafetyEvents.report(data);
+    case "LIST_MEDICATION_SAFETY_EVENTS": return medicationSafetyEvents.list(data, wxContext);
+    case "GET_MEDICATION_SAFETY_EVENT": return medicationSafetyEvents.get(data, wxContext);
+    case "MARK_MEDICATION_SAFETY_EVENT_READ": return medicationSafetyEvents.markRead(data, wxContext);
+    case "GET_MY_DEVICES": return memberships.listMyDevices({
+      openId: requireMiniprogramIdentity(wxContext, isHttp),
+    });
+    case "REDEEM_DEVICE_PAIRING_CODE": return memberships.redeemPairingCode({
+      openId: requireMiniprogramIdentity(wxContext, isHttp),
+      pairingCode: data.pairingCode,
+    });
     case "CREATE_COMMAND": return createCommand(data, wxContext, isHttp);
     case "GET_DEVICE": {
       try {
-        return (await db.collection(collections.devices).doc(data.deviceId).get()).data || null;
+        const device = (await db.collection(collections.devices).doc(data.deviceId).get()).data || null;
+        return deviceVisibleToMembership(device, readMembership);
       } catch (error) {
         return null;
       }
     }
     case "LIST_MEDICINES": return listRows(collections.medicines, data.deviceId, data.limit, "slot", "asc");
-    case "GET_LATEST_VITALS": return (await listRows(collections.vitals, data.deviceId, 1, "createdAt"))[0] || null;
-    case "LIST_VITALS": return listRows(collections.vitals, data.deviceId, data.limit, "createdAt");
-    case "LIST_RECORDS": return listRows(collections.records, data.deviceId, data.limit, "createdAt");
-    case "LIST_COMMANDS": return listRows(collections.commands, data.deviceId, data.limit, "updatedAt");
-    case "LIST_INQUIRIES": return listInquiries(data);
-    case "GET_SNAPSHOT": return {
-      serviceUsers: await tryListRows(collections.serviceUsers, data.deviceId, 100, "updatedAt"),
-      plans: await tryListRows(collections.plans, data.deviceId, 100, "updatedAt"),
-      inquiries: await listInquiries(data),
-      vitals: await tryListRows(collections.vitals, data.deviceId, 100, "createdAt"),
-    };
+    case "GET_LATEST_VITALS": return (
+      await scopedRows(collections.vitals, Object.assign({}, data, { limit: 1 }), readMembership, "createdAt", "desc", "vitals")
+    )[0] || null;
+    case "LIST_VITALS": return scopedRows(collections.vitals, data, readMembership, "createdAt", "desc", "vitals");
+    case "LIST_RECORDS": return scopedRows(collections.records, data, readMembership, "createdAt", "desc", "records");
+    case "LIST_COMMANDS": return scopedRows(collections.commands, data, readMembership, "updatedAt", "desc", "commands");
+    case "LIST_INQUIRIES": return rowsVisibleToMembership(
+      await listInquiries(Object.assign({}, data, { limit: 2000 })),
+      readMembership,
+      "inquiries",
+    ).slice(0, requestedLimit(data, 100));
+    case "GET_INQUIRY_DETAIL": return getInquiryDetail(data, readMembership);
+    case "GET_SNAPSHOT": return snapshotVisibleToMembership(data, readMembership);
     default: throw new Error(`unknown action: ${action}`);
   }
 }

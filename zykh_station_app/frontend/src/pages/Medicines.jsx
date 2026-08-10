@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, ScanLine } from "lucide-react";
-import { confirmDispense } from "../api/dispense.js";
+import { assessManualMedication, confirmManualMedication } from "../api/dispense.js";
 import { loadMedicine, loadMedicines } from "../api/medicines.js";
 import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
@@ -264,16 +264,27 @@ export function Medicines({ notify, focus, onNavigate }) {
     setModalOpen(true);
   }
 
-  function handleConfirm(payload) {
+  function handleManualAssessment(payload) {
     setSubmitting(true);
     setModalError("");
-    return confirmDispense(payload)
+    return assessManualMedication(payload)
+      .catch((error) => {
+        setModalError(error.message || "个人用药安全核查失败");
+        throw error;
+      })
+      .finally(() => setSubmitting(false));
+  }
+
+  function handleManualConfirmation(payload) {
+    setSubmitting(true);
+    setModalError("");
+    return confirmManualMedication(payload)
       .then((data) => {
-        setModalResult(data.message);
         notify(data.message);
-        if (data.ok && !data.dry_run) {
+        if (data.dispense_status === "DISPENSED") {
+          setModalResult(data.message);
           window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
-            detail: { medicine_id: payload.medicine_id }
+            detail: { medicine_id: confirmMedicine?.id || payload.medicine_id }
           }));
         }
         return data;
@@ -351,12 +362,14 @@ export function Medicines({ notify, focus, onNavigate }) {
 
       <DispenseConfirmModal
         medicine={confirmMedicine}
+        manualAccess
         open={modalOpen}
         submitting={submitting}
         result={modalResult}
         error={modalError}
         onCancel={() => setModalOpen(false)}
-        onSubmit={handleConfirm}
+        onAssessManual={handleManualAssessment}
+        onConfirmManual={handleManualConfirmation}
       />
     </main>
   );

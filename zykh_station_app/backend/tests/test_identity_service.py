@@ -87,14 +87,14 @@ class IdentityServiceTest(unittest.TestCase):
     def test_matched_subject_returns_bound_service_user(self) -> None:
         face = FakeFaceClient({"ok": True, "status": "unknown", "confidence": -1})
         service = IdentityService(face_client=face)
-        enrollment = service.enroll_user("zhangsan")
+        enrollment = service.enroll_user("wang-nainai")
         self.assertTrue(enrollment.ok)
 
         matched_face = FakeFaceClient(
             {
                 "ok": True,
                 "status": "matched",
-                "subject": "profile:zhangsan",
+                "subject": "profile:wang-nainai",
                 "confidence": 0.82,
             }
         )
@@ -102,8 +102,8 @@ class IdentityServiceTest(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.status, "matched")
-        self.assertEqual(result.user.id, "zhangsan")
-        self.assertEqual(result.user.name, "张三")
+        self.assertEqual(result.user.id, "wang-nainai")
+        self.assertEqual(result.user.name, "王奶奶")
         self.assertAlmostEqual(result.confidence, 0.82)
         self.assertEqual(result.match_count, 1)
         self.assertIsNotNone(result.last_seen_at)

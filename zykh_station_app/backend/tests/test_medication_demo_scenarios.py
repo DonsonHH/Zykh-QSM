@@ -57,16 +57,25 @@ class MedicationDemoScenariosTest(unittest.TestCase):
             candidates if candidates is not None else self.all_candidates,
         )
 
-    def test_scenario_1_daily_plan_contains_hypertension_and_nutrition_items(self) -> None:
+    def test_scenario_1_daily_plan_contains_the_four_official_items(self) -> None:
         plans = RecordsService().list_today_plans(due_only=False)
-        zhangsan_plan_ids = {
-            item.medicine_id
-            for item in plans
-            if item.service_user_id == "zhangsan"
+        plan_ids_by_user = {
+            user_id: {
+                item.medicine_id
+                for item in plans
+                if item.service_user_id == user_id
+            }
+            for user_id in ("wang-nainai", "li-yeye")
         }
 
-        self.assertIn("slot-21-amlodipine", zhangsan_plan_ids)
-        self.assertIn("slot-02-centrum", zhangsan_plan_ids)
+        self.assertEqual(
+            plan_ids_by_user["wang-nainai"],
+            {"slot-21-amlodipine", "slot-18-budesonide-nasal"},
+        )
+        self.assertEqual(
+            plan_ids_by_user["li-yeye"],
+            {"slot-06-lactulose", "slot-23-desloratadine"},
+        )
 
     def test_scenarios_2_and_3_keep_symptom_drugs_as_choices_not_default_combinations(self) -> None:
         mild_cold = self._extract("受凉后鼻塞、流清鼻涕、头痛和轻微咳嗽，没有明显高热")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -366,6 +368,13 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "service_users", "allergies", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "service_users", "medical_conditions_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "service_users", "current_medications_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "service_users", "allergy_facts_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "service_users", "safety_profile_revision", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "service_users", "safety_profile_updated_at", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "service_users", "persona_generation", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "service_users", "archived", "INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS face_identities (
@@ -410,6 +419,100 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS identity_assertions (
+              assertion_id TEXT PRIMARY KEY,
+              service_user_id TEXT NOT NULL,
+              verification_method TEXT NOT NULL,
+              verification_score REAL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              FOREIGN KEY(service_user_id) REFERENCES service_users(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS identity_assertions_user_expiry_idx "
+            "ON identity_assertions(service_user_id, expires_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medicine_safety_checks (
+              check_id TEXT PRIMARY KEY,
+              request_id TEXT NOT NULL UNIQUE,
+              request_payload_digest TEXT NOT NULL,
+              route TEXT NOT NULL,
+              service_user_id TEXT NOT NULL,
+              service_user_name_snapshot TEXT NOT NULL,
+              persona_generation TEXT NOT NULL,
+              safety_profile_revision INTEGER NOT NULL,
+              person_safety_fingerprint TEXT NOT NULL,
+              verification_method TEXT NOT NULL,
+              verification_assertion_id TEXT NOT NULL,
+              medicine_id TEXT NOT NULL,
+              medicine_name_snapshot TEXT NOT NULL,
+              slot TEXT NOT NULL,
+              hardware_slot_snapshot INTEGER NOT NULL,
+              stock_snapshot INTEGER NOT NULL,
+              review_fingerprint TEXT NOT NULL,
+              check_status TEXT NOT NULL,
+              reason_codes_json TEXT NOT NULL,
+              reason_summary TEXT NOT NULL,
+              ruleset_version TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              consumed_at TEXT NOT NULL DEFAULT '',
+              dispense_status TEXT NOT NULL DEFAULT 'NOT_STARTED',
+              dispense_record_id TEXT NOT NULL DEFAULT '',
+              qsm_operation_id TEXT NOT NULL DEFAULT '',
+              confirm_request_id TEXT NOT NULL DEFAULT '',
+              confirm_payload_digest TEXT NOT NULL DEFAULT '',
+              confirm_message TEXT NOT NULL DEFAULT '',
+              confirm_completed_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_column(conn, "medicine_safety_checks", "confirm_request_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicine_safety_checks", "confirm_payload_digest", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicine_safety_checks", "confirm_message", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicine_safety_checks", "confirm_completed_at", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "medicine_safety_checks", "hardware_slot_snapshot", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "medicine_safety_checks", "stock_snapshot", "INTEGER NOT NULL DEFAULT -1")
+        _ensure_column(conn, "medicine_safety_checks", "person_safety_fingerprint", "TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS medicine_safety_checks_confirm_request_idx "
+            "ON medicine_safety_checks(confirm_request_id) WHERE confirm_request_id<>''"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS medicine_safety_checks_user_created_idx "
+            "ON medicine_safety_checks(service_user_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS medicine_safety_checks_status_created_idx "
+            "ON medicine_safety_checks(check_status, created_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medication_safety_outbox (
+              event_id TEXT PRIMARY KEY,
+              aggregate_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              payload_digest TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              attempts INTEGER NOT NULL DEFAULT 0,
+              next_attempt_at TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              sent_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS medication_safety_outbox_pending_idx "
+            "ON medication_safety_outbox(status, next_attempt_at, created_at)"
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS today_plans (
               id TEXT PRIMARY KEY,
               time TEXT NOT NULL,
@@ -433,8 +536,17 @@ def init_db() -> None:
         _ensure_column(conn, "today_plans", "weekdays_json", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "today_plans", "start_date", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "today_plans", "last_action_date", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "today_plans", "archived", "INTEGER NOT NULL DEFAULT 0")
         _migrate_today_plans(conn)
         _seed_service_data(conn)
+        conn.execute(
+            """
+            UPDATE today_plans SET archived=1, updated_at=?
+            WHERE archived=0
+              AND service_user_id IN (SELECT id FROM service_users WHERE archived=1)
+            """,
+            (now_text(),),
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -455,29 +567,63 @@ def _migrate_today_plans(conn: sqlite3.Connection) -> None:
         """
         UPDATE today_plans
         SET service_user_id=COALESCE(
-          (SELECT service_users.id FROM service_users WHERE service_users.name=today_plans.target_user LIMIT 1),
+          (
+            SELECT MIN(service_users.id)
+            FROM service_users
+            WHERE service_users.name=today_plans.target_user
+              AND service_users.archived=0
+            GROUP BY service_users.name
+            HAVING COUNT(*)=1
+          ),
           ''
         )
-        WHERE service_user_id=''
+        WHERE service_user_id='' AND archived=0
         """
     )
     conn.execute(
         """
         UPDATE today_plans
         SET medicine_id=COALESCE(
-          (SELECT medicines.id FROM medicines WHERE medicines.name=today_plans.medicine LIMIT 1),
+          (
+            SELECT MIN(medicines.id)
+            FROM medicines
+            WHERE medicines.name=today_plans.medicine
+            GROUP BY medicines.name
+            HAVING COUNT(*)=1
+          ),
           ''
         )
-        WHERE medicine_id=''
+        WHERE medicine_id='' AND archived=0
         """
     )
-    conn.execute("DELETE FROM today_plans WHERE service_user_id='' OR medicine_id=''")
+    # Legacy free-text plans are user data. If an old person or medicine label
+    # cannot be resolved unambiguously, quarantine the row instead of deleting
+    # it or guessing a new owner/medicine.
+    conn.execute(
+        """
+        UPDATE today_plans SET archived=1
+        WHERE archived=0 AND (
+          service_user_id=''
+          OR medicine_id=''
+          OR NOT EXISTS (
+            SELECT 1 FROM service_users
+            WHERE service_users.id=today_plans.service_user_id
+              AND service_users.archived=0
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM medicines
+            WHERE medicines.id=today_plans.medicine_id
+          )
+        )
+        """
+    )
     conn.execute(
         """
         UPDATE today_plans
         SET target_user=(SELECT name FROM service_users WHERE id=today_plans.service_user_id),
             medicine=(SELECT name FROM medicines WHERE id=today_plans.medicine_id),
             updated_at=CASE WHEN updated_at='' THEN ? ELSE updated_at END
+        WHERE archived=0
         """,
         (now_text(),),
     )
@@ -519,41 +665,186 @@ def _seed_service_data(conn: sqlite3.Connection) -> None:
             VALUES (1, '待同步', 0, '未同步', '本地记录')
             """
         )
-    if conn.execute("SELECT COUNT(*) AS count FROM service_users").fetchone()["count"] == 0:
-        conn.executemany(
-            """
-            INSERT INTO service_users(id, name, age, profile, allergies, note, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+    seed_version = "family-safety-personas-v1"
+    seed = conn.execute(
+        "SELECT value FROM app_settings WHERE key='service_user_seed_version'"
+    ).fetchone()
+    fingerprint_seed = conn.execute(
+        "SELECT value FROM app_settings WHERE key='service_user_seed_fingerprints'"
+    ).fetchone()
+    if seed and str(seed["value"]) == seed_version and fingerprint_seed:
+        return
+
+    now = now_text()
+    users = (
+        (
+            "wang-nainai",
+            "王奶奶",
+            72,
+            "高血压；常年性过敏性鼻炎；既往胃溃疡；独居",
+            "青霉素类药物过敏",
+            "女儿为已绑定家属；计划用药按既往有效医嘱执行",
+            "重点照护",
             [
-                (
-                    "zhangsan",
-                    "张三",
-                    70,
-                    "高血压；常年性过敏性鼻炎；李四的爷爷和主要照护人",
-                    "头孢类药物禁忌",
-                    "父母外出工作时负责照护李四；本人降压药和鼻喷剂按既往医嘱使用",
-                    "家庭监护人",
-                ),
-                (
-                    "lisi",
-                    "李四",
-                    8,
-                    "8岁儿童；体重约25公斤；季节性过敏性鼻炎；功能性便秘",
-                    "无已知药物过敏",
-                    "张三的孙子；父母工作日外出，由张三照护；儿童用药需由监护人核验",
-                    "儿童家庭成员",
-                ),
-                ("wangwu", "王五", 58, "长期胃病", "", "近期有问询", "观察"),
+                {"concept_code": "hypertension", "display_text": "高血压", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+                {"concept_code": "allergic_rhinitis", "display_text": "常年性过敏性鼻炎", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+                {"concept_code": "peptic_ulcer", "display_text": "既往胃溃疡", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
             ],
-        )
-    else:
+            [
+                {"medicine_id": "slot-21-amlodipine", "medicine_name": "苯磺酸氨氯地平片", "active_ingredients": ["氨氯地平"], "schedule": "08:00 早餐后", "source": "demo_plan_review", "updated_at": "2026-08-10"},
+                {"medicine_id": "slot-18-budesonide-nasal", "medicine_name": "布地奈德鼻喷雾剂", "active_ingredients": ["布地奈德"], "schedule": "21:00 睡前", "source": "demo_plan_review", "updated_at": "2026-08-10"},
+            ],
+            [
+                {"concept_code": "penicillin_allergy", "display_text": "青霉素类药物过敏", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+            ],
+        ),
+        (
+            "li-yeye",
+            "李爷爷",
+            74,
+            "2 型糖尿病；功能性便秘；季节性过敏性鼻炎；独居",
+            "无已知药物过敏",
+            "儿子为已绑定家属；计划用药按既往有效医嘱执行",
+            "重点照护",
+            [
+                {"concept_code": "diabetes", "display_text": "2 型糖尿病", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+                {"concept_code": "functional_constipation", "display_text": "功能性便秘", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+                {"concept_code": "allergic_rhinitis", "display_text": "季节性过敏性鼻炎", "status": "present", "source": "demo_profile_review", "reviewed_at": "2026-08-10"},
+            ],
+            [
+                {"medicine_id": "slot-06-lactulose", "medicine_name": "乳果糖口服液", "active_ingredients": ["乳果糖"], "schedule": "07:30 早餐时", "source": "demo_plan_review", "updated_at": "2026-08-10"},
+                {"medicine_id": "slot-23-desloratadine", "medicine_name": "枸地氯雷他定胶囊", "active_ingredients": ["枸地氯雷他定"], "schedule": "20:30 睡前", "source": "demo_plan_review", "updated_at": "2026-08-10"},
+            ],
+            [],
+        ),
+    )
+    for user in users:
         conn.execute(
             """
-            UPDATE service_users
-            SET allergies='头孢类药物禁忌',
-                note=CASE WHEN note='' OR note='今日有计划' THEN '今日演示对象' ELSE note END
-            WHERE name='张三'
-              AND allergies IN ('', '头孢过敏', '头孢过敏；避免头孢类抗生素')
-            """
+            INSERT INTO service_users(
+              id, name, age, profile, allergies, note, status,
+              medical_conditions_json, current_medications_json, allergy_facts_json,
+              safety_profile_revision, safety_profile_updated_at, persona_generation, archived
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'senior-demo-v1', 0)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            (
+                user[0], user[1], user[2], user[3], user[4], user[5], user[6],
+                json.dumps(user[7], ensure_ascii=False),
+                json.dumps(user[8], ensure_ascii=False),
+                json.dumps(user[9], ensure_ascii=False),
+                now,
+            ),
         )
+
+    expected_fingerprints = {
+        user[0]: _service_user_identity_fingerprint(
+            {
+                "id": user[0],
+                "name": user[1],
+                "age": user[2],
+                "profile": user[3],
+                "allergies": user[4],
+                "note": user[5],
+                "status": user[6],
+                "medical_conditions_json": user[7],
+                "current_medications_json": user[8],
+                "allergy_facts_json": user[9],
+                "safety_profile_revision": 1,
+                "persona_generation": "senior-demo-v1",
+                "archived": 0,
+            }
+        )
+        for user in users
+    }
+    conn.execute(
+        """
+        INSERT INTO app_settings(key, value, updated_at)
+        VALUES ('service_user_seed_fingerprints', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        (json.dumps(expected_fingerprints, ensure_ascii=False, sort_keys=True), now),
+    )
+
+    # Archive only the exact historical demo identities. Never rename or reuse
+    # them: inquiry history and biometric bindings remain attached to the old ID.
+    conn.execute(
+        """
+        UPDATE service_users SET archived=1
+        WHERE (id='zhangsan' AND name='张三')
+           OR (id='lisi' AND name='李四')
+           OR (id='wangwu' AND name='王五')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO app_settings(key, value, updated_at)
+        VALUES ('service_user_seed_version', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        (seed_version, now),
+    )
+
+
+def has_exact_senior_demo_personas(conn: sqlite3.Connection) -> bool:
+    """Return true only when both reserved demo IDs still hold exact seeded identities."""
+    stored = conn.execute(
+        "SELECT value FROM app_settings WHERE key='service_user_seed_fingerprints'"
+    ).fetchone()
+    if stored is None:
+        return False
+    try:
+        expected = json.loads(str(stored["value"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(expected, dict) or set(expected) != {"wang-nainai", "li-yeye"}:
+        return False
+    rows = conn.execute(
+        """
+        SELECT id, name, age, profile, allergies, note, status,
+               medical_conditions_json, current_medications_json,
+               allergy_facts_json, safety_profile_revision,
+               persona_generation, archived
+        FROM service_users
+        WHERE id IN ('wang-nainai', 'li-yeye')
+        """
+    ).fetchall()
+    actual = {
+        str(row["id"]): _service_user_identity_fingerprint(dict(row))
+        for row in rows
+    }
+    return actual == {str(key): str(value) for key, value in expected.items()}
+
+
+def _service_user_identity_fingerprint(values: dict[str, object]) -> str:
+    def json_list(value: object) -> list[object]:
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(str(value or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    payload = {
+        "id": str(values.get("id") or ""),
+        "name": str(values.get("name") or ""),
+        "age": int(values.get("age") or 0),
+        "profile": str(values.get("profile") or ""),
+        "allergies": str(values.get("allergies") or ""),
+        "note": str(values.get("note") or ""),
+        "status": str(values.get("status") or ""),
+        "medical_conditions": json_list(values.get("medical_conditions_json")),
+        "current_medications": json_list(values.get("current_medications_json")),
+        "allergy_facts": json_list(values.get("allergy_facts_json")),
+        "safety_profile_revision": int(values.get("safety_profile_revision") or 0),
+        "persona_generation": str(values.get("persona_generation") or ""),
+        "archived": bool(values.get("archived")),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

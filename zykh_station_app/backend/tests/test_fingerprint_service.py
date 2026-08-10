@@ -83,14 +83,14 @@ class FingerprintServiceTest(unittest.TestCase):
 
     def test_enrolled_template_resolves_service_user(self) -> None:
         service = FingerprintService(client=self.client)
-        enrollment = service.enroll_user("zhangsan")
+        enrollment = service.enroll_user("wang-nainai")
         identified = service.identify()
 
         self.assertTrue(enrollment.ok)
         self.assertEqual(enrollment.template_id, 16)
         self.assertEqual(self.client.enrolled, [16])
         self.assertTrue(identified.ok)
-        self.assertEqual(identified.user.id, "zhangsan")
+        self.assertEqual(identified.user.id, "wang-nainai")
         self.assertEqual(identified.score, 126)
         self.assertEqual(identified.match_count, 1)
         self.assertIsNotNone(identified.last_seen_at)
@@ -111,24 +111,24 @@ class FingerprintServiceTest(unittest.TestCase):
 
     def test_async_enrollment_exposes_removal_step_then_binds_on_completion(self) -> None:
         service = FingerprintService(client=self.client)
-        started = service.start_enrollment("zhangsan")
+        started = service.start_enrollment("wang-nainai")
 
         self.assertTrue(started.ok)
         self.assertEqual(started.status, "running")
         self.assertEqual(started.job_id, "job-1")
         self.client.progress_event = "remove_finger"
-        removal = service.enrollment_progress("zhangsan", "job-1")
+        removal = service.enrollment_progress("wang-nainai", "job-1")
         self.assertEqual(removal.event, "remove_finger")
         self.assertIn("完全移开", removal.message)
 
         self.client.progress_event = "enrolled"
-        completed = service.enrollment_progress("zhangsan", "job-1")
+        completed = service.enrollment_progress("wang-nainai", "job-1")
         identified = service.identify()
 
         self.assertTrue(completed.ok)
         self.assertEqual(completed.status, "enrolled")
         self.assertTrue(identified.ok)
-        self.assertEqual(identified.user.id, "zhangsan")
+        self.assertEqual(identified.user.id, "wang-nainai")
         self.assertEqual(self.client.deleted, [])
 
     def test_removal_timeout_has_actionable_message(self) -> None:

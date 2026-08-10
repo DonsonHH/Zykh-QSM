@@ -22,7 +22,6 @@ from app.schemas.inquiry import (  # noqa: E402
     InquiryTurnRequest,
     InquiryVitalsRequest,
 )
-from app.schemas.records import TodayPlanCreateRequest  # noqa: E402
 from app.repositories.medicine_repository import MedicineRepository  # noqa: E402
 from app.services.dispense_service import DispenseError  # noqa: E402
 from app.services.inquiry_dialogue_policy import infer_question_topic  # noqa: E402
@@ -329,8 +328,15 @@ class InquiryOrchestratorTest(unittest.TestCase):
             interpreter,
         )
 
-    def create(self, service: InquiryOrchestrator):
-        return service.create_session(InquirySessionCreateRequest(service_user_id="zhangsan"))
+    def create(
+        self,
+        service: InquiryOrchestrator,
+        *,
+        service_user_id: str = "wang-nainai",
+    ):
+        return service.create_session(
+            InquirySessionCreateRequest(service_user_id=service_user_id)
+        )
 
     def test_orchestrator_rejects_bypassed_failed_demo_without_side_effects(self) -> None:
         service, interpreter = self.service([case(action="analyze")])
@@ -417,9 +423,39 @@ class InquiryOrchestratorTest(unittest.TestCase):
         service, _ = self.service([])
         session = self.create(service)
 
-        self.assertEqual(session.user_name, "张三")
+        self.assertEqual(session.user_name, "王奶奶")
         self.assertEqual(session.stage, "symptoms")
-        self.assertEqual(service.get_session(session.session_id).user_id, "zhangsan")
+        self.assertEqual(service.get_session(session.session_id).user_id, "wang-nainai")
+
+    def test_archived_identity_cannot_start_a_registered_session(self) -> None:
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO service_users(
+                  id, name, age, profile, allergies, note, status, archived
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    "legacy-archived-person",
+                    "历史归档对象",
+                    70,
+                    "旧人物资料",
+                    "无已知药物过敏",
+                    "已归档",
+                    "已归档",
+                ),
+            )
+        service, _ = self.service([])
+
+        session = service.create_session(
+            InquirySessionCreateRequest(
+                service_user_id="legacy-archived-person",
+                guest_name="现场访客",
+            )
+        )
+
+        self.assertEqual(session.user_id, "")
+        self.assertEqual(session.user_name, "现场访客")
 
     def test_registered_long_term_medication_note_is_in_the_model_profile(self) -> None:
         service, interpreter = self.service(
@@ -432,10 +468,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
             InquiryTurnRequest(transcript="我嗓子疼"),
         )
 
-        long_term_medication = "本人降压药和鼻喷剂按既往医嘱使用"
-        self.assertIn(long_term_medication, session.user_profile)
-        self.assertIn(long_term_medication, interpreter.opening_profiles[0]["profile"])
-        self.assertIn(long_term_medication, interpreter.profiles[0]["profile"])
+        plan_note = "计划用药按既往有效医嘱执行"
+        self.assertIn("高血压", session.user_profile)
+        self.assertIn(plan_note, session.user_profile)
+        self.assertIn(plan_note, interpreter.opening_profiles[0]["profile"])
+        self.assertIn(plan_note, interpreter.profiles[0]["profile"])
 
     def test_model_controls_the_next_question_without_fixed_field_order(self) -> None:
         service, _ = self.service(
@@ -1220,7 +1257,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=echo_authorized_diarrhea_combination,
             dispense=dispense,
         )
-        session = self.create(service)
+        session = self.create(service, service_user_id="wang-nainai")
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
@@ -1466,7 +1503,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
 
         result = service.process_turn(
-            self.create(service).session_id,
+            self.create(service, service_user_id="wang-nainai").session_id,
             InquiryTurnRequest(
                 transcript="咽喉疼痛且有轻微发热半天，已经用了对乙酰氨基酚，没有过敏"
             ),
@@ -1474,10 +1511,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
         self.assertTrue(result.can_view_medicines)
         self.assertEqual(result.treatment_options[0].medicines[0].id, "slot-07-yinhuang")
-        self.assertEqual(
-            [notice.code for notice in result.medication_safety_notices],
-            ["used_medicine_duplicate", "used_medicine_duplicate"],
-        )
+        notice_codes = [
+            notice.code for notice in result.medication_safety_notices
+        ]
+        self.assertEqual(notice_codes.count("used_medicine_duplicate"), 2)
+        self.assertIn("history_contraindication", notice_codes)
         notice_text = " ".join(
             notice.message for notice in result.medication_safety_notices
         )
@@ -1507,7 +1545,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         )
 
         result = service.process_turn(
-            self.create(service).session_id,
+            self.create(service, service_user_id="li-yeye").session_id,
             InquiryTurnRequest(
                 transcript="逐渐出现的轻微头痛半天，已经用了芬必得，没有过敏"
             ),
@@ -2069,7 +2107,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=ranking,
             dispense=dispense,
         )
-        session = self.create(service)
+        session = self.create(service, service_user_id="li-yeye")
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
@@ -2139,28 +2177,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=ranking,
             dispense=dispense,
         )
-        repository = MedicineRepository()
-        medicine = repository.get_by_id("slot-13-ibuprofen")
-        repository.update(
-            medicine.id,
-            {
-                "contraindications": [
-                    *medicine.contraindications,
-                    "糖尿病患者禁用",
-                ],
-                "structured_contraindications": [
-                    *medicine.structured_contraindications,
-                    {
-                        "concept_code": "diabetes",
-                        "display_text": "糖尿病患者禁用",
-                    },
-                ],
-                "safety_review_status": "reviewed",
-                "safety_reviewed_by": "test-pharmacist",
-                "safety_reviewed_at": "2026-08-08T12:30:00+08:00",
-            },
-        )
-        session = self.create(service)
+        session = self.create(service, service_user_id="li-yeye")
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
@@ -2170,8 +2187,8 @@ class InquiryOrchestratorTest(unittest.TestCase):
         option = result.treatment_options[0]
         with db.connect() as conn:
             conn.execute(
-                "UPDATE service_users SET profile=? WHERE id=?",
-                ("糖尿病", "zhangsan"),
+                "UPDATE service_users SET profile=profile || ? WHERE id=?",
+                ("；肾功能不全", "li-yeye"),
             )
 
         with self.assertRaises(DispenseError) as raised:
@@ -2199,7 +2216,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=echo_authorized_diarrhea_combination,
             dispense=dispense,
         )
-        session = self.create(service)
+        session = self.create(service, service_user_id="wang-nainai")
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
@@ -2248,7 +2265,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=echo_authorized_diarrhea_combination,
             dispense=dispense,
         )
-        session = self.create(service)
+        session = self.create(service, service_user_id="wang-nainai")
         result = service.process_turn(
             session.session_id,
             InquiryTurnRequest(
@@ -2289,13 +2306,11 @@ class InquiryOrchestratorTest(unittest.TestCase):
 
     def test_existing_plan_exposes_and_authorizes_a_prescription_candidate(self) -> None:
         MedicineService().list_medicines()
-        plan = RecordsService().create_today_plan(TodayPlanCreateRequest(
-            time="12:30",
-            timing_label="既往医嘱",
-            medicine_id="slot-23-desloratadine",
-            service_user_id="zhangsan",
-            dose="按既往医嘱",
-        ))
+        plan = next(
+            item
+            for item in RecordsService().list_today_plans()
+            if item.id == "plan-demo-li-desloratadine"
+        )
         ranking = {
             "ok": True,
             "source": "cloud",
@@ -2318,7 +2333,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ranking=ranking,
             dispense=dispense,
         )
-        session = self.create(service)
+        session = self.create(service, service_user_id="li-yeye")
 
         result = service.process_turn(
             session.session_id,
@@ -2410,7 +2425,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
             ],
             ranking={"ok": True, "source": "cloud", "options": []},
         )
-        first = self.create(first_service)
+        first = self.create(first_service, service_user_id="li-yeye")
         first_service.process_turn(
             first.session_id,
             InquiryTurnRequest(transcript="排便困难两天，没用药，没有过敏"),
@@ -2419,7 +2434,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         second_service, second_interpreter = self.service(
             [case(action="ask", reply="这次和上次相比有什么变化？")]
         )
-        second = self.create(second_service)
+        second = self.create(second_service, service_user_id="li-yeye")
         second_service.process_turn(
             second.session_id,
             InquiryTurnRequest(transcript="今天又有点不舒服"),

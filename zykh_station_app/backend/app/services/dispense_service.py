@@ -8,6 +8,10 @@ from ..config import settings
 from ..db import now_text
 from ..repositories.dispense_repository import DispenseRepository
 from ..repositories.medicine_repository import MedicineRepository
+from ..repositories.manual_medication_access_repository import (
+    ManualExecutionPreconditionError,
+    ManualMedicationAccessRepository,
+)
 from ..schemas.dispense import (
     DispenseConfirmRequest,
     DispenseConfirmResponse,
@@ -15,8 +19,10 @@ from ..schemas.dispense import (
     DispenseOpenResponse,
     DispenseRecord,
 )
+from ..schemas.manual_medication_access import ManualDispenseExecutionCommand
 from .qsm_client import QsmClient
 from .dispense_archive_service import DispenseArchiveService
+from .dispense_route import classify_dispense_route
 from .medicine_knowledge_repository import MedicineKnowledgeRepository
 
 
@@ -43,12 +49,56 @@ class DispenseService:
         self.archive_service = archive_service or DispenseArchiveService()
 
     def confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
+        if classify_dispense_route(request) == "MANUAL_INVENTORY":
+            raise DispenseError(
+                "普通库存取药必须先完成身份确认和个人用药安全核查。",
+                status_code=409,
+            )
         if request.today_plan_id:
             with self._plan_dispense_lock:
                 return self._confirm(request, force_dry_run)
         return self._confirm(request, force_dry_run)
 
-    def _confirm(self, request: DispenseConfirmRequest, force_dry_run: bool | None = None) -> DispenseConfirmResponse:
+    def confirm_checked_manual(
+        self,
+        command: ManualDispenseExecutionCommand,
+    ) -> DispenseConfirmResponse:
+        request = DispenseConfirmRequest(
+            medicine_id=command.medicine_id,
+            slot=command.slot,
+            quantity=command.quantity,
+            reason="普通库存个人用药安全核查通过",
+            confirmed_safety_notice=True,
+            confirm_real_dispense=True,
+            target_user_id=command.service_user_id,
+            target_user_name=command.service_user_name,
+            verification_method=command.verification_method,
+            expected_review_fingerprint=command.expected_review_fingerprint,
+        )
+        return self._confirm(
+            request,
+            validated_manual=True,
+            qsm_operation_id=command.qsm_operation_id,
+            manual_execution=command,
+        )
+
+    def confirm_debug_dry_run(
+        self,
+        request: DispenseConfirmRequest,
+    ) -> DispenseConfirmResponse:
+        """Explicit device-console adapter; it can never request a real cabinet action."""
+        return self._confirm(request, force_dry_run=True, debug_dry_run=True)
+
+    def _confirm(
+        self,
+        request: DispenseConfirmRequest,
+        force_dry_run: bool | None = None,
+        *,
+        validated_manual: bool = False,
+        debug_dry_run: bool = False,
+        qsm_operation_id: str = "",
+        manual_execution: ManualDispenseExecutionCommand | None = None,
+    ) -> DispenseConfirmResponse:
         medicine = self.medicine_repository.get_by_id(request.medicine_id)
         if medicine is None:
             raise DispenseError("未找到该药品。", status_code=404)
@@ -60,7 +110,7 @@ class DispenseService:
             raise DispenseError("该药品资料尚未补全，完成实物包装和说明书核验前不可取药。")
         if not medicine.package_verified:
             raise DispenseError("该药品包装规格尚未人工核验，核验完成前不可取药。")
-        if request.verification_method == "inquiry_confirmed" and (
+        if (request.verification_method == "inquiry_confirmed" or validated_manual) and (
             medicine.safety_review_status != "reviewed"
             or not medicine.safety_reviewed_by.strip()
             or not medicine.safety_reviewed_at.strip()
@@ -70,7 +120,12 @@ class DispenseService:
             raise DispenseError("该药品已过有效期，不可取药；请联系管理员更换库存。")
         if medicine.stock < request.quantity:
             raise DispenseError("当前库存不足，不能执行取药。", status_code=409)
-        if not medicine.is_otc and not request.today_plan_id:
+        if (
+            not medicine.is_otc
+            and not request.today_plan_id
+            and not validated_manual
+            and not debug_dry_run
+        ):
             raise DispenseError("该药品需凭处方或既往用药计划取用，请先完成医生审核。")
         canonical_name, target_user_type = self._resolve_identity(request.target_user_id, request.target_user_name)
         registered_allergies = self._registered_allergies(request.target_user_id)
@@ -99,7 +154,7 @@ class DispenseService:
         if latest.stock < request.quantity:
             raise DispenseError("当前库存不足，不能执行取药。", status_code=409)
         if (
-            request.verification_method == "inquiry_confirmed"
+            (request.verification_method == "inquiry_confirmed" or validated_manual)
             and not request.expected_review_fingerprint.strip()
         ):
             raise DispenseError(
@@ -115,13 +170,57 @@ class DispenseService:
                     "药品身份或安全资料已变化，请重新核对后再取药。",
                     status_code=409,
                 )
+        if validated_manual:
+            if manual_execution is None:
+                raise DispenseError("普通库存取药缺少最终安全核查凭据。", status_code=409)
+            self._validate_manual_execution_snapshot(manual_execution, latest)
         medicine = latest
         dry_run = self._should_dry_run(request, medicine, force_dry_run)
-        qsm_result = self.qsm_client.dispense(str(medicine.hardware_slot or medicine.slot), request.quantity, dry_run=dry_run)
+        stock_reserved = False
+        if validated_manual and not dry_run:
+            if manual_execution is None:
+                raise DispenseError(
+                    "药品库存记录已经变化，请重新核查。",
+                    status_code=409,
+                )
+            try:
+                ManualMedicationAccessRepository().reserve_checked_execution(
+                    manual_execution
+                )
+            except ManualExecutionPreconditionError as exc:
+                raise DispenseError(str(exc), status_code=409) from exc
+            stock_reserved = True
+        qsm_slot = str(medicine.hardware_slot or medicine.slot)
+        if qsm_operation_id:
+            qsm_result = self.qsm_client.dispense(
+                qsm_slot,
+                request.quantity,
+                dry_run=dry_run,
+                operation_id=qsm_operation_id,
+            )
+        else:
+            qsm_result = self.qsm_client.dispense(
+                qsm_slot,
+                request.quantity,
+                dry_run=dry_run,
+            )
         qsm_ok = bool(qsm_result.get("ok"))
+        result_unknown = bool(qsm_result.get("result_unknown"))
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if not dry_run and not qsm_ok:
-            message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
+            stock_restore_conflict = False
+            if stock_reserved and not result_unknown:
+                stock_restore_conflict = not self.medicine_repository.restore_reserved_stock(
+                    medicine.id,
+                    request.quantity,
+                    expected_stock=manual_execution.expected_stock,
+                )
+            if validated_manual and result_unknown:
+                message = "柜门结果待现场确认，请勿自动重试。"
+            else:
+                message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
+                if stock_restore_conflict:
+                    message += "；库存已被其他操作更新，请人工核对当前库存。"
             record = self._build_record(
                 request,
                 medicine,
@@ -133,7 +232,14 @@ class DispenseService:
             )
             self.dispense_repository.append(record)
             self._archive_identity_if_requested(request, record, target_user_type)
-            return DispenseConfirmResponse(ok=False, dry_run=False, message=message, record_id=record.id, qsm_detail=qsm_detail)
+            return DispenseConfirmResponse(
+                ok=False,
+                dry_run=False,
+                message=message,
+                record_id=record.id,
+                qsm_detail=qsm_detail,
+                result_unknown=validated_manual and result_unknown,
+            )
 
         message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
         record = self._build_record(
@@ -156,6 +262,39 @@ class DispenseService:
                 request.target_user_id,
             )
         return DispenseConfirmResponse(ok=True, dry_run=dry_run, message=message, record_id=record.id, qsm_detail=qsm_detail)
+
+    def _validate_manual_execution_snapshot(
+        self,
+        command: ManualDispenseExecutionCommand,
+        medicine,
+    ) -> None:
+        person = ManualMedicationAccessRepository().get_person(command.service_user_id)
+        if (
+            person is None
+            or person.archived
+            or person.persona_generation != command.expected_persona_generation
+            or person.safety_profile_revision != command.expected_safety_profile_revision
+            or person.safety_fingerprint() != command.expected_person_safety_fingerprint
+        ):
+            raise DispenseError("人物资料已经更新，请重新确认身份并核查。", status_code=409)
+        if (
+            medicine.id != command.medicine_id
+            or medicine.slot != command.slot
+            or int(medicine.hardware_slot or 0) != command.expected_hardware_slot
+        ):
+            raise DispenseError("药品仓位映射已经变化，请重新核查。", status_code=409)
+        if medicine.stock != command.expected_stock:
+            raise DispenseError("药品库存记录已经变化，请重新核查。", status_code=409)
+        if (
+            medicine.expire_date != command.expected_expire_date
+            or MedicineKnowledgeRepository.is_expired(medicine.expire_date)
+        ):
+            raise DispenseError("药品有效期已经变化，请重新核查。", status_code=409)
+        if (
+            MedicineKnowledgeRepository.review_fingerprint(medicine)
+            != command.expected_review_fingerprint
+        ):
+            raise DispenseError("药品身份或安全资料已经变化，请重新核查。", status_code=409)
 
     def _archive_identity_if_requested(
         self,
@@ -307,7 +446,7 @@ class DispenseService:
             db.init_db()
             with db.connect() as conn:
                 row = conn.execute(
-                    "SELECT name, status FROM service_users WHERE id=?",
+                    "SELECT name, status FROM service_users WHERE id=? AND archived=0",
                     (user_id,),
                 ).fetchone()
             if row:
@@ -329,7 +468,7 @@ class DispenseService:
         db.init_db()
         with db.connect() as conn:
             row = conn.execute(
-                "SELECT allergies FROM service_users WHERE id=?",
+                "SELECT allergies FROM service_users WHERE id=? AND archived=0",
                 (user_id,),
             ).fetchone()
         return str(row["allergies"] or "").strip() if row else ""
