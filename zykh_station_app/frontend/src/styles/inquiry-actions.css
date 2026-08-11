@@ -454,6 +454,16 @@
   font-weight: 800;
 }
 
+.option-medicine-row small.medicine-safety-note {
+  margin-top: 2px;
+  border-left: 3px solid #e6a23c;
+  border-radius: 4px;
+  background: #fff8ed;
+  padding: 3px 6px;
+  color: #8a4708;
+  font-weight: 800;
+}
+
 .option-medicine-row em {
   color: var(--primary);
   font-size: 14px;

@@ -1635,7 +1635,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertIn("观察后备选", result.treatment_options[1].label)
         self.assertIn("观察后备选", result.reply)
 
-    def test_observation_fallback_does_not_override_a_condition_needing_exclusion(
+    def test_observation_fallback_does_not_override_when_every_condition_needs_exclusion(
         self,
     ) -> None:
         ranking = {
@@ -1681,6 +1681,138 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertFalse(result.can_view_medicines)
         self.assertEqual(result.treatment_options, [])
         self.assertEqual(result.next_action, "complete")
+
+    def test_observation_fallback_uses_only_safety_cleaned_possible_conditions(
+        self,
+    ) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud_responses",
+            "assessment": {
+                "summary": "模型同时给出了取药指令和需要进一步排查的情况。",
+                "possible_conditions": [
+                    {
+                        "name": "建议直接取药的情况",
+                        "likelihood": "possible",
+                        "supporting_evidence_ids": [],
+                        "non_supporting_evidence_ids": [],
+                    },
+                    {
+                        "name": "需要进一步排查的感染",
+                        "likelihood": "needs_exclusion",
+                        "supporting_evidence_ids": [],
+                        "non_supporting_evidence_ids": [],
+                    },
+                ],
+                "next_steps": ["继续观察并联系专业人员"],
+                "seek_care_if": ["发热或疼痛加重"],
+            },
+            "options": [],
+        }
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="轻微感冒发热头痛",
+                    evidence="有一点发热和头痛",
+                    duration="刚开始",
+                    used="未使用",
+                    allergy="无",
+                )
+            ],
+            ranking=ranking,
+        )
+        session = self.create(service, service_user_id="")
+
+        result = service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(
+                transcript="刚开始有一点发热和头痛，没有用药也没有过敏"
+            ),
+        )
+
+        self.assertEqual(
+            [
+                condition.name
+                for condition in (
+                    result.extracted_information.final_assessment.possible_conditions
+                )
+            ],
+            ["需要进一步排查的感染"],
+        )
+        self.assertFalse(result.can_view_medicines)
+        self.assertEqual(result.treatment_options, [])
+        self.assertEqual(result.next_action, "complete")
+
+    def test_low_risk_cough_keeps_a_safe_observation_option_when_one_cause_needs_exclusion(
+        self,
+    ) -> None:
+        ranking = {
+            "ok": True,
+            "source": "cloud_responses",
+            "assessment": {
+                "summary": (
+                    "咳嗽和发冷可能与上呼吸道不适有关；"
+                    "头晕仍需观察或排除低血糖反应。"
+                ),
+                "possible_conditions": [
+                    {
+                        "name": "上呼吸道感染",
+                        "likelihood": "possible",
+                        "supporting_evidence_ids": [],
+                        "non_supporting_evidence_ids": [],
+                    },
+                    {
+                        "name": "低血糖反应",
+                        "likelihood": "needs_exclusion",
+                        "supporting_evidence_ids": [],
+                        "non_supporting_evidence_ids": [],
+                    },
+                ],
+                "next_steps": ["监测血糖并观察咳嗽变化"],
+                "seek_care_if": ["咳嗽加剧或头晕加重"],
+            },
+            "options": [],
+        }
+        service, _ = self.service(
+            [
+                case(
+                    action="analyze",
+                    concept="咳嗽头晕发冷",
+                    evidence="今天晚上有一点咳嗽、头晕和发冷",
+                    duration="今天晚上",
+                    used="未使用",
+                    allergy="无已知药物过敏",
+                )
+            ],
+            ranking=ranking,
+        )
+
+        result = service.process_turn(
+            self.create(service, service_user_id="li-yeye").session_id,
+            InquiryTurnRequest(
+                transcript=(
+                    "今天晚上有一点咳嗽、头晕和发冷，"
+                    "没有呼吸困难，没有用药，也没有药物过敏"
+                )
+            ),
+        )
+
+        option_ids = {
+            medicine.id
+            for option in result.treatment_options
+            for medicine in option.medicines
+        }
+        self.assertTrue(result.can_view_medicines)
+        self.assertEqual(len(result.treatment_options), 2)
+        self.assertIn("slot-01-fufang-ganmaoling", option_ids)
+        self.assertIn("slot-07-yinhuang", option_ids)
+        self.assertNotIn("slot-05-nin-jiom-pei-pa-koa", option_ids)
+        notice_text = " ".join(
+            notice.message for notice in result.medication_safety_notices
+        )
+        self.assertIn("蜜炼川贝枇杷膏", notice_text)
+        self.assertNotIn("银黄颗粒", notice_text)
 
     def test_observation_fallback_never_auto_selects_a_prescription_plan_item(
         self,

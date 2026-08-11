@@ -1138,10 +1138,15 @@ class InquiryOrchestrator:
             return False
         if not str(raw_assessment.get("summary") or "").strip():
             return False
-        return not any(
-            condition.likelihood == "needs_exclusion"
-            for condition in assessment.possible_conditions
-        )
+        raw_conditions = raw_assessment.get("possible_conditions")
+        if isinstance(raw_conditions, list) and raw_conditions:
+            has_supported_possibility = any(
+                condition.likelihood in {"possible", "more_likely"}
+                for condition in assessment.possible_conditions
+            )
+            if not has_supported_possibility:
+                return False
+        return True
 
     @staticmethod
     def _observation_fallback_payload(

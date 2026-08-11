@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   manualDispenseBlockHint,
@@ -6,6 +8,14 @@ import {
   manualDispenseButtonLabel
 } from "../src/utils/medicineSafety.js";
 
+const modal = fs.readFileSync(
+  path.join(process.cwd(), "src/components/DispenseConfirmModal.jsx"),
+  "utf8"
+);
+const detailPanel = fs.readFileSync(
+  path.join(process.cwd(), "src/components/MedicineDetailPanel.jsx"),
+  "utf8"
+);
 
 const base = {
   is_otc: true,
@@ -52,5 +62,18 @@ assert.equal(
   ""
 );
 assert.equal(manualDispenseButtonLabel(base, new Date("2026-08-05")), "确认身份并核查");
+assert.match(modal, /禁忌提醒/);
+assert.match(modal, /慎用与指导提醒/);
+assert.doesNotMatch(
+  modal,
+  /medicine\.contraindications[^\n]*\|\|\s*medicine\.safety_note/,
+  "dispense confirmation must not hide the safety note when contraindications exist"
+);
+assert.ok(
+  detailPanel.includes("medicine.safety_note")
+    && detailPanel.includes("detail-safety")
+    && detailPanel.includes("慎用与指导提醒"),
+  "medicine details must show the safety note separately from contraindications"
+);
 
 console.log("medicine dispense guard contract: ok");

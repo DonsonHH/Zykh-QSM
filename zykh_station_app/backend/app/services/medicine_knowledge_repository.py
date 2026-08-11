@@ -618,7 +618,15 @@ class MedicineKnowledgeRepository:
         any mapped item can be shown or used.
         """
         matched_ids: set[str] = set()
+        disease_terms = ("感冒", "上呼吸道感染")
+        disease_referenced = any(term in query for term in disease_terms)
+        disease_affirmed = any(
+            cls._has_active_disease_reference(query, term)
+            for term in disease_terms
+        )
         for rule in RULES:
+            if rule.key == "cold" and disease_referenced and not disease_affirmed:
+                continue
             concept = rule.concept.strip().lower()
             matched = bool(
                 concept
@@ -634,32 +642,116 @@ class MedicineKnowledgeRepository:
                 query,
             )
             matched_ids.update((*primary_ids, *alternative_ids))
+        respiratory_terms = ("咳嗽", "干咳", "咳痰", "鼻塞", "流涕", "流鼻涕")
+        chill_terms = ("发冷", "怕冷", "寒战")
+        same_clause_cluster = any(
+            not cls._cold_cluster_explicitly_disclaimed(clause)
+            and any(
+                cls._has_active_retrieval_term(clause, term)
+                for term in respiratory_terms
+            )
+            and any(
+                cls._has_active_retrieval_term(clause, term)
+                for term in chill_terms
+            )
+            for clause in re.split(r"[。；;！!？，,]", query)
+            if clause.strip()
+        )
+        if same_clause_cluster and (not disease_referenced or disease_affirmed):
+            # Retrieval-only symptom cluster: the combination expands the
+            # reviewed cold-use candidate, while either symptom alone does not
+            # infer a diagnosis or bypass later eligibility/safety checks.
+            # Explicit rejection of a cold diagnosis, symptoms attributed to
+            # separate causes, and already-resolved respiratory symptoms do
+            # not satisfy this cluster.
+            matched_ids.add("slot-01-fufang-ganmaoling")
         return matched_ids
+
+    @classmethod
+    def _has_active_disease_reference(cls, text: str, term: str) -> bool:
+        source = str(text or "")
+        for match in re.finditer(re.escape(term), source, flags=re.IGNORECASE):
+            if cls._retrieval_match_is_negated(source, match.start()):
+                continue
+            suffix = source[match.end():match.end() + 14]
+            if re.match(
+                r"(?:已经|已)?(?:明显)?"
+                r"(?:好(?:了)?|缓解(?:了)?|消失(?:了)?|恢复(?:了)?|痊愈(?:了)?)",
+                suffix,
+            ):
+                continue
+            return True
+        return False
+
+    @staticmethod
+    def _cold_cluster_explicitly_disclaimed(text: str) -> bool:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if re.search(
+            r"(?:不是|并非|没有|未|不)(?:在)?(?:同时|一起|同一时间)",
+            compact,
+        ):
+            return True
+        if re.search(r"(?:分别|不同时间|先后)(?:发生|出现)?", compact):
+            return True
+        return bool(
+            re.search(
+                r"(?:是|由|由于|因为).{0,10}"
+                r"(?:过敏|低血糖|疫苗|空调|寒冷)(?:导致|引起)?",
+                compact,
+            )
+        )
+
+    @classmethod
+    def _has_active_retrieval_term(cls, text: str, term: str) -> bool:
+        if not cls._has_unnegated_retrieval_term(text, term):
+            return False
+        resolved = re.search(
+            rf"{re.escape(term)}(?:已经|已)?(?:明显)?"
+            r"(?:好(?:了)?|缓解(?:了)?|消失(?:了)?|恢复(?:了)?)",
+            str(text or ""),
+            flags=re.IGNORECASE,
+        )
+        return resolved is None
 
     @staticmethod
     def _has_unnegated_retrieval_term(text: str, term: str) -> bool:
-        matches = list(re.finditer(re.escape(term), str(text or ""), flags=re.IGNORECASE))
+        source = str(text or "")
+        matches = list(re.finditer(re.escape(term), source, flags=re.IGNORECASE))
         if not matches:
             return False
         for match in matches:
-            start = match.start()
-            clause_start = max(
-                str(text or "").rfind(separator, 0, start)
-                for separator in ("。", "；", ";", "！", "？")
-            )
-            prefix = str(text or "")[clause_start + 1:start]
-            direct = re.search(
-                r"(?:(?:没有|并没有|没|无|否认|不是|并不)"
-                r"(?:明显|什么|任何|一点|怎么)?[^。；;，,但是不过却]{0,14}|"
-                r"不(?:明显|怎么)?(?:是)?)$",
-                prefix,
-            )
-            if direct is None:
-                return True
-            negation_start = direct.start()
-            if re.search(r"(?:但是|但|不过|却|现在|目前)", prefix[negation_start:]):
+            if not MedicineKnowledgeRepository._retrieval_match_is_negated(
+                source,
+                match.start(),
+            ):
                 return True
         return False
+
+    @staticmethod
+    def _retrieval_match_is_negated(text: str, start: int) -> bool:
+        clause_start = max(
+            str(text or "").rfind(separator, 0, start)
+            for separator in ("。", "；", ";", "！", "？")
+        )
+        prefix = str(text or "")[clause_start + 1:start]
+        if re.search(
+            r"(?:无法|不能|未能|尚未|难以|不)(?:完全)?排除(?:是|为)?$",
+            prefix,
+        ):
+            return False
+        direct = re.search(
+            r"(?:(?:没有|并没有|没|无(?!法)|否认|不是|并非|非(?!常)|并不|"
+            r"(?:(?:已经|已|明确)?排除))"
+            r"(?:明显|什么|任何|一点|怎么)?[^。；;，,但是不过却]{0,14}|"
+            r"不(?:明显|怎么)?(?:是)?)$",
+            prefix,
+        )
+        if direct is None:
+            return False
+        negation_start = direct.start()
+        return not bool(
+            re.search(r"(?:但是|但|不过|却|现在|目前)", prefix[negation_start:])
+        )
 
     @staticmethod
     def _text_ngrams(value: str) -> set[str]:

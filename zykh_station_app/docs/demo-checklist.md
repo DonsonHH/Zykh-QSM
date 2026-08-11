@@ -88,7 +88,7 @@ curl http://127.0.0.1:8000/api/device/check
 7. Select local mode and verify inquiry still returns one of those cloud sources,
    the top bar shows local state, mini-program realtime sync pauses, and speech
    uses QSM offline TTS.
-8. Verify all 23 fixed rows have the v6 controlled safety metadata; an expired,
+8. Verify all 23 fixed rows have the v7 controlled safety metadata; an expired,
    empty or unverified row may still be excluded after evaluation. Prescription
    attributes alone do not create a caregiver-approval state in the manual path.
 9. In a controlled test session, verify a qualifying shallow-wound or adult

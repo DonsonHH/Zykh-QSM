@@ -16,6 +16,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app import db  # noqa: E402
 from app.routers.medicines import list_medicines  # noqa: E402
 from app.repositories.medicine_repository import (  # noqa: E402
+    BUNDLED_LABEL_SAFETY_REVIEWER,
     MEDICINE_SAFETY_FACTS_VERSION,
     MedicineRepository,
 )
@@ -250,7 +251,10 @@ class MedicineInventoryContractTest(unittest.TestCase):
             medicine.structured_contraindications,
         )
         self.assertEqual(medicine.safety_review_status, "reviewed")
-        self.assertEqual(medicine.safety_reviewed_by, "bundled-cabinet-reference-v6")
+        self.assertEqual(
+            medicine.safety_reviewed_by,
+            BUNDLED_LABEL_SAFETY_REVIEWER,
+        )
         self.assertTrue(medicine.safety_reviewed_at)
 
     def test_ibuprofen_catalog_blocks_current_major_history_contraindications(self) -> None:
@@ -351,7 +355,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
 
         self.assertEqual(
             MEDICINE_SAFETY_FACTS_VERSION,
-            "database-safety-facts-v6-repaired-fixed-catalog",
+            "database-safety-facts-v7-yinhuang-caution-classification",
         )
         self.assertEqual(corrected.dosage, "现场修改后尚未受控审核")
         self.assertEqual(corrected.safety_review_status, "draft")
@@ -364,7 +368,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         bundled = [
             medicine
             for medicine in medicines
-            if medicine.safety_reviewed_by == "bundled-cabinet-reference-v6"
+            if medicine.safety_reviewed_by == BUNDLED_LABEL_SAFETY_REVIEWER
         ]
 
         self.assertEqual(
@@ -420,7 +424,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
                 self.assertEqual(medicine.safety_review_status, "reviewed")
                 self.assertEqual(
                     medicine.safety_reviewed_by,
-                    "bundled-cabinet-reference-v6",
+                    BUNDLED_LABEL_SAFETY_REVIEWER,
                 )
                 self.assertTrue(medicine.safety_reviewed_at)
 
@@ -481,14 +485,17 @@ class MedicineInventoryContractTest(unittest.TestCase):
         still_controlled = repository.get_by_id("slot-06-lactulose")
 
         self.assertEqual(corrected.safety_review_status, "reviewed")
-        self.assertEqual(corrected.safety_reviewed_by, "bundled-cabinet-reference-v6")
+        self.assertEqual(
+            corrected.safety_reviewed_by,
+            BUNDLED_LABEL_SAFETY_REVIEWER,
+        )
         self.assertIn("利君", corrected.aliases)
         self.assertIn("维生素D", centrum.active_ingredients)
         self.assertNotIn("复合维生素和矿物质", centrum.active_ingredients)
         self.assertEqual(still_controlled.safety_review_status, "reviewed")
         self.assertEqual(
             still_controlled.safety_reviewed_by,
-            "bundled-cabinet-reference-v6",
+            BUNDLED_LABEL_SAFETY_REVIEWER,
         )
 
     def test_v5_migration_upgrades_only_the_exact_legacy_ibuprofen_label(self) -> None:
@@ -544,7 +551,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(migrated.safety_review_status, "reviewed")
         self.assertEqual(
             migrated.safety_reviewed_by,
-            "bundled-cabinet-reference-v6",
+            BUNDLED_LABEL_SAFETY_REVIEWER,
         )
 
     def test_v6_migration_repairs_v5_marker_with_legacy_ibuprofen_safety_facts(self) -> None:
@@ -574,7 +581,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(migrated.safety_review_status, "reviewed")
         self.assertEqual(
             migrated.safety_reviewed_by,
-            "bundled-cabinet-reference-v6",
+            BUNDLED_LABEL_SAFETY_REVIEWER,
         )
         with db.connect() as conn:
             version = conn.execute(
@@ -583,7 +590,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(
             version["value"],
-            "database-safety-facts-v6-repaired-fixed-catalog",
+            MEDICINE_SAFETY_FACTS_VERSION,
         )
 
         assessment = MedicineKnowledgeRepository(repository).assess_candidates(
@@ -793,8 +800,162 @@ class MedicineInventoryContractTest(unittest.TestCase):
         )
         self.assertEqual(
             unaffected_reviewers,
-            {"bundled-cabinet-reference-v5", "bundled-cabinet-reference-v6"},
+            {"bundled-cabinet-reference-v5", BUNDLED_LABEL_SAFETY_REVIEWER},
         )
+
+    def test_v7_classifies_yinhuang_diabetes_caution_without_disabling_combinations(
+        self,
+    ) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        before_combinations = {
+            item.combination_id
+            for item in repository.list_case_reviewed_combinations()
+        }
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET contraindications_json=?, structured_contraindications_json=?,
+                    safety_note=?, safety_review_status='reviewed',
+                    safety_reviewed_by='bundled-cabinet-reference-v5',
+                    safety_reviewed_at='2026-08-08 20:14:13'
+                WHERE id='slot-07-yinhuang'
+                """,
+                (
+                    json.dumps(
+                        ["对本品过敏禁用", "脾胃虚寒或糖尿病患者慎用"],
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        [
+                            {
+                                "concept_code": "label_warning",
+                                "display_text": "对本品过敏禁用",
+                            },
+                            {
+                                "concept_code": "diabetes",
+                                "display_text": "脾胃虚寒或糖尿病患者慎用",
+                            },
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    "高热、化脓或症状 3 天无改善时需联系医生。",
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v6-repaired-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+            unaffected_before = {
+                str(row["id"]): (
+                    str(row["safety_reviewed_by"]),
+                    str(row["safety_reviewed_at"]),
+                )
+                for row in conn.execute(
+                    """
+                    SELECT id, safety_reviewed_by, safety_reviewed_at
+                    FROM medicines
+                    WHERE id!='slot-07-yinhuang'
+                    ORDER BY id
+                    """
+                ).fetchall()
+            }
+
+        migrated = repository.get_by_id("slot-07-yinhuang")
+
+        self.assertEqual(
+            MEDICINE_SAFETY_FACTS_VERSION,
+            "database-safety-facts-v7-yinhuang-caution-classification",
+        )
+        self.assertEqual(
+            migrated.contraindications,
+            ["对本品及所含成份过敏者禁用"],
+        )
+        self.assertNotIn(
+            "diabetes",
+            {
+                item.get("concept_code")
+                for item in migrated.structured_contraindications
+            },
+        )
+        self.assertIn("糖尿病患者慎用", migrated.safety_note)
+        self.assertEqual(migrated.safety_review_status, "reviewed")
+        self.assertEqual(
+            migrated.safety_reviewed_by,
+            "bundled-cabinet-reference-v7",
+        )
+        self.assertEqual(
+            {
+                item.combination_id
+                for item in repository.list_case_reviewed_combinations()
+            },
+            before_combinations,
+        )
+        with db.connect() as conn:
+            unaffected_after = {
+                str(row["id"]): (
+                    str(row["safety_reviewed_by"]),
+                    str(row["safety_reviewed_at"]),
+                )
+                for row in conn.execute(
+                    """
+                    SELECT id, safety_reviewed_by, safety_reviewed_at
+                    FROM medicines
+                    WHERE id!='slot-07-yinhuang'
+                    ORDER BY id
+                    """
+                ).fetchall()
+            }
+        self.assertEqual(unaffected_after, unaffected_before)
+
+    def test_v7_does_not_overwrite_a_local_yinhuang_review(self) -> None:
+        repository = MedicineRepository()
+        repository.list_all()
+        local_contraindications = ["值守药师确认需个案评估"]
+        local_structured = [
+            {
+                "concept_code": "label_warning",
+                "display_text": "值守药师确认需个案评估",
+            }
+        ]
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET contraindications_json=?, structured_contraindications_json=?,
+                    safety_note=?, safety_review_status='reviewed',
+                    safety_reviewed_by='现场药师-李',
+                    safety_reviewed_at='2026-08-10 09:00:00'
+                WHERE id='slot-07-yinhuang'
+                """,
+                (
+                    json.dumps(local_contraindications, ensure_ascii=False),
+                    json.dumps(local_structured, ensure_ascii=False),
+                    "现场药师补充的个案说明",
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE app_settings
+                SET value='database-safety-facts-v6-repaired-fixed-catalog'
+                WHERE key='medicine_safety_facts_version'
+                """
+            )
+
+        preserved = repository.get_by_id("slot-07-yinhuang")
+
+        self.assertEqual(preserved.contraindications, local_contraindications)
+        self.assertEqual(
+            preserved.structured_contraindications,
+            local_structured,
+        )
+        self.assertEqual(preserved.safety_note, "现场药师补充的个案说明")
+        self.assertEqual(preserved.safety_reviewed_by, "现场药师-李")
+        self.assertEqual(preserved.safety_review_status, "reviewed")
 
     def test_safety_migration_does_not_approve_modified_label_content(self) -> None:
         repository = MedicineRepository()

@@ -478,6 +478,7 @@ try {
 
   const blockedView = await evaluate(`(() => ({
     text: document.querySelector('.dispense-modal')?.innerText || '',
+    detailText: document.querySelector('.medicine-detail-panel')?.innerText || '',
     status: document.querySelector('.manual-access-result')?.getAttribute('data-status') || '',
     alertRole: document.querySelector('.manual-access-result')?.getAttribute('role') || '',
     identityMethodsLocked: [...document.querySelectorAll('.biometric-method-toggle button')]
@@ -488,6 +489,10 @@ try {
   assert.equal(blockedView.identityMethodsLocked, true, "blocked result can be bypassed by changing identity method");
   assert.match(blockedView.text, /王奶奶/, "blocked result does not identify the verified person");
   assert.match(blockedView.text, /布洛芬缓释胶囊/, "blocked result does not identify the medicine");
+  assert.match(blockedView.text, /禁忌提醒：消化性溃疡患者禁用/, "dispense confirmation omits contraindications");
+  assert.match(blockedView.text, /慎用与指导提醒：请核对包装说明书/, "dispense confirmation hides the safety note when contraindications exist");
+  assert.match(blockedView.detailText, /禁忌提醒[\s\S]*消化性溃疡患者禁用/, "medicine details omit contraindications");
+  assert.match(blockedView.detailText, /慎用与指导提醒[\s\S]*请核对包装说明书/, "medicine details omit the independent safety note");
   assert.match(blockedView.text, /既往胃溃疡/, "blocked result does not show the server-provided reason");
   assert.match(blockedView.text, /柜门未打开/, "blocked result does not explicitly say that the cabinet stayed closed");
   assert.match(blockedView.text, /已记录并将同步家属/, "blocked result does not explain family visibility");

@@ -814,7 +814,14 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
 
             <div className="modal-warning compact-warning">
               <strong>用药提醒</strong>
-              <span>{medicine.contraindications.slice(0, 2).join("；") || medicine.safety_note}</span>
+              <div className="compact-warning-list">
+                {medicine.contraindications?.length ? (
+                  <span><b>禁忌提醒：</b>{medicine.contraindications.slice(0, 2).join("；")}</span>
+                ) : null}
+                {medicine.safety_note ? (
+                  <span><b>慎用与指导提醒：</b>{medicine.safety_note}</span>
+                ) : null}
+              </div>
             </div>
 
           </div>

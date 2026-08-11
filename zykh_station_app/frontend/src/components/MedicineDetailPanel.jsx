@@ -65,6 +65,16 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
           </ul>
         </section>
 
+        {medicine.safety_note ? (
+          <section className="detail-section">
+            <h3>
+              <ShieldAlert size={20} aria-hidden="true" />
+              慎用与指导提醒
+            </h3>
+            <p className="detail-copy detail-safety">{medicine.safety_note}</p>
+          </section>
+        ) : null}
+
         <div className="detail-stats">
           <article>
             <PackageOpen size={21} aria-hidden="true" />

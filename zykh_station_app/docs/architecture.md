@@ -103,8 +103,10 @@ one or two observation-labelled alternatives when the model returns no option or
 only one option. This deterministic fallback is presentation and selection
 continuity, not a second diagnosis engine: it uses only the already-focused pool,
 prefers a different category for the second option, and remains disabled for
-provider failure, cases needing exclusion, prescription-plan items and every hard
-safety block.
+provider failure, assessments whose every listed cause still needs exclusion,
+prescription-plan items and every hard safety block. A secondary cause marked
+`needs_exclusion` does not erase a separate `possible` or `more_likely`
+symptom-scoped option; its monitoring and seek-care advice remains visible.
 Extracted observations keep open, user-led
 symptom concepts rather than a fixed symptom taxonomy. A bounded dialogue-policy
 layer classifies the model's proposed question into decision topics so it can

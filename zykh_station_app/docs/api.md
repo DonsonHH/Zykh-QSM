@@ -282,12 +282,14 @@ local validator is reported as a retryable matching failure, not mislabeled as
 proof that no suitable medicine exists. When a completed low-risk assessment
 returns no option despite directly relevant, fully eligible OTC candidates, the
 orchestrator creates up to two mutually exclusive observation options from that
-same focused pool. Their labels and reasons explicitly say to observe first and
-only compare the package directions if the matching symptom appears or worsens.
+same focused pool. A secondary `needs_exclusion` possibility does not erase a
+safe symptom-scoped option; it remains visible as a monitoring/seek-care step.
+Their labels and reasons explicitly say to observe first and only compare the
+package directions if the matching symptom appears or worsens.
 If the model returns one valid option, a second category-distinct eligible OTC
 candidate may be added as an observation alternative. This fallback never runs
-for provider failure, `needs_exclusion`, high/emergency risk, an empty focused
-pool, or prescription/plan-only items. If the cloud model routes are unavailable or
+for provider failure, high/emergency risk, an empty focused pool, or
+prescription/plan-only items. If the cloud model routes are unavailable or
 return invalid structure, deterministic rules preserve bounded follow-up and
 danger-signal handling only. The session remains retryable, returns no final
 assessment or candidate and does not expose connection or fallback terminology

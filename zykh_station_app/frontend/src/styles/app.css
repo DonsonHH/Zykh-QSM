@@ -2117,6 +2117,11 @@ a:focus-visible {
   margin-bottom: 5px;
 }
 
+.compact-warning-list {
+  display: grid;
+  gap: 5px;
+}
+
 .compact-warning span {
   overflow: hidden;
   font-size: 15px;
@@ -2125,6 +2130,10 @@ a:focus-visible {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.compact-warning span b {
+  font-weight: 950;
 }
 
 .biometric-method-toggle {

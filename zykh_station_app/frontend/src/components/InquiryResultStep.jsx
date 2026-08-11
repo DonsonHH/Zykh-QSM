@@ -204,6 +204,9 @@ export function InquiryResultStep({
                         <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
                           用法：{medicine.recommended_usage || medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
                         </small>
+                        {medicine.safety_note ? (
+                          <small className="medicine-safety-note">慎用与指导提醒：{medicine.safety_note}</small>
+                        ) : null}
                       </span>
                       <em>{medicine.slot}号柜</em>
                     </span>

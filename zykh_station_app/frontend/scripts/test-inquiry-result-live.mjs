@@ -445,6 +445,7 @@ try {
       const medicineRow = optionCard.querySelector('.option-medicine-row:last-child');
       const confirmNotice = document.querySelector('.treatment-confirm-notice');
       const medicationSafetyNotices = document.querySelector('.medication-safety-notices');
+      const medicineSafetyNotes = [...document.querySelectorAll('.medicine-safety-note')];
       const rect = (element) => {
         const value = element.getBoundingClientRect();
         return { top: value.top, right: value.right, bottom: value.bottom, left: value.left, width: value.width, height: value.height };
@@ -469,6 +470,12 @@ try {
         openButtonHeight: openButton.getBoundingClientRect().height,
         hasCauseHeading: assessment.textContent.includes('病因分析'),
         hasMedicationSafetyNotice: medicationSafetyNotices.textContent.includes('复方感冒灵颗粒未纳入本次候选'),
+        medicineSafetyNoteCount: medicineSafetyNotes.length,
+        hasMedicineSafetyNotes: [
+          '高热或症状持续时联系医生',
+          '仅供外用',
+          '喷敷时避免吸入气道'
+        ].every((note) => medicineSafetyNotes.some((element) => element.textContent.includes(note))),
         hasDisclaimer: footer.textContent.includes('不构成诊断或处方') && footer.textContent.includes('请听医嘱')
       };
     })()`));
@@ -545,6 +552,8 @@ try {
     );
     assert.ok(result.assessment.top >= result.options.top, "assessment appears before treatment options");
     assert.equal(result.hasMedicationSafetyNotice, true, "deterministic medication safety notice is not visible");
+    assert.equal(result.medicineSafetyNoteCount, 3, "not every candidate medicine safety note is rendered");
+    assert.equal(result.hasMedicineSafetyNotes, true, "candidate medicine safety note text is not visible");
     assert.ok(result.medicationSafetyNotices.left >= result.body.left - 1 && result.medicationSafetyNotices.right <= result.body.right + 1, "medication safety notice overflows the result body");
     assert.ok(result.medicationSafetyNotices.bottom <= result.options.top + 1, "medication safety notice must appear before treatment options");
     assert.ok(result.confirmNotice.width >= 200, "medical disclaimer is squeezed into an unreadable column");

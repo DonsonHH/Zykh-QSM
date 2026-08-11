@@ -179,6 +179,7 @@ class MedicineCatalogReachabilityTest(unittest.TestCase):
             "眩晕症状；体温36.6；心率70；血氧97",
             "头晕不适；体征测量时间2026-08-10 10:06；一般症状",
             "没有头痛，也没有发热",
+            "没有咳嗽，也没有发冷",
         ):
             with self.subTest(case_text=case_text):
                 self.assertEqual(
@@ -194,6 +195,50 @@ class MedicineCatalogReachabilityTest(unittest.TestCase):
         ):
             with self.subTest(case_text=case_text):
                 self.assertNotIn(medicine_id, self._candidate_ids(case_text))
+
+    def test_cold_candidate_requires_an_unnegated_respiratory_and_chill_cluster(self) -> None:
+        for case_text in (
+            "不是感冒，只是空调太冷所以发冷",
+            "医生说不是感冒，是低血糖时头晕手脚发冷",
+            "打完疫苗后发冷，没有咳嗽鼻塞咽痛",
+            "不是感冒，只是咳嗽和发冷",
+            "医生说咳嗽是过敏，不是感冒；今天低血糖时发冷",
+            "咳嗽已经好了，现在只是发冷",
+            "医生已经排除感冒；今天咳嗽和发冷",
+            "并非感冒，只是咳嗽和发冷",
+            "非感冒导致，今天咳嗽和发冷",
+            "感冒已经好了，现在咳嗽和发冷是过敏导致",
+            "咳嗽和发冷不是同时发生",
+        ):
+            with self.subTest(case_text=case_text):
+                self.assertNotIn(
+                    "slot-01-fufang-ganmaoling",
+                    self._candidate_ids(case_text, directions=frozenset()),
+                )
+
+        self.assertIn(
+            "slot-01-fufang-ganmaoling",
+            self._candidate_ids(
+                "今天有一点咳嗽和发冷，没有呼吸困难",
+                directions=frozenset(),
+            ),
+        )
+        self.assertIn(
+            "slot-01-fufang-ganmaoling",
+            self._candidate_ids(
+                "目前无法排除感冒，今天有一点咳嗽和发冷",
+                directions=frozenset(),
+            ),
+        )
+        for case_text in (
+            "今天咳嗽而且非常怕冷",
+            "今天非常咳嗽并且发冷",
+        ):
+            with self.subTest(case_text=case_text):
+                self.assertIn(
+                    "slot-01-fufang-ganmaoling",
+                    self._candidate_ids(case_text, directions=frozenset()),
+                )
 
     def test_prescription_items_still_require_an_existing_direction(self) -> None:
         for medicine_id, case_text in CATALOG_REACHABILITY_CASES:

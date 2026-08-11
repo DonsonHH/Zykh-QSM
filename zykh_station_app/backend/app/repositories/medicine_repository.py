@@ -20,13 +20,16 @@ from ..schemas.medicine import (
 MEDICINE_SEED_VERSION = "home-real-cabinet-v8-fixed-catalog"
 MEDICINE_GUIDANCE_VERSION = "verified-label-reference-v6-slot-03-13-online"
 PACKAGE_VERIFICATION_VERSION = "fixed-inventory-identity-v1"
-MEDICINE_SAFETY_FACTS_VERSION = "database-safety-facts-v6-repaired-fixed-catalog"
-BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-cabinet-reference-v6"
+MEDICINE_SAFETY_FACTS_VERSION = (
+    "database-safety-facts-v7-yinhuang-caution-classification"
+)
+BUNDLED_LABEL_SAFETY_REVIEWER = "bundled-cabinet-reference-v7"
 BUNDLED_LABEL_SAFETY_REVIEWERS = frozenset(
     {
         "bundled-label-reference-v2",
         "bundled-cabinet-reference-v4",
         "bundled-cabinet-reference-v5",
+        "bundled-cabinet-reference-v6",
         BUNDLED_LABEL_SAFETY_REVIEWER,
     }
 )
@@ -261,6 +264,17 @@ LEGACY_V5_STRUCTURED_SAFETY_FACTS: dict[str, list[dict[str, str]]] = {
 }
 
 
+LEGACY_V6_MEDICINE_LABEL_SAFETY: dict[str, dict[str, object]] = {
+    "slot-07-yinhuang": {
+        "contraindications": (
+            "对本品过敏禁用",
+            "脾胃虚寒或糖尿病患者慎用",
+        ),
+        "safety_note": "高热、化脓或症状 3 天无改善时需联系医生。",
+    }
+}
+
+
 CONTRAINDICATION_CONCEPT_TERMS: dict[str, tuple[str, ...]] = {
     "diabetes": ("糖尿病", "糖代谢异常"),
     "renal_impairment": ("肾功能", "肾损害", "肾衰", "肾病"),
@@ -400,14 +414,18 @@ DEFAULT_MEDICINES = [
         "name": "银黄颗粒",
         "category": "咽喉口腔",
         "tags": ["咽痛", "上呼吸道不适"],
-        "contraindications": ["对本品过敏禁用", "脾胃虚寒或糖尿病患者慎用"],
+        "contraindications": ["对本品及所含成份过敏者禁用"],
         "stock": 1,
         "unit": "盒",
         "expire_date": "2028-08-29",
         "image_hint": "神鹤药业银黄颗粒",
         "is_otc": True,
         "is_emergency": False,
-        "safety_note": "高热、化脓或症状 3 天无改善时需联系医生。",
+        "safety_note": (
+            "脾胃虚寒且大便溏者慎用；本品含蔗糖，糖尿病患者慎用；"
+            "高血压、心脏病、肝病、糖尿病、肾病患者以及老年人"
+            "应在医师指导下服用。高热、化脓或症状 3 天无改善时需联系医生。"
+        ),
     },
     {
         "id": "slot-08-huoxiang-zhengqi",
@@ -2526,6 +2544,17 @@ class MedicineRepository:
                 for field in ("name", "barcode", "manufacturer", "spec", "category")
             )
             current_safety_note = str(row["safety_note"] or "")
+            aliases = list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in (str(item["name"]), *facts.get("aliases", ()))
+                    if value and value.strip()
+                )
+            )
+            ingredients = list(facts.get("active_ingredients", ()))
+            structured = MedicineRepository._default_structured_contraindications(
+                list(item.get("contraindications", []))
+            )
             legacy_label = LEGACY_V4_MEDICINE_LABEL_SAFETY.get(str(item["id"]))
             legacy_contraindications = list(
                 (legacy_label or {}).get("contraindications", ())
@@ -2575,7 +2604,45 @@ class MedicineRepository:
                 legacy_label_content_matches
                 or v5_marker_with_legacy_ibuprofen_facts
             )
-            if controlled_legacy_label_content_matches:
+            legacy_v6_label = LEGACY_V6_MEDICINE_LABEL_SAFETY.get(str(item["id"]))
+            legacy_v6_contraindications = list(
+                (legacy_v6_label or {}).get("contraindications", ())
+            )
+            legacy_v6_structured = (
+                MedicineRepository._default_structured_contraindications(
+                    legacy_v6_contraindications
+                )
+            )
+            controlled_v6_label_content_matches = bool(
+                legacy_v6_label
+                and reviewed_status
+                and reviewer
+                in {
+                    "bundled-cabinet-reference-v5",
+                    "bundled-cabinet-reference-v6",
+                }
+                and identity_matches
+                and current_tags == list(item.get("tags", []))
+                and str(row["indications"] or "")
+                == str(item.get("indications", "") or "")
+                and str(row["dosage"] or "")
+                == str(item.get("dosage", "") or "")
+                and current_contraindications == legacy_v6_contraindications
+                and current_structured == legacy_v6_structured
+                and bool(row["is_otc"]) == bool(item.get("is_otc"))
+                and bool(row["is_emergency"]) == bool(item.get("is_emergency"))
+                and current_safety_note
+                == str(legacy_v6_label.get("safety_note") or "")
+                and str(row["guidance_source"] or "")
+                == str(item.get("guidance_source", "") or "")
+                and current_aliases == aliases
+                and current_ingredients == ingredients
+            )
+            controlled_label_content_matches = (
+                controlled_legacy_label_content_matches
+                or controlled_v6_label_content_matches
+            )
+            if controlled_label_content_matches:
                 current_contraindications = list(item.get("contraindications", []))
                 current_safety_note = str(item.get("safety_note", "") or "")
                 conn.execute(
@@ -2604,17 +2671,6 @@ class MedicineRepository:
                 and current_safety_note == str(item.get("safety_note", "") or "")
                 and str(row["guidance_source"] or "")
                 == str(item.get("guidance_source", "") or "")
-            )
-            aliases = list(
-                dict.fromkeys(
-                    value.strip()
-                    for value in (str(item["name"]), *facts.get("aliases", ()))
-                    if value and value.strip()
-                )
-            )
-            ingredients = list(facts.get("active_ingredients", ()))
-            structured = MedicineRepository._default_structured_contraindications(
-                list(item.get("contraindications", []))
             )
             facts_are_empty = (
                 current_aliases == []
@@ -2645,6 +2701,12 @@ class MedicineRepository:
                     if value and value.strip()
                 )
             )
+            facts_match_v6_label_baseline = (
+                controlled_v6_label_content_matches
+                and current_aliases == aliases
+                and current_ingredients == ingredients
+                and current_structured == legacy_v6_structured
+            )
             facts_match_legacy_baseline = (
                 current_aliases == legacy_aliases
                 and current_ingredients
@@ -2656,8 +2718,13 @@ class MedicineRepository:
                         and current_structured
                         in ([], *known_legacy_ibuprofen_structured_snapshots)
                     )
+                    or (
+                        controlled_v6_label_content_matches
+                        and current_structured == legacy_v6_structured
+                    )
                 )
                 or facts_match_v5_structured_baseline
+                or facts_match_v6_label_baseline
             )
             facts_can_migrate = (
                 facts_are_empty
@@ -2675,7 +2742,7 @@ class MedicineRepository:
                 bundled_baseline_eligible
                 and existing_bundled_review
                 and facts_match_bundled_baseline
-                and not controlled_legacy_label_content_matches
+                and not controlled_label_content_matches
                 and not facts_match_v5_structured_baseline
             )
             next_reviewer = (

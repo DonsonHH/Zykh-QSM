@@ -114,6 +114,7 @@ const checks = [
   [result.indexOf("treatment-option-grid") < result.indexOf("<ClinicalAssessmentCard"), "treatment options must appear before the cause analysis"],
   [result.includes("compactActionSummary") && !result.includes("assessment.summary"), "next-step summary must stay concise and avoid repeating the condition analysis"],
   [result.includes("medicine.match_reason") && result.includes("适合点：") && result.includes("用法："), "personalized medicine reason and usage are not separated"],
+  [result.includes("medicine.safety_note") && result.includes("medicine-safety-note") && result.includes("慎用与指导提醒"), "treatment options do not show each medicine safety note independently"],
   [result.includes("medication_safety_notices") && result.includes("medication-safety-notices"), "deterministic medication safety notices are not independently visible on the active result page"],
   [result.includes("不构成诊断或处方") && result.includes("请听医嘱"), "result page omits the user-facing medical disclaimer"],
   [page.includes("主要不适") && page.includes("持续时间") && page.includes("体征信息"), "live inquiry summary wording is incomplete"],
