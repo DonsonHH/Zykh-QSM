@@ -113,6 +113,7 @@ async function testRealtimeSubscription() {
           deviceId: "zykh-qsm-001",
           syncSummary: {
             serviceUsers: [{ id: "u1" }],
+            serviceUsersSnapshotComplete: true,
             recentInquiries: [{ inquiry_id: "i1", title: "头晕问询", messageCount: 4 }],
           },
         },
@@ -147,6 +148,7 @@ async function testRealtimeSubscription() {
     snapshots += 1;
     assert.equal(snapshot.compatibilityMode, true);
     assert.equal(snapshot.serviceUsers[0].id, "u1");
+    assert.equal(snapshot.serviceUsersSnapshotComplete, true);
     assert.equal(snapshot.inquiries[0].messageCount, 4);
     assert.equal(Object.prototype.hasOwnProperty.call(snapshot.inquiries[0], "messages"), false);
     assert.deepEqual(snapshot.medicines[0], {

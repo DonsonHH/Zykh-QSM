@@ -31,6 +31,21 @@ def qsm_status() -> QsmStatus:
 
 @router.get("/vitals", response_model=QsmVitalsResponse)
 def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
+    return read_qsm_vitals(full=full)
+
+
+def read_qsm_vitals(
+    full: bool = False,
+    *,
+    record_id: str = "",
+    source_route: str = "HOME",
+    inquiry_session_id: str = "",
+    attribution_source: str = "UNREGISTERED",
+    service_user_id: str = "",
+    service_user_name_snapshot: str = "",
+    persona_generation: str = "",
+) -> QsmVitalsResponse:
+    """Read once and persist the measurement with its server-verified context."""
     client = QsmClient()
     vitals = client.read_full_vitals() if full else client.read_vitals()
     source = str(vitals.get("source", "fallback"))
@@ -69,39 +84,54 @@ def qsm_vitals(full: bool = False) -> QsmVitalsResponse:
     )
     if _has_non_real_provenance(response):
         return response
-    VitalsRepository().append(
-        VitalsRecord(
-            id=f"vitals-{uuid4().hex[:12]}",
-            temperature=response.temperature,
-            heart_rate=response.heart_rate,
-            spo2=response.spo2,
-            systolic_pressure=response.systolic_pressure,
-            diastolic_pressure=response.diastolic_pressure,
-            respiratory_rate=response.respiratory_rate,
-            microcirculation=response.microcirculation,
-            fatigue=response.fatigue,
-            rr_interval=response.rr_interval,
-            hrv_sdnn=response.hrv_sdnn,
-            hrv_rmssd=response.hrv_rmssd,
-            body_temperature=response.body_temperature,
-            ambient_temperature=response.ambient_temperature,
-            status=response.status,
-            source=str(vitals.get("source", client.mode)),
-            sensor_model=response.sensor_model or "",
-            error_message=response.error_message or "",
-            measured_at=response.measured_at,
-        )
+    resolved_record_id = record_id.strip() or f"vitals-{uuid4().hex[:12]}"
+    record = VitalsRecord(
+        id=resolved_record_id,
+        temperature=response.temperature,
+        heart_rate=response.heart_rate,
+        spo2=response.spo2,
+        systolic_pressure=response.systolic_pressure,
+        diastolic_pressure=response.diastolic_pressure,
+        respiratory_rate=response.respiratory_rate,
+        microcirculation=response.microcirculation,
+        fatigue=response.fatigue,
+        rr_interval=response.rr_interval,
+        hrv_sdnn=response.hrv_sdnn,
+        hrv_rmssd=response.hrv_rmssd,
+        body_temperature=response.body_temperature,
+        ambient_temperature=response.ambient_temperature,
+        status=response.status,
+        source=str(vitals.get("source", client.mode)),
+        sensor_model=response.sensor_model or "",
+        error_message=response.error_message or "",
+        measured_at=response.measured_at,
+        source_route=source_route,
+        inquiry_session_id=inquiry_session_id,
+        attribution_source=attribution_source,
+        service_user_id=service_user_id,
+        service_user_name_snapshot=service_user_name_snapshot,
+        persona_generation=persona_generation,
+        temperature_source=response.temperature_source or "",
+        heart_rate_source=response.heart_rate_source or "",
+        spo2_source=response.spo2_source or "",
     )
-    DeviceActionRepository().append(
-        DeviceActionRecord(
-            id=f"device-{uuid4().hex[:12]}",
-            created_at=response.measured_at,
-            type="体征读取",
-            title=_vitals_record_title(response),
-            description=_vitals_record_description(response),
-            status="已记录" if response.ok else "暂不可用",
+    repository = VitalsRepository()
+    if record_id.strip():
+        inserted = repository.append_once(record)
+    else:
+        repository.append(record)
+        inserted = True
+    if inserted:
+        DeviceActionRepository().append(
+            DeviceActionRecord(
+                id=f"device-{uuid4().hex[:12]}",
+                created_at=response.measured_at,
+                type="体征读取",
+                title=_vitals_record_title(response),
+                description=_vitals_record_description(response),
+                status="已记录" if response.ok else "暂不可用",
+            )
         )
-    )
     return response
 
 

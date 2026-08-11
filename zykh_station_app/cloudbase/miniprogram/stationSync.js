@@ -38,6 +38,7 @@ async function loadStationSnapshot() {
       latestVitals,
       records,
       serviceUsers: summary.serviceUsers || [],
+      serviceUsersSnapshotComplete: summary.serviceUsersSnapshotComplete === true,
       plans: summary.plans || [],
       inquiries: summary.recentInquiries || [],
       compatibilityMode: true,

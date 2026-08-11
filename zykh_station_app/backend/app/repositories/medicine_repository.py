@@ -1617,7 +1617,7 @@ class MedicineRepository:
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
                        safety_review_status, safety_reviewed_by, safety_reviewed_at,
-                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       inventory_state, inventory_revision, inventory_confirmed_at, last_inventory_request_id,
                        last_inventory_dispense_record_id
                 FROM medicines
                 ORDER BY hardware_slot, slot
@@ -1637,7 +1637,7 @@ class MedicineRepository:
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
                        safety_review_status, safety_reviewed_by, safety_reviewed_at,
-                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       inventory_state, inventory_revision, inventory_confirmed_at, last_inventory_request_id,
                        last_inventory_dispense_record_id
                 FROM medicines
                 WHERE id=?
@@ -1658,7 +1658,7 @@ class MedicineRepository:
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
                        safety_review_status, safety_reviewed_by, safety_reviewed_at,
-                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       inventory_state, inventory_revision, inventory_confirmed_at, last_inventory_request_id,
                        last_inventory_dispense_record_id
                 FROM medicines
                 WHERE barcode=?
@@ -1679,7 +1679,7 @@ class MedicineRepository:
                        image_hint, manufacturer, is_otc, is_emergency, safety_note,
                        guidance_source, guidance_review_required, package_verified, guidance_updated_at,
                        safety_review_status, safety_reviewed_by, safety_reviewed_at,
-                       inventory_state, inventory_confirmed_at, last_inventory_request_id,
+                       inventory_state, inventory_revision, inventory_confirmed_at, last_inventory_request_id,
                        last_inventory_dispense_record_id
                 FROM medicines
                 WHERE hardware_slot=?
@@ -1786,6 +1786,17 @@ class MedicineRepository:
                 next_values["last_inventory_request_id"] = ""
                 next_values["last_inventory_dispense_record_id"] = ""
                 continue
+            if key == "inventory_state":
+                normalized_state = str(value or "").strip().upper()
+                if normalized_state not in {"AVAILABLE", "DEPLETED", "UNKNOWN"}:
+                    raise ValueError("库存状态必须是 AVAILABLE、DEPLETED 或 UNKNOWN。")
+                if (
+                    (normalized_state == "DEPLETED" and int(next_values["stock"]) != 0)
+                    or (normalized_state != "DEPLETED" and int(next_values["stock"]) <= 0)
+                ):
+                    raise ValueError("库存状态与库存标志不一致。")
+                next_values["inventory_state"] = normalized_state
+                continue
             if key == "low_stock_line":
                 next_values[key] = max(int(value), 0)
                 continue
@@ -1797,9 +1808,10 @@ class MedicineRepository:
             for field in ("name", "manufacturer", "barcode", "category", "spec")
         )
         if identity_changed:
-            next_values["inventory_state"] = (
-                "AVAILABLE" if int(next_values["stock"]) > 0 else "DEPLETED"
-            )
+            if "inventory_state" not in updates:
+                next_values["inventory_state"] = (
+                    "AVAILABLE" if int(next_values["stock"]) > 0 else "DEPLETED"
+                )
             next_values["inventory_confirmed_at"] = db.now_text()
             next_values["last_inventory_request_id"] = ""
             next_values["last_inventory_dispense_record_id"] = ""
@@ -3005,6 +3017,7 @@ class MedicineRepository:
             safety_reviewed_by=row["safety_reviewed_by"] or "",
             safety_reviewed_at=row["safety_reviewed_at"] or "",
             inventory_state=(row["inventory_state"] or "UNKNOWN"),
+            inventory_revision=int(row["inventory_revision"]),
             inventory_confirmed_at=row["inventory_confirmed_at"] or "",
             last_inventory_request_id=row["last_inventory_request_id"] or "",
             last_inventory_dispense_record_id=row["last_inventory_dispense_record_id"] or "",

@@ -154,8 +154,8 @@ async function run() {
   );
   assert.match(
     source,
-    /2\.7-service-user-persona-tombstones/,
-    "service-user persona tombstone schema revision was not advanced",
+    /2\.8-runtime-persona-consistency/,
+    "runtime and persona contracts must publish one unified schema revision",
   );
   for (const collectionName of [
     "medication_safety_events",
@@ -180,7 +180,7 @@ async function run() {
   }
   assert.match(
     deploySource,
-    /2\.7-service-user-persona-tombstones/,
+    /2\.8-runtime-persona-consistency/,
     "deployment verification must not accept an older parallel schemaVersion=2 contract",
   );
   assert.doesNotMatch(
@@ -198,6 +198,21 @@ async function run() {
     /capabilities\.get\("serviceUserPersonaTombstones"\)\s*==\s*"v1"/,
     "deployment verification must wait for persona-generation tombstones",
   );
+  for (const [capability, version] of [
+    ["medicationSafetyEvents", "v1"],
+    ["caregiverMembership", "v1"],
+    ["inquiryDetail", "v1"],
+    ["snapshotBatch", "v2"],
+    ["explicitInventoryState", "v1"],
+    ["personaLifecycle", "v1"],
+    ["vitalsAttribution", "v1"],
+  ]) {
+    assert.match(
+      deploySource,
+      new RegExp(`capabilities\\.get\\("${capability}"\\)\\s*==\\s*"${version}"`),
+      `deployment verification must wait for ${capability}`,
+    );
+  }
   assert.match(
     deploySource,
     /capabilities\.get\("caregiverNotificationOutbox"\)\s*==\s*"v1"/,
@@ -221,7 +236,7 @@ async function run() {
     "vitals history is sorted by synchronization time instead of measurement time",
   );
   const ping = await cloudFunction.main({ action: "PING", data: {} });
-  assert.equal(ping.schemaRevision, "2.7-service-user-persona-tombstones");
+  assert.equal(ping.schemaRevision, "2.8-runtime-persona-consistency");
   assert.equal(ping.capabilities && ping.capabilities.medicationSafetyEvents, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverMembership, "v1");
   assert.equal(ping.capabilities && ping.capabilities.inquiryDetail, "v1");
@@ -231,6 +246,9 @@ async function run() {
   assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationOutbox, "v1");
   assert.equal(ping.capabilities && ping.capabilities.caregiverNotificationWorker, "v1");
   assert.equal(ping.capabilities && ping.capabilities.serviceUserPersonaTombstones, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.explicitInventoryState, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.personaLifecycle, "v1");
+  assert.equal(ping.capabilities && ping.capabilities.vitalsAttribution, "v1");
   assert.equal(ping.collections && ping.collections.devicePairingCodes, "device_pairing_codes");
   assert.equal(
     ping.collections && ping.collections.caregiverNotificationOutbox,
@@ -360,6 +378,7 @@ async function run() {
       syncSummary: {
         counts: { serviceUsers: 2 },
         serviceUsers: personaRows,
+        serviceUsersSnapshotComplete: true,
       },
     },
   });
@@ -368,6 +387,7 @@ async function run() {
     action: "GET_SNAPSHOT",
     data: { deviceId: "persona-sync-device" },
   });
+  assert.equal(publicPersonaSnapshot.serviceUsersSnapshotComplete, true);
   assert.deepEqual(publicPersonaSnapshot.serviceUsers.map(row => row.id), ["wang-nainai"]);
   assert.equal(publicPersonaSnapshot.serviceUsers[0].persona_generation, "senior-demo-v1");
   const publicPersonaDevice = await cloudFunction.main({
@@ -375,6 +395,7 @@ async function run() {
     data: { deviceId: "persona-sync-device" },
   });
   assert.deepEqual(publicPersonaDevice.syncSummary.serviceUsers.map(row => row.id), ["wang-nainai"]);
+  assert.equal(publicPersonaDevice.syncSummary.serviceUsersSnapshotComplete, true);
   assert.deepEqual(publicPersonaDevice.syncSummary.counts, { serviceUsers: 1 });
   currentOpenId = "wechat-openid";
   const generationPairingCode = "ZYKH-QSM-PERSONA-GENERATION-PAIR-20260810";
@@ -1531,6 +1552,10 @@ async function run() {
     deviceId: "zykh-qsm-001",
     user_id: "wang-nainai",
     inquiry_id: "inquiry-wang",
+    messages: [
+      { id: "question", role: "user", content: "有点咳嗽" },
+      { id: "answer", role: "assistant", content: "先核对持续时间" },
+    ],
     updatedAt: "2026-08-10 15:00:00",
   });
   storeFor("inquiries").set("inquiry-li", {
@@ -1648,6 +1673,8 @@ async function run() {
     scopedInquiries.map(row => row.user_id || row.target_user_id),
     ["wang-nainai"],
   );
+  assert.deepEqual(scopedInquiries[0].messages, []);
+  assert.equal(scopedInquiries[0].messageCount, 2);
   const scopedVitals = await cloudFunction.main({
     action: "LIST_VITALS",
     data: { deviceId: "zykh-qsm-001", limit: 20 },
@@ -1663,6 +1690,10 @@ async function run() {
     data: { deviceId: "zykh-qsm-001", inquiryId: "inquiry-wang" },
   });
   assert.equal(scopedInquiryDetail.inquiry_id, "inquiry-wang");
+  assert.deepEqual(
+    scopedInquiryDetail.messages.map(message => message.content),
+    ["有点咳嗽", "先核对持续时间"],
+  );
   const hiddenInquiryDetail = await cloudFunction.main({
     action: "GET_INQUIRY_DETAIL",
     data: { deviceId: "zykh-qsm-001", inquiryId: "inquiry-li" },
@@ -1701,6 +1732,130 @@ async function run() {
     plans: 1,
     inquiries: 1,
   });
+
+  storeFor("service_users").set("vitals-command-device-user-wang-generation-current", {
+    id: "wang",
+    name: "王女士",
+    deviceId: "vitals-command-device",
+    persona_generation: "current-generation",
+    archived: false,
+  });
+  storeFor("device_memberships").set("vitals-command-membership", {
+    openid: "vitals-command-caregiver",
+    deviceId: "vitals-command-device",
+    role: "CAREGIVER",
+    service_user_scopes: ["wang"],
+    permissions: ["CREATE_COMMAND"],
+    status: "ACTIVE",
+  });
+  currentOpenId = "vitals-command-caregiver";
+  const unattributedVitalsCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "vitals-command-device",
+      type: "READ_VITALS_ALL",
+      requestId: "unattributed-vitals-command",
+      payload: {},
+    },
+  });
+  assert.equal(unattributedVitalsCommand.ok, false);
+  assert.match(unattributedVitalsCommand.error, /INVALID_ARGUMENT/);
+  const standaloneVitalsCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "vitals-command-device",
+      type: "READ_VITALS_ALL",
+      requestId: "standalone-vitals-command",
+      payload: { attribution_source: "STANDALONE" },
+    },
+  });
+  assert.equal(standaloneVitalsCommand.ok, false);
+  assert.match(standaloneVitalsCommand.error, /NOT_FOUND|INVALID_ARGUMENT/);
+  storeFor("device_memberships").get("vitals-command-membership").service_user_scopes = [];
+  const unscopedStandaloneVitalsCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "vitals-command-device",
+      type: "READ_VITALS_ALL",
+      requestId: "unscoped-standalone-vitals-command",
+      payload: { attribution_source: "STANDALONE" },
+    },
+  });
+  assert.equal(unscopedStandaloneVitalsCommand.payload.attribution_source, "STANDALONE");
+  assert.equal(unscopedStandaloneVitalsCommand.payload.persona_generation, undefined);
+  storeFor("device_memberships").get("vitals-command-membership").service_user_scopes = ["wang"];
+  const attributedVitalsCommand = await cloudFunction.main({
+    action: "CREATE_COMMAND",
+    data: {
+      deviceId: "vitals-command-device",
+      type: "READ_VITALS_ALL",
+      requestId: "attributed-vitals-command",
+      payload: {
+        service_user_id: "wang",
+        attribution_source: "REMOTE_COMMAND",
+      },
+    },
+  });
+  assert.equal(attributedVitalsCommand.payload.persona_generation, "current-generation");
+  currentOpenId = "wechat-openid";
+
+  const vitalsMirrorOriginalSecrets = process.env.DEVICE_SECRETS;
+  process.env.DEVICE_SECRETS = JSON.stringify({
+    "vitals-runtime-device": "vitals-runtime-secret",
+  });
+  storeFor("device_memberships").set("vitals-runtime-membership", {
+    openid: "vitals-runtime-viewer",
+    deviceId: "vitals-runtime-device",
+    role: "CAREGIVER",
+    service_user_scopes: ["wang-nainai"],
+    permissions: ["READ_VITALS"],
+    status: "ACTIVE",
+  });
+  storeFor("commands").set("vitals-runtime-command", {
+    deviceId: "vitals-runtime-device",
+    type: "READ_VITALS_ALL",
+    status: "running",
+    payload: {
+      service_user_id: "wang-nainai",
+      service_user_name_snapshot: "王奶奶",
+      persona_generation: "senior-demo-v1",
+      inquiry_session_id: "inquiry-vitals-runtime",
+      attribution_source: "REMOTE_COMMAND",
+    },
+    createdAt: "2026-08-10 15:10:00",
+    updatedAt: "2026-08-10 15:10:00",
+  });
+  const vitalsAck = await invokeHttp("ACK_COMMAND", {
+    deviceId: "vitals-runtime-device",
+    deviceSecret: "vitals-runtime-secret",
+    commandId: "vitals-runtime-command",
+    status: "done",
+    result: {
+      vitals: {
+        heart_rate: 71,
+        spo2_percent: 98,
+        body_temp_c: 36.5,
+        measured_at: "2026-08-10 15:10:12",
+      },
+    },
+  });
+  assert.equal(vitalsAck.status, "done");
+  currentOpenId = "vitals-runtime-viewer";
+  const mirroredVitals = await cloudFunction.main({
+    action: "LIST_VITALS",
+    data: { deviceId: "vitals-runtime-device", limit: 20 },
+  });
+  assert.equal(mirroredVitals.length, 1);
+  assert.equal(mirroredVitals[0].heartRate, 71);
+  assert.equal(mirroredVitals[0].service_user_id, "wang-nainai");
+  assert.equal(mirroredVitals[0].service_user_name_snapshot, "王奶奶");
+  assert.equal(mirroredVitals[0].persona_generation, "senior-demo-v1");
+  assert.equal(mirroredVitals[0].inquiry_session_id, "inquiry-vitals-runtime");
+  assert.equal(mirroredVitals[0].attribution_source, "REMOTE_COMMAND");
+  assert.equal(mirroredVitals[0].sourceCommandId, "vitals-runtime-command");
+  currentOpenId = "wechat-openid";
+  if (vitalsMirrorOriginalSecrets === undefined) delete process.env.DEVICE_SECRETS;
+  else process.env.DEVICE_SECRETS = vitalsMirrorOriginalSecrets;
 
   storeFor("records").clear();
   for (let index = 0; index < 101; index += 1) {
@@ -2173,17 +2328,53 @@ async function run() {
   assert.match(conflictingSlotMedicine.error, /conflicting medicine slot/);
   assert.equal(inserted, 1);
 
+  for (const [payload, errorPattern] of [
+    [
+      { operation: "patch", slot: 1, patch: { inventoryState: "MISSING" } },
+      /unsupported medicine inventory state/,
+    ],
+    [
+      {
+        operation: "patch",
+        slot: 1,
+        inventoryState: "STOCKED",
+        patch: { inventory_state: "DEPLETED" },
+      },
+      /conflicting medicine inventory state fields/,
+    ],
+    [
+      { operation: "patch", slot: 1, patch: { inventoryState: "STOCKED", quantity: 0 } },
+      /STOCKED medicine quantity must be positive/,
+    ],
+    [
+      { operation: "patch", slot: 1, patch: { inventoryState: "DEPLETED", quantity: 1 } },
+      /DEPLETED medicine quantity must be zero/,
+    ],
+  ]) {
+    const invalidInventoryPatch = await cloudFunction.main({
+      action: "CREATE_COMMAND",
+      data: { deviceId: "zykh-qsm-001", type: "UPSERT_MEDICINE", payload },
+    });
+    assert.equal(invalidInventoryPatch.ok, false);
+    assert.match(invalidInventoryPatch.error, errorPattern);
+    assert.equal(inserted, 1);
+  }
+
   const medicinePatch = {
     operation: "patch",
     hardware_slot: 1,
+    inventoryState: "STOCKED",
+    inventory_state: "STOCKED",
     patch: {
       name: "演示药品",
       spec: "0.3克×10袋",
       traceCode: "TRACE-001",
-      quantity: 0,
+      quantity: 1,
       lowStockLine: 2,
       expireDate: "2030-02",
       expiryPrecision: "month",
+      inventoryState: "STOCKED",
+      inventory_state: "STOCKED",
     },
   };
   const validMedicine = await cloudFunction.main({
@@ -2196,7 +2387,7 @@ async function run() {
   });
   assert.equal(validMedicine.status, "pending");
   assert.deepEqual(insertedRows[1].payload, medicinePatch);
-  assert.equal(insertedRows[1].payload.patch.quantity, 0);
+  assert.equal(insertedRows[1].payload.patch.quantity, 1);
   assert.equal(inserted, 2);
 
   const remoteReviewedMedicine = await cloudFunction.main({
@@ -2245,10 +2436,14 @@ async function run() {
     name: "演示药品",
     spec: "0.3克×10袋",
     traceCode: "TRACE-001",
-    quantity: 0,
+    quantity: 1,
     lowStockLine: 2,
     expireDate: "2030-02",
     expiryPrecision: "month",
+    inventoryState: "STOCKED",
+    inventory_state: "STOCKED",
+    inventoryStateRevision: 7,
+    inventory_state_revision: 7,
   };
   process.env.DEVICE_SECRET = "server-test-secret";
   delete process.env.DEVICE_SECRETS;
@@ -2267,7 +2462,18 @@ async function run() {
     data: { deviceId: "zykh-qsm-001", limit: 10 },
   });
   assert.equal(medicines.length, 1);
-  for (const field of ["spec", "traceCode", "quantity", "lowStockLine", "expireDate", "expiryPrecision"]) {
+  for (const field of [
+    "spec",
+    "traceCode",
+    "quantity",
+    "lowStockLine",
+    "expireDate",
+    "expiryPrecision",
+    "inventoryState",
+    "inventory_state",
+    "inventoryStateRevision",
+    "inventory_state_revision",
+  ]) {
     assert.equal(medicines[0][field], medicineSnapshotRow[field], `${field} changed in CloudBase storage`);
   }
   if (originalSharedSecret === undefined) delete process.env.DEVICE_SECRET;

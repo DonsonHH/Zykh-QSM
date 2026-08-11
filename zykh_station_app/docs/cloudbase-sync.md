@@ -66,8 +66,9 @@ Event 云函数并创建或更新独立 `caregiverNotificationWorker`。原 `/ap
 路由不会被重建，测试文件不会进入 ZIP，也不依赖容易超时的 COS 上传。
 
 worker 的唯一受管定时器会在更新代码前关闭；部署器只有在 API 返回
-`schemaRevision=2.7-service-user-persona-tombstones`、人物 tombstone、配对签发与通知 worker
-能力齐全，且 worker 自身无副作用运行探针通过后，才可能执行最后的显式启用。
+`schemaRevision=2.8-runtime-persona-consistency`，线上小程序运行时能力、人物
+tombstone、配对签发与通知 worker 能力齐全，且 worker 自身无副作用运行探针
+通过后，才可能执行最后的显式启用。
 默认部署始终保持定时器关闭，部署或探针失败也不会留下 OPEN timer。
 
 也可以在微信开发者工具中，把 `zykh_station_app/cloudbase/cloudfunctions/api/` 复制为项目的 `cloudfunctions/api/`，然后右键选择“上传并部署：云端安装依赖”。
@@ -87,15 +88,16 @@ curl -sS -H 'Content-Type: application/json' \
 ```
 
 返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为
-`2.7-service-user-persona-tombstones`，并声明
+`2.8-runtime-persona-consistency`，并声明
 `medicationSafetyEvents=v1`、`caregiverMembership=v1`、`devicePairing=v1`、
 `devicePairingIssue=v1`、`caregiverNotificationOutbox=v1`、
 `caregiverNotificationWorker=v1`、`inquiryDetail=v1`、`snapshotBatch=v2` 与
-`serviceUserPersonaTombstones=v1`。
+`serviceUserPersonaTombstones=v1`，以及小程序运行时使用的
+`explicitInventoryState=v1`、`personaLifecycle=v1`、`vitalsAttribution=v1`。
 终端把 revision 纳入 snapshot hash；后续云函数清理或映射逻辑升级后会自动
 触发一次完整重同步。
 
-人物迁移必须按“云先、Station 后”的顺序部署。2.7 云函数先兼容旧的
+人物迁移必须按“云先、Station 后”的顺序部署。2.8 云函数先兼容旧的
 `<device>-user-<person>` 文档键；收到带代次的新行并成功写入 canonical 文档后，
 只删除 `deviceId/personId` 精确匹配且代次为空或相同的旧键。无关、身份不匹配的
 ownerless 文档不会被 `FINALIZE_SNAPSHOT` 或兼容迁移删除。随后部署 Station 并
@@ -106,7 +108,7 @@ tombstone，再发布依赖该能力的小程序版本。
 
 可将 `cloudbase/miniprogram/remoteCommands.js` 放入小程序工具目录。它使用云函数 `CREATE_COMMAND`，避免页面直接拼装命令结构。
 
-`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅以 5 秒周期调用经过 membership 校验的云函数；不再按可输入的 `deviceId` 直接 watch 健康集合，避免原始变更在授权投影前下发客户端。v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。2 秒设备心跳中的 `syncSummary.recentInquiries` 只携带摘要字段和 `messageCount`，不携带完整 `messages`，且 `GET_DEVICE` 会按当前家属人物范围裁剪摘要。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
+`cloudbase/miniprogram/stationSync.js` 提供 `loadStationSnapshot()` 和页面按需使用的 `subscribeStationSnapshot()`。订阅以 5 秒周期调用经过 membership 校验的云函数；不再按可输入的 `deviceId` 直接 watch 健康集合，避免原始变更在授权投影前下发客户端。v2 下读取独立集合，v1 下自动从设备 `syncSummary` 和原有集合组合数据。2 秒设备心跳中的 `syncSummary.recentInquiries` 只携带摘要字段和 `messageCount`，不携带完整 `messages`，且 `GET_DEVICE` 会按当前家属人物范围裁剪摘要。`LIST_INQUIRIES` 同样只返回摘要，完整且最多 80 条的消息明细仅由 `GET_INQUIRY_DETAIL` 返回。`GET_SNAPSHOT` 完整分页读取人物集合后返回 `serviceUsersSnapshotComplete=true`；兼容回退也保留 Station 心跳中的同名可信标记。页面在 `onShow` 中建立订阅，并在 `onHide`/`onUnload` 中调用返回的停止函数。
 
 `remoteCommands.js` 只调用 v2 的 `CREATE_COMMAND`。云函数缺少该 action 时会
 明确提示升级，不会降级为小程序直接写入 `commands` 集合；网络超时、权限拒绝、
@@ -132,6 +134,14 @@ membership 已授权且人物范围匹配的分区；权限数组为空时不返
 `CREATE_COMMAND` 权限的 membership 不能下发命令。人物命令执行前还会从当前
 唯一活动人物行重验 membership 绑定的代次，并由服务端把该代次写入命令；旧代次
 授权不能向同 ID 的新人物发送问询或资料/计划更新。
+
+远程 `READ_VITALS_ALL` 必须携带可核验的服务对象身份，或显式声明
+`attribution_source=STANDALONE`；空身份、空归属请求会失败关闭。人物归属命令由
+服务端固化当前 `persona_generation`。Station 在读取外设前再次核对当前人物代次，
+并只落一条带可信姓名、代次及归属来源的本地体征记录，不再额外生成未登记副本。
+板端 ACK 成功后，云函数把测量结果镜像到
+`vitals`，保留人物、代次、问询会话、归属来源和源命令 ID；可选镜像失败不会
+反向破坏命令 ACK。
 
 ## 微信设备绑定
 

@@ -144,7 +144,7 @@ class MedicineInventoryConfirmationTest(unittest.TestCase):
             if row["id"] == self.medicine.id
         )
         self.assertEqual(cloud_row["quantity"], 1)
-        self.assertEqual(cloud_row["inventoryState"], "AVAILABLE")
+        self.assertEqual(cloud_row["inventoryState"], "STOCKED")
         self.assertTrue(cloud_row["inventoryConfirmedAt"])
 
     def test_depleted_confirmation_is_idempotent_and_cannot_be_rewritten(self) -> None:

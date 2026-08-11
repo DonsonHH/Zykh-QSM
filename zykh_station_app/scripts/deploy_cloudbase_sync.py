@@ -27,7 +27,7 @@ COLLECTIONS = (
     "device_memberships",
     "device_pairing_codes",
 )
-TARGET_SCHEMA_REVISION = "2.7-service-user-persona-tombstones"
+TARGET_SCHEMA_REVISION = "2.8-runtime-persona-consistency"
 WORKER_TRIGGER_NAME = "caregiver-notification-worker-timer"
 WORKER_TRIGGER_CRON = "0 */2 * * * * *"
 DEFAULT_NOTIFICATION_PAGE = "pages/records/index"
@@ -516,11 +516,18 @@ def wait_for_schema(endpoint: str) -> None:
             if (
                 int(result.get("schemaVersion") or 0) == 2
                 and result.get("schemaRevision") == TARGET_SCHEMA_REVISION
+                and capabilities.get("medicationSafetyEvents") == "v1"
+                and capabilities.get("caregiverMembership") == "v1"
+                and capabilities.get("inquiryDetail") == "v1"
+                and capabilities.get("snapshotBatch") == "v2"
                 and capabilities.get("devicePairing") == "v1"
                 and capabilities.get("devicePairingIssue") == "v1"
                 and capabilities.get("caregiverNotificationOutbox") == "v1"
                 and capabilities.get("caregiverNotificationWorker") == "v1"
+                and capabilities.get("explicitInventoryState") == "v1"
+                and capabilities.get("personaLifecycle") == "v1"
                 and capabilities.get("serviceUserPersonaTombstones") == "v1"
+                and capabilities.get("vitalsAttribution") == "v1"
             ):
                 print(
                     f"[cloudbase] schemaRevision={TARGET_SCHEMA_REVISION}，"

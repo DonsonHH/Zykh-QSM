@@ -43,6 +43,7 @@ class Medicine(BaseModel):
     review_fingerprint: str = ""
     dispense_count: int = 0
     inventory_state: Literal["AVAILABLE", "DEPLETED", "UNKNOWN"] = "UNKNOWN"
+    inventory_revision: int = 0
     inventory_confirmed_at: str = ""
     last_inventory_request_id: str = ""
     last_inventory_dispense_record_id: str = ""

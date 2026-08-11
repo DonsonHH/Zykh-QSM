@@ -253,14 +253,24 @@ class CloudSyncWorker:
         medicines = []
         for medicine in MedicineRepository().list_all():
             row = medicine.model_dump(mode="json")
+            cloud_inventory_state = {
+                "AVAILABLE": "STOCKED",
+                "DEPLETED": "DEPLETED",
+                "UNKNOWN": "UNKNOWN",
+            }.get(medicine.inventory_state, "UNKNOWN")
+            cloud_quantity = 0 if cloud_inventory_state == "DEPLETED" else 1
             row.update(
                 {
                     "slot": medicine.hardware_slot,
                     "hardwareSlot": medicine.hardware_slot,
                     "spec": medicine.spec,
                     "traceCode": medicine.trace_code,
-                    "quantity": medicine.stock,
-                    "inventoryState": medicine.inventory_state,
+                    "stock": cloud_quantity,
+                    "quantity": cloud_quantity,
+                    "inventoryState": cloud_inventory_state,
+                    "inventory_state": cloud_inventory_state,
+                    "inventoryStateRevision": medicine.inventory_revision,
+                    "inventory_state_revision": medicine.inventory_revision,
                     "inventoryConfirmedAt": medicine.inventory_confirmed_at,
                     "expireDate": medicine.expire_date,
                     "expiryPrecision": CloudSyncWorker._expiry_precision(medicine.expire_date),
@@ -483,6 +493,7 @@ class CloudSyncWorker:
         return {
             "counts": counts,
             "serviceUsers": active_service_users,
+            "serviceUsersSnapshotComplete": True,
             "plans": snapshot.get("plans", []),
             "recentInquiries": [
                 {
@@ -639,9 +650,7 @@ class CloudSyncWorker:
         if command_type == "AUDIO_SPEAK":
             return self._speak_reminder(payload)
         if command_type == "READ_VITALS_ALL":
-            from ..routers.qsm import qsm_vitals
-
-            return qsm_vitals(full=True).model_dump(mode="json")
+            return self._read_remote_vitals(command, payload)
         if command_type == "AI_CHAT":
             question = str(payload.get("question") or payload.get("message") or "").strip()
             if not question:
@@ -661,7 +670,7 @@ class CloudSyncWorker:
     def _require_current_command_persona(
         command_type: str,
         payload: dict[str, object],
-    ) -> None:
+    ) -> dict[str, str]:
         if command_type == "UPSERT_SERVICE_USER":
             person_id = str(
                 payload.get("id")
@@ -677,6 +686,8 @@ class CloudSyncWorker:
                 or payload.get("targetUserId")
                 or payload.get("user_id")
                 or payload.get("userId")
+                or payload.get("person_id")
+                or payload.get("personId")
                 or ""
             ).strip()
         generation = str(
@@ -690,7 +701,7 @@ class CloudSyncWorker:
         with db.connect() as conn:
             person = conn.execute(
                 """
-                SELECT persona_generation
+                SELECT name, persona_generation
                 FROM service_users
                 WHERE id=? AND archived=0
                 """,
@@ -701,6 +712,110 @@ class CloudSyncWorker:
             or str(person["persona_generation"] or "").strip() != generation
         ):
             raise CloudSyncError("人物代次已经变化，已拒绝执行该云端命令。")
+        return {
+            "service_user_id": person_id,
+            "service_user_name_snapshot": str(person["name"] or "").strip(),
+            "persona_generation": generation,
+        }
+
+    @classmethod
+    def _read_remote_vitals(
+        cls,
+        command: dict[str, object],
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        from ..routers.qsm import read_qsm_vitals
+
+        attribution_source = cls._command_text_value(
+            payload,
+            "attribution_source",
+            "attribution_source",
+            "attributionSource",
+        ).upper()
+        person_id = cls._command_text_value(
+            payload,
+            "service_user_id",
+            "service_user_id",
+            "serviceUserId",
+            "person_id",
+            "personId",
+            "target_user_id",
+            "targetUserId",
+        )
+        generation = cls._command_text_value(
+            payload,
+            "persona_generation",
+            "persona_generation",
+            "personaGeneration",
+        )
+        inquiry_session_id = cls._command_text_value(
+            payload,
+            "inquiry_session_id",
+            "inquiry_session_id",
+            "inquirySessionId",
+        )
+
+        if attribution_source == "STANDALONE":
+            if person_id or generation:
+                raise CloudSyncError("独立测量不得携带人物或人物代次。")
+            context = {
+                "service_user_id": "",
+                "service_user_name_snapshot": "",
+                "persona_generation": "",
+            }
+        elif attribution_source == "REMOTE_COMMAND":
+            if not person_id or not generation:
+                raise CloudSyncError("远程人物体征缺少当前人物代次，已拒绝执行。")
+            context = cls._require_current_command_persona("READ_VITALS_ALL", payload)
+        else:
+            raise CloudSyncError("远程体征必须明确人物归属或标记为独立测量。")
+
+        command_id = str(command.get("_id") or command.get("id") or "").strip()
+        operation_identity = command_id or json.dumps(
+            {
+                "payload": payload,
+                "type": "READ_VITALS_ALL",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        operation_digest = hashlib.sha256(operation_identity.encode("utf-8")).hexdigest()
+        record_id = f"vitals-command-{operation_digest[:24]}"
+        response = read_qsm_vitals(
+            full=True,
+            record_id=record_id,
+            source_route="HOME",
+            inquiry_session_id=inquiry_session_id,
+            attribution_source=attribution_source,
+            service_user_id=context["service_user_id"],
+            service_user_name_snapshot=context["service_user_name_snapshot"],
+            persona_generation=context["persona_generation"],
+        )
+        result = response.model_dump(mode="json")
+        result.update(
+            {
+                "vitals_record_id": record_id,
+                "source_route": "HOME",
+                "inquiry_session_id": inquiry_session_id,
+                "attribution_source": attribution_source,
+                **context,
+            }
+        )
+        return result
+
+    @staticmethod
+    def _command_text_value(
+        payload: dict[str, object],
+        label: str,
+        *names: str,
+    ) -> str:
+        values = [str(payload[name] or "").strip() for name in names if name in payload]
+        if not values:
+            return ""
+        if len(set(values)) > 1:
+            raise CloudSyncError(f"云端命令字段 {label} 存在冲突值。")
+        return values[0]
 
     @staticmethod
     def _speak_reminder(payload: dict[str, object]) -> dict[str, object]:
@@ -801,6 +916,52 @@ class CloudSyncWorker:
                 updates[target] = number
             else:
                 updates[target] = str(value).strip()
+        outer_inventory_state_present, outer_inventory_state = CloudSyncWorker._consistent_value(
+            payload,
+            "库存状态",
+            "inventoryState",
+            "inventory_state",
+        )
+        source_inventory_state_present, source_inventory_state = CloudSyncWorker._consistent_value(
+            source,
+            "库存状态",
+            "inventoryState",
+            "inventory_state",
+        )
+        if (
+            source is not payload
+            and outer_inventory_state_present
+            and source_inventory_state_present
+            and str(outer_inventory_state or "").strip().upper()
+            != str(source_inventory_state or "").strip().upper()
+        ):
+            raise CloudSyncError("药品字段 库存状态存在冲突值。")
+        inventory_state_present = source_inventory_state_present
+        raw_inventory_state = source_inventory_state
+        if inventory_state_present:
+            cloud_inventory_state = str(raw_inventory_state or "").strip().upper()
+            local_inventory_states = {
+                "STOCKED": "AVAILABLE",
+                "DEPLETED": "DEPLETED",
+                "UNKNOWN": "UNKNOWN",
+            }
+            if cloud_inventory_state not in local_inventory_states:
+                raise CloudSyncError("药品字段 inventoryState 必须是 STOCKED、DEPLETED 或 UNKNOWN。")
+            requested_stock = updates.get("stock")
+            if requested_stock is not None:
+                quantity_conflicts = (
+                    cloud_inventory_state == "DEPLETED" and int(requested_stock) != 0
+                ) or (
+                    cloud_inventory_state != "DEPLETED" and int(requested_stock) <= 0
+                )
+                if quantity_conflicts:
+                    raise CloudSyncError("药品库存状态与 quantity 存在冲突。")
+            updates["stock"] = 0 if cloud_inventory_state == "DEPLETED" else 1
+            updates["inventory_state"] = local_inventory_states[cloud_inventory_state]
+        elif "stock" in updates:
+            if int(updates["stock"]) <= 0:
+                raise CloudSyncError("quantity=0 必须同时明确 DEPLETED 库存状态。")
+            updates["stock"] = 1
         for target in ("aliases", "active_ingredients"):
             if target not in source:
                 continue
@@ -891,6 +1052,7 @@ class CloudSyncWorker:
                     "safety_reviewed_by",
                     "safety_reviewed_at",
                     "guidance_review_required",
+                    "inventory_state",
                 )
                 if field in updates
             }

@@ -367,6 +367,7 @@ class CloudSyncServiceTest(unittest.TestCase):
             [row["id"] for row in device_summary["serviceUsers"]],
             ["li-yeye", "wang-nainai"],
         )
+        self.assertIs(device_summary["serviceUsersSnapshotComplete"], True)
         self.assertTrue(
             all(row["persona_generation"] == "senior-demo-v1" for row in device_summary["serviceUsers"])
         )
@@ -480,7 +481,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(inquiry["reply"], "建议先休息并观察。")
         self.assertEqual(inquiry["persona_generation"], "persona-summary-v1")
 
-    def test_medicine_patch_updates_only_explicit_fields_and_preserves_zero_stock(self) -> None:
+    def test_medicine_patch_updates_only_explicit_fields_and_preserves_explicit_depleted(self) -> None:
         repository = MedicineRepository()
         original = repository.get_by_hardware_slot(1)
         self.assertIsNotNone(original)
@@ -492,6 +493,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                 "patch": {
                     "name": "一号仓演示药",
                     "quantity": 0,
+                    "inventoryState": "DEPLETED",
                     "spec": "0.3克×10袋",
                     "traceCode": "TRACE-001",
                     "lowStockLine": 0,
@@ -510,6 +512,132 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(updated.category, original.category)
         self.assertEqual(updated.unit, original.unit)
         self.assertEqual(updated.expire_date, original.expire_date)
+
+    def test_medicine_patch_rejects_zero_quantity_without_explicit_depleted(self) -> None:
+        repository = MedicineRepository()
+        seeded = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=1, inventory_state='AVAILABLE', inventory_revision=5
+                WHERE id=?
+                """,
+                (seeded.id,),
+            )
+        original = repository.get_by_hardware_slot(1)
+
+        with self.assertRaisesRegex(CloudSyncError, "明确 DEPLETED"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "hardware_slot": 1,
+                    "patch": {"quantity": 0},
+                }
+            )
+
+        unchanged = repository.get_by_hardware_slot(1)
+        self.assertEqual(unchanged.inventory_state, original.inventory_state)
+        self.assertEqual(unchanged.stock, original.stock)
+        self.assertEqual(unchanged.inventory_revision, original.inventory_revision)
+
+    def test_medicine_patch_maps_explicit_stocked_to_available_flag(self) -> None:
+        repository = MedicineRepository()
+        original = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=0, inventory_state='DEPLETED', inventory_revision=11
+                WHERE id=?
+                """,
+                (original.id,),
+            )
+
+        result = CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 1,
+                "patch": {
+                    "inventoryState": "STOCKED",
+                    "inventory_state": "STOCKED",
+                },
+            }
+        )
+
+        updated = repository.get_by_hardware_slot(1)
+        self.assertEqual(result["medicine"]["inventory_state"], "AVAILABLE")
+        self.assertEqual(updated.inventory_state, "AVAILABLE")
+        self.assertEqual(updated.stock, 1)
+        self.assertEqual(updated.inventory_revision, 12)
+
+    def test_medicine_patch_maps_depleted_and_unknown_without_implicit_zero(self) -> None:
+        repository = MedicineRepository()
+        original = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=1, inventory_state='AVAILABLE', inventory_revision=20
+                WHERE id=?
+                """,
+                (original.id,),
+            )
+
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 1,
+                "patch": {"inventoryState": "DEPLETED"},
+            }
+        )
+        depleted = repository.get_by_hardware_slot(1)
+        self.assertEqual(depleted.inventory_state, "DEPLETED")
+        self.assertEqual(depleted.stock, 0)
+        self.assertEqual(depleted.inventory_revision, 21)
+
+        CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "hardware_slot": 1,
+                "patch": {"inventory_state": "UNKNOWN"},
+            }
+        )
+        unknown = repository.get_by_hardware_slot(1)
+        self.assertEqual(unknown.inventory_state, "UNKNOWN")
+        self.assertEqual(unknown.stock, 1)
+        self.assertEqual(unknown.inventory_revision, 22)
+
+    def test_medicine_patch_rejects_inventory_state_quantity_conflicts(self) -> None:
+        conflicting_payloads = (
+            {"inventoryState": "STOCKED", "quantity": 0},
+            {"inventoryState": "DEPLETED", "quantity": 1},
+            {"inventoryState": "UNKNOWN", "quantity": 0},
+        )
+        for patch_payload in conflicting_payloads:
+            with self.subTest(patch_payload=patch_payload):
+                with self.assertRaisesRegex(CloudSyncError, "状态与 quantity 存在冲突"):
+                    CloudSyncWorker._upsert_medicine(
+                        {
+                            "operation": "patch",
+                            "hardware_slot": 1,
+                            "patch": patch_payload,
+                        }
+                    )
+
+    def test_medicine_patch_rejects_conflicting_outer_and_inner_inventory_state(self) -> None:
+        with self.assertRaisesRegex(CloudSyncError, "库存状态存在冲突值"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "hardware_slot": 1,
+                    "inventoryState": "STOCKED",
+                    "patch": {
+                        "inventory_state": "DEPLETED",
+                        "quantity": 0,
+                    },
+                }
+            )
 
     def test_identity_patch_invalidates_reviewed_guidance_and_safety_facts(self) -> None:
         repository = MedicineRepository()
@@ -655,6 +783,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                 "barcode": "draft-create-barcode",
                 "spec": "草稿规格",
                 "expireDate": "2030-12",
+                "inventoryState": "UNKNOWN",
                 "aliases": ["新建草稿别名"],
                 "active_ingredients": ["新建草稿成分"],
                 "structured_contraindications": [
@@ -682,6 +811,8 @@ class CloudSyncServiceTest(unittest.TestCase):
         )
         self.assertEqual(created.safety_review_status, "draft")
         self.assertFalse(created.package_verified)
+        self.assertEqual(created.inventory_state, "UNKNOWN")
+        self.assertEqual(created.stock, 1)
 
     def test_medicine_patch_rejects_an_unknown_operation(self) -> None:
         with self.assertRaisesRegex(CloudSyncError, "不支持的药品操作"):
@@ -719,6 +850,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                 "name": "二十三号仓同条码药",
                 "barcode": slot_one.barcode,
                 "quantity": 0,
+                "inventoryState": "DEPLETED",
                 "unit": "盒",
                 "category": "家庭常用",
                 "spec": "10片",
@@ -761,6 +893,57 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(daily["expireDate"], "2029-01-31")
         self.assertEqual(daily["expiryPrecision"], "day")
 
+    def test_snapshot_projects_available_inventory_with_explicit_cloud_aliases(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=1, inventory_state='AVAILABLE', inventory_revision=7
+                WHERE id=?
+                """,
+                (medicine.id,),
+            )
+
+        refreshed = repository.get_by_hardware_slot(1)
+        row = next(
+            item
+            for item in CloudSyncWorker._build_snapshot()["medicines"]
+            if item["slot"] == 1
+        )
+
+        self.assertEqual(refreshed.inventory_state, "AVAILABLE")
+        self.assertEqual(refreshed.inventory_revision, 7)
+        self.assertEqual(row["quantity"], 1)
+        self.assertEqual(row["inventoryState"], "STOCKED")
+        self.assertEqual(row["inventory_state"], "STOCKED")
+        self.assertEqual(row["inventoryStateRevision"], 7)
+        self.assertEqual(row["inventory_state_revision"], 7)
+
+    def test_snapshot_only_projects_zero_quantity_for_explicit_depleted(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=0, inventory_state='UNKNOWN', inventory_revision=8
+                WHERE id=?
+                """,
+                (medicine.id,),
+            )
+
+        row = next(
+            item
+            for item in CloudSyncWorker._build_snapshot()["medicines"]
+            if item["slot"] == 1
+        )
+
+        self.assertEqual(row["inventoryState"], "UNKNOWN")
+        self.assertEqual(row["quantity"], 1)
+        self.assertEqual(row["stock"], 1)
+
     def test_medicine_schema_migration_contains_sync_extension_columns(self) -> None:
         with db.connect() as conn:
             columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(medicines)").fetchall()}
@@ -780,6 +963,8 @@ class CloudSyncServiceTest(unittest.TestCase):
                         "spec": "0.3克×10袋",
                         "traceCode": "TRACE-ROUNDTRIP",
                         "quantity": 0,
+                        "inventoryState": "DEPLETED",
+                        "inventory_state": "DEPLETED",
                         "lowStockLine": 2,
                         "expireDate": "2030-02",
                         "expiryPrecision": "month",
@@ -1081,6 +1266,97 @@ class CloudSyncServiceTest(unittest.TestCase):
 
         self.assertEqual(result["plan"]["service_user_id"], "wang-nainai")
         self.assertEqual(result["plan"]["persona_generation"], "senior-demo-v1")
+
+    def test_remote_vitals_records_the_current_persona_without_an_unregistered_duplicate(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "service_user_id": "wang-nainai",
+            "service_user_name_snapshot": "不应信任的旧姓名",
+            "persona_generation": "stale-persona-v0",
+            "inquiry_session_id": "inquiry-remote-vitals",
+            "attribution_source": "REMOTE_COMMAND",
+        }
+        fake_vitals = {
+            "temperature_c": 36.5,
+            "heart_rate": 71,
+            "spo2": 98,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "uart8_sensor",
+            "source": "real",
+            "quality": "good",
+        }
+
+        def fake_qsm_init(client) -> None:
+            client.mode = "real"
+
+        with (
+            patch.object(QsmClient, "__init__", fake_qsm_init),
+            patch.object(QsmClient, "read_full_vitals", return_value=fake_vitals) as read_vitals,
+        ):
+            with self.assertRaisesRegex(CloudSyncError, "人物代次"):
+                worker._execute_command("READ_VITALS_ALL", {"payload": payload})
+            read_vitals.assert_not_called()
+
+            payload["persona_generation"] = "senior-demo-v1"
+            result = worker._execute_command("READ_VITALS_ALL", {"payload": payload})
+
+        self.assertEqual(VitalsRepository().count(), 1)
+        recorded = VitalsRepository().latest()
+        self.assertEqual(recorded.service_user_id, "wang-nainai")
+        self.assertEqual(recorded.service_user_name_snapshot, "王奶奶")
+        self.assertEqual(recorded.persona_generation, "senior-demo-v1")
+        self.assertEqual(recorded.inquiry_session_id, "inquiry-remote-vitals")
+        self.assertEqual(recorded.attribution_source, "REMOTE_COMMAND")
+        self.assertEqual(result["service_user_id"], "wang-nainai")
+        self.assertEqual(result["service_user_name_snapshot"], "王奶奶")
+
+    def test_remote_vitals_standalone_is_explicit_and_cannot_mix_person_fields(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "attribution_source": "STANDALONE",
+            "inquiry_session_id": "",
+        }
+        fake_vitals = {
+            "temperature_c": 36.4,
+            "heart_rate": 70,
+            "spo2": 99,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "uart8_sensor",
+            "source": "real",
+            "quality": "good",
+        }
+
+        def fake_qsm_init(client) -> None:
+            client.mode = "real"
+
+        with (
+            patch.object(QsmClient, "__init__", fake_qsm_init),
+            patch.object(QsmClient, "read_full_vitals", return_value=fake_vitals) as read_vitals,
+        ):
+            result = worker._execute_command(
+                "READ_VITALS_ALL",
+                {"_id": "remote-vitals-standalone", "payload": payload},
+            )
+            mixed_payload = {
+                **payload,
+                "service_user_id": "wang-nainai",
+                "persona_generation": "senior-demo-v1",
+            }
+            with self.assertRaisesRegex(CloudSyncError, "独立测量"):
+                worker._execute_command(
+                    "READ_VITALS_ALL",
+                    {"_id": "remote-vitals-invalid-mixed", "payload": mixed_payload},
+                )
+
+        read_vitals.assert_called_once()
+        self.assertEqual(VitalsRepository().count(), 1)
+        recorded = VitalsRepository().latest()
+        self.assertEqual(recorded.service_user_id, "")
+        self.assertEqual(recorded.persona_generation, "")
+        self.assertEqual(recorded.attribution_source, "STANDALONE")
+        self.assertEqual(result["attribution_source"], "STANDALONE")
 
     def test_miniprogram_speak_command_announces_the_named_reminder(self) -> None:
         worker = FakeCloudSyncWorker()

@@ -13,7 +13,7 @@ const {
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
-const schemaRevision = "2.7-service-user-persona-tombstones";
+const schemaRevision = "2.8-runtime-persona-consistency";
 const capabilities = Object.freeze({
   medicationSafetyEvents: "v1",
   caregiverMembership: "v1",
@@ -23,7 +23,10 @@ const capabilities = Object.freeze({
   devicePairingIssue: "v1",
   caregiverNotificationOutbox: "v1",
   caregiverNotificationWorker: "v1",
+  explicitInventoryState: "v1",
+  personaLifecycle: "v1",
   serviceUserPersonaTombstones: "v1",
+  vitalsAttribution: "v1",
 });
 
 const collections = {
@@ -126,6 +129,148 @@ function cleanData(value) {
   return result;
 }
 
+function compactTextList(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value.map(item => String(item || "").trim()).filter(Boolean).slice(0, 3);
+    }
+    if (typeof value === "string" && value.trim()) return [value.trim()];
+  }
+  return [];
+}
+
+function compactInquiryCare(row = {}) {
+  const extracted = row.extracted_information || row.extractedInformation || {};
+  const assessment = row.final_assessment
+    || row.finalAssessment
+    || extracted.final_assessment
+    || extracted.finalAssessment
+    || {};
+  return {
+    summary: firstPresent(
+      row.reasoning_summary,
+      row.reasoningSummary,
+      row.summary,
+      assessment.summary,
+      "",
+    ),
+    next_steps: compactTextList(
+      row.next_steps,
+      row.nextSteps,
+      assessment.next_steps,
+      assessment.nextSteps,
+    ),
+    seek_care_if: compactTextList(
+      row.seek_care_if,
+      row.seekCareIf,
+      assessment.seek_care_if,
+      assessment.seekCareIf,
+    ),
+  };
+}
+
+function inquiryMessageCount(row = {}, sourceMessages = []) {
+  const declared = Number(firstPresent(row.messageCount, row.message_count, ""));
+  const declaredCount = Number.isInteger(declared) && declared >= 0 ? declared : 0;
+  return Math.max(sourceMessages.length, declaredCount);
+}
+
+function compactInquiryMessage(message = {}, index = 0) {
+  return {
+    id: firstPresent(message.id, message._id, `msg-${index}`),
+    role: firstPresent(message.role, message.sender, ""),
+    content: firstPresent(message.content, message.text, message.message, ""),
+    source: firstPresent(message.source, message.origin, ""),
+    created_at: firstPresent(message.created_at, message.createdAt, message.time, ""),
+  };
+}
+
+function compactInquiryForClient(row = {}, options = {}) {
+  const includeMessages = options.includeMessages === true;
+  const sourceMessages = Array.isArray(row.messages) ? row.messages : [];
+  const care = compactInquiryCare(row);
+  const messages = includeMessages
+    ? sourceMessages.map(compactInquiryMessage).filter(item => item.content).slice(-80)
+    : [];
+  return {
+    _id: firstPresent(row._id, ""),
+    deviceId: firstPresent(row.deviceId, row.device_id, ""),
+    inquiry_id: firstPresent(row.inquiry_id, row.session_id, row._id, ""),
+    session_id: firstPresent(row.session_id, row.inquiry_session_id, ""),
+    sourceCommandId: firstPresent(row.sourceCommandId, row.source_command_id, ""),
+    target_user_id: firstPresent(
+      row.target_user_id,
+      row.service_user_id,
+      row.user_id,
+      row.person_id,
+      row.patient_id,
+      "",
+    ),
+    service_user_id: firstPresent(row.service_user_id, row.target_user_id, ""),
+    user_id: firstPresent(row.user_id, ""),
+    person_id: firstPresent(row.person_id, ""),
+    patient_id: firstPresent(row.patient_id, ""),
+    service_user_name_snapshot: firstPresent(
+      row.service_user_name_snapshot,
+      row.service_user_name,
+      row.target_user_name,
+      "",
+    ),
+    display_name: firstPresent(
+      row.service_user_name_snapshot,
+      row.target_user_name,
+      row.service_user_name,
+      row.patient_name,
+      row.user_name,
+      row.person_name,
+      "",
+    ),
+    target_user_name: firstPresent(
+      row.target_user_name,
+      row.service_user_name_snapshot,
+      row.patient_name,
+      row.user_name,
+      "家庭成员",
+    ),
+    persona_generation: firstPresent(row.persona_generation, row.personaGeneration, ""),
+    identity_kind: firstPresent(row.identity_kind, row.identityKind, ""),
+    title: firstPresent(row.title, row.topic, row.symptoms_summary, "AI 问询"),
+    topic: firstPresent(row.topic, row.title, row.symptoms_summary, "AI 问询"),
+    symptoms_summary: firstPresent(
+      row.symptoms_summary,
+      row.symptomsText,
+      row.symptoms_text,
+      row.title,
+      "",
+    ),
+    reasoning_summary: care.summary,
+    reply: firstPresent(row.reply, row.ai_message, row.message, ""),
+    ai_message: firstPresent(row.ai_message, row.reply, ""),
+    risk_label: firstPresent(row.risk_label, row.riskLevel, row.risk_level, ""),
+    risk_level: firstPresent(row.risk_level, row.riskLevel, ""),
+    final_assessment: care,
+    next_steps: care.next_steps,
+    seek_care_if: care.seek_care_if,
+    status: firstPresent(row.status, row.action_status, "done"),
+    stage: firstPresent(row.stage, row.inquiry_stage, ""),
+    next_action: firstPresent(row.next_action, row.nextAction, ""),
+    messageCount: inquiryMessageCount(row, sourceMessages),
+    syncedMessageCount: Number(firstPresent(
+      row.syncedMessageCount,
+      row.synced_message_count,
+      sourceMessages.length,
+      0,
+    )) || 0,
+    conversationTruncated: row.conversationTruncated === true || row.conversation_truncated === true,
+    messages,
+    created_at: firstPresent(row.created_at, row.createdAt, ""),
+    updated_at: firstPresent(row.updated_at, row.updatedAt, row.created_at, row.createdAt, ""),
+    createdAt: firstPresent(row.created_at, row.createdAt, ""),
+    updatedAt: firstPresent(row.updated_at, row.created_at, row.updatedAt, row.createdAt, ""),
+    syncOwner: firstPresent(row.syncOwner, ""),
+  };
+}
+
 function safeId(value) {
   return String(value || "unknown").replace(/[^A-Za-z0-9_.-]/g, "-");
 }
@@ -205,6 +350,7 @@ function validateMedicineCommand(payload = {}) {
     "name", "manufacturer", "barcode", "code", "category", "spec", "trace_code", "traceCode",
     "stock", "quantity", "low_stock_line", "lowStockLine", "unit", "expire_date", "expireDate",
     "expiryPrecision", "hardware_slot", "hardwareSlot", "slot",
+    "inventoryState", "inventory_state",
     "aliases", "active_ingredients", "structured_contraindications", "safety_review_status",
   ]);
   if (operation === "patch") {
@@ -214,7 +360,38 @@ function validateMedicineCommand(payload = {}) {
   }
 
   validateNonNegativeInteger(source, "quantity", "stock");
+  if (source !== payload) validateNonNegativeInteger(payload, "quantity", "stock");
   validateNonNegativeInteger(source, "lowStockLine", "low_stock_line");
+  const inventoryStates = [];
+  const quantities = [];
+  for (const candidate of source === payload ? [source] : [payload, source]) {
+    for (const fieldName of ["inventoryState", "inventory_state"]) {
+      if (!Object.prototype.hasOwnProperty.call(candidate, fieldName)) continue;
+      const value = String(candidate[fieldName] || "").trim().toUpperCase();
+      if (value) inventoryStates.push(value);
+    }
+    for (const fieldName of ["quantity", "stock"]) {
+      if (!Object.prototype.hasOwnProperty.call(candidate, fieldName)) continue;
+      const value = Number(candidate[fieldName]);
+      if (!Number.isInteger(value) || value < 0) throw new Error("quantity must be a non-negative integer");
+      quantities.push(value);
+    }
+  }
+  const distinctInventoryStates = Array.from(new Set(inventoryStates));
+  if (distinctInventoryStates.length > 1) throw new Error("conflicting medicine inventory state fields");
+  const inventoryState = distinctInventoryStates[0] || "";
+  if (inventoryState && !["STOCKED", "DEPLETED", "UNKNOWN"].includes(inventoryState)) {
+    throw new Error("unsupported medicine inventory state");
+  }
+  const distinctQuantities = Array.from(new Set(quantities));
+  if (distinctQuantities.length > 1) throw new Error("conflicting medicine quantity fields");
+  const quantity = distinctQuantities.length ? distinctQuantities[0] : null;
+  if (inventoryState === "STOCKED" && quantity !== null && quantity <= 0) {
+    throw new Error("STOCKED medicine quantity must be positive");
+  }
+  if (inventoryState === "DEPLETED" && quantity !== null && quantity !== 0) {
+    throw new Error("DEPLETED medicine quantity must be zero");
+  }
   for (const fieldName of ["aliases", "active_ingredients"]) {
     const field = presentValue(source, fieldName);
     if (!field.present) continue;
@@ -523,7 +700,8 @@ async function listInquiries(data) {
   });
   return Array.from(map.values())
     .sort((a, b) => inquiryTime(b) - inquiryTime(a))
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(row => compactInquiryForClient(row, { includeMessages: false }));
 }
 
 function membershipScopes(membership = {}) {
@@ -616,6 +794,9 @@ function deviceVisibleToMembership(device, membership) {
       "serviceUsers",
     );
     syncSummary.counts.serviceUsers = syncSummary.serviceUsers.length;
+    if (Object.prototype.hasOwnProperty.call(source, "serviceUsersSnapshotComplete")) {
+      syncSummary.serviceUsersSnapshotComplete = source.serviceUsersSnapshotComplete === true;
+    }
   }
   if (membershipHasPermission(membership, "READ_PLAN")) {
     syncSummary.plans = rowsVisibleToMembership(
@@ -630,7 +811,7 @@ function deviceVisibleToMembership(device, membership) {
       Array.isArray(source.recentInquiries) ? source.recentInquiries : [],
       membership,
       "inquiries",
-    );
+    ).map(row => compactInquiryForClient(row, { includeMessages: false }));
     syncSummary.counts.inquiries = syncSummary.recentInquiries.length;
   }
   return Object.assign(cleanData(device), { syncSummary });
@@ -672,6 +853,9 @@ async function snapshotVisibleToMembership(data, membership) {
       membership,
       "serviceUsers",
     );
+    // listAllDeviceRows completes every database page before returning, so this
+    // marker is only published when the visible profile snapshot is complete.
+    snapshot.serviceUsersSnapshotComplete = true;
   }
   if (membershipHasPermission(membership, "READ_PLAN")) {
     snapshot.plans = rowsVisibleToMembership(
@@ -724,7 +908,7 @@ async function getInquiryDetail(data, membership) {
     item.sourceCommandId,
   ].some(value => String(value || "") === inquiryId));
   if (!row) throw new Error("NOT_FOUND");
-  return row;
+  return compactInquiryForClient(row, { includeMessages: true });
 }
 
 async function reportDevice(data) {
@@ -913,15 +1097,16 @@ async function ackCommand(data) {
   const command = await db.collection(collections.commands).doc(data.commandId).get();
   if (command.data && command.data.deviceId !== data.deviceId) throw new Error("unauthorized command");
   const status = data.status || "done";
+  const result = data.result && typeof data.result === "object" ? data.result : {};
   await db.collection(collections.commands).doc(data.commandId).update({
-    data: { status, result: data.result || {}, updatedAt: nowText() },
+    data: { status, result, updatedAt: nowText() },
   });
   if (command.data && command.data.type === "AI_CHAT") {
     try {
       const mirrored = commandToInquiry(Object.assign({}, command.data, {
         _id: data.commandId,
         status,
-        result: data.result || {},
+        result,
         updatedAt: nowText(),
       }));
       await setDocument(collections.inquiries, `${data.deviceId}-inquiry-${safeId(data.commandId)}`, mirrored);
@@ -929,7 +1114,122 @@ async function ackCommand(data) {
       // Command ACK must remain reliable even if the optional inquiry mirror is not ready.
     }
   }
+  if (command.data && command.data.type === "READ_VITALS_ALL" && status === "done") {
+    try {
+      await mirrorVitalsCommand(data.deviceId, data.commandId, command.data, result);
+    } catch (error) {
+      // Command ACK must remain reliable even if the optional vitals mirror is not ready.
+    }
+  }
   return { commandId: data.commandId, status };
+}
+
+function commandVitalsPayload(result = {}) {
+  if (result.vitals && typeof result.vitals === "object") return result.vitals;
+  if (result.data && typeof result.data === "object") return result.data;
+  if (result.result && typeof result.result === "object") return result.result;
+  return result;
+}
+
+function hasVitalsSignal(row = {}) {
+  return [
+    row.heartRate,
+    row.heart_rate,
+    row.heart_rate_bpm,
+    row.spo2,
+    row.spo2_percent,
+    row.bodyTemp,
+    row.body_temp_c,
+    row.target_temp_c,
+    row.temperature,
+    row.body_temperature,
+    row.status,
+    row.quality,
+  ].some(value => value !== undefined && value !== null && value !== "");
+}
+
+async function mirrorVitalsCommand(deviceId, commandId, command, result) {
+  const measured = commandVitalsPayload(result);
+  const authoritative = Object.assign({}, result, measured);
+  const payload = command && command.payload && typeof command.payload === "object"
+    ? command.payload
+    : {};
+  if (!hasVitalsSignal(authoritative)) return null;
+  const normalized = normalizeVitals(authoritative);
+  const createdAt = firstPresent(
+    authoritative.measured_at,
+    authoritative.measuredAt,
+    authoritative.createdAt,
+    authoritative.created_at,
+    normalized.createdAt,
+    command.updatedAt,
+    command.createdAt,
+    nowText(),
+  );
+  const serviceUserId = firstPresent(
+    authoritative.service_user_id,
+    authoritative.serviceUserId,
+    authoritative.person_id,
+    authoritative.personId,
+    payload.service_user_id,
+    payload.serviceUserId,
+    payload.person_id,
+    payload.personId,
+    "",
+  );
+  const serviceUserName = firstPresent(
+    authoritative.service_user_name_snapshot,
+    authoritative.serviceUserNameSnapshot,
+    authoritative.service_user_name,
+    authoritative.serviceUserName,
+    authoritative.person_name,
+    authoritative.personName,
+    payload.service_user_name_snapshot,
+    payload.serviceUserNameSnapshot,
+    payload.service_user_name,
+    payload.serviceUserName,
+    payload.person_name,
+    payload.personName,
+    "",
+  );
+  const row = Object.assign({}, normalized, {
+    deviceId,
+    device_id: deviceId,
+    createdAt,
+    measured_at: firstPresent(authoritative.measured_at, authoritative.measuredAt, createdAt),
+    updatedAt: nowText(),
+    sourceCommandId: commandId,
+    source: firstPresent(authoritative.source, result.source, "READ_VITALS_ALL"),
+    service_user_id: serviceUserId,
+    service_user_name_snapshot: serviceUserName,
+    persona_generation: firstPresent(
+      authoritative.persona_generation,
+      authoritative.personaGeneration,
+      payload.persona_generation,
+      payload.personaGeneration,
+      "",
+    ),
+    inquiry_session_id: firstPresent(
+      authoritative.inquiry_session_id,
+      authoritative.inquirySessionId,
+      payload.inquiry_session_id,
+      payload.inquirySessionId,
+      "",
+    ),
+    attribution_source: firstPresent(
+      authoritative.attribution_source,
+      authoritative.attributionSource,
+      payload.attribution_source,
+      payload.attributionSource,
+      serviceUserId ? "REMOTE_COMMAND" : "STANDALONE",
+    ),
+    target_user_id: serviceUserId,
+    target_user_name: serviceUserName,
+    syncOwner: "command_ack",
+  });
+  const id = `${deviceId}-vitals-command-${safeId(commandId)}`;
+  await setDocument(collections.vitals, id, row);
+  return Object.assign({ _id: id }, row);
 }
 
 async function createCommand(data, wxContext, isHttp) {
@@ -937,22 +1237,36 @@ async function createCommand(data, wxContext, isHttp) {
   if (!wxContext.OPENID) throw new Error("miniprogram identity required");
   const personScopedTypes = new Set([
     "AI_CHAT",
+    "READ_VITALS_ALL",
     "UPSERT_SERVICE_USER",
     "UPSERT_TODAY_PLAN",
   ]);
-  const personId = commandPersonId(data.type, data.payload || {});
+  const commandPayload = Object.assign({}, data.payload || {});
+  const personId = commandPersonId(data.type, commandPayload);
+  const isVitalsCommand = data.type === "READ_VITALS_ALL";
+  const attributionSource = String(firstPresent(
+    commandPayload.attribution_source,
+    commandPayload.attributionSource,
+    "",
+  ) || "").trim().toUpperCase();
+  const isStandaloneVitals = isVitalsCommand && attributionSource === "STANDALONE";
+  if (isVitalsCommand && !personId && !isStandaloneVitals) throw new Error("INVALID_ARGUMENT");
+  if (isVitalsCommand && personId && isStandaloneVitals) throw new Error("INVALID_ARGUMENT");
+  if (isVitalsCommand && personId && !attributionSource) {
+    commandPayload.attribution_source = "REMOTE_COMMAND";
+  }
   const membership = await memberships.requireCommandAccess({
     openId: wxContext.OPENID,
     deviceId: data.deviceId,
     personId,
   });
-  if (personScopedTypes.has(data.type) && !personId) throw new Error("NOT_FOUND");
+  if (isStandaloneVitals && membershipScopes(membership).length) throw new Error("NOT_FOUND");
+  if (personScopedTypes.has(data.type) && !personId && !isStandaloneVitals) throw new Error("NOT_FOUND");
   if (!allowedCommandTypes.has(data.type)) throw new Error("unsupported command type");
-  const commandPayload = Object.assign({}, data.payload || {});
   const personaGeneration = String(
     membership.current_persona_generation || "",
   ).trim();
-  if (personScopedTypes.has(data.type) && personaGeneration) {
+  if (personScopedTypes.has(data.type) && personId && personaGeneration) {
     commandPayload.persona_generation = personaGeneration;
   }
   if (data.type === "UPSERT_MEDICINE") validateMedicineCommand(commandPayload);
