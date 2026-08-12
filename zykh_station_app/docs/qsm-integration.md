@@ -175,13 +175,27 @@ transport failures use `failure_reason=transport_error`, and a replaced session 
 instead of being cleared.
 
 Phase two adds a data-truth boundary without changing retry or timeout policy.
-`spo2_source=demo_fallback` may still support an explicitly labelled live demo,
-but that session is never written to `vitals_records` or marked for cloud sync.
+When the host demo fallback is enabled, a started session with a valid GY-614 forehead temperature
+may fill only missing heart rate (`70-100`) or SpO2 (`95-99`) values. Each filled
+metric retains `demo_fallback` in its metric source even though the kiosk uses its
+normal completed-result presentation. Such a session is written only to the
+isolated `demo_vitals_records` audit table; it is never written to `vitals_records`,
+marked for cloud sync, used as a historical reference, or supplied as numeric
+inquiry evidence. Only `no_finger`, `core_not_stable`, `spo2_not_stable` and
+`heart_rate_not_stable` are eligible. Gateway transport, start rejection, UART
+open/read and session lookup errors never enter this fallback; `transport_error`
+keeps the existing same-session retry and third-failure cancellation policy. The original eligible failure is
+retained as `demo_fallback_reason`, while terminal `failure_reason` is cleared on
+the completed presentation response.
 Existing records carrying the legacy `SpO2-demo` marker are excluded from cloud
 snapshots and from selection as the previous complete measurement.
+An embedded inquiry reports the presentation-only completion as `demo_complete`
+without numeric readings, so the normal kiosk completion transition can continue
+while the inquiry model and safety rules receive no demo measurements.
 Legacy inquiry vitals that exactly match one of those marked records are exposed
 as a failed, quarantined demo without their numeric readings.
-An unstable current session remains `failed`; the previous complete measurement
+An unstable current session that is not eligible for the enabled demo fallback
+remains `failed`; the previous complete measurement
 is exposed only through `historical_*` reference fields and is rendered separately
 from the current result.
 
@@ -198,10 +212,13 @@ matches the active measurement is ignored. This phase does not change the
 one-time 8-second SpO2 grace window, or the UART8 start/stop/frame protocol.
 
 The first deep-module extraction keeps the HTTP interface compatible while moving
-host-side response modeling, data-truth checks, historical references and
-persistence/sync effects into `backend/app/modules/vitals_session.py`. Its narrow
-interface is `prepare / start / get / cancel`; `QsmClient` and the in-memory test
-gateway are adapters at that seam. The browser module
+cross-boundary provenance checks, historical references and persistence/sync
+effects into `backend/app/modules/vitals_session.py`. Gateway-specific response
+normalization, including the optional provenance-marked presentation fallback,
+stays in `QsmClient`; the module revalidates its provenance before choosing the
+isolated or clinical persistence branch. Its narrow interface is
+`prepare / start / get / cancel`; `QsmClient` and the in-memory test gateway are
+adapters at that seam. The browser module
 `frontend/src/modules/vitalsSession.js` owns prewarm, start/poll/cancel lifecycle,
 phase transitions, active-session identity, SpO₂ retry and embedded completion.
 Its `vitalsSessionAdapter.js` dependency owns transient transport decisions and

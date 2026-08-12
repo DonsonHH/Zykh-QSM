@@ -111,7 +111,7 @@ class InquiryInformationRevisionRequest(BaseModel):
 
 class InquiryVitalsRequest(BaseModel):
     vitals_session_id: str = Field(default="", max_length=160)
-    status: Literal["complete", "failed", "cancelled"] = "complete"
+    status: Literal["complete", "demo_complete", "failed", "cancelled"] = "complete"
     temperature: float | None = Field(default=None, gt=0, lt=50)
     heart_rate: int | None = Field(default=None, gt=0, lt=260)
     spo2: int | None = Field(default=None, gt=0, le=100)

@@ -348,7 +348,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const handleVitalsExit = useCallback((outcome) => {
     return submitVitalsOutcome({
       vitals_session_id: outcome?.vitals_session_id || "",
-      status: outcome?.status === "failed" ? "failed" : "cancelled",
+      status: outcome?.status === "demo_complete"
+        ? "demo_complete"
+        : outcome?.status === "failed" ? "failed" : "cancelled",
       error_message: outcome?.error_message || "",
       measured_at: new Date().toISOString()
     });

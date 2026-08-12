@@ -29,8 +29,6 @@ $SPO2_GRACE = 0 if $SPO2_GRACE < 0;
 my $INITIAL_STABILIZATION_SECONDS = int($ENV{QSM_VITALS_INITIAL_STABILIZATION_SECONDS} || 8);
 $INITIAL_STABILIZATION_SECONDS = 5 if $INITIAL_STABILIZATION_SECONDS < 5;
 my $PREPARE_TTL = int($ENV{QSM_VITALS_PREPARE_TTL_SECONDS} || 45);
-my $DEMO_SPO2_FALLBACK = ($ENV{QSM_VITALS_DEMO_SPO2_FALLBACK} // '1')
-    !~ /^(?:0|false|no|off)$/i;
 my $CURRENT = "$DATA/current.json";
 my $PREPARED = "$DATA/prepared.json";
 
@@ -208,15 +206,7 @@ sub run_measurement {
     my $heart_rate = first_number($uart, qw(heart_rate_bpm heart_rate));
     my $spo2 = first_number($uart, qw(spo2_percent spo2));
     my $cancelled = -e $cancel_file;
-    my $spo2_demo_fallback = !$cancelled
-        && $DEMO_SPO2_FALLBACK
-        && defined($heart_rate) && $heart_rate > 0
-        && (!defined($spo2) || $spo2 <= 0)
-        && defined($temperature) && $temperature > 0
-        && $uart->{finger_detected}
-        && int($uart->{heart_rate_frame_count} || 0) > 0;
-    $spo2 = 95 + int(rand(5)) if $spo2_demo_fallback;
-    my $complete = !$cancelled && ($uart->{stable_core} || $spo2_demo_fallback)
+    my $complete = !$cancelled && $uart->{stable_core}
         && defined($heart_rate) && $heart_rate > 0
         && defined($spo2) && $spo2 > 0
         && defined($temperature) && $temperature > 0;
@@ -258,12 +248,8 @@ sub run_measurement {
         spo2 => $spo2,
         temperature_source => $temperature_source,
         heart_rate_source => defined($heart_rate) && $heart_rate > 0 ? 'uart8_sensor' : undef,
-        spo2_source => $spo2_demo_fallback
-            ? 'demo_fallback'
-            : defined($spo2) && $spo2 > 0
-                ? 'uart8_sensor'
-                : undef,
-        spo2_demo_fallback => $spo2_demo_fallback ? JSON::PP::true : JSON::PP::false,
+        spo2_source => defined($spo2) && $spo2 > 0 ? 'uart8_sensor' : undef,
+        spo2_demo_fallback => JSON::PP::false,
         systolic_pressure => positive_or_undef($uart->{systolic_pressure}),
         diastolic_pressure => positive_or_undef($uart->{diastolic_pressure}),
         respiratory_rate => positive_or_undef($uart->{respiratory_rate}),
@@ -277,11 +263,9 @@ sub run_measurement {
         reference_ready => $uart->{reference_ready} ? JSON::PP::true : JSON::PP::false,
         finger_detected => $uart->{finger_detected} ? JSON::PP::true : JSON::PP::false,
         quality => $uart->{quality} || undef,
-        message => $spo2_demo_fallback
-            ? '心率与温度已读取；血氧演示值已补齐。'
-            : ($temperature_source || '') eq 'uart8_fingertip_reference'
-                ? '额温未读取；已采用本次指温参考值。'
-                : $uart->{message} || undef,
+        message => ($temperature_source || '') eq 'uart8_fingertip_reference'
+            ? '额温未读取；已采用本次指温参考值。'
+            : $uart->{message} || undef,
         sample_count => int($uart->{sample_count} || 0),
         valid_frame_count => int($uart->{valid_frame_count} || 0),
         communication_status => $uart->{communication_status} || undef,

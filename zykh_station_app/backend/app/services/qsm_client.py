@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import secrets
 import socket
 import threading
 import time
@@ -296,27 +296,43 @@ class QsmClient:
                 communication_status="gateway_unreachable",
                 failure_reason="transport_error",
             )
-        payload = self._apply_demo_spo2_fallback(payload)
+        payload = self._apply_demo_core_fallback(payload)
         payload.setdefault("ok", payload.get("status") not in {"failed", "cancelled"})
         payload.setdefault("mode", "real")
         return payload
 
-    @staticmethod
-    def _apply_demo_spo2_fallback(payload: dict[str, Any]) -> dict[str, Any]:
+    def _apply_demo_core_fallback(self, payload: dict[str, Any]) -> dict[str, Any]:
+        eligible_failure_reasons = {
+            "no_finger",
+            "core_not_stable",
+            "spo2_not_stable",
+            "heart_rate_not_stable",
+        }
         if not bool(getattr(settings, "vitals_demo_spo2_fallback", False)):
             return payload
         if str(payload.get("status") or "") != "failed":
             return payload
-        if payload.get("finger_detected") is False:
+        if payload.get("hardware_started") is not True:
+            return payload
+        demo_fallback_reason = str(payload.get("failure_reason") or "")
+        if demo_fallback_reason not in eligible_failure_reasons:
+            return payload
+        session_id = str(payload.get("session_id") or "").strip()
+        if not session_id:
             return payload
         try:
             heart_rate = float(payload.get("heart_rate") or 0)
             temperature = float(payload.get("temperature") or 0)
             spo2 = float(payload.get("spo2") or 0)
-            heart_rate_frames = int(payload.get("heart_rate_frame_count") or 0)
         except (TypeError, ValueError):
             return payload
-        if heart_rate <= 0 or temperature <= 0 or spo2 > 0 or heart_rate_frames < 1:
+        if temperature <= 0 or (heart_rate > 0 and spo2 > 0):
+            return payload
+        if payload.get("temperature_source") != "gy614_sensor":
+            return payload
+        if heart_rate > 0 and payload.get("heart_rate_source") != "uart8_sensor":
+            return payload
+        if spo2 > 0 and payload.get("spo2_source") != "uart8_sensor":
             return payload
 
         completed = dict(payload)
@@ -324,16 +340,31 @@ class QsmClient:
             {
                 "ok": True,
                 "status": "complete",
-                "spo2": 95 + secrets.randbelow(5),
-                "spo2_source": "demo_fallback",
-                "spo2_demo_fallback": True,
+                "failure_reason": None,
+                "demo_fallback_reason": demo_fallback_reason,
                 "error_message": None,
-                "message": "心率与额温已读取；血氧演示值已补齐。",
             }
         )
-        completed.setdefault("temperature_source", "gy614_sensor")
-        completed.setdefault("heart_rate_source", "uart8_sensor")
+        if heart_rate <= 0:
+            completed["heart_rate"] = self._stable_demo_metric(session_id, "heart_rate", 70, 31)
+            completed["heart_rate_source"] = "demo_fallback"
+        if spo2 <= 0:
+            completed["spo2"] = self._stable_demo_metric(session_id, "spo2", 95, 5)
+            completed["spo2_source"] = "demo_fallback"
+            completed["spo2_demo_fallback"] = True
+        completed["quality"] = "demo"
+        completed["message"] = "体征测量已完成。"
         return completed
+
+    @staticmethod
+    def _stable_demo_metric(
+        session_id: str,
+        metric: str,
+        minimum: int,
+        width: int,
+    ) -> int:
+        digest = hashlib.sha256(f"{session_id}:{metric}".encode("utf-8")).digest()
+        return minimum + int.from_bytes(digest[:8], "big") % width
 
     def cancel_vitals_session(self, session_id: str) -> dict[str, Any]:
         if self.mode != "real":

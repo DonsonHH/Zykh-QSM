@@ -379,6 +379,26 @@ def init_db() -> None:
         _ensure_column(conn, "vitals_records", "spo2_source", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS demo_vitals_records (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL UNIQUE,
+              temperature REAL NOT NULL,
+              heart_rate INTEGER NOT NULL,
+              spo2 INTEGER NOT NULL,
+              measured_at TEXT NOT NULL,
+              source_route TEXT NOT NULL DEFAULT 'HOME',
+              inquiry_session_id TEXT NOT NULL DEFAULT '',
+              service_user_id TEXT NOT NULL DEFAULT '',
+              persona_generation TEXT NOT NULL DEFAULT '',
+              temperature_source TEXT NOT NULL DEFAULT '',
+              heart_rate_source TEXT NOT NULL DEFAULT '',
+              spo2_source TEXT NOT NULL DEFAULT '',
+              demo_fallback_reason TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS vitals_session_contexts (
               session_id TEXT PRIMARY KEY,
               source_route TEXT NOT NULL,

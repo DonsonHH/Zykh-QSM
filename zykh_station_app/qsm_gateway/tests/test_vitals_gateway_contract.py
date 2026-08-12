@@ -54,9 +54,10 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertIn("prewarmed_stalled_frames", reader)
         self.assertIn("start_recovery_mode", gateway)
 
-    def test_missing_spo2_demo_fallback_is_explicitly_marked(self) -> None:
+    def test_gateway_never_synthesizes_spo2(self) -> None:
         gateway = GATEWAY.read_text(encoding="utf-8")
-        self.assertIn("QSM_VITALS_DEMO_SPO2_FALLBACK", gateway)
+        self.assertNotIn("QSM_VITALS_DEMO_SPO2_FALLBACK", gateway)
+        self.assertNotIn("rand(5)", gateway)
         self.assertIn("spo2_demo_fallback", gateway)
         self.assertIn("spo2_source", gateway)
 

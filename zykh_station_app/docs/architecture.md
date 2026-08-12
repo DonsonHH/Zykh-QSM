@@ -16,12 +16,17 @@ legacy name-only rows and plans owned by archived people are quarantined with
 
 - `main.py`: app factory, middleware, router registration and startup initialization.
 - `routers/`: HTTP endpoints and request/response schemas.
-- `modules/`: deep application modules. `VitalsSessionModule` owns host-side session response modeling, provenance/data-truth gates, historical references and persistence/sync policy behind `prepare / start / get / cancel`.
+- `modules/`: deep application modules. `VitalsSessionModule` owns cross-boundary
+  provenance/data-truth gates, historical references and persistence/sync policy
+  behind `prepare / start / get / cancel`; the QSM adapter owns gateway-specific
+  response normalization before that boundary.
 - `services/`: station, dashboard, QSM gateway, inquiry, records and sync use cases.
   `ManualMedicationAccessModule` is a deep application module kept here for
   compatibility with the existing service layout; its public surface is only
   `assess(command)` and `confirm(command)`.
-- `repositories/`: SQLite persistence adapters.
+- `repositories/`: SQLite persistence adapters. Presentation-only fallback vitals
+  use `demo_vitals_records`, a separate audit store with no clinical-history or
+  cloud-sync reader.
 - `schemas/`: Pydantic input/output contracts.
 - `core/`: constants and safety language.
 
@@ -44,7 +49,7 @@ The gateway adapter supports:
   before UART/GPIO output, replays the stored result for the same payload and
   never retries an in-flight/ambiguous operation.
 
-Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Failed real calls are not replaced by fake success data.
+Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Communication, startup and device failures are not replaced by presentation data. The optional core-vitals demo fallback applies only after a started session returns a valid real temperature and an eligible hand-signal stabilization failure; every filled metric remains provenance-marked and is stored outside clinical history and sync.
 
 Stage six adds business-facing QSM action endpoints:
 

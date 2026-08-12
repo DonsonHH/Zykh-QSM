@@ -18,7 +18,6 @@ import {
   hasCoreVitals,
   hasVitalsReading as hasReading,
   inquiryVitalsDisposition,
-  isDemoSpo2,
   isVitalsSessionActive,
   vitalsTemperaturePresentation,
   useVitalsSession
@@ -355,14 +354,6 @@ export function describeVitals(result, errorMessage, phase) {
   }
   if (errorMessage || phase === "failed" || result?.ok === false) {
     return describeVitalsFailure(result, errorMessage);
-  }
-  if (isDemoSpo2(result)) {
-    return {
-      tone: "warn",
-      title: "演示结果",
-      summary: "血氧为演示值，本次结果未保存",
-      detail: "心率与温度来自设备，血氧仅用于现场演示。"
-    };
   }
   if (hasCoreVitals(result)) {
     const temperatureLabel = vitalsTemperaturePresentation(result).label;

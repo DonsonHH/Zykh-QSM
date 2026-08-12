@@ -459,10 +459,16 @@ into one message:
 - `cancel_reason=replaced` identifies a session stopped by a newer measurement;
   normal cancellation leaves `failure_reason` unset.
 
-Responses with `spo2_source=demo_fallback` remain available for an explicitly
-labelled demonstration but are not persisted or included in cloud sync. When a
-current sensor session fails, it remains `failed`; historical values never fill
-the current `heart_rate`, `spo2` or `temperature` fields. Legacy records marked
+Responses with `heart_rate_source=demo_fallback` or `spo2_source=demo_fallback`
+use the normal completed-result presentation but are persisted only in the
+isolated `demo_vitals_records` audit table. They are excluded from real vitals
+history, inquiry inputs, historical-reference selection and cloud sync. When a
+measurement runs inside inquiry, the frontend posts a numeric-free
+`status=demo_complete` outcome so the UI can finish normally without supplying
+the isolated readings to inquiry reasoning. When a
+current sensor session fails without an eligible demo completion, it remains
+`failed`; historical values never fill the current `heart_rate`, `spo2` or
+`temperature` fields. Legacy records marked
 with `SpO2-demo` are also excluded from cloud snapshots and historical references.
 If an older inquiry contains the same timestamp and core readings as one of those
 records, its stored vitals are presented as a quarantined failed demo without the

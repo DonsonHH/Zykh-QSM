@@ -24,8 +24,12 @@ export function hasCoreVitals(result) {
     && hasVitalsReading(result?.temperature);
 }
 
-export function isDemoSpo2(result) {
-  return Boolean(result?.spo2_demo_fallback || result?.spo2_source === "demo_fallback");
+export function isDemoVitals(result) {
+  return Boolean(
+    result?.spo2_demo_fallback
+    || result?.heart_rate_source === "demo_fallback"
+    || result?.spo2_source === "demo_fallback"
+  );
 }
 
 export function vitalsTemperaturePresentation(result) {
@@ -44,13 +48,13 @@ export function shouldAutomaticallyRetrySpo2(result) {
 }
 
 export function inquiryVitalsDisposition(result) {
-  if (isDemoSpo2(result)) {
+  if (isDemoVitals(result)) {
     return {
       kind: "exit",
       outcome: {
         vitals_session_id: result?.session_id || "",
-        status: "failed",
-        error_message: "血氧为演示值，本次体征未写入问询。"
+        status: "demo_complete",
+        error_message: ""
       }
     };
   }

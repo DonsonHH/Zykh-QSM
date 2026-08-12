@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from app import db  # noqa: E402
 from app.modules.vitals_session import VitalsSessionModule  # noqa: E402
+from app.repositories.demo_vitals_repository import DemoVitalsRepository  # noqa: E402
 from app.repositories.inquiry_repository import InquiryRepository  # noqa: E402
 from app.repositories.sync_repository import SyncRepository  # noqa: E402
 from app.repositories.vitals_repository import VitalsRecord, VitalsRepository  # noqa: E402
@@ -117,7 +118,7 @@ class VitalsSessionModuleTest(unittest.TestCase):
         self.assertEqual(VitalsRepository().count(), 1)
         self.assertEqual(SyncRepository().get_status().pending_count, 1)
 
-    def test_demo_fallback_is_returned_but_never_persisted_through_module_interface(self) -> None:
+    def test_demo_fallback_is_recorded_only_in_isolated_demo_store(self) -> None:
         gateway = InMemoryVitalsGateway(
             {
                 "ok": True,
@@ -131,17 +132,29 @@ class VitalsSessionModuleTest(unittest.TestCase):
                 "heart_rate_source": "uart8_sensor",
                 "spo2_source": "demo_fallback",
                 "spo2_demo_fallback": True,
+                "demo_fallback_reason": "spo2_not_stable",
                 "source": "UART8-vitals-24B+GY-614",
                 "measured_at": "2026-08-05T15:05:00+08:00",
             }
         )
 
-        response = VitalsSessionModule(gateway=gateway).get("module-demo")
+        module = VitalsSessionModule(gateway=gateway)
+        response = module.get("module-demo")
+        repeated = module.get("module-demo")
 
         self.assertEqual(response.status, "complete")
+        self.assertEqual(repeated.session_id, "module-demo")
         self.assertEqual(response.spo2_source, "demo_fallback")
         self.assertEqual(VitalsRepository().count(), 0)
+        self.assertEqual(DemoVitalsRepository().count(), 1)
+        isolated = DemoVitalsRepository().get_by_session("module-demo")
+        self.assertIsNotNone(isolated)
+        self.assertEqual(isolated.heart_rate, 72)
+        self.assertEqual(isolated.spo2, 97)
+        self.assertEqual(isolated.spo2_source, "demo_fallback")
+        self.assertEqual(isolated.demo_fallback_reason, "spo2_not_stable")
         self.assertEqual(SyncRepository().get_status().pending_count, 0)
+        self.assertEqual(CloudSyncWorker._build_snapshot()["vitals"], [])
 
     def test_failed_measurement_keeps_current_values_separate_from_history(self) -> None:
         VitalsRepository().append(

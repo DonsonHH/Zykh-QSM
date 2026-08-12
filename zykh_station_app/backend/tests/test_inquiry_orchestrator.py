@@ -302,6 +302,15 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 spo2_demo_fallback=True,
             )
 
+    def test_demo_complete_outcome_cannot_carry_measurements(self) -> None:
+        with self.assertRaisesRegex(ValueError, "非完成状态"):
+            InquiryVitalsRequest(
+                status="demo_complete",
+                temperature=36.6,
+                heart_rate=72,
+                spo2=97,
+            )
+
     def test_historical_vitals_cannot_be_attached_as_current_complete_measurement(self) -> None:
         with self.assertRaisesRegex(ValueError, "历史体征"):
             InquiryVitalsRequest(
@@ -1119,6 +1128,58 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(resumed.vitals["status"], "cancelled")
         self.assertEqual(interpreter.contexts[-1]["vitals_event"], "用户取消了本次体征测量，请结合已有信息自然继续问询。")
         self.assertTrue(any(message.source == "vitals_tool" for message in resumed.messages))
+
+    def test_demo_complete_returns_to_inquiry_without_numeric_readings(self) -> None:
+        service, interpreter = self.service(
+            [
+                case(
+                    action="measure_vitals",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="头晕可能需要结合体征确认。",
+                    used="未使用",
+                    allergy="无",
+                ),
+                case(
+                    action="ask",
+                    concept="头晕",
+                    evidence="有点头晕",
+                    reply="我们继续。头晕是在起身时更明显吗？",
+                    used="未使用",
+                    allergy="无",
+                ),
+            ]
+        )
+        session = self.create(service)
+        service.process_turn(
+            session.session_id,
+            InquiryTurnRequest(transcript="我有点头晕，没用药，没有过敏"),
+        )
+
+        resumed = service.attach_vitals(
+            session.session_id,
+            InquiryVitalsRequest(
+                vitals_session_id="demo-vitals-session",
+                status="demo_complete",
+            ),
+        )
+
+        self.assertEqual(resumed.next_action, "ask")
+        self.assertEqual(resumed.vitals, {
+            "vitals_session_id": "demo-vitals-session",
+            "status": "demo_complete",
+            "spo2_demo_fallback": False,
+            "historical_fallback": False,
+            "measured_at": "",
+            "error_message": "",
+        })
+        self.assertNotIn("heart_rate", resumed.vitals)
+        self.assertNotIn("spo2", resumed.vitals)
+        self.assertNotIn("temperature", resumed.vitals)
+        self.assertEqual(
+            interpreter.contexts[-1]["vitals_event"],
+            "本次体征展示已完成；隔离读数不进入问询判断，请结合已有信息自然继续问询。",
+        )
 
     def test_model_cannot_measure_before_a_complaint_is_understood(self) -> None:
         interpretation = SymptomInterpretation(

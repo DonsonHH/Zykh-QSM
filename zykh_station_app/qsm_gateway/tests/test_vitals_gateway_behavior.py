@@ -62,21 +62,22 @@ if ($mode eq 'wait') {
 
 my $success = $mode eq 'success';
 my $no_frames = $mode eq 'no_frames';
+my $missing_spo2 = $mode eq 'missing_spo2';
 write_json($output, {
     ok => $success ? JSON::PP::true : JSON::PP::false,
     status => $success ? 'measured' : 'awaiting_finger',
-    heart_rate_bpm => $success ? 74 : 0,
+    heart_rate_bpm => ($success || $missing_spo2) ? 74 : 0,
     spo2_percent => $success ? 98 : 0,
-    body_temperature_c => $success ? 36.42 : undef,
+    body_temperature_c => ($success || $missing_spo2) ? 36.42 : undef,
     stable_core => $success ? JSON::PP::true : JSON::PP::false,
     communication_status => $no_frames ? 'no_protocol_frames' : 'receiving_protocol_frames',
-    finger_detected => $success ? JSON::PP::true : JSON::PP::false,
-    quality => $success ? 'stable' : 'no_finger',
+    finger_detected => ($success || $missing_spo2) ? JSON::PP::true : JSON::PP::false,
+    quality => $success ? 'stable' : $missing_spo2 ? 'spo2_not_stable' : 'no_finger',
     message => $success ? 'measurement complete' : 'waiting for finger',
     sample_count => 4,
     valid_frame_count => $no_frames ? 0 : 4,
-    contact_frame_count => $success ? 4 : 0,
-    heart_rate_frame_count => $success ? 4 : 0,
+    contact_frame_count => ($success || $missing_spo2) ? 4 : 0,
+    heart_rate_frame_count => ($success || $missing_spo2) ? 4 : 0,
     spo2_frame_count => $success ? 4 : 0,
     first_heart_rate_frame => $success ? 1 : undef,
     first_spo2_frame => $success ? 1 : undef,
@@ -144,7 +145,6 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
                 "GY614_UART": "fake-gy614",
                 "VITALS_UART_DEVICE": uart_device or os.ttyname(self.slave_fd),
                 "VITALS_UART_LOCK_FILE": str(self.temp / "vitals.lock"),
-                "QSM_VITALS_DEMO_SPO2_FALLBACK": "0",
                 "FAKE_UART_MODE": mode,
             }
         )
@@ -269,6 +269,20 @@ class VitalsGatewayBehaviorTest(unittest.TestCase):
         self.assertEqual(result["valid_frame_count"], 0)
         self.assertEqual(result["failure_reason"], "no_protocol_frames")
         self.assertNotEqual(result["failure_reason"], "no_finger")
+
+    def test_missing_spo2_remains_failed_for_host_side_provenance_handling(self) -> None:
+        self.start_gateway("missing_spo2")
+
+        started = self.request("POST", "/api/vitals/session/start", {"replace_active": True})
+        result = self.wait_for_terminal_status(str(started["session_id"]))
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["heart_rate"], 74)
+        self.assertEqual(result["spo2"], 0)
+        self.assertEqual(result["failure_reason"], "spo2_not_stable")
+        self.assertEqual(result["heart_rate_source"], "uart8_sensor")
+        self.assertIsNone(result["spo2_source"])
+        self.assertFalse(result["spo2_demo_fallback"])
 
     def test_unknown_session_exposes_gateway_and_failure_diagnostics(self) -> None:
         self.start_gateway("success")

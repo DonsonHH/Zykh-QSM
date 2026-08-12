@@ -32,8 +32,8 @@ try {
     "",
     "complete"
   );
-  assert.equal(demoStatus.title, "演示结果");
-  assert.match(demoStatus.summary, /未保存/, "demo SpO2 must not be presented as recorded data");
+  assert.equal(demoStatus.title, "测量完成");
+  assert.match(demoStatus.summary, /已记录/, "isolated demo result must use the normal completed presentation");
   assert.equal(
     typeof module.inquiryVitalsDisposition,
     "function",
@@ -53,11 +53,31 @@ try {
       kind: "exit",
       outcome: {
         vitals_session_id: "vitals-demo-session",
-        status: "failed",
-        error_message: "血氧为演示值，本次体征未写入问询。"
+        status: "demo_complete",
+        error_message: ""
       }
     },
     "demo SpO2 must not enter inquiry persistence as a complete measurement"
+  );
+  assert.deepEqual(
+    module.inquiryVitalsDisposition({
+      session_id: "vitals-demo-heart-rate",
+      status: "complete",
+      temperature: 36.6,
+      heart_rate: 70,
+      spo2: 98,
+      heart_rate_source: "demo_fallback",
+      spo2_source: "uart8_sensor"
+    }),
+    {
+      kind: "exit",
+      outcome: {
+        vitals_session_id: "vitals-demo-heart-rate",
+        status: "demo_complete",
+        error_message: ""
+      }
+    },
+    "demo heart rate must remain isolated from inquiry persistence"
   );
   assert.deepEqual(
     module.inquiryVitalsDisposition({

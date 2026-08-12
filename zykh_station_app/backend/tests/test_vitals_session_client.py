@@ -207,9 +207,12 @@ class VitalsSessionClientTest(unittest.TestCase):
             "heart_rate": 76,
             "spo2": None,
             "temperature": 36.4,
+            "temperature_source": "gy614_sensor",
             "finger_detected": True,
             "heart_rate_frame_count": 3,
+            "heart_rate_source": "uart8_sensor",
             "spo2_frame_count": 0,
+            "failure_reason": "spo2_not_stable",
             "source": "UART8-vitals-24B+GY-614",
             "error_message": "血氧仍未稳定。",
         }
@@ -230,6 +233,179 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertEqual(result["temperature_source"], "gy614_sensor")
         self.assertEqual(result["heart_rate_source"], "uart8_sensor")
         self.assertEqual(result["spo2_source"], "demo_fallback")
+
+    def test_status_fills_missing_heart_rate_and_spo2_with_isolated_demo_values(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "elapsed_seconds": 18.0,
+            "heart_rate": None,
+            "spo2": None,
+            "temperature": 36.4,
+            "temperature_source": "gy614_sensor",
+            "finger_detected": False,
+            "failure_reason": "no_finger",
+            "source": "UART8-vitals-24B+GY-614",
+            "error_message": "未获得心率和血氧。",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+            repeated = self.client.get_vitals_session("session-123")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "complete")
+        self.assertGreaterEqual(result["heart_rate"], 70)
+        self.assertLessEqual(result["heart_rate"], 100)
+        self.assertGreaterEqual(result["spo2"], 95)
+        self.assertLessEqual(result["spo2"], 99)
+        self.assertEqual(repeated["heart_rate"], result["heart_rate"])
+        self.assertEqual(repeated["spo2"], result["spo2"])
+        self.assertEqual(result["heart_rate_source"], "demo_fallback")
+        self.assertEqual(result["spo2_source"], "demo_fallback")
+        self.assertTrue(result["spo2_demo_fallback"])
+        self.assertIsNone(result["failure_reason"])
+        self.assertEqual(result["demo_fallback_reason"], "no_finger")
+
+    def test_status_does_not_mask_no_protocol_frames_with_demo_values(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": None,
+            "spo2": None,
+            "temperature": 36.4,
+            "temperature_source": "gy614_sensor",
+            "failure_reason": "no_protocol_frames",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "no_protocol_frames")
+        self.assertIsNone(result["heart_rate"])
+        self.assertIsNone(result["spo2"])
+
+    def test_status_preserves_real_spo2_when_only_heart_rate_needs_demo_fallback(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": None,
+            "spo2": 98,
+            "temperature": 36.5,
+            "temperature_source": "gy614_sensor",
+            "spo2_source": "uart8_sensor",
+            "failure_reason": "heart_rate_not_stable",
+            "source": "UART8-vitals-24B+GY-614",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertGreaterEqual(result["heart_rate"], 70)
+        self.assertLessEqual(result["heart_rate"], 100)
+        self.assertEqual(result["heart_rate_source"], "demo_fallback")
+        self.assertEqual(result["spo2"], 98)
+        self.assertEqual(result["spo2_source"], "uart8_sensor")
+        self.assertFalse(result.get("spo2_demo_fallback", False))
+
+    def test_status_does_not_mask_transport_error_with_demo_values(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": None,
+            "spo2": None,
+            "temperature": 36.5,
+            "failure_reason": "transport_error",
+            "communication_status": "gateway_unreachable",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_reason"], "transport_error")
+        self.assertIsNone(result["heart_rate"])
+        self.assertIsNone(result["spo2"])
+
+    def test_status_requires_verified_real_temperature_provenance_for_demo_fallback(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": None,
+            "spo2": None,
+            "temperature": 36.5,
+            "temperature_source": "",
+            "failure_reason": "core_not_stable",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIsNone(result["heart_rate"])
+        self.assertIsNone(result["spo2"])
+
+    def test_status_requires_forehead_temperature_for_demo_fallback(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": None,
+            "spo2": None,
+            "temperature": 35.9,
+            "temperature_source": "uart8_fingertip_reference",
+            "failure_reason": "core_not_stable",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIsNone(result["heart_rate"])
+        self.assertIsNone(result["spo2"])
 
     def test_cancel_calls_board_session_gateway(self) -> None:
         result = self.client.cancel_vitals_session("session-123")

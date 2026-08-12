@@ -1486,6 +1486,7 @@ class InquiryOrchestrator:
 
         vitals_status = str((session.vitals or {}).get("status") or "")
         if not self._has_complete_vitals(session) and vitals_status not in {
+            "demo_complete",
             "failed",
             "cancelled",
             "unavailable",
@@ -1607,7 +1608,9 @@ class InquiryOrchestrator:
             catalog["vital-heart-rate"] = f"本次心率：{vitals.get('heart_rate')}次/分"
         if vitals.get("spo2") is not None:
             catalog["vital-spo2"] = f"本次血氧：{vitals.get('spo2')}%"
-        if vitals.get("status") in {"cancelled", "failed"}:
+        if vitals.get("status") == "demo_complete":
+            catalog["vital-status"] = "本次体征：展示完成，数值不作为问询依据"
+        elif vitals.get("status") in {"cancelled", "failed"}:
             catalog["vital-status"] = "本次体征：测量未完成"
         return catalog
 
@@ -1909,7 +1912,11 @@ class InquiryOrchestrator:
             return False
         if cls._has_complete_vitals(session):
             return False
-        if str((session.vitals or {}).get("status") or "") in {"failed", "cancelled"}:
+        if str((session.vitals or {}).get("status") or "") in {
+            "demo_complete",
+            "failed",
+            "cancelled",
+        }:
             return False
         if not cls._has_meaningful_complaint(extracted):
             return False
@@ -1948,6 +1955,8 @@ class InquiryOrchestrator:
         if status == "failed":
             detail = str(vitals.get("error_message") or "设备未获得完整读数")
             return f"本次体征测量未完成：{detail}。请结合已有信息自然继续问询。"
+        if status == "demo_complete":
+            return "本次体征展示已完成；隔离读数不进入问询判断，请结合已有信息自然继续问询。"
         return (
             f"体征测量完成：额温 {vitals.get('temperature')}℃，"
             f"心率 {vitals.get('heart_rate')}次/分，血氧 {vitals.get('spo2')}%。"
