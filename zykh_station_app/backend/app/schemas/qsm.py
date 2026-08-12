@@ -101,6 +101,7 @@ class VitalsSessionResponse(BaseModel):
     minimum_measurement_seconds: float | None = None
     failure_reason: str | None = None
     demo_fallback_reason: str | None = None
+    completion_reason: str | None = None
     cancel_reason: str | None = None
     source: str | None = None
     started_at: str | None = None

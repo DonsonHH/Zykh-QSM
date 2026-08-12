@@ -326,7 +326,7 @@ class QsmClient:
             spo2 = float(payload.get("spo2") or 0)
         except (TypeError, ValueError):
             return payload
-        if temperature <= 0 or (heart_rate > 0 and spo2 > 0):
+        if temperature <= 0:
             return payload
         if payload.get("temperature_source") != "gy614_sensor":
             return payload
@@ -341,18 +341,23 @@ class QsmClient:
                 "ok": True,
                 "status": "complete",
                 "failure_reason": None,
-                "demo_fallback_reason": demo_fallback_reason,
+                "completion_reason": demo_fallback_reason,
                 "error_message": None,
             }
         )
+        used_demo_fallback = False
         if heart_rate <= 0:
             completed["heart_rate"] = self._stable_demo_metric(session_id, "heart_rate", 70, 31)
             completed["heart_rate_source"] = "demo_fallback"
+            used_demo_fallback = True
         if spo2 <= 0:
             completed["spo2"] = self._stable_demo_metric(session_id, "spo2", 95, 5)
             completed["spo2_source"] = "demo_fallback"
             completed["spo2_demo_fallback"] = True
-        completed["quality"] = "demo"
+            used_demo_fallback = True
+        if used_demo_fallback:
+            completed["demo_fallback_reason"] = demo_fallback_reason
+        completed["quality"] = "demo_fallback" if used_demo_fallback else "approximate"
         completed["message"] = "体征测量已完成。"
         return completed
 

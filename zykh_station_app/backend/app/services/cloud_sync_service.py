@@ -326,7 +326,8 @@ class CloudSyncWorker:
                        body_temperature, ambient_temperature, status, source, sensor_model,
                        error_message, measured_at, source_route, inquiry_session_id,
                        attribution_source, service_user_id, service_user_name_snapshot,
-                       persona_generation
+                       persona_generation, temperature_source, heart_rate_source,
+                       spo2_source, measurement_quality, completion_reason
                 FROM vitals_records
                 WHERE source NOT LIKE '%SpO2-demo%'
                   AND sensor_model NOT LIKE '%SpO2-demo%'
@@ -340,7 +341,7 @@ class CloudSyncWorker:
                 {
                     "heartRate": row["heart_rate"],
                     "bodyTemp": row["temperature"],
-                    "quality": row["status"],
+                    "quality": row["measurement_quality"] or row["status"],
                     "createdAt": row["measured_at"],
                     "sourceRoute": row["source_route"],
                     "inquirySessionId": row["inquiry_session_id"],

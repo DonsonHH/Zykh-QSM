@@ -40,15 +40,8 @@ export function vitalsTemperaturePresentation(result) {
   };
 }
 
-export function shouldAutomaticallyRetrySpo2(result) {
-  return result?.status === "failed"
-    && hasVitalsReading(result?.heart_rate)
-    && hasVitalsReading(result?.temperature)
-    && !hasVitalsReading(result?.spo2);
-}
-
 export function inquiryVitalsDisposition(result) {
-  if (isDemoVitals(result)) {
+  if (isDemoVitals(result) || result?.quality === "approximate") {
     return {
       kind: "exit",
       outcome: {
@@ -89,8 +82,6 @@ export function useVitalsSession({
   const prewarmPromiseRef = useRef(null);
   const sessionIdRef = useRef("");
   const phaseRef = useRef("idle");
-  const automaticRetryRef = useRef(false);
-  const automaticRetryTimerRef = useRef(null);
   const pollPolicyRef = useRef(null);
   if (!pollPolicyRef.current) pollPolicyRef.current = createVitalsPollPolicy();
 
@@ -107,7 +98,6 @@ export function useVitalsSession({
   useEffect(() => {
     ensurePrepared();
     return () => {
-      window.clearTimeout(automaticRetryTimerRef.current);
       const activeSession = sessionIdRef.current;
       if (activeSession && isVitalsSessionActive(phaseRef.current)) {
         requestBoardCancellation(activeSession);
@@ -198,14 +188,6 @@ export function useVitalsSession({
     phaseRef.current = data.status || "failed";
     setPhase(phaseRef.current);
     setErrorMessage(data.error_message || "");
-    if (shouldAutomaticallyRetrySpo2(data) && !automaticRetryRef.current) {
-      automaticRetryRef.current = true;
-      setErrorMessage("血氧信号未稳定，正在自动重新测量，请继续保持手指不动。");
-      automaticRetryTimerRef.current = window.setTimeout(
-        () => measure({ automatic: true }),
-        850
-      );
-    }
   }
 
   function ensurePrepared() {
@@ -223,11 +205,9 @@ export function useVitalsSession({
     return prewarmPromiseRef.current;
   }
 
-  async function measure({ automatic = false } = {}) {
+  async function measure() {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    window.clearTimeout(automaticRetryTimerRef.current);
-    if (!automatic) automaticRetryRef.current = false;
     const previousSession = sessionIdRef.current;
     const previousCancellation = previousSession
       ? requestBoardCancellation(previousSession)
@@ -275,7 +255,6 @@ export function useVitalsSession({
 
   async function cancel({ exit = embedded } = {}) {
     window.clearTimeout(completionTimerRef.current);
-    window.clearTimeout(automaticRetryTimerRef.current);
     requestIdRef.current += 1;
     const currentSession = sessionIdRef.current || sessionId;
     sessionIdRef.current = "";

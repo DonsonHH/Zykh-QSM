@@ -377,6 +377,8 @@ def init_db() -> None:
         _ensure_column(conn, "vitals_records", "temperature_source", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "vitals_records", "heart_rate_source", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "vitals_records", "spo2_source", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "measurement_quality", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "vitals_records", "completion_reason", "TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS demo_vitals_records (

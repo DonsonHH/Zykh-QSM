@@ -174,24 +174,25 @@ transport failures use `failure_reason=transport_error`, and a replaced session 
 `failure_reason` unset; a UART stop failure remains attached to the cancelled session
 instead of being cleared.
 
-Phase two adds a data-truth boundary without changing retry or timeout policy.
-When the host demo fallback is enabled, a started session with a valid GY-614 forehead temperature
-may fill only missing heart rate (`70-100`) or SpO2 (`95-99`) values. Each filled
-metric retains `demo_fallback` in its metric source even though the kiosk uses its
-normal completed-result presentation. Such a session is written only to the
-isolated `demo_vitals_records` audit table; it is never written to `vitals_records`,
-marked for cloud sync, used as a historical reference, or supplied as numeric
-inquiry evidence. Only `no_finger`, `core_not_stable`, `spo2_not_stable` and
+Phase two adds a provenance boundary without changing transport retry or timeout policy.
+When the host completion fallback is enabled, a started session with a valid GY-614 forehead temperature
+keeps any available heart-rate and SpO2 readings. If both exist, the session
+completes with `quality=approximate`; otherwise it fills only missing heart rate
+(`70-100`) or SpO2 (`95-99`) values and uses `quality=demo_fallback`. Each filled
+metric retains `demo_fallback` in its metric source. Both forms use the normal
+completed-result presentation and are written to `vitals_records`, marked for
+cloud sync and included in the CloudBase vitals snapshot. Only `no_finger`,
+`core_not_stable`, `spo2_not_stable` and
 `heart_rate_not_stable` are eligible. Gateway transport, start rejection, UART
 open/read and session lookup errors never enter this fallback; `transport_error`
 keeps the existing same-session retry and third-failure cancellation policy. The original eligible failure is
-retained as `demo_fallback_reason`, while terminal `failure_reason` is cleared on
-the completed presentation response.
+retained as `completion_reason` (and as `demo_fallback_reason` when a metric was
+filled), while terminal `failure_reason` is cleared on the completed response.
 Existing records carrying the legacy `SpO2-demo` marker are excluded from cloud
 snapshots and from selection as the previous complete measurement.
-An embedded inquiry reports the presentation-only completion as `demo_complete`
+An embedded inquiry reports approximate or filled completion as `demo_complete`
 without numeric readings, so the normal kiosk completion transition can continue
-while the inquiry model and safety rules receive no demo measurements.
+while the inquiry model and safety rules receive no approximate or filled measurements.
 Legacy inquiry vitals that exactly match one of those marked records are exposed
 as a failed, quarantined demo without their numeric readings.
 An unstable current session that is not eligible for the enabled demo fallback
@@ -214,13 +215,13 @@ one-time 8-second SpO2 grace window, or the UART8 start/stop/frame protocol.
 The first deep-module extraction keeps the HTTP interface compatible while moving
 cross-boundary provenance checks, historical references and persistence/sync
 effects into `backend/app/modules/vitals_session.py`. Gateway-specific response
-normalization, including the optional provenance-marked presentation fallback,
-stays in `QsmClient`; the module revalidates its provenance before choosing the
-isolated or clinical persistence branch. Its narrow interface is
+normalization, including the optional provenance-marked terminal completion,
+stays in `QsmClient`; the module revalidates its provenance before writing the
+normal record and sync path. Its narrow interface is
 `prepare / start / get / cancel`; `QsmClient` and the in-memory test gateway are
 adapters at that seam. The browser module
 `frontend/src/modules/vitalsSession.js` owns prewarm, start/poll/cancel lifecycle,
-phase transitions, active-session identity, SpO₂ retry and embedded completion.
+phase transitions, active-session identity, transport retry and embedded completion.
 Its `vitalsSessionAdapter.js` dependency owns transient transport decisions and
 one-shot cancellation, leaving the React page as a presentation caller. UART8 and GY-614 sampling remain inside the owned QSM
 gateway adapter, so this extraction does not change the validated timing or frame

@@ -33,7 +33,23 @@ try {
     "complete"
   );
   assert.equal(demoStatus.title, "测量完成");
-  assert.match(demoStatus.summary, /已记录/, "isolated demo result must use the normal completed presentation");
+  assert.match(demoStatus.summary, /已记录/, "classified fallback result must use the normal completed presentation");
+  const approximateStatus = module.describeVitals(
+    {
+      ok: true,
+      status: "complete",
+      temperature: 36.5,
+      heart_rate: 78,
+      spo2: 96,
+      quality: "approximate",
+      heart_rate_source: "uart8_sensor",
+      spo2_source: "uart8_sensor"
+    },
+    "",
+    "complete"
+  );
+  assert.equal(approximateStatus.title, "测量完成");
+  assert.match(approximateStatus.summary, /已记录/);
   assert.equal(
     typeof module.inquiryVitalsDisposition,
     "function",
@@ -78,6 +94,27 @@ try {
       }
     },
     "demo heart rate must remain isolated from inquiry persistence"
+  );
+  assert.deepEqual(
+    module.inquiryVitalsDisposition({
+      session_id: "vitals-approximate",
+      status: "complete",
+      temperature: 36.5,
+      heart_rate: 78,
+      spo2: 96,
+      quality: "approximate",
+      heart_rate_source: "uart8_sensor",
+      spo2_source: "uart8_sensor"
+    }),
+    {
+      kind: "exit",
+      outcome: {
+        vitals_session_id: "vitals-approximate",
+        status: "demo_complete",
+        error_message: ""
+      }
+    },
+    "approximate sensor readings must finish the UI without entering inquiry reasoning"
   );
   assert.deepEqual(
     module.inquiryVitalsDisposition({

@@ -118,7 +118,7 @@ class VitalsSessionModuleTest(unittest.TestCase):
         self.assertEqual(VitalsRepository().count(), 1)
         self.assertEqual(SyncRepository().get_status().pending_count, 1)
 
-    def test_demo_fallback_is_recorded_only_in_isolated_demo_store(self) -> None:
+    def test_demo_fallback_is_recorded_in_main_backend_with_classification_fields(self) -> None:
         gateway = InMemoryVitalsGateway(
             {
                 "ok": True,
@@ -133,6 +133,8 @@ class VitalsSessionModuleTest(unittest.TestCase):
                 "spo2_source": "demo_fallback",
                 "spo2_demo_fallback": True,
                 "demo_fallback_reason": "spo2_not_stable",
+                "completion_reason": "spo2_not_stable",
+                "quality": "demo_fallback",
                 "source": "UART8-vitals-24B+GY-614",
                 "measured_at": "2026-08-05T15:05:00+08:00",
             }
@@ -145,16 +147,51 @@ class VitalsSessionModuleTest(unittest.TestCase):
         self.assertEqual(response.status, "complete")
         self.assertEqual(repeated.session_id, "module-demo")
         self.assertEqual(response.spo2_source, "demo_fallback")
-        self.assertEqual(VitalsRepository().count(), 0)
-        self.assertEqual(DemoVitalsRepository().count(), 1)
-        isolated = DemoVitalsRepository().get_by_session("module-demo")
-        self.assertIsNotNone(isolated)
-        self.assertEqual(isolated.heart_rate, 72)
-        self.assertEqual(isolated.spo2, 97)
-        self.assertEqual(isolated.spo2_source, "demo_fallback")
-        self.assertEqual(isolated.demo_fallback_reason, "spo2_not_stable")
-        self.assertEqual(SyncRepository().get_status().pending_count, 0)
-        self.assertEqual(CloudSyncWorker._build_snapshot()["vitals"], [])
+        self.assertEqual(VitalsRepository().count(), 1)
+        self.assertEqual(DemoVitalsRepository().count(), 0)
+        recorded = VitalsRepository().latest()
+        self.assertIsNotNone(recorded)
+        self.assertEqual(recorded.heart_rate, 72)
+        self.assertEqual(recorded.spo2, 97)
+        self.assertEqual(recorded.spo2_source, "demo_fallback")
+        self.assertEqual(recorded.measurement_quality, "demo_fallback")
+        self.assertEqual(recorded.completion_reason, "spo2_not_stable")
+        self.assertEqual(SyncRepository().get_status().pending_count, 1)
+        snapshot = CloudSyncWorker._build_snapshot()["vitals"]
+        self.assertEqual(len(snapshot), 1)
+        self.assertEqual(snapshot[0]["spo2_source"], "demo_fallback")
+        self.assertEqual(snapshot[0]["measurement_quality"], "demo_fallback")
+        self.assertEqual(snapshot[0]["completion_reason"], "spo2_not_stable")
+
+    def test_approximate_sensor_result_is_recorded_without_remeasurement(self) -> None:
+        gateway = InMemoryVitalsGateway(
+            {
+                "ok": True,
+                "mode": "real",
+                "status": "complete",
+                "hardware_started": True,
+                "temperature": 36.5,
+                "heart_rate": 78,
+                "spo2": 96,
+                "temperature_source": "gy614_sensor",
+                "heart_rate_source": "uart8_sensor",
+                "spo2_source": "uart8_sensor",
+                "quality": "approximate",
+                "completion_reason": "core_not_stable",
+                "source": "UART8-vitals-24B+GY-614",
+                "measured_at": "2026-08-13T03:05:00+08:00",
+            }
+        )
+
+        response = VitalsSessionModule(gateway=gateway).get("module-approximate")
+
+        self.assertEqual(response.status, "complete")
+        recorded = VitalsRepository().latest()
+        self.assertIsNotNone(recorded)
+        self.assertEqual(recorded.heart_rate, 78)
+        self.assertEqual(recorded.spo2, 96)
+        self.assertEqual(recorded.measurement_quality, "approximate")
+        self.assertEqual(recorded.completion_reason, "core_not_stable")
 
     def test_legacy_demo_store_adds_and_backfills_fallback_reason(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "legacy-demo-vitals.db"

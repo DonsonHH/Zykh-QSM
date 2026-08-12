@@ -233,8 +233,47 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertEqual(result["temperature_source"], "gy614_sensor")
         self.assertEqual(result["heart_rate_source"], "uart8_sensor")
         self.assertEqual(result["spo2_source"], "demo_fallback")
+        self.assertEqual(result["quality"], "demo_fallback")
+        self.assertEqual(result["completion_reason"], "spo2_not_stable")
 
-    def test_status_fills_missing_heart_rate_and_spo2_with_isolated_demo_values(self) -> None:
+    def test_status_accepts_latest_sensor_values_when_core_signal_is_not_stable(self) -> None:
+        self.handler.status_payload = {
+            "ok": False,
+            "session_id": "session-123",
+            "status": "failed",
+            "hardware_started": True,
+            "heart_rate": 78,
+            "spo2": 96,
+            "temperature": 36.5,
+            "temperature_source": "gy614_sensor",
+            "heart_rate_source": "uart8_sensor",
+            "spo2_source": "uart8_sensor",
+            "stable_core": False,
+            "failure_reason": "core_not_stable",
+            "source": "UART8-vitals-24B+GY-614",
+            "error_message": "心率和血氧读数已出现，但信号不连续。",
+        }
+        with patch(
+            "app.services.qsm_client.settings",
+            SimpleNamespace(
+                qsm_vitals_session_status_path="/api/vitals/session/status",
+                vitals_demo_spo2_fallback=True,
+            ),
+        ):
+            result = self.client.get_vitals_session("session-123")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["heart_rate"], 78)
+        self.assertEqual(result["spo2"], 96)
+        self.assertEqual(result["temperature"], 36.5)
+        self.assertEqual(result["heart_rate_source"], "uart8_sensor")
+        self.assertEqual(result["spo2_source"], "uart8_sensor")
+        self.assertEqual(result["quality"], "approximate")
+        self.assertEqual(result["completion_reason"], "core_not_stable")
+        self.assertIsNone(result["failure_reason"])
+
+    def test_status_fills_missing_heart_rate_and_spo2_with_classified_values(self) -> None:
         self.handler.status_payload = {
             "ok": False,
             "session_id": "session-123",
@@ -273,6 +312,8 @@ class VitalsSessionClientTest(unittest.TestCase):
         self.assertTrue(result["spo2_demo_fallback"])
         self.assertIsNone(result["failure_reason"])
         self.assertEqual(result["demo_fallback_reason"], "no_finger")
+        self.assertEqual(result["completion_reason"], "no_finger")
+        self.assertEqual(result["quality"], "demo_fallback")
 
     def test_status_does_not_mask_no_protocol_frames_with_demo_values(self) -> None:
         self.handler.status_payload = {

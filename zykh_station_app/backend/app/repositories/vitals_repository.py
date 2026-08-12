@@ -34,6 +34,8 @@ class VitalsRecord(BaseModel):
     temperature_source: str = ""
     heart_rate_source: str = ""
     spo2_source: str = ""
+    measurement_quality: str = ""
+    completion_reason: str = ""
 
 
 class VitalsRepository:
@@ -58,9 +60,10 @@ class VitalsRepository:
                   status, source, sensor_model, error_message, measured_at,
                   source_route, inquiry_session_id, attribution_source,
                   service_user_id, service_user_name_snapshot, persona_generation,
-                  temperature_source, heart_rate_source, spo2_source
+                  temperature_source, heart_rate_source, spo2_source,
+                  measurement_quality, completion_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -91,6 +94,8 @@ class VitalsRepository:
                     record.temperature_source,
                     record.heart_rate_source,
                     record.spo2_source,
+                    record.measurement_quality,
+                    record.completion_reason,
                 ),
             )
         return cursor.rowcount > 0
@@ -106,7 +111,9 @@ class VitalsRepository:
                        body_temperature, ambient_temperature,
                        status, source, sensor_model, error_message, measured_at,
                        source_route, inquiry_session_id, attribution_source,
-                       service_user_id, service_user_name_snapshot, persona_generation
+                       service_user_id, service_user_name_snapshot, persona_generation,
+                       temperature_source, heart_rate_source, spo2_source,
+                       measurement_quality, completion_reason
                 FROM vitals_records
                 ORDER BY measured_at DESC
                 LIMIT 1
@@ -148,6 +155,7 @@ class VitalsRepository:
                       AND r.temperature_source='gy614_sensor'
                       AND r.heart_rate_source='uart8_sensor'
                       AND r.spo2_source='uart8_sensor'
+                      AND r.measurement_quality IN ('', 'stable', 'good')
                       AND r.temperature IS NOT NULL AND r.temperature > 0
                       AND r.heart_rate IS NOT NULL AND r.heart_rate > 0
                       AND r.spo2 IS NOT NULL AND r.spo2 > 0
@@ -170,6 +178,7 @@ class VitalsRepository:
                       AND r.temperature_source='gy614_sensor'
                       AND r.heart_rate_source='uart8_sensor'
                       AND r.spo2_source='uart8_sensor'
+                      AND r.measurement_quality IN ('', 'stable', 'good')
                       AND r.temperature IS NOT NULL AND r.temperature > 0
                       AND r.heart_rate IS NOT NULL AND r.heart_rate > 0
                       AND r.spo2 IS NOT NULL AND r.spo2 > 0
@@ -191,7 +200,9 @@ class VitalsRepository:
                        body_temperature, ambient_temperature,
                        status, source, sensor_model, error_message, measured_at,
                        source_route, inquiry_session_id, attribution_source,
-                       service_user_id, service_user_name_snapshot, persona_generation
+                       service_user_id, service_user_name_snapshot, persona_generation,
+                       temperature_source, heart_rate_source, spo2_source,
+                       measurement_quality, completion_reason
                 FROM vitals_records
                 WHERE status IN ('available', 'partial')
                   AND (temperature IS NOT NULL OR heart_rate IS NOT NULL OR spo2 IS NOT NULL)
@@ -235,7 +246,9 @@ class VitalsRepository:
                        body_temperature, ambient_temperature,
                        status, source, sensor_model, error_message, measured_at,
                        source_route, inquiry_session_id, attribution_source,
-                       service_user_id, service_user_name_snapshot, persona_generation
+                       service_user_id, service_user_name_snapshot, persona_generation,
+                       temperature_source, heart_rate_source, spo2_source,
+                       measurement_quality, completion_reason
                 FROM vitals_records
                 WHERE status IN ('available', 'partial')
                   AND {ownership_clause}

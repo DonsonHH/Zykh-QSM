@@ -381,6 +381,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
         temperature: float = 36.5,
         heart_rate: int = 76,
         spo2: int = 98,
+        measurement_quality: str = "",
     ) -> InquiryVitalsRequest:
         vitals_session_id = f"trusted-{session.session_id}"
         VitalsRepository().append(
@@ -401,6 +402,7 @@ class InquiryOrchestratorTest(unittest.TestCase):
                 temperature_source="gy614_sensor",
                 heart_rate_source="uart8_sensor",
                 spo2_source="uart8_sensor",
+                measurement_quality=measurement_quality,
             )
         )
         return InquiryVitalsRequest(
@@ -434,6 +436,30 @@ class InquiryOrchestratorTest(unittest.TestCase):
         self.assertEqual(measurement.inquiry_session_id, session.session_id)
         self.assertEqual(measurement.service_user_id, "")
         self.assertEqual(measurement.persona_generation, "")
+
+    def test_approximate_measurement_is_recorded_but_not_trusted_by_inquiry(self) -> None:
+        service, interpreter = self.service(
+            [case(action="ask", reply="请描述症状持续了多久。")]
+        )
+        session = self.create(service)
+        session.stage = "vitals"
+        session.next_action = "measure_vitals"
+        InquiryRepository().save_session(session)
+        request = self.trusted_vitals_request(
+            session,
+            temperature=36.5,
+            heart_rate=78,
+            spo2=96,
+            measurement_quality="approximate",
+        )
+
+        with self.assertRaisesRegex(ValueError, "不属于本次问询"):
+            service.attach_vitals(session.session_id, request)
+
+        recorded = VitalsRepository().latest()
+        self.assertIsNotNone(recorded)
+        self.assertEqual(recorded.measurement_quality, "approximate")
+        self.assertEqual(interpreter.contexts, [])
 
     def test_orchestrator_rejects_bypassed_failed_demo_without_side_effects(self) -> None:
         service, interpreter = self.service([case(action="analyze")])

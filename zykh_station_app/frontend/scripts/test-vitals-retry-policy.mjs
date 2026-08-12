@@ -24,25 +24,9 @@ try {
     "a fingertip fallback must not be presented as a forehead-temperature reading"
   );
   assert.equal(
-    sessionModule.shouldAutomaticallyRetrySpo2({
-      status: "failed",
-      heart_rate: 74,
-      temperature: 36.6,
-      spo2: null
-    }),
-    true,
-    "a real heart-rate and temperature result may retry missing SpO2 once"
-  );
-  assert.equal(
-    sessionModule.shouldAutomaticallyRetrySpo2({
-      status: "failed",
-      heart_rate: null,
-      temperature: 36.6,
-      spo2: null,
-      failure_reason: "no_finger"
-    }),
-    false,
-    "a no-finger result must remain visible instead of restarting the sensor"
+    typeof sessionModule.shouldAutomaticallyRetrySpo2,
+    "undefined",
+    "terminal sensor results must not trigger a second measurement"
   );
 } finally {
   await vite.close();
@@ -52,6 +36,12 @@ assert.doesNotMatch(
   vitals,
   /shouldAutomaticallyRetryNoFinger/,
   "a no-finger result must remain visible instead of rapidly restarting the sensor"
+);
+const sessionSource = await readFile(`${root}src/modules/vitalsSession.js`, "utf8");
+assert.doesNotMatch(
+  sessionSource,
+  /automaticRetry/,
+  "the removed automatic remeasurement state must not return"
 );
 assert.doesNotMatch(
   vitals,

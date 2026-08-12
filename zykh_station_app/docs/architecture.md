@@ -24,9 +24,10 @@ legacy name-only rows and plans owned by archived people are quarantined with
   `ManualMedicationAccessModule` is a deep application module kept here for
   compatibility with the existing service layout; its public surface is only
   `assess(command)` and `confirm(command)`.
-- `repositories/`: SQLite persistence adapters. Presentation-only fallback vitals
-  use `demo_vitals_records`, a separate audit store with no clinical-history or
-  cloud-sync reader.
+- `repositories/`: SQLite persistence adapters. Approximate and filled terminal
+  vitals use the normal `vitals_records` path, with metric provenance,
+  `measurement_quality` and `completion_reason` carried into cloud sync. The
+  legacy `demo_vitals_records` table remains only for old-row migration.
 - `schemas/`: Pydantic input/output contracts.
 - `core/`: constants and safety language.
 
@@ -49,7 +50,7 @@ The gateway adapter supports:
   before UART/GPIO output, replays the stored result for the same payload and
   never retries an in-flight/ambiguous operation.
 
-Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Communication, startup and device failures are not replaced by presentation data. The optional core-vitals demo fallback applies only after a started session returns a valid real temperature and an eligible hand-signal stabilization failure; every filled metric remains provenance-marked and is stored outside clinical history and sync.
+Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Communication, startup and device failures are not replaced by filled data. The optional core-vitals completion applies only after a started session returns a valid real temperature and an eligible hand-signal stabilization failure. It retains any available sensor readings, fills only missing core metrics, records provenance and quality in `vitals_records`, and follows the normal sync path.
 
 Stage six adds business-facing QSM action endpoints:
 

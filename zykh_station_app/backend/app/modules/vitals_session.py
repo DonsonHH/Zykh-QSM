@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from .. import db
 from ..db import now_text
-from ..repositories.demo_vitals_repository import DemoVitalsRecord, DemoVitalsRepository
 from ..repositories.inquiry_repository import InquiryRepository
 from ..repositories.device_action_repository import DeviceActionRecord, DeviceActionRepository
 from ..repositories.sync_repository import SyncRepository
@@ -191,9 +190,6 @@ class VitalsSessionModule:
             return
         if response.historical_fallback:
             return
-        if VitalsSessionModule._has_demo_provenance(response):
-            VitalsSessionModule._persist_demo_measurement(response)
-            return
         if response.heart_rate is None or response.spo2 is None or response.temperature is None:
             return
 
@@ -227,6 +223,10 @@ class VitalsSessionModule:
             temperature_source=response.temperature_source or "",
             heart_rate_source=response.heart_rate_source or "",
             spo2_source=response.spo2_source or "",
+            measurement_quality=response.quality or "",
+            completion_reason=(
+                response.completion_reason or response.demo_fallback_reason or ""
+            ),
         )
         if not VitalsRepository().append_once(record):
             return
@@ -246,40 +246,6 @@ class VitalsSessionModule:
                     f"{temperature_label} {response.temperature:.1f}℃，体征测量已完成。"
                 ),
                 status="已记录",
-            )
-        )
-
-    @staticmethod
-    def _has_demo_provenance(response: VitalsSessionResponse) -> bool:
-        return bool(
-            response.spo2_demo_fallback
-            or response.heart_rate_source == "demo_fallback"
-            or response.spo2_source == "demo_fallback"
-        )
-
-    @staticmethod
-    def _persist_demo_measurement(response: VitalsSessionResponse) -> None:
-        if response.heart_rate is None or response.spo2 is None or response.temperature is None:
-            return
-        measured_at = response.measured_at or response.updated_at or now_text()
-        DemoVitalsRepository().append_once(
-            DemoVitalsRecord(
-                id=f"demo-vitals-session-{response.session_id}",
-                session_id=response.session_id,
-                temperature=response.temperature,
-                heart_rate=response.heart_rate,
-                spo2=response.spo2,
-                measured_at=measured_at,
-                source_route=response.source_route,
-                inquiry_session_id=response.inquiry_session_id,
-                service_user_id=response.service_user_id,
-                persona_generation=response.persona_generation,
-                temperature_source=response.temperature_source or "",
-                heart_rate_source=response.heart_rate_source or "",
-                spo2_source=response.spo2_source or "",
-                demo_fallback_reason=(
-                    response.demo_fallback_reason or response.failure_reason or ""
-                ),
             )
         )
 
