@@ -156,6 +156,47 @@ class VitalsSessionModuleTest(unittest.TestCase):
         self.assertEqual(SyncRepository().get_status().pending_count, 0)
         self.assertEqual(CloudSyncWorker._build_snapshot()["vitals"], [])
 
+    def test_legacy_demo_store_adds_and_backfills_fallback_reason(self) -> None:
+        legacy_db_path = Path(self.temp_dir.name) / "legacy-demo-vitals.db"
+        with patch("app.db.settings", SimpleNamespace(db_path=legacy_db_path)):
+            with db.connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE demo_vitals_records (
+                      id TEXT PRIMARY KEY,
+                      session_id TEXT NOT NULL UNIQUE,
+                      temperature REAL NOT NULL,
+                      heart_rate INTEGER NOT NULL,
+                      spo2 INTEGER NOT NULL,
+                      measured_at TEXT NOT NULL,
+                      failure_reason TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO demo_vitals_records(
+                      id, session_id, temperature, heart_rate, spo2,
+                      measured_at, failure_reason
+                    ) VALUES ('legacy-demo', 'legacy-session', 36.5, 72, 97,
+                              '2026-08-13T02:45:00+08:00', 'spo2_not_stable')
+                    """
+                )
+
+            db.init_db()
+
+            with db.connect() as conn:
+                columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(demo_vitals_records)")
+                }
+                row = conn.execute(
+                    "SELECT demo_fallback_reason FROM demo_vitals_records "
+                    "WHERE session_id='legacy-session'"
+                ).fetchone()
+            self.assertIn("demo_fallback_reason", columns)
+            self.assertEqual(row["demo_fallback_reason"], "spo2_not_stable")
+
     def test_failed_measurement_keeps_current_values_separate_from_history(self) -> None:
         VitalsRepository().append(
             VitalsRecord(

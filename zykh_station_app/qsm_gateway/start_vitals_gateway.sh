@@ -13,7 +13,18 @@ if [ -f "$PID_FILE" ]; then
   old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   case "$old_pid" in
     ''|*[!0-9]*) ;;
-    *) kill "$old_pid" 2>/dev/null || true ;;
+    *)
+      kill "$old_pid" 2>/dev/null || true
+      count=0
+      while kill -0 "$old_pid" 2>/dev/null && [ "$count" -lt 30 ]; do
+        count=$((count + 1))
+        sleep 0.1
+      done
+      if kill -0 "$old_pid" 2>/dev/null; then
+        kill -KILL "$old_pid" 2>/dev/null || true
+        sleep 0.2
+      fi
+      ;;
   esac
   rm -f "$PID_FILE"
 fi

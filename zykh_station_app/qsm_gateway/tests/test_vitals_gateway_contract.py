@@ -7,6 +7,7 @@ from pathlib import Path
 
 GATEWAY = Path(__file__).resolve().parents[1] / "vitals_gateway.pl"
 READER = Path(__file__).resolve().parents[1] / "read_vitals_uart8.pl"
+STARTER = Path(__file__).resolve().parents[1] / "start_vitals_gateway.sh"
 
 
 class VitalsGatewayContractTest(unittest.TestCase):
@@ -60,6 +61,11 @@ class VitalsGatewayContractTest(unittest.TestCase):
         self.assertNotIn("rand(5)", gateway)
         self.assertIn("spo2_demo_fallback", gateway)
         self.assertIn("spo2_source", gateway)
+
+    def test_restart_waits_for_previous_gateway_to_release_the_port(self) -> None:
+        starter = STARTER.read_text(encoding="utf-8")
+        self.assertIn('while kill -0 "$old_pid"', starter)
+        self.assertIn('kill -KILL "$old_pid"', starter)
 
 
 if __name__ == "__main__":

@@ -397,6 +397,24 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(
+            conn,
+            "demo_vitals_records",
+            "demo_fallback_reason",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        demo_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(demo_vitals_records)").fetchall()
+        }
+        if "failure_reason" in demo_columns:
+            conn.execute(
+                """
+                UPDATE demo_vitals_records
+                SET demo_fallback_reason=failure_reason
+                WHERE demo_fallback_reason='' AND failure_reason!=''
+                """
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS vitals_session_contexts (
