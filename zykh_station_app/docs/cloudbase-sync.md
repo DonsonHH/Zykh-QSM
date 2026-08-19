@@ -22,7 +22,7 @@ SQLite / QSM 外设
 - 今日计划；
 - 体征记录；
 - AI 问询记录；
-- 家庭取药记录。
+- 站点取药记录。
 - 人物—药品安全核查及物理结果（独立 append-only 事件，不属于快照）。
 
 人物同步不是普通的“当前列表”覆盖：Station 会把活动人物和归档 tombstone 一起
@@ -229,7 +229,7 @@ AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提
 终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按 `slot` 升序提供药品；命令字段到 SQLite 与快照字段的对应关系为：
 
 | 命令字段 | SQLite | 小程序快照字段 |
-|---|---|---|
+| --- | --- | --- |
 | `hardware_slot` / `hardwareSlot` / `slot` | `hardware_slot` | `slot`, `hardwareSlot` |
 | `spec` | `spec` | `spec` |
 | `traceCode` / `trace_code` | `trace_code` | `traceCode`, `trace_code` |
