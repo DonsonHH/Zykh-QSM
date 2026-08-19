@@ -129,7 +129,7 @@ class ManualMedicationAccessRepository:
         this final recheck must not turn an available medicine into zero.
         """
         if int(command.quantity) < 1:
-            raise ManualExecutionPreconditionError("取药数量无效，本次柜门未打开。")
+            raise ManualExecutionPreconditionError("取药数量无效，本次分类柜指示灯未亮。")
         db.init_db()
         with db.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -190,7 +190,7 @@ class ManualMedicationAccessRepository:
                 or int(medicine.hardware_slot or 0) != command.expected_hardware_slot
             ):
                 raise ManualExecutionPreconditionError(
-                    "药品仓位映射已经变化，请重新核查。"
+                    "药品逻辑库存身份已经变化，请重新核查。"
                 )
             if (
                 medicine.stock != command.expected_stock
@@ -456,7 +456,7 @@ class ManualMedicationAccessRepository:
                 WHERE check_id=? AND confirm_completed_at=''
                 """,
                 (
-                    "柜门操作已进入执行边界，当前结果待确认，请勿重复取药。",
+                    "分类柜亮灯已进入执行边界，当前结果待确认，请勿重复取药。",
                     completed_at,
                     completed_at,
                     str(row["check_id"]),
@@ -527,7 +527,7 @@ class ManualMedicationAccessRepository:
                 raise ValueError("该安全核查已被使用，请重新确认身份并核查。")
             if not stored.expires_at or stored.expires_at <= consumed_at:
                 raise ValueError("该安全核查已过期，请重新确认身份并核查。")
-            unknown_message = "柜门操作已进入执行边界，当前结果待确认，请勿重复取药。"
+            unknown_message = "分类柜亮灯已进入执行边界，当前结果待确认，请勿重复取药。"
             cursor = conn.execute(
                 """
                 UPDATE medicine_safety_checks
@@ -807,7 +807,7 @@ class ManualMedicationAccessRepository:
             dispense_status=status,
             message=str(
                 values.get("confirm_message")
-                or "柜门结果待现场确认，请勿自动重试。"
+                or "分类柜亮灯结果待现场确认，请勿自动重试。"
             ),
             dispense_record_id=str(values.get("dispense_record_id") or ""),
         )

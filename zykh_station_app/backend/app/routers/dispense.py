@@ -20,7 +20,7 @@ def open_cabinet(request: DispenseOpenRequest) -> DispenseOpenResponse:
     del request
     raise HTTPException(
         status_code=403,
-        detail="直接开柜接口已停用；请使用现场安全取药确认或管理员调试台。",
+        detail="旧版直接开柜接口已停用；请使用现场安全取药确认点亮对应分类柜。",
     )
 
 

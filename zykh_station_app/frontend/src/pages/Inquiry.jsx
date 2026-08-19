@@ -23,6 +23,7 @@ import {
 } from "../api/inquiry.js";
 import { stopAudioPlayback } from "../api/audio.js";
 import { confirmMedicineInventory } from "../api/medicines.js";
+import { turnOffCabinetLight } from "../api/qsm.js";
 import { loadServiceUsers } from "../api/records.js";
 import { InquiryChatStep } from "../components/InquiryChatStep.jsx";
 import { InquiryIdentityGate } from "../components/InquiryIdentityGate.jsx";
@@ -30,6 +31,7 @@ import { InquiryInformationReview } from "../components/InquiryInformationReview
 import { InquiryResultStep } from "../components/InquiryResultStep.jsx";
 import { activateIdentity, useFaceIdentity } from "../hooks/useFaceIdentity.js";
 import { chiefComplaint } from "../utils/inquiryFacts.js";
+import { normalizeCabinetLightMessage } from "../utils/cabinetLightPresentation.js";
 import {
   clearInquirySession,
   INQUIRY_BACKEND_SESSION_KEY,
@@ -45,6 +47,11 @@ function readJson(key) {
   } catch {
     return null;
   }
+}
+
+function treatmentRequestMayHaveReachedHardware(error) {
+  const responseStatus = Number(error?.status);
+  return !Number.isInteger(responseStatus) || responseStatus >= 500;
 }
 
 function normalizeUser(user) {
@@ -87,6 +94,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   const openingTreatmentRef = useRef(false);
   const inventoryConfirmationBusyRef = useRef(false);
   const confirmedInventoryRecordsRef = useRef(new Set());
+  const cabinetLightMayBeOnRef = useRef(false);
   const attachingVitalsRef = useRef(false);
   const vitalsLaunchTimerRef = useRef(null);
   const launchedVitalsRequestRef = useRef("");
@@ -157,6 +165,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       mountedRef.current = false;
       window.clearTimeout(vitalsLaunchTimerRef.current);
       stopAudioPlayback().catch(() => null);
+      if (cabinetLightMayBeOnRef.current) {
+        cabinetLightMayBeOnRef.current = false;
+        turnOffCabinetLight().catch(() => null);
+      }
       if (resetOnResultLeaveRef.current) clearInquirySession();
     };
   }, []);
@@ -182,18 +194,28 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
 
   useEffect(() => {
     const item = session?.action_items?.[session.action_items.length - 1];
+    const inventoryAlreadyConfirmed = item?.inventory_confirmation_required
+      && item?.record_id
+      && confirmedInventoryRecordsRef.current.has(item.record_id);
     if (
-      !item?.ok
+      (!item?.ok && !item?.result_unknown)
       || item.dry_run
-      || !item.inventory_confirmation_required
-      || confirmedInventoryRecordsRef.current.has(item.record_id)
+      || inventoryAlreadyConfirmed
     ) return;
-    setInventoryConfirmation((current) => current?.record_id === item.record_id ? current : {
+    const confirmationKey = item.record_id
+      || `${session.session_id}:${session.action_items.length - 1}:${item.medicine_id}`;
+    setInventoryConfirmation((current) => current?._confirmation_key === confirmationKey ? current : {
       ...item,
+      name: item.medicine_name || item.name,
+      _confirmation_key: confirmationKey,
+      confirmation_mode: item.result_unknown
+        ? "result_unknown"
+        : item.inventory_confirmation_required ? "inventory" : "pickup",
       option_id: session.selected_option_id,
       next_item_index: Number(session.action_progress_index || 0),
-      should_continue: session.action_status === "opening"
+      should_continue: Boolean(item.ok && !item.result_unknown && session.action_status === "opening")
     });
+    cabinetLightMayBeOnRef.current = true;
     setInventoryConfirmationError("");
   }, [session]);
 
@@ -369,24 +391,33 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         const data = await confirmInquiryTreatment(sessionId, optionId, expectedItemIndex);
         setTreatmentAction(data);
         setSession(data.session);
-        notify(data.message || "方案对应药柜已处理");
+        notify(normalizeCabinetLightMessage(data.message || "方案对应分类柜亮灯引导已处理"));
         const completedItem = data.items?.[expectedItemIndex];
+        if (completedItem?.result_unknown) {
+          setTreatmentAction({ ...data, status: "result_unknown" });
+        }
         if (completedItem?.ok && !completedItem.dry_run && completedItem.medicine_id) {
+          cabinetLightMayBeOnRef.current = true;
           window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
             detail: { medicine_id: completedItem.medicine_id }
           }));
         }
         if (
-          completedItem?.ok
+          completedItem?.result_unknown
+          || (completedItem?.ok
           && !completedItem.dry_run
-          && completedItem.inventory_confirmation_required
+          && completedItem.medicine_id)
         ) {
           setInventoryConfirmation({
             ...completedItem,
+            name: completedItem.medicine_name || completedItem.name,
+            confirmation_mode: completedItem.result_unknown ? "result_unknown"
+              : completedItem.inventory_confirmation_required ? "inventory" : "pickup",
             option_id: optionId,
             next_item_index: Number(data.completed_count || expectedItemIndex + 1),
-            should_continue: data.status === "opening"
+            should_continue: Boolean(completedItem.ok && !completedItem.result_unknown && data.status === "opening")
           });
+          cabinetLightMayBeOnRef.current = true;
           setInventoryConfirmationError("");
           break;
         }
@@ -395,8 +426,33 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         await new Promise((resolve) => window.setTimeout(resolve, 1800));
       }
     } catch (error) {
-      setTreatmentAction({ status: "failed", message: error.message || "开柜未完成，请联系现场协助人员" });
-      notify(error.message || "开柜未完成，请联系现场协助人员");
+      const message = normalizeCabinetLightMessage(error.message || "分类柜亮灯未完成，请联系现场协助人员");
+      if (treatmentRequestMayHaveReachedHardware(error)) {
+        const option = session?.treatment_options?.find((value) => value.option_id === optionId);
+        const medicine = option?.medicines?.[Number(initialItemIndex || 0)] || {};
+        cabinetLightMayBeOnRef.current = true;
+        setTreatmentAction({
+          status: "result_unknown",
+          message: `${message}。亮灯结果待现场确认，请勿重复操作。`,
+          completed_count: Number(initialItemIndex || 0),
+          total_count: Number(option?.medicines?.length || 0)
+        });
+        setInventoryConfirmation({
+          ...medicine,
+          medicine_id: medicine.id || "",
+          medicine_name: medicine.name || "本项药品",
+          confirmation_mode: "result_unknown",
+          option_id: optionId,
+          next_item_index: Number(initialItemIndex || 0),
+          should_continue: false,
+          result_unknown: true
+        });
+        setInventoryConfirmationError("");
+        notify(`${message}。请勿重复操作，现场确认后关闭分类柜指示灯。`);
+        return;
+      }
+      setTreatmentAction({ status: "failed", message });
+      notify(message);
       loadInquirySession(sessionId)
         .then((latest) => {
           setSession(latest);
@@ -407,7 +463,7 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
       openingTreatmentRef.current = false;
       setOpeningTreatment(false);
     }
-  }, [notify, sessionId]);
+  }, [notify, session, sessionId]);
 
   const handleTreatmentConfirm = useCallback(async (optionId) => {
     await runTreatmentSequence(
@@ -417,37 +473,47 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     );
   }, [runTreatmentSequence, session?.action_progress_index]);
 
-  const handleInventoryConfirmation = useCallback(async (observation) => {
+  const handleInventoryConfirmation = useCallback(async (observation = "") => {
     const pending = inventoryConfirmation;
     if (!pending || inventoryConfirmationBusyRef.current) return;
-    if (!pending.record_id) {
-      setInventoryConfirmationError("缺少本次取药记录，无法确认库存；请联系值守员核对。");
-      return;
-    }
     inventoryConfirmationBusyRef.current = true;
     setInventoryConfirmationBusy(true);
     setInventoryConfirmationError("");
     try {
-      const response = await confirmMedicineInventory(pending.medicine_id, {
-        request_id: buildInquiryInventoryRequestId(pending.record_id),
-        dispense_record_id: pending.record_id,
-        observation
-      });
-      confirmedInventoryRecordsRef.current.add(pending.record_id);
-      window.dispatchEvent(new CustomEvent("zykh:medicine-updated", {
-        detail: {
-          id: pending.medicine_id,
-          name: pending.medicine_name,
-          slot: pending.slot,
-          stock: response.stock,
-          inventory_state: response.inventory_state,
-          inventory_confirmed_at: response.inventory_confirmed_at,
-          last_inventory_request_id: buildInquiryInventoryRequestId(pending.record_id),
-          last_inventory_dispense_record_id: pending.record_id
+      await turnOffCabinetLight();
+      cabinetLightMayBeOnRef.current = false;
+      const confirmationMode = pending.confirmation_mode
+        || (pending.inventory_confirmation_required ? "inventory" : "pickup");
+      if (confirmationMode === "inventory") {
+        if (!pending.record_id) {
+          setInventoryConfirmationError("分类柜指示灯已关闭，但缺少本次取药记录，无法确认库存；请联系值守员核对。");
+          return;
         }
-      }));
+        const response = await confirmMedicineInventory(pending.medicine_id, {
+          request_id: buildInquiryInventoryRequestId(pending.record_id),
+          dispense_record_id: pending.record_id,
+          observation
+        });
+        confirmedInventoryRecordsRef.current.add(pending.record_id);
+        window.dispatchEvent(new CustomEvent("zykh:medicine-updated", {
+          detail: {
+            id: pending.medicine_id,
+            name: pending.medicine_name,
+            slot: pending.slot,
+            stock: response.stock,
+            inventory_state: response.inventory_state,
+            inventory_confirmed_at: response.inventory_confirmed_at,
+            last_inventory_request_id: buildInquiryInventoryRequestId(pending.record_id),
+            last_inventory_dispense_record_id: pending.record_id
+          }
+        }));
+      }
       setInventoryConfirmation(null);
-      notify(response.message || (observation === "DEPLETED" ? "已记录药品用完" : "已确认柜内还有药"));
+      notify(confirmationMode === "result_unknown"
+        ? "已发送分类柜关灯指令；本次亮灯结果不再重试"
+        : confirmationMode === "pickup"
+          ? "已确认取药并关闭分类柜指示灯"
+          : observation === "DEPLETED" ? "已记录药品用完" : "已确认分类柜内还有药");
       if (pending.should_continue) {
         await runTreatmentSequence(
           pending.option_id,
@@ -456,7 +522,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
         );
       }
     } catch (error) {
-      setInventoryConfirmationError(error.message || "库存确认未保存，请重新选择或联系值守员核对");
+      setInventoryConfirmationError(normalizeCabinetLightMessage(
+        error.message || "指示灯关闭或库存确认未完成，请重试或联系值守员核对"
+      ));
     } finally {
       inventoryConfirmationBusyRef.current = false;
       setInventoryConfirmationBusy(false);
@@ -464,6 +532,10 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
   }, [inventoryConfirmation, notify, runTreatmentSequence]);
 
   function resetFlow() {
+    if (cabinetLightMayBeOnRef.current) {
+      cabinetLightMayBeOnRef.current = false;
+      turnOffCabinetLight().catch(() => null);
+    }
     creatingRef.current = false;
     clearInquirySession();
     setSession(null);
@@ -487,6 +559,14 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
     stopAudioPlayback().catch(() => null);
     clearFaceIdentity();
     window.setTimeout(() => identifyFace({ force: true }).catch(() => null), 220);
+  }
+
+  function returnHome() {
+    if (cabinetLightMayBeOnRef.current) {
+      cabinetLightMayBeOnRef.current = false;
+      turnOffCabinetLight().catch(() => null);
+    }
+    onNavigate("home");
   }
 
   const resultReady = session?.stage === "result";
@@ -610,8 +690,9 @@ export function Inquiry({ notify, onNavigate, networkStatus }) {
             onConfirmTreatment={handleTreatmentConfirm}
             onInventoryHasStock={() => handleInventoryConfirmation("HAS_REMAINING")}
             onInventoryDepleted={() => handleInventoryConfirmation("DEPLETED")}
+            onCabinetLightOff={() => handleInventoryConfirmation()}
             onRestart={resetFlow}
-            onHome={() => onNavigate("home")}
+            onHome={returnHome}
           />
         ) : session ? (
           <InquiryChatStep

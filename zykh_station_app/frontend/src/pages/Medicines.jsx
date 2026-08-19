@@ -6,6 +6,8 @@ import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
+import { projectMedicinesToCabinets } from "../utils/cabinetV2.js";
+import { normalizeCabinetLightMessage } from "../utils/cabinetLightPresentation.js";
 import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
 
 function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
@@ -145,6 +147,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const initialMedicineView = initialParams.get("medicineView") === "cabinet" ? "cabinet" : "list";
   const initialMedicineId = initialParams.get("medicineId");
   const [medicines, setMedicines] = useState([]);
+  const [cabinets, setCabinets] = useState([]);
   const [selectedMedicine, setSelectedMedicine] = useState(null);
   const [confirmMedicine, setConfirmMedicine] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -161,7 +164,9 @@ export function Medicines({ notify, focus, onNavigate }) {
     setLoadError("");
     loadMedicines()
       .then((data) => {
-        const loadedMedicines = data.medicines || [];
+        const loadedCabinets = data.cabinets || [];
+        const loadedMedicines = projectMedicinesToCabinets(data.medicines || [], loadedCabinets);
+        setCabinets(loadedCabinets);
         setMedicines(loadedMedicines);
         setSelectedMedicine(
           loadedMedicines.find((medicine) => medicine.id === initialMedicineId) || loadedMedicines[0] || null
@@ -180,17 +185,18 @@ export function Medicines({ notify, focus, onNavigate }) {
     const updateInventory = (event) => {
       const updated = event.detail;
       if (!updated?.id) return;
-      setMedicines((items) => items.map((item) => item.id === updated.id ? updated : item));
-      setSelectedMedicine((current) => current?.id === updated.id ? updated : current);
+      const projected = projectMedicinesToCabinets([updated], cabinets)[0];
+      setMedicines((items) => items.map((item) => item.id === projected.id ? projected : item));
+      setSelectedMedicine((current) => current?.id === projected.id ? projected : current);
       notify(
         updated.inventory_state === "DEPLETED"
-          ? `${updated.hardware_slot || updated.slot}号仓已标记为缺药`
-          : `${updated.hardware_slot || updated.slot}号仓库存已确认`
+          ? `${projected.cabinet_id}号分类柜的${updated.name}已标记为缺药`
+          : `${projected.cabinet_id}号分类柜的${updated.name}库存已确认`
       );
     };
     window.addEventListener("zykh:medicine-updated", updateInventory);
     return () => window.removeEventListener("zykh:medicine-updated", updateInventory);
-  }, [notify]);
+  }, [cabinets, notify]);
 
   useEffect(() => {
     const refreshDispenseHistory = (event) => {
@@ -198,7 +204,7 @@ export function Medicines({ notify, focus, onNavigate }) {
       if (!medicineId) return;
       loadMedicine(medicineId)
         .then((response) => {
-          const updated = response.medicine;
+          const updated = projectMedicinesToCabinets([response.medicine], cabinets)[0];
           if (!updated?.id) return;
           setMedicines((items) => items.map((item) => item.id === updated.id ? updated : item));
           setSelectedMedicine((current) => current?.id === updated.id ? updated : current);
@@ -209,7 +215,7 @@ export function Medicines({ notify, focus, onNavigate }) {
     };
     window.addEventListener("zykh:dispense-recorded", refreshDispenseHistory);
     return () => window.removeEventListener("zykh:dispense-recorded", refreshDispenseHistory);
-  }, []);
+  }, [cabinets]);
 
   useEffect(() => {
     if (!focus || medicines.length === 0) {
@@ -251,6 +257,16 @@ export function Medicines({ notify, focus, onNavigate }) {
   }, [selectedMedicine]);
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
+  const unassignedCount = useMemo(
+    () => medicines.filter((medicine) => medicine.cabinet_unassigned || !medicine.cabinet_id).length,
+    [medicines]
+  );
+  const stockedCabinetCount = useMemo(
+    () => cabinets.filter((cabinet) => cabinet.medicine_ids.some(
+      (medicineId) => medicines.some((medicine) => medicine.id === medicineId && medicine.stock > 0)
+    )).length,
+    [cabinets, medicines]
+  );
 
   function openConfirm() {
     if (!detailMedicine) {
@@ -284,9 +300,10 @@ export function Medicines({ notify, focus, onNavigate }) {
     setModalError("");
     return confirmManualMedication(payload)
       .then((data) => {
-        notify(data.message);
+        const message = normalizeCabinetLightMessage(data.message);
+        notify(message);
         if (data.dispense_status === "DISPENSED") {
-          setModalResult(data.message);
+          setModalResult(message);
           window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {
             detail: { medicine_id: confirmMedicine?.id || payload.medicine_id }
           }));
@@ -302,25 +319,27 @@ export function Medicines({ notify, focus, onNavigate }) {
 
   return (
     <main className="medicines-page">
-      <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""}`}>
+      <section className={`medicines-main-panel ${viewMode === "cabinet" ? "cabinet-mode" : ""} ${unassignedCount ? "has-unassigned" : ""}`}>
         <div className="medicines-heading">
-          <h2 className="page-entry-cue">家用药品</h2>
+          <h2 className="page-entry-cue">药品与分类柜</h2>
           <div className="medicines-heading-actions">
-            <span className="medicines-stock-summary">{loading ? "读取中" : `${stockedCount}/23 仓`}</span>
+            <span className="medicines-stock-summary">
+              {loading ? "读取中" : `${stockedCabinetCount}/3 分类柜 · ${stockedCount} 种在库`}
+            </span>
             <div className="medicine-view-toggle" aria-label="药品显示方式">
               <button
                 type="button"
                 className={viewMode === "list" ? "active" : ""}
                 onClick={() => setViewMode("list")}
               >
-                名称
+                药品
               </button>
               <button
                 type="button"
                 className={viewMode === "cabinet" ? "active" : ""}
                 onClick={() => setViewMode("cabinet")}
               >
-                编号
+                分类柜
               </button>
             </div>
             <button
@@ -334,15 +353,22 @@ export function Medicines({ notify, focus, onNavigate }) {
           </div>
         </div>
 
+        {unassignedCount ? (
+          <div className="medicine-cabinet-warning" role="alert">
+            <strong>{unassignedCount} 种药品尚未配置分类柜，已禁止取药。</strong>
+            <span>请先完成分类柜映射；可切换到“药品”列表查看这些记录。</span>
+          </div>
+        ) : null}
+
         {loading ? (
           <div className="medicine-loading-state" role="status">
             <LoaderCircle className="localized-loader" size={36} aria-hidden="true" />
-            <strong>正在读取家用药品</strong>
+            <strong>正在读取本地药品</strong>
             <small>请稍候</small>
           </div>
         ) : loadError ? (
           <div className="medicine-loading-state error" role="alert">
-            <strong>药柜数据读取失败</strong>
+            <strong>本地药品读取失败</strong>
             <small>{loadError}</small>
           </div>
         ) : viewMode === "list" ? (
@@ -353,10 +379,10 @@ export function Medicines({ notify, focus, onNavigate }) {
           />
         ) : (
           <CabinetSlotMap
+            cabinets={cabinets}
             medicines={medicines}
             selectedMedicine={selectedMedicine}
             onSelect={setSelectedMedicine}
-            notify={notify}
           />
         )}
 

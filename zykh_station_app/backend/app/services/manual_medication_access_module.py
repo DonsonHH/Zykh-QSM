@@ -244,7 +244,7 @@ class ManualMedicationAccessModule:
             return self.repository.complete_confirm(
                 check_id=check.check_id,
                 dispense_status="RESULT_UNKNOWN",
-                message="柜门结果待现场确认，请勿自动重试。",
+                message="分类柜亮灯结果待现场确认，请勿自动重试。",
                 dispense_record_id="",
                 completed_at=self._clock().strftime(_TIMESTAMP_FORMAT),
             )
@@ -297,7 +297,7 @@ class ManualMedicationAccessModule:
         return (
             "CHECK_FAILED",
             [self._fallback_precondition_reason(fallback_message)],
-            f"{fallback_message.rstrip('。')}；本次柜门未打开。",
+            f"{fallback_message.rstrip('。')}；本次分类柜指示灯未亮。",
         )
 
     def _evaluate_final_recheck(
@@ -337,7 +337,7 @@ class ManualMedicationAccessModule:
             return (
                 "CHECK_FAILED",
                 ["PROFILE_GENERATION_MISMATCH"],
-                "人物资料已经更新，请重新确认身份并核查；本次柜门未打开。",
+                "人物资料已经更新，请重新确认身份并核查；本次分类柜指示灯未亮。",
             )
         if (
             medicine is None
@@ -348,16 +348,16 @@ class ManualMedicationAccessModule:
         ):
             if medicine is not None and medicine.stock <= 0:
                 reason_code = "OUT_OF_STOCK"
-                snapshot_message = "当前库存不足，请重新核查；本次柜门未打开。"
+                snapshot_message = "当前库存不足，请重新核查；本次分类柜指示灯未亮。"
             elif medicine is not None and medicine.stock != check.stock:
                 reason_code = "MEDICINE_DATA_UNREVIEWED"
-                snapshot_message = "药品库存记录已经变化，请重新核查；本次柜门未打开。"
+                snapshot_message = "药品库存记录已经变化，请重新核查；本次分类柜指示灯未亮。"
             elif medicine is not None and int(medicine.hardware_slot or 0) != check.hardware_slot:
                 reason_code = "MEDICINE_DATA_UNREVIEWED"
-                snapshot_message = "药品仓位映射已经变化，请重新核查；本次柜门未打开。"
+                snapshot_message = "药品逻辑库存身份已经变化，请重新核查；本次分类柜指示灯未亮。"
             else:
                 reason_code = "MEDICINE_DATA_UNREVIEWED"
-                snapshot_message = "药品身份或安全资料已经变化，请重新核查；本次柜门未打开。"
+                snapshot_message = "药品身份或安全资料已经变化，请重新核查；本次分类柜指示灯未亮。"
             return (
                 "CHECK_FAILED",
                 [reason_code],
@@ -393,7 +393,7 @@ class ManualMedicationAccessModule:
             return (
                 "CHECK_FAILED",
                 ["PROFILE_UNAVAILABLE"],
-                "未找到可用于核查的个人健康档案，本次柜门未打开。",
+                "未找到可用于核查的个人健康档案，本次分类柜指示灯未亮。",
             )
         profile_complete = (
             self._has_auditable_medical_history(person.medical_conditions)
@@ -407,19 +407,19 @@ class ManualMedicationAccessModule:
             return (
                 "CHECK_FAILED",
                 ["MEDICINE_DATA_UNREVIEWED"],
-                "药品身份或仓位资料不完整，本次柜门未打开。",
+                "药品身份或逻辑库存资料不完整，本次分类柜指示灯未亮。",
             )
         if current_fingerprint != command.expected_review_fingerprint:
             return (
                 "CHECK_FAILED",
                 ["MEDICINE_DATA_UNREVIEWED"],
-                "药品身份或安全资料已经变化，请重新核对；本次柜门未打开。",
+                "药品身份或安全资料已经变化，请重新核对；本次分类柜指示灯未亮。",
             )
         if not medicine.package_verified:
             return (
                 "CHECK_FAILED",
                 ["PACKAGE_UNVERIFIED"],
-                "该仓位包装信息尚未核验，本次柜门未打开。",
+                "该药品包装信息尚未核验，本次分类柜指示灯未亮。",
             )
         if (
             medicine.safety_review_status != "reviewed"
@@ -430,25 +430,25 @@ class ManualMedicationAccessModule:
             return (
                 "CHECK_FAILED",
                 ["MEDICINE_DATA_UNREVIEWED"],
-                "该药品安全资料尚未完成核验，本次柜门未打开。",
+                "该药品安全资料尚未完成核验，本次分类柜指示灯未亮。",
             )
         if not self._has_known_expiry(medicine.expire_date):
             return (
                 "CHECK_FAILED",
                 ["MEDICINE_DATA_UNREVIEWED"],
-                "该药品有效期尚未完成核验，本次柜门未打开。",
+                "该药品有效期尚未完成核验，本次分类柜指示灯未亮。",
             )
         if MedicineKnowledgeRepository.is_expired(medicine.expire_date):
             return (
                 "BLOCKED",
                 ["MEDICINE_EXPIRED"],
-                f"{medicine.name}已过有效期，本次已阻止取药，柜门未打开。",
+                f"{medicine.name}已过有效期，本次已阻止取药，分类柜指示灯未亮。",
             )
         if medicine.stock <= 0:
             return (
                 "CHECK_FAILED",
                 ["OUT_OF_STOCK"],
-                "当前库存不足，本次柜门未打开。",
+                "当前库存不足，本次分类柜指示灯未亮。",
             )
 
         block_reason_codes: list[str] = []
@@ -477,14 +477,14 @@ class ManualMedicationAccessModule:
             return (
                 "BLOCKED",
                 block_reason_codes,
-                f"{'；'.join(block_messages)}；本次已阻止取药，柜门未打开。",
+                f"{'；'.join(block_messages)}；本次已阻止取药，分类柜指示灯未亮。",
             )
 
         if not profile_complete:
             return (
                 "CHECK_FAILED",
                 ["PROFILE_UNAVAILABLE"],
-                "个人病史、当前用药或过敏结论不完整，本次柜门未打开。",
+                "个人病史、当前用药或过敏结论不完整，本次分类柜指示灯未亮。",
             )
 
         return (

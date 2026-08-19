@@ -158,16 +158,16 @@ class RecordsService:
         )
         if result_unknown:
             return (
-                "开柜结果待现场确认",
-                "开柜结果未知，请现场核对柜门和药品，勿重复执行",
+                "分类柜亮灯结果待现场确认",
+                "亮灯结果未知，请现场核对指示灯和药品，勿重复执行",
             )
         if session.action_status == "partial":
             return (
-                "部分柜门已完成，其余柜门未完成",
-                "取药方案仅部分完成，请现场核对未完成柜门",
+                "部分分类柜已完成亮灯，其余步骤未完成",
+                "取药方案仅部分完成，请现场核对未完成的亮灯步骤",
             )
         if session.action_status == "failed":
-            return "柜门未完成", "开柜执行失败，本次取药未完成"
+            return "分类柜亮灯未完成", "分类柜亮灯执行失败，本次取药未完成"
         return "", ""
 
     @staticmethod
@@ -704,7 +704,7 @@ class RecordsService:
                 (state, db.now_text(), plan_id, operation_id),
             ).rowcount
         if updated != 1:
-            raise ValueError("计划取药动作已经变化，请勿重复开柜")
+            raise ValueError("计划取药动作已经变化，请勿重复发起分类柜亮灯")
 
     def complete_today_plan(
         self,
@@ -741,7 +741,7 @@ class RecordsService:
                     ),
                 ).rowcount
                 if updated != 1:
-                    raise ValueError("计划取药动作已经变化，请勿重复开柜")
+                    raise ValueError("计划取药动作已经变化，请勿重复发起分类柜亮灯")
         else:
             self.validate_dispense_plan(plan_id, medicine_id, service_user_id)
             with db.connect() as conn:

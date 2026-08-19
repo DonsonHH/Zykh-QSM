@@ -20,6 +20,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
 LOCAL_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
 LOCAL_STATION_PATCH="$REPO_ROOT/zykh_station_app/qsm_gateway/patch_station_gateway.pl"
+LOCAL_CABINET_LIGHT_PROTOCOL="$REPO_ROOT/zykh_station_app/qsm_gateway/lib/Zykh/CabinetLightProtocol.pm"
 LOCAL_VITALS_UART="$REPO_ROOT/zykh_station_app/qsm_gateway/read_vitals_uart8.pl"
 LOCAL_VITALS_GATEWAY="$REPO_ROOT/zykh_station_app/qsm_gateway/vitals_gateway.pl"
 LOCAL_VITALS_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_vitals_gateway.sh"
@@ -47,6 +48,7 @@ fail() {
 
 [ -f "$LOCAL_START" ] || fail "找不到外设网关启动脚本：$LOCAL_START"
 [ -f "$LOCAL_STATION_PATCH" ] || fail "找不到外设网关稳定性补丁：$LOCAL_STATION_PATCH"
+[ -f "$LOCAL_CABINET_LIGHT_PROTOCOL" ] || fail "找不到分类柜灯光协议模块：$LOCAL_CABINET_LIGHT_PROTOCOL"
 [ -f "$LOCAL_VITALS_UART" ] || fail "找不到 UART8 体征读取器：$LOCAL_VITALS_UART"
 [ -f "$LOCAL_VITALS_GATEWAY" ] || fail "找不到体征会话网关：$LOCAL_VITALS_GATEWAY"
 [ -f "$LOCAL_VITALS_START" ] || fail "找不到体征会话启动脚本：$LOCAL_VITALS_START"
@@ -74,13 +76,14 @@ else
 fi
 
 log "部署 UART8 体征适配到现有外设网关"
-$ADB_PREFIX shell "mkdir -p '$QSM_HOME/scripts' '$QSM_HOME/data'" >/dev/null || fail "创建板端目录失败"
+$ADB_PREFIX shell "mkdir -p '$QSM_HOME/scripts/Zykh' '$QSM_HOME/data'" >/dev/null || fail "创建板端目录失败"
 $ADB_PREFIX push "$LOCAL_HOST_TETHER" "$QSM_HOME/scripts/start_host_tether.sh" >/dev/null || fail "推送主机网络共享脚本失败"
 $ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_host_tether.sh'" >/dev/null || fail "设置主机网络共享脚本权限失败"
 $ADB_PREFIX shell "test -f '$QSM_HOME/server.pl'" >/dev/null 2>&1 \
   || fail "板端缺少 $QSM_HOME/server.pl；请先部署外设网关，再安装 UART8 适配。"
 $ADB_PREFIX push "$LOCAL_START" "$QSM_HOME/scripts/start_station_gateway.sh" >/dev/null || fail "推送外设网关启动脚本失败"
 $ADB_PREFIX push "$LOCAL_STATION_PATCH" "$QSM_HOME/scripts/patch_station_gateway.pl" >/dev/null || fail "推送外设网关稳定性补丁失败"
+$ADB_PREFIX push "$LOCAL_CABINET_LIGHT_PROTOCOL" "$QSM_HOME/scripts/Zykh/CabinetLightProtocol.pm" >/dev/null || fail "推送分类柜灯光协议模块失败"
 $ADB_PREFIX push "$LOCAL_VITALS_UART" "$QSM_HOME/scripts/read_vitals_uart8.pl" >/dev/null || fail "推送 UART8 体征读取器失败"
 $ADB_PREFIX shell "chmod +x '$QSM_HOME/scripts/start_station_gateway.sh' '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/scripts/read_vitals_uart8.pl'; perl '$QSM_HOME/scripts/patch_station_gateway.pl' '$QSM_HOME/server.pl'; QSM_HOME='$QSM_HOME' PORT='$DEVICE_PORT' sh '$QSM_HOME/scripts/start_station_gateway.sh'" >/dev/null \
   || fail "重启板端网关失败"

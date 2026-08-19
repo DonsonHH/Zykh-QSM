@@ -49,17 +49,31 @@ class Medicine(BaseModel):
     last_inventory_dispense_record_id: str = ""
 
 
+class MedicineCabinet(BaseModel):
+    id: int = Field(ge=1, le=3)
+    label: str
+    description: str
+    medicine_ids: list[str] = Field(default_factory=list)
+
+
+class LocalMedicine(Medicine):
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    cabinet_label: str = ""
+    cabinet_description: str = ""
+
+
 class MedicineListResponse(BaseModel):
     ok: bool = True
     total: int
-    warehouse_total: int = 23
+    warehouse_total: int = 3
     categories: list[str]
-    medicines: list[Medicine]
+    cabinets: list[MedicineCabinet] = Field(default_factory=list)
+    medicines: list[LocalMedicine]
 
 
 class MedicineDetailResponse(BaseModel):
     ok: bool = True
-    medicine: Medicine
+    medicine: LocalMedicine
 
 
 class MedicineUpdateRequest(BaseModel):
@@ -179,6 +193,8 @@ class MedicineScanResult(BaseModel):
     quantity: str | None = None
     expire_date: str | None = None
     slot: str | None = None
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    cabinet_label: str = ""
     source: str = "local"
     error_message: str | None = None
 
@@ -202,7 +218,7 @@ class MedicineScanRegisterResponse(BaseModel):
     ok: bool
     created: bool
     message: str
-    medicine: Medicine | None = None
+    medicine: LocalMedicine | None = None
 
 
 class MedicineVisualRecognizeRequest(BaseModel):

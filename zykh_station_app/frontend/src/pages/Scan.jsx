@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, BadgeCheck, Camera, LoaderCircle, PackagePlus, Pill, ScanLine } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Camera, LoaderCircle, PackageCheck, Pill, ScanLine } from "lucide-react";
 import { loadQsmCapabilities, registerScannedMedicine, scanMedicine } from "../api/qsm.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
 
@@ -66,7 +66,7 @@ export function Scan({ notify, onNavigate }) {
               lastCodeRef.current = data.barcode;
               applyScanResult(data, data.barcode);
               setLiveStatus("matched");
-              setLiveMessage("已匹配家庭药柜药品，请人工核验。");
+              setLiveMessage("已匹配本地分类柜药品，请人工核验。");
             })
             .catch((error) => {
               setLiveStatus("preview");
@@ -93,6 +93,8 @@ export function Scan({ notify, onNavigate }) {
         quantity: "--",
         expire_date: "--",
         slot: "--",
+        cabinet_id: null,
+        cabinet_label: "",
         source: data.source || "local"
       });
       notify(data.error_message || "条码未匹配，请人工核验");
@@ -125,7 +127,7 @@ export function Scan({ notify, onNavigate }) {
     })
       .then((data) => {
         if (!data.ok) {
-          notify(data.message || "录入失败，请在药品页核对空仓");
+          notify(data.message || "录入失败，请在药品页核对药品档案");
           return;
         }
         setResult({
@@ -133,11 +135,13 @@ export function Scan({ notify, onNavigate }) {
           medicine_id: data.medicine?.id || result.medicine_id,
           name: data.medicine?.name || result.name,
           slot: data.medicine?.hardware_slot || data.medicine?.slot || result.slot,
+          cabinet_id: data.medicine?.cabinet_id ?? result.cabinet_id,
+          cabinet_label: data.medicine?.cabinet_label || result.cabinet_label,
           quantity: data.medicine ? `${data.medicine.stock}${data.medicine.unit}` : result.quantity,
           expire_date: data.medicine?.expire_date || result.expire_date,
           match_percent: result.match_percent ?? (data.created ? 88 : 99)
         });
-        notify(data.message || "已录入药柜");
+        notify(data.message || "已找到现有本地药品档案");
         if (data.medicine?.id && onNavigate) {
           window.setTimeout(() => onNavigate("medicines", { medicineId: data.medicine.id }), 480);
         }
@@ -225,8 +229,12 @@ export function Scan({ notify, onNavigate }) {
                 <strong>{result.quantity || "--"}</strong>
               </article>
               <article>
-                <span>仓位</span>
-                <strong>{result.slot || "--"}</strong>
+                <span>所属分类柜</span>
+                <strong>
+                  {result.cabinet_id
+                    ? `${result.cabinet_id}号 · ${result.cabinet_label || "分类柜"}`
+                    : "待配置"}
+                </strong>
               </article>
             </div>
           </>
@@ -254,8 +262,8 @@ export function Scan({ notify, onNavigate }) {
           >
             {registering
               ? <LoaderCircle className="localized-loader" size={24} aria-hidden="true" />
-              : <PackagePlus size={24} aria-hidden="true" />}
-            <span>{registering ? "录入中..." : "完成核验并录入"}</span>
+              : <PackageCheck size={24} aria-hidden="true" />}
+            <span>{registering ? "核对中..." : "核对固定药品档案"}</span>
           </button>
         </div>
       </section>

@@ -6,7 +6,7 @@ const sections = [
   { id: "overview", label: "运行概览", icon: LayoutDashboard },
   { id: "users", label: "服务对象", icon: UsersRound },
   { id: "plans", label: "今日用药", icon: CalendarClock },
-  { id: "cabinet", label: "药柜维护", icon: Boxes },
+  { id: "cabinet", label: "分类柜维护", icon: Boxes },
   { id: "devices", label: "设备控制", icon: Activity },
   { id: "inquiries", label: "问询调试", icon: MessagesSquare },
   { id: "logs", label: "运行日志", icon: ClipboardList }

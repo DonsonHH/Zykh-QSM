@@ -18,7 +18,7 @@ export function AdminOverview({ data, loading, onRefresh }) {
   const devices = data?.devices || {};
   const metrics = [
     { label: "服务对象", value: counts.users ?? "--", icon: CircleUserRound, accent: "blue" },
-    { label: "有库存仓位", value: counts.medicines ?? "--", icon: Boxes, accent: "green" },
+    { label: "有库存药品", value: counts.medicines ?? "--", icon: Boxes, accent: "green" },
     { label: "取药记录", value: counts.dispense_records ?? "--", icon: Database, accent: "violet" },
     { label: "待同步", value: counts.pending_sync ?? "--", icon: Clock3, accent: "orange" }
   ];

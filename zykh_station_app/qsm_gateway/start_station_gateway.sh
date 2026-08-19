@@ -3,6 +3,10 @@ set -u
 
 QSM_HOME="${QSM_HOME:-/userdata/zykh_app}"
 PORT="${PORT:-8080}"
+CABINET_LIGHT_UART="${CABINET_LIGHT_UART:-/dev/ttyACM0}"
+CABINET_LIGHT_UART_BAUD="${CABINET_LIGHT_UART_BAUD:-115200}"
+CABINET_LIGHT_TIMEOUT_SECONDS="${CABINET_LIGHT_TIMEOUT_SECONDS:-2}"
+CABINET_LIGHT_PROTOCOL_MODULE="${CABINET_LIGHT_PROTOCOL_MODULE:-$QSM_HOME/scripts/Zykh/CabinetLightProtocol.pm}"
 VITALS_UART_DEVICE="${VITALS_UART_DEVICE:-/dev/ttyS8}"
 VITALS_UART_TIMEOUT_SECONDS="${VITALS_UART_TIMEOUT_SECONDS:-16}"
 VITALS_UART_STABLE_FRAMES="${VITALS_UART_STABLE_FRAMES:-3}"
@@ -75,8 +79,40 @@ if [ -n "$(gateway_pids)" ]; then
   exit 1
 fi
 
+if [ ! -r "$CABINET_LIGHT_PROTOCOL_MODULE" ]; then
+  printf 'Cabinet light protocol module is missing: %s\n' "$CABINET_LIGHT_PROTOCOL_MODULE" >&2
+  exit 1
+fi
+
+# A previous process or interrupted interaction may have left one cabinet lit.
+# Confirm OFF over the same strict protocol before accepting new requests.
+if ! perl - "$CABINET_LIGHT_PROTOCOL_MODULE" "$CABINET_LIGHT_UART" "$CABINET_LIGHT_UART_BAUD" "$CABINET_LIGHT_TIMEOUT_SECONDS" <<'PERL'
+use strict;
+use warnings;
+my ($module, $device, $baud, $timeout) = @ARGV;
+require $module;
+my $protocol = Zykh::CabinetLightProtocol->new(
+    device => $device,
+    baud => int($baud),
+    timeout_seconds => 0 + $timeout,
+);
+my $result = $protocol->off();
+if (!$result->{ok}) {
+    print STDERR (($result->{detail} || $result->{error} || 'cabinet light OFF failed') . "\n");
+    exit 1;
+}
+PERL
+then
+  printf 'Cannot confirm cabinet lights are OFF; station gateway will not start.\n' >&2
+  exit 1
+fi
+
 TZ="${TZ:-CST-8}" \
 PORT="$PORT" \
+CABINET_LIGHT_PROTOCOL_MODULE="$CABINET_LIGHT_PROTOCOL_MODULE" \
+CABINET_LIGHT_UART="$CABINET_LIGHT_UART" \
+CABINET_LIGHT_UART_BAUD="$CABINET_LIGHT_UART_BAUD" \
+CABINET_LIGHT_TIMEOUT_SECONDS="$CABINET_LIGHT_TIMEOUT_SECONDS" \
 MAX30102_SCRIPT="$QSM_HOME/scripts/read_vitals_uart8.pl" \
 MAX30102_JSON="$QSM_HOME/data/vital_signs_uart8.json" \
 VITALS_UART_DEVICE="$VITALS_UART_DEVICE" \

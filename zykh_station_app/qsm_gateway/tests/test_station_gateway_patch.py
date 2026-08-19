@@ -28,87 +28,163 @@ use JSON::PP qw(encode_json decode_json);
 # ZYKH_STATION_TTS_CANCEL_RESULT
 my $DATA_DIR = $ENV{TEST_DATA_DIR};
 
+package Zykh::CabinetLightProtocol;
+
+sub new { return bless {}, $_[0]; }
+
+sub persisted_operation_state {
+    my $data_dir = $ENV{TEST_DATA_DIR};
+    my @paths = sort glob("$data_dir/dispense-operation-*.json");
+    return 'missing' unless @paths;
+    open my $fh, '<:raw', $paths[-1] or return 'unreadable';
+    local $/;
+    my $raw = <$fh>;
+    close $fh;
+    my $state = eval { JSON::PP::decode_json($raw) };
+    return ref($state) eq 'HASH' ? ($state->{state} || 'empty') : 'invalid';
+}
+
+sub append_hardware_log {
+    my ($action, $cabinet_id) = @_;
+    my $data_dir = $ENV{TEST_DATA_DIR};
+    open my $fh, '>>', "$data_dir/hardware.log" or die "hardware log: $!";
+    print {$fh} "$action state=" . persisted_operation_state();
+    print {$fh} " cabinet=$cabinet_id" if defined $cabinet_id;
+    print {$fh} "\n";
+    close $fh;
+}
+
+sub illuminate {
+    my ($self, $cabinet_id) = @_;
+    my $delay = 0 + ($ENV{FAKE_HARDWARE_DELAY} || 0);
+    select(undef, undef, undef, $delay) if $delay > 0;
+    append_hardware_log('cabinet', $cabinet_id);
+    die "fake cabinet result lost\n" if $ENV{FAKE_HARDWARE_DIE};
+    return {
+        ok => JSON::PP::true,
+        result => 'success',
+        cabinet_id => int($cabinet_id),
+        status => "cabinet_$cabinet_id",
+        detail => "cabinet $cabinet_id lit",
+    };
+}
+
+sub off {
+    append_hardware_log('off', undef);
+    return { ok => JSON::PP::true, result => 'success', status => 'off' };
+}
+
+sub status {
+    return { ok => JSON::PP::true, result => 'success', status => 'off' };
+}
+
+package main;
+
 sub route_request {
     my ($method, $path, $params) = @_;
-    die "unexpected route" unless $method eq 'POST' && $path eq '/api/dispense';
-    return dispense($params);
+    my $client;
+    my $req = { params => $params };
+    if ($method eq 'POST' && $path eq '/api/dispense') {
+        return send_json($client, 200, dispense($req->{params}));
+    }
+    die "unexpected route";
 }
 
 sub dispense {
     my ($p) = @_;
     my $slot = int($p->{slot} || 0);
     return { ok => JSON::PP::false, error => 'slot required' } if $slot <= 0;
-    my $control_code = exists $p->{control_code} && "$p->{control_code}" =~ /^\d+$/
-        ? int($p->{control_code})
-        : cabinet_control_code($slot);
-    my $gpio = $ENV{"SLOT${slot}_GPIO"};
-    my $uart_dev = $ENV{DISPENSE_UART} || '';
-    my ($result, $detail) = ('success', 'simulated');
-    if ($uart_dev && -e $uart_dev && ($ENV{DISPENSE_MODE} || 'uart') eq 'uart') {
-        my $r = dispense_uart($uart_dev, $slot, $control_code);
-        ($result, $detail) = $r->{ok} ? ('success', $r->{detail}) : ('failed', $r->{error});
-    } elsif (defined $gpio && $gpio =~ /^\d+$/) {
-        my $r = pulse_gpio($gpio, 500);
-        ($result, $detail) = $r->{ok} ? ('success', $r->{detail}) : ('failed', $r->{error});
-    }
-    return {
-        ok => $result eq 'success' ? JSON::PP::true : JSON::PP::false,
-        result => $result,
-        detail => $detail,
-        slot => $slot,
-        control_code => $control_code,
-        records => [],
-        medicines => [],
-    };
+    return { ok => JSON::PP::true, result => 'legacy', slot => $slot };
 }
 
-sub cabinet_control_code {
-    my ($slot) = @_;
-    return 13 if $slot == 13;
-    return $slot - 1;
+sub gpio_set { return { ok => JSON::PP::true }; }
+sub send_json { return $_[2]; }
+sub add_record { return; }
+sub list_records { return []; }
+sub list_medicines { return []; }
+sub read_temperature { return {}; }
+
+sub now_text { return '2026-08-10 18:00:00'; }
+
+if (@ARGV) {
+    my $module = "$DATA_DIR/fake-cabinet-light-protocol.pm";
+    if (!-f $module) {
+        open my $module_fh, '>', $module or die "fake module: $!";
+        print {$module_fh} "1;\n";
+        close $module_fh;
+    }
+    $ENV{CABINET_LIGHT_PROTOCOL_MODULE} ||= $module;
+    my $params = decode_json($ARGV[0]);
+    my $path = $ARGV[1] || '/api/dispense';
+    my $method = $path =~ m{/status\z} ? 'GET' : 'POST';
+    print encode_json(route_request($method, $path, $params));
+    exit 0;
 }
+'''
+
+
+FAKE_CABINET_PROTOCOL = r'''package Zykh::CabinetLightProtocol;
+use strict;
+use warnings;
+use JSON::PP ();
+
+sub new { return bless {}, $_[0]; }
 
 sub persisted_operation_state {
-    my @paths = sort glob("$DATA_DIR/dispense-operation-*.json");
+    my $data_dir = $ENV{TEST_DATA_DIR};
+    my @paths = sort glob("$data_dir/dispense-operation-*.json");
     return 'missing' unless @paths;
     open my $fh, '<:raw', $paths[-1] or return 'unreadable';
     local $/;
     my $raw = <$fh>;
     close $fh;
-    my $state = eval { decode_json($raw) };
+    my $state = eval { JSON::PP::decode_json($raw) };
     return ref($state) eq 'HASH' ? ($state->{state} || 'empty') : 'invalid';
 }
 
 sub append_hardware_log {
-    my ($kind, $slot, $control_code) = @_;
-    open my $fh, '>>', "$DATA_DIR/hardware.log" or die "hardware log: $!";
-    print {$fh} join(' ', $kind, "state=" . persisted_operation_state(), "slot=$slot", "control=$control_code") . "\n";
+    my ($action, $cabinet_id) = @_;
+    my $data_dir = $ENV{TEST_DATA_DIR};
+    open my $fh, '>>', "$data_dir/hardware.log" or die "hardware log: $!";
+    print {$fh} "$action state=" . persisted_operation_state();
+    print {$fh} " cabinet=$cabinet_id" if defined $cabinet_id;
+    print {$fh} "\n";
     close $fh;
 }
 
-sub dispense_uart {
-    my ($dev, $slot, $control_code) = @_;
+sub illuminate {
+    my ($self, $cabinet_id) = @_;
     my $delay = 0 + ($ENV{FAKE_HARDWARE_DELAY} || 0);
     select(undef, undef, undef, $delay) if $delay > 0;
-    append_hardware_log('uart', $slot, $control_code);
-    die "fake UART result lost\n" if $ENV{FAKE_HARDWARE_DIE};
-    return { ok => JSON::PP::true, detail => "uart pulse $control_code" };
+    append_hardware_log('cabinet', $cabinet_id);
+    die "fake cabinet result lost\n" if $ENV{FAKE_HARDWARE_DIE};
+    return {
+        ok => JSON::PP::true,
+        result => 'success',
+        cabinet_id => int($cabinet_id),
+        status => "cabinet_$cabinet_id",
+        detail => "cabinet $cabinet_id lit",
+    };
 }
 
-sub pulse_gpio {
-    my ($gpio, $ms) = @_;
-    append_hardware_log('gpio', $gpio, $ms);
-    return { ok => JSON::PP::true, detail => "gpio pulse $gpio" };
+sub off {
+    append_hardware_log('off', undef);
+    return { ok => JSON::PP::true, result => 'success', status => 'off' };
 }
 
-sub now_text { return '2026-08-10 18:00:00'; }
-
-if (@ARGV) {
-    my $params = decode_json($ARGV[0]);
-    print encode_json(route_request('POST', '/api/dispense', $params));
-    exit 0;
+sub status {
+    return { ok => JSON::PP::true, result => 'success', status => 'off' };
 }
+
+1;
 '''
+
+
+def install_fake_cabinet_protocol(root: Path) -> Path:
+    module = root / "Zykh" / "CabinetLightProtocol.pm"
+    module.parent.mkdir(parents=True)
+    module.write_text(FAKE_CABINET_PROTOCOL, encoding="utf-8")
+    return module
 
 
 class StationGatewayPatchTest(unittest.TestCase):
@@ -432,13 +508,11 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             self.assertFalse(first_played.exists())
             self.assertFalse(fallback_played.exists())
 
-    def test_dispense_operation_id_replays_success_without_second_uart_pulse(self) -> None:
+    def test_dispense_operation_id_replays_success_without_second_cabinet_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -448,13 +522,10 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
             })
             payload = {
-                "slot": 13,
+                "cabinet_id": 2,
                 "quantity": 1,
-                "control_code": 13,
                 "operation_id": "manual-dispense-op-001",
             }
             first = json.loads(subprocess.run(
@@ -480,15 +551,13 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         self.assertEqual(replay["result"], first["result"])
         self.assertEqual(replay["detail"], first["detail"])
         self.assertTrue(replay["replay"])
-        self.assertEqual(hardware_lines, ["uart state=sent slot=13 control=13"])
+        self.assertEqual(hardware_lines, ["cabinet state=sent cabinet=2"])
 
-    def test_zero_control_code_is_sent_once_over_uart_and_replayed(self) -> None:
+    def test_legacy_slot_and_control_code_payload_is_rejected_without_hardware(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -498,8 +567,6 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
             })
             payload = {
                 "slot": 4,
@@ -507,22 +574,71 @@ if (@ARGV && $ARGV[0] eq 'stop') {
                 "control_code": 0,
                 "operation_id": "manual-dispense-op-zero",
             }
-            responses = [json.loads(subprocess.run(
+            response = json.loads(subprocess.run(
                 ["perl", str(gateway), json.dumps(payload)],
                 check=True,
                 capture_output=True,
                 text=True,
                 env=env,
-            ).stdout) for _ in range(2)]
+            ).stdout)
+            hardware_log_exists = (root / "hardware.log").exists()
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["result"], "legacy_protocol_rejected")
+        self.assertFalse(hardware_log_exists)
+
+    def test_cabinet_light_off_route_uses_the_same_serialized_protocol(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gateway = root / "server.pl"
+            gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            env = os.environ.copy()
+            env["TEST_DATA_DIR"] = str(root)
+            response = json.loads(subprocess.run(
+                ["perl", str(gateway), "{}", "/api/cabinet/light/off"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            ).stdout)
             hardware_lines = (root / "hardware.log").read_text(encoding="utf-8").splitlines()
 
-        self.assertTrue(responses[0]["ok"])
-        self.assertFalse(responses[0]["replay"])
-        self.assertTrue(responses[1]["ok"])
-        self.assertTrue(responses[1]["replay"])
-        self.assertEqual(hardware_lines, ["uart state=sent slot=4 control=0"])
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["status"], "off")
+        self.assertEqual(hardware_lines, ["off state=missing"])
 
-    def test_real_dispense_without_uart_or_gpio_fails_closed(self) -> None:
+    def test_cabinet_light_status_route_is_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gateway = root / "server.pl"
+            gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            env = os.environ.copy()
+            env["TEST_DATA_DIR"] = str(root)
+            response = json.loads(subprocess.run(
+                ["perl", str(gateway), "{}", "/api/cabinet/light/status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            ).stdout)
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["status"], "off")
+        self.assertFalse((root / "hardware.log").exists())
+
+    def test_real_dispense_without_protocol_module_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
@@ -536,13 +652,12 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(root / "missing-uart"),
+                "CABINET_LIGHT_PROTOCOL_MODULE": str(root / "missing-module.pm"),
             })
 
             response = json.loads(subprocess.run(
                 ["perl", str(gateway), json.dumps({
-                    "slot": 13,
+                    "cabinet_id": 2,
                     "quantity": 1,
                     "operation_id": "manual-no-executor",
                 })],
@@ -562,9 +677,7 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -574,24 +687,22 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
                 "FAKE_HARDWARE_DELAY": "0.30",
             })
             started_at = time.monotonic()
             processes = [
                 subprocess.Popen(
                     ["perl", str(gateway), json.dumps({
-                        "slot": slot,
+                        "cabinet_id": cabinet_id,
                         "quantity": 1,
-                        "operation_id": f"parallel-operation-{slot}",
+                        "operation_id": f"parallel-operation-{cabinet_id}",
                     })],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     env=env,
                 )
-                for slot in (12, 13)
+                for cabinet_id in (1, 2)
             ]
             results = [json.loads(process.communicate(timeout=3)[0]) for process in processes]
             elapsed = time.monotonic() - started_at
@@ -605,9 +716,7 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -617,13 +726,10 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
             })
             original = {
-                "slot": 13,
+                "cabinet_id": 2,
                 "quantity": 1,
-                "control_code": 13,
                 "operation_id": "manual-dispense-op-conflict",
             }
 
@@ -638,9 +744,8 @@ if (@ARGV && $ARGV[0] eq 'stop') {
 
             self.assertTrue(invoke(original)["ok"])
             conflicts = [
-                invoke({**original, "slot": 12}),
+                invoke({**original, "cabinet_id": 1}),
                 invoke({**original, "quantity": 2}),
-                invoke({**original, "control_code": 12}),
             ]
             hardware_lines = (root / "hardware.log").read_text(encoding="utf-8").splitlines()
 
@@ -648,16 +753,14 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             self.assertFalse(conflict["ok"])
             self.assertEqual(conflict["result"], "idempotency_conflict")
             self.assertTrue(conflict["idempotency_conflict"])
-        self.assertEqual(hardware_lines, ["uart state=sent slot=13 control=13"])
+        self.assertEqual(hardware_lines, ["cabinet state=sent cabinet=2"])
 
     def test_reserved_or_sent_operation_without_final_result_is_never_retried(self) -> None:
         for previous_state in ("reserved", "sent"):
             with self.subTest(previous_state=previous_state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 gateway = root / "server.pl"
-                uart = root / "fake-uart"
                 gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-                uart.write_bytes(b"")
                 subprocess.run(
                     ["perl", str(PATCHER), str(gateway)],
                     check=True,
@@ -667,11 +770,10 @@ if (@ARGV && $ARGV[0] eq 'stop') {
                 operation_id = f"manual-dispense-op-{previous_state}"
                 state_path = root / f"dispense-operation-{operation_id}.json"
                 state_path.write_text(json.dumps({
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "operation_id": operation_id,
-                    "slot": 13,
+                    "cabinet_id": 2,
                     "quantity": 1,
-                    "control_code": 13,
                     "state": previous_state,
                     "created_at": "2026-08-10 17:59:00",
                     "updated_at": "2026-08-10 17:59:00",
@@ -679,13 +781,10 @@ if (@ARGV && $ARGV[0] eq 'stop') {
                 env = os.environ.copy()
                 env.update({
                     "TEST_DATA_DIR": str(root),
-                    "DISPENSE_MODE": "uart",
-                    "DISPENSE_UART": str(uart),
                 })
                 payload = {
-                    "slot": 13,
+                    "cabinet_id": 2,
                     "quantity": 1,
-                    "control_code": 13,
                     "operation_id": operation_id,
                 }
                 responses = [json.loads(subprocess.run(
@@ -704,13 +803,11 @@ if (@ARGV && $ARGV[0] eq 'stop') {
                     self.assertTrue(response["result_unknown"])
                     self.assertFalse(response["retry_safe"])
 
-    def test_dispense_without_operation_id_keeps_legacy_behavior(self) -> None:
+    def test_dispense_without_operation_id_uses_v3_without_persisted_replay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -720,10 +817,8 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
             })
-            payload = {"slot": 13, "quantity": 1, "control_code": 13}
+            payload = {"cabinet_id": 2, "quantity": 1}
             responses = [json.loads(subprocess.run(
                 ["perl", str(gateway), json.dumps(payload)],
                 check=True,
@@ -744,9 +839,7 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -756,14 +849,11 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
                 "FAKE_HARDWARE_DELAY": "0.25",
             })
             payload = json.dumps({
-                "slot": 13,
+                "cabinet_id": 2,
                 "quantity": 1,
-                "control_code": 13,
                 "operation_id": "manual-dispense-op-concurrent",
             })
             runners = [subprocess.Popen(
@@ -781,15 +871,13 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         self.assertTrue(all(stderr == "" for _, stderr in results))
         self.assertEqual(sum(response["replay"] is False for response in responses), 1)
         self.assertEqual(sum(response["replay"] is True for response in responses), 1)
-        self.assertEqual(hardware_lines, ["uart state=sent slot=13 control=13"])
+        self.assertEqual(hardware_lines, ["cabinet state=sent cabinet=2"])
 
-    def test_lost_uart_result_stays_unknown_and_is_not_retried(self) -> None:
+    def test_lost_cabinet_result_stays_unknown_and_is_not_retried(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gateway = root / "server.pl"
-            uart = root / "fake-uart"
             gateway.write_text(DISPENSE_GATEWAY_FIXTURE, encoding="utf-8")
-            uart.write_bytes(b"")
             subprocess.run(
                 ["perl", str(PATCHER), str(gateway)],
                 check=True,
@@ -799,14 +887,11 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             env = os.environ.copy()
             env.update({
                 "TEST_DATA_DIR": str(root),
-                "DISPENSE_MODE": "uart",
-                "DISPENSE_UART": str(uart),
                 "FAKE_HARDWARE_DIE": "1",
             })
             payload = json.dumps({
-                "slot": 13,
+                "cabinet_id": 2,
                 "quantity": 1,
-                "control_code": 13,
                 "operation_id": "manual-dispense-op-lost-result",
             })
             responses = [json.loads(subprocess.run(
@@ -820,7 +905,7 @@ if (@ARGV && $ARGV[0] eq 'stop') {
             hardware_lines = (root / "hardware.log").read_text(encoding="utf-8").splitlines()
 
         self.assertEqual(state["state"], "sent")
-        self.assertEqual(hardware_lines, ["uart state=sent slot=13 control=13"])
+        self.assertEqual(hardware_lines, ["cabinet state=sent cabinet=2"])
         self.assertTrue(all(response["result_unknown"] for response in responses))
         self.assertTrue(all(response["result"] == "result_unknown" for response in responses))
 
@@ -852,6 +937,12 @@ if (@ARGV && $ARGV[0] eq 'stop') {
         self.assertEqual(first, second)
         self.assertIn("ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1", second)
         self.assertIn("ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2", second)
+        self.assertIn("ZYKH_STATION_CABINET_LIGHT_PROTOCOL_V3", second)
+        self.assertIn("ZYKH_STATION_CABINET_LIGHT_ROUTES_V3", second)
+        self.assertIn("/dev/ttyACM0", second)
+        self.assertIn("cabinet_id", second)
+        self.assertNotIn("/dev/ttyS5", second)
+        self.assertNotIn("pack('C'", second)
         writer = second.split("sub write_dispense_operation_state", 1)[1].split(
             "sub dispense_operation_unknown_result", 1
         )[0]

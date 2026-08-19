@@ -89,12 +89,23 @@ class MedicineInventoryContractTest(unittest.TestCase):
                 """
             )
 
-    def test_public_inventory_exposes_all_23_physical_slots_in_order(self) -> None:
+    def test_public_inventory_projects_23_logical_medicines_into_three_local_cabinets(self) -> None:
         response = list_medicines()
 
         self.assertEqual(response.total, 23)
-        self.assertEqual(response.warehouse_total, 23)
+        self.assertEqual(response.warehouse_total, 3)
+        self.assertEqual(
+            [(cabinet.id, cabinet.label) for cabinet in response.cabinets],
+            [(1, "口服药品"), (2, "外用药品"), (3, "医疗护理用品")],
+        )
+        self.assertEqual(
+            {medicine_id for cabinet in response.cabinets for medicine_id in cabinet.medicine_ids},
+            {item.id for item in response.medicines},
+        )
+        # The 1-23 values remain logical inventory/cloud identities only.
         self.assertEqual([item.hardware_slot for item in response.medicines], list(range(1, 24)))
+        self.assertEqual(response.medicines[12].cabinet_id, 1)
+        self.assertEqual(response.medicines[12].cabinet_label, "口服药品")
         expected_names = (
             "复方感冒灵颗粒", "多维元素片", "蒙脱石散", "阿莫西林胶囊",
             "蜜炼川贝枇杷膏", "乳果糖口服液", "银黄颗粒", "藿香正气丸",
@@ -104,6 +115,14 @@ class MedicineInventoryContractTest(unittest.TestCase):
             "创口贴", "苯磺酸氨氯地平片", "医用棉签", "枸地氯雷他定胶囊",
         )
         self.assertEqual(tuple(item.name for item in response.medicines), expected_names)
+
+    def test_single_medicine_response_exposes_local_cabinet_without_replacing_logical_slot(self) -> None:
+        medicine = MedicineService().get_medicine("slot-18-budesonide-nasal")
+
+        self.assertIsNotNone(medicine)
+        self.assertEqual(medicine.hardware_slot, 18)
+        self.assertEqual(medicine.cabinet_id, 2)
+        self.assertEqual(medicine.cabinet_label, "外用药品")
 
     def test_known_package_fields_match_the_physical_inventory(self) -> None:
         medicines = {item.hardware_slot: item for item in list_medicines().medicines}

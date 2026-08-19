@@ -157,9 +157,13 @@ const sessionFixture = {
 let socket;
 let nextMessageId = 0;
 let interceptionError = null;
+const runtimeErrors = [];
+const consoleMessages = [];
 const pending = new Map();
 const treatmentRequests = [];
 const inventoryRequests = [];
+const lightOffRequests = [];
+let treatmentMode = "success";
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -195,14 +199,47 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/inquiry/sessions/qa-inquiry-result/treatment/confirm") {
     const body = JSON.parse(request.postData || "{}");
     treatmentRequests.push(body);
-    if (body.expected_item_index === 0) {
+    if (treatmentMode === "result_unknown") {
+      const item = {
+        medicine_id: "slot-07-yinhuang",
+        medicine_name: "银黄颗粒",
+        slot: "7",
+        ok: false,
+        dry_run: false,
+        message: "分类柜亮灯结果待现场确认，请勿自动重试。",
+        record_id: "qa-dispense-record-unknown",
+        inventory_confirmation_required: false,
+        result_unknown: true,
+        retry_safe: false
+      };
+      const session = {
+        ...sessionFixture,
+        selected_option_id: "A",
+        action_status: "failed",
+        action_progress_index: 0,
+        action_items: [item]
+      };
+      payload = {
+        ok: false,
+        status: "failed",
+        option_id: "A",
+        message: "第 1 项分类柜亮灯结果待现场确认，请勿自动重试。",
+        result_unknown: true,
+        retry_safe: false,
+        items: [item],
+        completed_count: 0,
+        total_count: 2,
+        next_medicine: null,
+        session
+      };
+    } else if (body.expected_item_index === 0) {
       const item = {
         medicine_id: "slot-07-yinhuang",
         medicine_name: "银黄颗粒",
         slot: "7",
         ok: true,
         dry_run: false,
-        message: "7号柜门已打开。",
+        message: "1号口服药品分类柜指示灯已亮。",
         record_id: "qa-dispense-record-1",
         inventory_confirmation_required: true,
         result_unknown: false,
@@ -219,7 +256,7 @@ async function fulfillApiRequest({ requestId, request }) {
         ok: true,
         status: "opening",
         option_id: "A",
-        message: "已打开 1/2：7号柜；下一步打开 22号柜。",
+        message: "已点亮 1/2：1号分类柜；取药并关灯后再处理下一项。",
         items: [item],
         completed_count: 1,
         total_count: 2,
@@ -233,30 +270,30 @@ async function fulfillApiRequest({ requestId, request }) {
         slot: "7",
         ok: true,
         dry_run: false,
-        message: "7号柜门已打开。",
+        message: "1号口服药品分类柜指示灯已亮。",
         record_id: "qa-dispense-record-1",
         inventory_confirmation_required: true,
         result_unknown: false,
         retry_safe: true
       };
-      const dryRunItem = {
+      const pickupOnlyItem = {
         medicine_id: "slot-22-cotton-swab",
         medicine_name: "医用棉签",
         slot: "22",
         ok: true,
-        dry_run: true,
-        message: "本地测试记录已完成。",
+        dry_run: false,
+        message: "3号医疗护理用品分类柜指示灯已亮。",
         record_id: "qa-dispense-record-2",
         inventory_confirmation_required: false,
         result_unknown: false,
         retry_safe: true
       };
-      const items = [firstItem, dryRunItem];
+      const items = [firstItem, pickupOnlyItem];
       payload = {
         ok: true,
         status: "complete",
         option_id: "A",
-        message: "方案 A 的 1 个药柜已按顺序完成开柜。",
+        message: "方案 A 的 2 项分类柜指示灯已按取药顺序点亮。",
         items,
         completed_count: 2,
         total_count: 2,
@@ -288,6 +325,9 @@ async function fulfillApiRequest({ requestId, request }) {
         message: "已确认柜内还有药"
       };
     }
+  } else if (url.pathname === "/api/qsm/cabinet-light/off") {
+    lightOffRequests.push(JSON.parse(request.postData || "{}"));
+    payload = { ok: true, result: "off", message: "分类柜指示灯已关闭" };
   } else if (url.pathname === "/api/qsm/capabilities") {
     payload = { camera: "unavailable", vitals: "available" };
   }
@@ -325,6 +365,16 @@ async function connect(url) {
         fulfillApiRequest(message.params).catch((error) => { interceptionError = error; });
         return;
       }
+      if (message.method === "Runtime.exceptionThrown") {
+        runtimeErrors.push(message.params?.exceptionDetails?.exception?.description
+          || message.params?.exceptionDetails?.text
+          || "runtime exception");
+        return;
+      }
+      if (message.method === "Runtime.consoleAPICalled") {
+        consoleMessages.push((message.params?.args || []).map((item) => item.value || item.description || "").join(" "));
+        return;
+      }
       if (!message.id || !pending.has(message.id)) return;
       const handlers = pending.get(message.id);
       pending.delete(message.id);
@@ -355,11 +405,21 @@ async function evaluate(expression) {
 
 async function waitForApp() {
   const deadline = Date.now() + 8_000;
+  let lastState = null;
   while (Date.now() < deadline) {
-    if (await evaluate("document.readyState === 'complete' && Boolean(document.querySelector('.kiosk-frame'))")) return;
+    lastState = await evaluate(`(() => ({
+      readyState: document.readyState,
+      hasKiosk: Boolean(document.querySelector('.kiosk-frame')),
+      title: document.title,
+      url: location.href,
+      bodyText: (document.body?.innerText || '').slice(0, 240),
+      rootHtml: (document.querySelector('#root')?.innerHTML || '').slice(0, 240),
+      resources: performance.getEntriesByType('resource').slice(-8).map((entry) => entry.name)
+    }))()`);
+    if (lastState.readyState === "complete" && lastState.hasKiosk) return;
     await delay(40);
   }
-  throw new Error("Kiosk app did not render");
+  throw new Error(`Kiosk app did not render: ${JSON.stringify({ lastState, runtimeErrors, consoleMessages })}`);
 }
 
 async function stopBrowser() {
@@ -515,20 +575,33 @@ try {
       && error.textContent.includes('请重试')
     );
     hasStock().click();
+    const pickupPrompt = await waitFor(
+      () => {
+        const candidate = document.querySelector('.inquiry-inventory-confirmation .medicine-remaining-prompt');
+        return candidate?.textContent.includes('我已取药，关闭指示灯') ? candidate : null;
+      },
+      'explicit pickup confirmation after the second real cabinet'
+    );
+    const completedBeforePickup = Boolean(document.querySelector('.treatment-action-result.complete'));
+    const pickupAction = [...pickupPrompt.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('我已取药，关闭指示灯'));
+    pickupAction.click();
     const complete = await waitFor(
       () => document.querySelector('.treatment-action-result.complete'),
-      'automatic continuation after explicit inventory confirmation'
+      'completion after explicit pickup and cabinet-light OFF'
     );
     return {
       failureStayedOnPrompt,
-      completed: complete.textContent.includes('完成开柜'),
+      completedBeforePickup,
+      completed: complete.textContent.includes('指示灯已按取药顺序点亮'),
       promptCleared: !document.querySelector('.inquiry-inventory-confirmation')
     };
   })()`);
 
   if (interceptionError) throw interceptionError;
   assert.equal(confirmationFlow.failureStayedOnPrompt, true, "inventory API failure did not stay on the explicit confirmation prompt");
-  assert.equal(confirmationFlow.completed, true, "dry-run or no-confirmation item did not continue automatically after explicit confirmation");
+  assert.equal(confirmationFlow.completedBeforePickup, false, "the second real cabinet completed before the user confirmed pickup and OFF");
+  assert.equal(confirmationFlow.completed, true, "the sequence did not complete after explicit pickup and OFF");
   assert.equal(confirmationFlow.promptCleared, true, "inventory prompt remained after a successful explicit confirmation");
   assert.deepEqual(
     treatmentRequests.map((request) => request.expected_item_index),
@@ -539,6 +612,7 @@ try {
   assert.equal(inventoryRequests[0].request_id, inventoryRequests[1].request_id, "inventory retry changed its idempotency key");
   assert.equal(inventoryRequests[0].dispense_record_id, "qa-dispense-record-1", "inventory confirmation lost the dispense record identity");
   assert.equal(inventoryRequests[0].observation, "HAS_REMAINING", "inventory confirmation changed the explicit operator observation");
+  assert.equal(lightOffRequests.length, 3, "each inventory attempt and the pickup-only cabinet must explicitly request OFF");
   for (const result of measurements) {
     assert.ok(result.flow.left >= 0 && result.flow.right <= result.viewport.width + 1, "inquiry flow exceeds the viewport horizontally");
     assert.ok(result.flow.top >= 0 && result.flow.bottom <= result.viewport.height + 1, "inquiry flow exceeds the viewport vertically");
@@ -561,6 +635,69 @@ try {
     assert.equal(result.hasCauseHeading, true, "structured cause assessment is missing");
     assert.equal(result.hasDisclaimer, true, "fixed medical disclaimer is missing");
   }
+
+  treatmentMode = "result_unknown";
+  treatmentRequests.length = 0;
+  inventoryRequests.length = 0;
+  lightOffRequests.length = 0;
+  await evaluate("window.sessionStorage.clear()");
+  await cdp("Page.navigate", { url: `${baseUrl}/?page=home&awake=1&scenario=inquiry-result-unknown` });
+  await waitForApp();
+  const unknownFlow = await evaluate(`(async () => {
+    const waitFor = async (predicate, label) => {
+      const deadline = performance.now() + 9000;
+      while (performance.now() < deadline) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Timed out waiting for ' + label);
+    };
+    const inquiryButton = await waitFor(
+      () => [...document.querySelectorAll('.bottom-nav button')].find((button) => button.textContent.includes('问询')),
+      'inquiry navigation for unknown result'
+    );
+    inquiryButton.click();
+    const guestButton = await waitFor(
+      () => [...document.querySelectorAll('.inquiry-identity-gate button')].find((button) => button.textContent.includes('访客身份继续')),
+      'guest confirmation for unknown result'
+    );
+    guestButton.click();
+    const review = await waitFor(() => document.querySelector('.inquiry-information-review'), 'unknown-result review');
+    const confirm = await waitFor(
+      () => review.querySelector('.review-actions .primary-action:not(:disabled)'),
+      'unknown-result review confirmation'
+    );
+    confirm.click();
+    await waitFor(() => document.querySelector('.inquiry-treatment-result'), 'unknown-result treatment result');
+    document.querySelector('.treatment-open-button').click();
+    const prompt = await waitFor(
+      () => {
+        const candidate = document.querySelector('.inquiry-inventory-confirmation .medicine-remaining-prompt');
+        return candidate?.textContent.includes('亮灯结果待确认，请勿重复操作') ? candidate : null;
+      },
+      'unknown-result explicit OFF prompt'
+    );
+    const action = [...prompt.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('关闭分类柜指示灯'));
+    const actionLabel = action?.textContent || '';
+    action.click();
+    const terminal = await waitFor(
+      () => document.querySelector('.treatment-action-result.result_unknown'),
+      'unknown-result terminal state after OFF'
+    );
+    return {
+      actionLabel,
+      terminalText: terminal.textContent,
+      promptCleared: !document.querySelector('.inquiry-inventory-confirmation')
+    };
+  })()`);
+  assert.match(unknownFlow.actionLabel, /关闭分类柜指示灯/, "unknown inquiry result exposed a physical retry instead of OFF");
+  assert.match(unknownFlow.terminalText, /待现场确认|请勿自动重试/, "unknown inquiry result lost its safety warning after OFF");
+  assert.equal(unknownFlow.promptCleared, true, "unknown inquiry prompt remained after confirmed OFF");
+  assert.equal(treatmentRequests.length, 1, "unknown inquiry result retried the physical light command");
+  assert.equal(lightOffRequests.length, 1, "unknown inquiry result did not issue exactly one explicit OFF request");
+  assert.equal(inventoryRequests.length, 0, "unknown inquiry result incorrectly attempted an inventory update");
 
   console.log("isolated inquiry result live layout: ok", measurements.map((item) => ({
     viewport: item.viewport,

@@ -12,12 +12,23 @@ SQLite / QSM 外设
   -> 微信小程序
 ```
 
+## v2.0.0 分类柜兼容边界
+
+三分类柜改造只发生在本地界面、FastAPI 映射和 QSM 灯光执行层；本版本没有修改
+`cloudbase/` 下的云函数、小程序 helper 或集合 schema，也不要求为该硬件变化重新
+部署 CloudBase。云端继续看到 23 项药品逻辑库存身份：
+
+- `hardware_slot=1..23` 仍是 `UPSERT_MEDICINE`、SQLite 行、快照和历史记录的稳定键；
+- `cabinet_id=1..3` 只用于本机投影和实体分类柜指示灯，不上传替换 `hardware_slot`；
+- 三个分类名称和 14/6/3 药品分组已作为 v2.0.0 本地实机布局确认，但不会写入 CloudBase，云端数据也不能用来重建该物理摆放；
+- 云端仍无开柜或亮灯命令。历史 `OPEN_CABINET` 继续失败关闭，不会到达 QSM。
+
 小程序允许的反向操作通过 `commands` 集合完成。主机拉取命令并将其置为 `running`，执行后 ACK 为 `done` 或 `failed`。`cloud_command_history` 保存本地执行结果，同一命令 ID 即使重复下发也不会重复执行。远程开柜不属于允许动作；历史 `OPEN_CABINET` 命令会被改写为失败且不会调用 QSM。
 
 ## 已同步数据
 
 - 设备在线状态和同步代理版本；
-- 23 个药柜仓位及药品信息，包括规格、追溯码、库存、低库存线和原始有效期精度；
+- 23 项逻辑药品库存身份及药品信息，包括 `hardware_slot`、规格、追溯码、库存、低库存线和原始有效期精度；
 - 服务对象；
 - 今日计划；
 - 体征记录；
@@ -197,7 +208,7 @@ UPSERT_SERVICE_USER
 UPSERT_TODAY_PLAN
 ```
 
-`UPSERT_MEDICINE` 以 `hardware_slot`（兼容 `hardwareSlot` / `slot`）作为药品身份，不以条码去重。局部修改使用嵌套补丁：
+`UPSERT_MEDICINE` 继续以 `hardware_slot`（兼容 `hardwareSlot` / `slot`）作为 1–23 的逻辑药品身份，不以条码去重，也不接受本地物理 `cabinet_id` 作为替代键。局部修改使用嵌套补丁：
 
 ```json
 {
@@ -226,7 +237,7 @@ AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提
 显式携带的三类新草稿字段。空仓 `upsert` 也会在创建药品后保存同一 payload 的草稿，
 并保持 `package_verified=false` 与 `safety_review_status=draft`。
 
-终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按 `slot` 升序提供药品；命令字段到 SQLite 与快照字段的对应关系为：
+终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按逻辑 `slot` 升序提供药品；本地 1–3 分类柜映射不会写进这个同步表。命令字段到 SQLite 与快照字段的对应关系为：
 
 | 命令字段 | SQLite | 小程序快照字段 |
 | --- | --- | --- |
@@ -246,8 +257,8 @@ AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提
 ## 家属安全事件只读接口
 
 Station 以 `medication-safety:{check_id}` 为稳定事件 ID：`BLOCKED` 与
-`CHECK_FAILED` 在核查终态写入一条 outbox；`PASSED` 直到确认得到物理终态后，
-才把核查与开柜双轴合并写入同一条事件。事件同时携带人物 profile revision、
+`CHECK_FAILED` 在核查终态写入一条 outbox；`PASSED` 直到确认得到本地分类柜亮灯终态后，
+才把核查与物理执行双轴合并写入同一条事件。为保持现有 CloudBase 契约，字段名和枚举不在 v2.0.0 中迁移；事件同时携带人物 profile revision、
 药品审核指纹与可用的 QSM operation ID。联网且云端声明
 `medicationSafetyEvents=v1` 后，使用设备密钥调用
 `REPORT_MEDICATION_SAFETY_EVENT`；同一 `event_id + payload_digest` 安全重放，
@@ -264,7 +275,7 @@ MARK_MEDICATION_SAFETY_EVENT_READ
 三者都要求 CloudBase `_openid` 对应 ACTIVE `device_memberships`、包含
 `READ_SAFETY`，并遵守 `service_user_scopes`。越权详情统一返回未找到，列表
 使用 `occurredAt + eventId` 稳定游标，单页最多 50 条；已读回执按家属独立、
-事务幂等且保留首次 `readAt`。helper 不包含 REPORT、批准、解除、重试开柜
+事务幂等且保留首次 `readAt`。helper 不包含 REPORT、批准、解除、重试亮灯
 或任何数据库直写后备路径。
 
 每次 `REPORT_MEDICATION_SAFETY_EVENT` 成功落库后，云函数会为当时仍是

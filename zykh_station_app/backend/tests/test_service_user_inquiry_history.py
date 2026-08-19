@@ -607,10 +607,10 @@ class ServiceUserInquiryHistoryTest(unittest.TestCase):
         ).inquiries[0].model_dump(mode="json")
 
         self.assertEqual(public_summary["risk_label"], "核验完成")
-        self.assertEqual(public_summary["outcome"], "开柜结果待现场确认")
+        self.assertEqual(public_summary["outcome"], "分类柜亮灯结果待现场确认")
         self.assertEqual(
             public_summary["no_medicine_reason"],
-            "开柜结果未知，请现场核对柜门和药品，勿重复执行",
+            "亮灯结果未知，请现场核对指示灯和药品，勿重复执行",
         )
         self.assertNotIn("SECRET", str(public_summary))
 
@@ -665,19 +665,19 @@ class ServiceUserInquiryHistoryTest(unittest.TestCase):
 
         self.assertEqual(
             summaries["history-action-failed-001"]["outcome"],
-            "柜门未完成",
+            "分类柜亮灯未完成",
         )
         self.assertEqual(
             summaries["history-action-failed-001"]["no_medicine_reason"],
-            "开柜执行失败，本次取药未完成",
+            "分类柜亮灯执行失败，本次取药未完成",
         )
         self.assertEqual(
             summaries["history-action-partial-001"]["outcome"],
-            "部分柜门已完成，其余柜门未完成",
+            "部分分类柜已完成亮灯，其余步骤未完成",
         )
         self.assertEqual(
             summaries["history-action-partial-001"]["no_medicine_reason"],
-            "取药方案仅部分完成，请现场核对未完成柜门",
+            "取药方案仅部分完成，请现场核对未完成的亮灯步骤",
         )
         self.assertNotIn("SECRET", str(summaries))
 

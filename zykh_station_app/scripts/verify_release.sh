@@ -23,6 +23,9 @@ printf 'CHECK backend pytest\n'
 printf 'CHECK qsm pytest\n'
 (cd "$ROOT_DIR" && "$PYTHON" -m pytest -q zykh_station_app/qsm_gateway/tests)
 
+printf 'CHECK cabinet v2 firmware contract\n'
+(cd "$APP_DIR/qsm_gateway/firmware/cabinet_v2_l432kc" && ./test.sh)
+
 printf 'CHECK frontend static contracts\n'
 for test_file in "$APP_DIR"/frontend/scripts/test-*.mjs; do
   if grep -Eq 'spawn\(|fetch\(|127\.0\.0\.1|localhost|playwright|puppeteer|chromium' "$test_file"; then
@@ -47,6 +50,7 @@ printf 'CHECK perl syntax\n'
 perl -c "$ROOT_DIR/zykh_app/server.pl"
 perl -c "$APP_DIR/qsm_gateway/vitals_gateway.pl"
 perl -c "$APP_DIR/qsm_gateway/patch_station_gateway.pl"
+perl -I "$APP_DIR/qsm_gateway/lib" -MZykh::CabinetLightProtocol -e 1
 
 printf 'CHECK markdown structure\n'
 "$PYTHON" - "$ROOT_DIR" <<'PY'

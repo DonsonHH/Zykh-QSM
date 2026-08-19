@@ -32,7 +32,9 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
             <p>
               {medicine.manufacturer ? <span className="detail-manufacturer">{medicine.manufacturer}</span> : null}
               <span className="detail-category">{medicine.category}</span>
-              <span className="detail-slot">{medicine.hardware_slot || medicine.slot}号仓</span>
+              <span className="detail-slot">
+                {medicine.cabinet_id ? `${medicine.cabinet_id}号分类柜 · ${medicine.cabinet_label}` : "分类柜待配置"}
+              </span>
             </p>
           </div>
         </div>

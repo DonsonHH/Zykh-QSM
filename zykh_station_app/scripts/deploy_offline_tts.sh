@@ -9,6 +9,7 @@ VOICE_ROOT="${QSM_VOICE_ROOT:-/userdata/zykh_voice}"
 APP_ROOT="${QSM_HOME:-/userdata/zykh_app}"
 STATION_PATCH="$REPO_ROOT/zykh_station_app/qsm_gateway/patch_station_gateway.pl"
 STATION_START="$REPO_ROOT/zykh_station_app/qsm_gateway/start_station_gateway.sh"
+STATION_CABINET_LIGHT_PROTOCOL="$REPO_ROOT/zykh_station_app/qsm_gateway/lib/Zykh/CabinetLightProtocol.pm"
 TTS_SCRIPT="$REPO_ROOT/zykh_station_app/qsm_gateway/offline_tts.sh"
 
 log() {
@@ -26,6 +27,7 @@ done
 [ -f "$ARCHIVE" ] || fail "未找到离线 TTS 部署包：$ARCHIVE"
 [ -f "$STATION_PATCH" ] || fail "未找到板端网关补丁：$STATION_PATCH"
 [ -f "$STATION_START" ] || fail "未找到板端网关启动脚本：$STATION_START"
+[ -f "$STATION_CABINET_LIGHT_PROTOCOL" ] || fail "未找到分类柜灯光协议模块：$STATION_CABINET_LIGHT_PROTOCOL"
 [ -f "$TTS_SCRIPT" ] || fail "未找到板端离线合成脚本：$TTS_SCRIPT"
 
 if [ -n "${ADB_SERIAL:-}" ]; then
@@ -65,7 +67,7 @@ case "$ARCH" in
 esac
 
 log "上传板端离线语音模型和运行库"
-$ADB_PREFIX shell "mkdir -p '$VOICE_ROOT' '$APP_ROOT/scripts' '$APP_ROOT/data/audio'" >/dev/null \
+$ADB_PREFIX shell "mkdir -p '$VOICE_ROOT' '$APP_ROOT/scripts/Zykh' '$APP_ROOT/data/audio'" >/dev/null \
   || fail "创建板端目录失败"
 $ADB_PREFIX push "$PAYLOAD/." "$VOICE_ROOT/" >/dev/null || fail "上传语音资源失败"
 $ADB_PREFIX push "$TTS_SCRIPT" "$APP_ROOT/scripts/offline_tts.sh" >/dev/null \
@@ -74,6 +76,8 @@ $ADB_PREFIX push "$STATION_PATCH" "$APP_ROOT/scripts/patch_station_gateway.pl" >
   || fail "上传板端语音路由补丁失败"
 $ADB_PREFIX push "$STATION_START" "$APP_ROOT/scripts/start_station_gateway.sh" >/dev/null \
   || fail "上传板端网关启动脚本失败"
+$ADB_PREFIX push "$STATION_CABINET_LIGHT_PROTOCOL" "$APP_ROOT/scripts/Zykh/CabinetLightProtocol.pm" >/dev/null \
+  || fail "上传分类柜灯光协议模块失败"
 $ADB_PREFIX shell "chmod 755 '$VOICE_ROOT/runtime/bin/sherpa-onnx-offline-tts' '$APP_ROOT/scripts/offline_tts.sh' '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/scripts/start_station_gateway.sh'" >/dev/null \
   || fail "设置板端文件权限失败"
 

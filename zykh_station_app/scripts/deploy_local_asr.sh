@@ -45,7 +45,8 @@ for file in \
   "$GATEWAY_DIR/offline_asr_resident.sh" \
   "$GATEWAY_DIR/offline_asr_paraformer.sh" \
   "$GATEWAY_DIR/start_station_gateway.sh" \
-  "$GATEWAY_DIR/patch_station_gateway.pl"; do
+  "$GATEWAY_DIR/patch_station_gateway.pl" \
+  "$GATEWAY_DIR/lib/Zykh/CabinetLightProtocol.pm"; do
   [ -s "$file" ] || fail "仓库缺少接入文件：$file"
 done
 
@@ -88,7 +89,7 @@ log "停止并删除旧 Zipformer 离线识别模块。"
 $ADB_PREFIX shell "if [ -s '$APP_ROOT/data/local-asr.pid' ]; then kill \$(cat '$APP_ROOT/data/local-asr.pid') 2>/dev/null || true; fi; rm -rf '$APP_ROOT/local_asr'; rm -f '$APP_ROOT/scripts/start_local_asr.sh' '$APP_ROOT/data/local-asr.pid' '$APP_ROOT/data/local-asr.log'" >/dev/null
 
 log "部署 Paraformer 模型、运行库和常驻服务。"
-$ADB_PREFIX shell "mkdir -p '$VOICE_ROOT/runtime/bin' '$VOICE_ROOT/runtime/lib' '$VOICE_ROOT/models/asr-paraformer' '$APP_ROOT/scripts' '$APP_ROOT/data/asr-service'" >/dev/null
+$ADB_PREFIX shell "mkdir -p '$VOICE_ROOT/runtime/bin' '$VOICE_ROOT/runtime/lib' '$VOICE_ROOT/models/asr-paraformer' '$APP_ROOT/scripts/Zykh' '$APP_ROOT/data/asr-service'" >/dev/null
 $ADB_PREFIX push "$TEMP_DIR/payload/runtime/bin/sherpa-onnx-offline" "$VOICE_ROOT/runtime/bin/" >/dev/null
 $ADB_PREFIX push "$TEMP_DIR/payload/runtime/bin/sherpa-onnx-offline-websocket-server" "$VOICE_ROOT/runtime/bin/" >/dev/null
 $ADB_PREFIX push "$TEMP_DIR/payload/runtime/lib/libonnxruntime.so" "$VOICE_ROOT/runtime/lib/" >/dev/null
@@ -105,6 +106,7 @@ $ADB_PREFIX shell "cp '$APP_ROOT/scripts/offline_asr_resident.sh' '$APP_ROOT/scr
 log "同步板端兼容 API 并预热模型。"
 $ADB_PREFIX push "$GATEWAY_DIR/patch_station_gateway.pl" "$APP_ROOT/scripts/patch_station_gateway.pl" >/dev/null
 $ADB_PREFIX push "$GATEWAY_DIR/start_station_gateway.sh" "$APP_ROOT/scripts/start_station_gateway.sh" >/dev/null
+$ADB_PREFIX push "$GATEWAY_DIR/lib/Zykh/CabinetLightProtocol.pm" "$APP_ROOT/scripts/Zykh/CabinetLightProtocol.pm" >/dev/null
 $ADB_PREFIX shell "chmod 755 '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/scripts/start_station_gateway.sh' && perl '$APP_ROOT/scripts/patch_station_gateway.pl' '$APP_ROOT/server.pl' && '$APP_ROOT/scripts/start_asr_service.sh' start && QSM_HOME='$APP_ROOT' PORT=8080 sh '$APP_ROOT/scripts/start_station_gateway.sh'" \
   >/dev/null || fail "Paraformer 或补丁后的外设网关启动失败。"
 

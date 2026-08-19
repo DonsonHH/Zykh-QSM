@@ -13,7 +13,14 @@ cd zykh_station_app
 sh scripts/adb_forward.sh
 ```
 
-For the first QSM offline-TTS deployment, run:
+For the first full QSM deployment, including the cabinet-light protocol module,
+run:
+
+```bash
+sh scripts/deploy_qsm_gateway.sh
+```
+
+For an offline-TTS-only update, run:
 
 ```bash
 sh scripts/deploy_offline_tts.sh
@@ -65,20 +72,33 @@ curl http://127.0.0.1:8000/api/device/check
 - QSM camera state;
 - vitals module state;
 - QSM local-voice readiness;
-- cabinet control: real linkage or temporarily disabled, matching the environment;
+- cabinet-light control from the live `STATUS` probe: “all off”, the exact cabinet still lit, or unavailable; do not accept configuration alone as ready;
 - sync state.
+
+5. Before any pickup test, verify the host status proxy reports all lights off:
+
+```bash
+curl http://127.0.0.1:8000/api/qsm/cabinet-light/status
+```
+
+The expected real-device result is `ok=true` and `status=off`. Do not continue
+when the result is `unknown` or a cabinet is unexpectedly lit.
 
 ## Workflow Verification
 
 1. Verify the homepage loads with today medication and emergency inquiry cards.
-2. Verify the medicines page loads inventory.
+2. Verify the medicines page shows exactly three physical cabinet cards and all
+   23 logical medicine items appear exactly once. Confirm that the original
+   `hardware_slot=1..23` identities remain available through the API. Treat the
+   displayed group names as a local proposal: compare every medicine with the
+   signed real-placement sheet before accepting the grouping.
 3. Verify the ordinary service-user list contains only `王奶奶` and `李爷爷`,
    and the four demo plans match their exact IDs, medicines, times and dose
    snapshots. Existing administrator edits must remain unchanged after restart.
 4. Open the medicines page and verify the manual path is identity → checking →
    passed/blocked/check-failed. A passed result still requires the explicit
-   “确认取药并开柜” action; blocked, failed and guest results must say the cabinet
-   was not opened.
+   “确认并点亮分类柜” action; blocked, failed and guest results must say the
+   cabinet light was not activated.
 5. In a hardware-isolated run, verify `王奶奶 + S13 布洛芬` and
    `李爷爷 + S05 蜜炼川贝枇杷膏` both return
    `BLOCKED / CONDITION_CONTRAINDICATION`, create one safety event and call the
@@ -93,7 +113,7 @@ curl http://127.0.0.1:8000/api/device/check
    attributes alone do not create a caregiver-approval state in the manual path.
 9. In a controlled test session, verify a qualifying shallow-wound or adult
    watery-diarrhea case exposes only the exact authorized combination; revoking
-   that combination before confirmation must return HTTP 409 without opening
+   that combination before confirmation must return HTTP 409 without lighting
    another cabinet.
 10. Verify the Scan page can show the QSM-camera capture state.
 11. Select each person card on Records and verify its history drawer supports
@@ -102,14 +122,25 @@ curl http://127.0.0.1:8000/api/device/check
 12. With a fake CloudBase adapter, verify safety events are append-only and
     idempotent, scoped caregivers can list/get/mark-read, and `OPEN_CABINET` is
     rejected in cloud, helper and Station layers with QSM call count zero.
-13. Physical cabinet smoke requires `DISPENSE_DRY_RUN=false`,
-    `ENABLE_REAL_DISPENSE=1` and request confirmation. Set
-    `REAL_DISPENSE_TEST_SLOT` when you need to restrict testing to one slot. A
-    timeout must show `RESULT_UNKNOWN`; do not press confirm again.
+13. Confirm the real serial path is ST-LINK VCP `/dev/ttyACM0` at 115200 8N1.
+    `PING` must return exactly `PONG`; `STATUS` must return exactly `STATUS OFF`
+    before the test. `/dev/ttyS5`, 9600 and single-byte `slot/control_code` are
+    retired and must not be accepted as successful cabinet control.
+14. Physical cabinet smoke requires `DISPENSE_DRY_RUN=false`,
+    `ENABLE_REAL_DISPENSE=1` and request confirmation. Set the legacy-named
+    `REAL_DISPENSE_TEST_SLOT` to physical cabinet ID `1`, `2` or `3` to limit the
+    test. Verify exactly one expected panel lights and the other two stay off;
+    the user must open the illuminated cabinet manually.
+15. After the user confirms pickup, verify the UI sends `OFF` and
+    `GET /api/qsm/cabinet-light/status` returns `status=off`. Repeat the
+    supervised observation for cabinets 1, 2 and 3 only after the placement map
+    is confirmed. A timeout or mismatched ACK must show `RESULT_UNKNOWN`; inspect
+    the lights physically and do not press confirm again.
 
 ## Expected Degradation
 
 - If the external gateway is unavailable in real mode, the UI should stay usable and show the gateway as not connected.
+- If cabinet light state cannot be confirmed, the UI must not claim that a door opened; it should retain an explicit retry-safe `OFF` action or direct the operator to inspect the lights.
 - If the QSM camera is unavailable in real mode, the Scan page should stay usable and allow manual verification.
 - If recognition fails, the Scan page should request manual confirmation rather than filling a fake medicine.
 - If the network is weak or unavailable, records remain local and can be shown as pending sync or not configured.

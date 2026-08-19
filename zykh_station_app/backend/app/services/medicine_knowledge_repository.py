@@ -10,6 +10,7 @@ from ..repositories.medicine_repository import (
 )
 from ..schemas.inquiry import CandidateMedicine, TreatmentMedicine, TreatmentOption
 from ..schemas.medicine import Medicine
+from .cabinet_v2_catalog import CabinetMappingError, cabinet_for_medicine_id
 from .medicine_combination_policy import CombinationAuthorization
 from .offline_inquiry_rules import OfflineInquiryRules, RULES
 
@@ -276,6 +277,10 @@ class MedicineKnowledgeRepository:
     @classmethod
     def _candidate_from_medicine(cls, medicine: Medicine) -> CandidateMedicine:
         facts = cls._safety_facts(medicine)
+        try:
+            cabinet = cabinet_for_medicine_id(medicine.id)
+        except CabinetMappingError:
+            cabinet = None
         return CandidateMedicine(
             id=medicine.id,
             name=medicine.name,
@@ -293,6 +298,8 @@ class MedicineKnowledgeRepository:
             review_fingerprint=cls.review_fingerprint(medicine),
             match_reason="",
             requires_existing_direction=not medicine.is_otc,
+            cabinet_id=cabinet.id if cabinet else None,
+            cabinet_label=cabinet.label if cabinet else "",
         )
 
     def options_from_ai_selection(

@@ -16,6 +16,9 @@ class DeviceCheckResponse(BaseModel):
     fingerprint_ok: bool
     fingerprint_status: str
     fingerprint_bound_users: int
+    cabinet_light_ok: bool = False
+    cabinet_light_status: str = "unknown"
+    cabinet_light_cabinet_id: int | None = None
     offline_tts_ok: bool = False
     offline_tts_engine: str = ""
     offline_tts_model: str = ""

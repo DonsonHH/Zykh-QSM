@@ -2003,7 +2003,7 @@ class MedicineRepository:
         medicine_id = self._scan_id(identity_name, identity_barcode)
         stock = max(int(stock if stock is not None else 1), 0)
         low_stock_line = max(int(low_stock_line if low_stock_line is not None else 1), 0)
-        safety = safety_note or "扫码录入药品，开柜前请核对药盒、有效期和家庭用药记录。"
+        safety = safety_note or "扫码录入药品，取药前请核对药盒、有效期和家庭用药记录。"
         inventory_state = "AVAILABLE" if stock > 0 else "DEPLETED"
         changed_at = db.now_text()
         with db.connect() as conn:

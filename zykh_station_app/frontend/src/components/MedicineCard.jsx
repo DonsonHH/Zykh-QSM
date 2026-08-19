@@ -34,10 +34,15 @@ export function MedicineCard({
           <small className="medicine-efficacy">{medicine.category}</small>
         </span>
       </span>
-      <span className="medicine-card-meta">
-        <em>
-          <b>{medicine.hardware_slot || medicine.slot}</b>
-          <small>号</small>
+      <span
+        className="medicine-card-meta"
+        aria-label={medicine.cabinet_id
+          ? `${medicine.cabinet_id}号分类柜 ${medicine.cabinet_label || ""}`
+          : "分类柜待配置"}
+      >
+        <em className={medicine.cabinet_id ? "" : "unassigned"}>
+          <b>{medicine.cabinet_id || "待"}</b>
+          <small>{medicine.cabinet_id ? "号分类柜" : "配置分类柜"}</small>
         </em>
       </span>
     </button>

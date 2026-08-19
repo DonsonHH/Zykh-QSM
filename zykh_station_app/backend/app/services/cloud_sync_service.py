@@ -33,6 +33,22 @@ from .speech_service import SpeechService
 
 
 REMOTE_CABINET_DISABLED_ERROR = "远程开柜已禁用，请在终端现场完成身份确认和用药核查。"
+LOCAL_ONLY_CABINET_FIELDS = frozenset(
+    {"cabinet_id", "cabinet_label", "cabinet_description"}
+)
+
+
+def _without_local_cabinet_projection(value: Any) -> Any:
+    """Keep cabinet-v2 presentation fields out of the unchanged cloud schema."""
+    if isinstance(value, dict):
+        return {
+            key: _without_local_cabinet_projection(item)
+            for key, item in value.items()
+            if key not in LOCAL_ONLY_CABINET_FIELDS
+        }
+    if isinstance(value, list):
+        return [_without_local_cabinet_projection(item) for item in value]
+    return value
 
 
 class CloudSyncError(RuntimeError):
@@ -286,7 +302,7 @@ class CloudSyncWorker:
         inquiries: list[dict[str, object]] = []
         inquiry_ids: set[str] = set()
         for session in inquiry_repository.list_sessions(limit=100):
-            row = session.model_dump(mode="json")
+            row = _without_local_cabinet_projection(session.model_dump(mode="json"))
             row.update(
                 {
                     "inquiry_id": session.session_id,
@@ -302,7 +318,7 @@ class CloudSyncWorker:
         for result in inquiry_repository.list_records():
             if result.inquiry_id in inquiry_ids:
                 continue
-            row = result.model_dump(mode="json")
+            row = _without_local_cabinet_projection(result.model_dump(mode="json"))
             row.update({"createdAt": result.created_at, "updatedAt": result.created_at})
             inquiries.append(row)
         records = []

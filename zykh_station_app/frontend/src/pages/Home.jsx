@@ -3,6 +3,7 @@ import { confirmDispense } from "../api/dispense.js";
 import { loadMedicine } from "../api/medicines.js";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { HomeHero } from "../components/HomeHero.jsx";
+import { normalizeCabinetLightMessage } from "../utils/cabinetLightPresentation.js";
 
 export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
   const [quickDispense, setQuickDispense] = useState(null);
@@ -53,8 +54,10 @@ export function Home({ dashboard, onNavigate, notify, onDashboardRefresh }) {
     setModalError("");
     return confirmDispense(payload)
       .then((response) => {
-        setModalResult(response.message);
-        notify(response.message);
+        const message = normalizeCabinetLightMessage(response.message);
+        setModalResult(response.ok ? message : "");
+        if (!response.ok) setModalError("");
+        notify(message);
         if (response.ok) {
           if (!response.dry_run) {
             window.dispatchEvent(new CustomEvent("zykh:dispense-recorded", {

@@ -11,13 +11,13 @@ React/Vite UI -> FastAPI -> services/qsm_client.py -> http://127.0.0.1:18080
                                    qsm_fingerprint_client.py -> http://127.0.0.1:18086
 ```
 
-QSM owns camera capture/streaming, face feature matching, temperature, integrated UART vitals, offline ASR/TTS, audio playback and cabinet-control peripherals. The local app owns UI, workflow, cloud-model orchestration, local records, safety rules, candidate medicine matching and 取药确认. The old QSM llama.cpp assets are diagnostic-only and are stopped during normal kiosk startup.
+QSM owns camera capture/streaming, face feature matching, temperature, integrated UART vitals, offline ASR/TTS, audio playback and the three-category-cabinet light controller. The local app owns UI, workflow, cloud-model orchestration, local records, safety rules, candidate medicine matching, the 23-logical-item to 3-physical-cabinet mapping and 取药确认. The old QSM llama.cpp assets are diagnostic-only and are stopped during normal kiosk startup.
 
 Latest hardware split:
 
 ```text
 Host app: React/Vite, FastAPI, SQLite, inquiry workflow, barcode/medicine recognition, identity mapping, touch UI.
-Peripheral gateway: FF Camera, face runtime, AS608 fingerprint templates, GY-614 forehead temperature, UART8 integrated vitals, audio, cabinet control.
+Peripheral gateway: FF Camera, face runtime, AS608 fingerprint templates, GY-614 forehead temperature, UART8 integrated vitals, audio, STM32L432KC cabinet-light control.
 ```
 
 QSM exposes MJPEG and still-capture endpoints on its main gateway. FastAPI proxies `/api/camera/stream`, saves recent real frames for barcode recognition and retries the brief 5xx window caused by switching between live preview and face matching.
@@ -52,6 +52,8 @@ QSM_VITALS_ALL_PATH=/api/vitals/read_all
 QSM_VITALS_PATH=/api/vitals/read
 QSM_TEMP_PATH=/api/vitals/temp/read
 QSM_DISPENSE_PATH=/api/dispense
+QSM_CABINET_LIGHT_OFF_PATH=/api/cabinet/light/off
+QSM_CABINET_LIGHT_STATUS_PATH=/api/cabinet/light/status
 QSM_AUDIO_ASR_PATH=/api/audio/asr
 QSM_AUDIO_STATUS_PATH=/api/audio/status
 QSM_AUDIO_SPEAK_PATH=/api/audio/speak
@@ -74,7 +76,8 @@ The path settings are reserved for gateway deployments that expose different HTT
 - `QSM_VITALS_ALL_PATH` and `QSM_VITALS_PATH` for full vitals checks when `QSM_VITALS_PREFER_FULL=true`.
 - `QSM_VITALS_PREPARE_PATH` starts the UART8 sensor algorithm when the measurement page opens. The session start then flushes preheat frames and collects a fresh stable window.
 - `QSM_VITALS_RETRY_ATTEMPTS` and `QSM_VITALS_RETRY_DELAY_SECONDS` for one automatic stabilization retry when temperature, heart rate or blood oxygen is incomplete. Concurrent UI requests share the same physical measurement instead of competing for UART.
-- `QSM_DISPENSE_PATH` for取药确认 physical gateway action.
+- `QSM_DISPENSE_PATH` for a safety-confirmed `cabinet_id=1..3` light action.
+- `QSM_CABINET_LIGHT_OFF_PATH` and `QSM_CABINET_LIGHT_STATUS_PATH` for explicit all-off control and state verification.
 - `QSM_AUDIO_ASR_PATH`, `QSM_AUDIO_STATUS_PATH`, `QSM_AUDIO_SPEAK_PATH` and `QSM_AUDIO_BEEP_PATH` for audio.
 
 ### 小程序服药提醒播报
@@ -140,7 +143,7 @@ stop:   0x2A
 frame:  FF 01 ... F1 (24 bytes)
 ```
 
-The medicine cabinet remains on `/dev/ttyS5`. Deploy the reader and restart wrapper with:
+The vitals binary UART remains independent from the cabinet controller. Deploy the reader and restart wrapper with:
 
 ```bash
 cd zykh_station_app
@@ -227,6 +230,66 @@ one-shot cancellation, leaving the React page as a presentation caller. UART8 an
 gateway adapter, so this extraction does not change the validated timing or frame
 protocol.
 
+## Three-category-cabinet light controller
+
+The physical cabinet boundary in v2 is intentionally separate from the 23 logical
+medicine identities. SQLite and CloudBase retain `hardware_slot=1..23`; the host
+resolves a stable medicine ID through `cabinet_v2_catalog.py` and sends only
+`cabinet_id=1`, `2` or `3` to QSM. An unmapped medicine fails closed before any
+HTTP or serial write. The current three group names and membership are a local
+display proposal and must be checked against the real placement sheet before a
+site accepts them as final. The v2.0.0 cabinet work does not modify
+`cloudbase/` or its schema.
+
+The actual serial path is:
+
+```text
+QSM USB host -> ST-LINK VCP /dev/ttyACM0 -> STM32L432KC USART2
+serial: 115200, 8N1, no flow control
+framing: ASCII line + CRLF
+```
+
+The retired `/dev/ttyS5` 9600-baud single-byte `slot/control_code` path must not be
+used. The patched station gateway rejects legacy `slot` or `control_code` fields
+instead of reporting a false success.
+
+| Command | Exact successful response | Meaning |
+| --- | --- | --- |
+| `PING` | `PONG` | Read-only connectivity check |
+| `CABINET 1` | `OK CABINET 1` | Illuminate only cabinet 1 |
+| `CABINET 2` | `OK CABINET 2` | Illuminate only cabinet 2 |
+| `CABINET 3` | `OK CABINET 3` | Illuminate only cabinet 3 |
+| `STATUS` | `STATUS OFF` or `STATUS CABINET n` | Read current light state |
+| `OFF` | `OK OFF` | Turn all three cabinets off |
+
+An illuminate action is successful only after both the exact `OK CABINET n`
+response and a second `STATUS CABINET n` verification. `OFF` likewise requires
+`OK OFF` followed by `STATUS OFF`. A write followed by timeout or a mismatched
+response is `result_unknown=true`; the illuminate action is not retried
+automatically. `OFF` is idempotent and may be explicitly retried. The startup
+wrapper sends and verifies `OFF` before accepting gateway requests, and refuses to
+start if it cannot prove the safe state.
+
+QSM board endpoints are `POST /api/dispense`,
+`POST /api/cabinet/light/off` and `GET /api/cabinet/light/status`. The first
+accepts `cabinet_id`, `quantity` and an optional stable `operation_id`. The host
+proxies the latter two as `POST /api/qsm/cabinet-light/off` and
+`GET /api/qsm/cabinet-light/status`.
+
+The controller only indicates the cabinet. It never drives or proves a door-open
+mechanism: the user opens the illuminated cabinet manually, takes the medicine,
+confirms completion in the UI and causes the host to send `OFF`.
+
+Deploy the protocol module, station patch and fail-safe startup wrapper together:
+
+```bash
+cd zykh_station_app
+sh scripts/deploy_qsm_gateway.sh
+```
+
+Tracked firmware source, pinout, protocol and reproducible build instructions are
+in `qsm_gateway/firmware/cabinet_v2_l432kc/`.
+
 ## Supported adapter methods
 
 - `health_check()`
@@ -238,7 +301,9 @@ protocol.
 - `get_vitals_session(session_id)`
 - `cancel_vitals_session(session_id)`
 - `get_device_status()`
-- `dispense(slot, dry_run=False)`
+- `dispense(cabinet_id, quantity, dry_run=False, operation_id="")`
+- `cabinet_light_off()`
+- `cabinet_light_status()`
 - `audio_asr()`
 - `audio_status()`
 - `audio_speak()` calls the QSM offline TTS route used by local presentation mode and cloud-TTS fallback.
@@ -256,7 +321,7 @@ WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes fr
 
 The host SIM fallback is a routed USB link rather than an ADB-forwarded HTTP request. QSM `usb0` is the EC200A WAN, QSM `usb1` is the RNDIS link to host `usb0`, and `qsm_gateway/start_host_tether.sh` enables forwarding and NAT. The root-owned host helper assigns `192.168.77.2/24` and a metric-700 default route through `192.168.77.1`; WiFi remains the preferred lower-metric route. Install the helper once with `sudo sh scripts/install_qsm_tether_helper.sh`. Settings refuses to disable WiFi when this route cannot be verified.
 
-By default the app uses the real cabinet-control path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues to the gateway dispense call after identity and optional today-plan ownership checks succeed. Successful real actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. `REAL_DISPENSE_TEST_SLOT` is optional and can limit physical tests to one safe slot. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
+By default the app uses the real cabinet-light path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues to the gateway light call after identity and optional today-plan ownership checks succeed. The UI then instructs the user to open the illuminated cabinet manually and provides an explicit completion action that sends `OFF`. Successful real light-guidance actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. The legacy-named `REAL_DISPENSE_TEST_SLOT` now accepts a physical cabinet ID `1`, `2` or `3` and can limit supervised hardware tests. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 
 `scripts/deploy_qsm_gateway.sh` can install the AS608 payload when it finds `QSM368ZP-AS608-offline-deploy(1).zip` at the repository root, or when `QSM_FINGERPRINT_BUNDLE` points to the package. Template IDs `0..15` remain reserved; host-created bindings start at 16. Fingerprint templates stay inside AS608 and face features stay on QSM. The host stores only local subject mappings, match counters, last-seen timestamps and dispense audit records.
 
@@ -277,6 +342,8 @@ GET  /api/audio/status
 POST /api/audio/speak
 POST /api/audio/beep
 POST /api/qsm/dispense/dry-run
+POST /api/qsm/cabinet-light/off
+GET  /api/qsm/cabinet-light/status
 GET  /api/qsm/capabilities
 GET  /api/identity/status
 POST /api/identity/resolve
@@ -311,45 +378,44 @@ Gateway unavailable expected behavior: HTTP 200, `connected=false` or `ok=false`
 
 Successful integrated-vitals responses preserve `heart_rate`, `spo2`, `systolic_pressure`, `diastolic_pressure`, `respiratory_rate`, `hrv_sdnn`, `hrv_rmssd`, and `sensor_model`. Zero placeholders from the sensor are normalized to `null` rather than shown as real readings.
 
-Real dispense smoke is intentionally omitted from the generic checklist. Only run it after configuring a safe slot and confirming the device is ready.
+Real cabinet-light smoke is intentionally omitted from the generic checklist.
+Only run it after confirming the provisional medicine grouping against the real
+placement, limiting the test to cabinet `1`, `2` or `3`, and checking that the
+controller begins at `STATUS OFF`.
 
-### Physical dispense idempotency
+### Physical cabinet-light idempotency
 
-The medicine-page manual route sends a non-empty `operation_id` to the board
-`/api/dispense` boundary. The station gateway patch serializes each operation by
-that ID and atomically persists `reserved -> sent -> final` around the original
-UART/GPIO call. Replaying the same normalized slot, quantity and control code
-returns the stored result without another pulse; reusing an ID with different
+The medicine-page manual route sends a non-empty `operation_id` and one
+`cabinet_id` to the board `/api/dispense` boundary. The station gateway serializes
+each operation and atomically persists `reserved -> sent -> final` around the
+strict text exchange. Replaying the same cabinet ID and quantity returns the
+stored result without sending `CABINET n` again; reusing an ID with different
 content fails. A stale `reserved`/`sent` record, corrupt state, transport loss or
-missing final result is reported as `result_unknown=true` and `retry_safe=false`.
-The host surfaces that as `RESULT_UNKNOWN`; neither layer automatically retries.
+missing final result is reported as `result_unknown=true` and
+`retry_safe=false`. The host surfaces that as `RESULT_UNKNOWN`; neither layer
+automatically retries an illuminate action.
 
-Scheduled-plan and AI-inquiry cabinet actions use the same replay contract.
-A plan action persists one board ID on the plan before the first QSM call and
-reuses it while the result is in progress or unknown, including across midnight
-and process restarts. A known failure may reserve a new action; a successful
-action marks the persisted ID complete with the plan. An inquiry action derives
-its ID from the server-owned inquiry session, selected
+Scheduled-plan and AI-inquiry actions use the same replay contract. A plan action
+persists one board ID before the first QSM call and reuses it while the result is
+in progress or unknown, including across midnight and process restarts. An
+inquiry action derives its ID from the server-owned inquiry session, selected
 option and medicine index; a real inquiry action without that identity fails
-closed before QSM. Transport uncertainty is preserved in both the dispense and
-inquiry responses as `result_unknown=true` and `retry_safe=false`, with explicit
-instructions to verify the cabinet on site and not retry automatically. A plan is
-not completed while its result is unknown.
+closed before QSM. Transport uncertainty is preserved with instructions to
+inspect the physical light state and not retry automatically. A plan is not
+completed while its result is unknown.
 
-Administrator cabinet tests require a client `request_id`. The admin UI stores one
-pending ID per slot in session storage before sending the request and keeps it when
-the HTTP or cabinet result is uncertain, so a replay reaches QSM with the same
-`admin-*` operation ID. A known completion clears that pending ID. Admin responses
-also expose `result_unknown` and `retry_safe`, and the audit ledger records an
-uncertain action as `unknown` rather than an ordinary failure.
+The legacy administrator route `/api/admin/cabinet/{slot}/open` is retained only
+as a compatibility rejection and returns HTTP 410. The administrator UI no
+longer exposes a 1–23 open-door test. Supervised light tests run through the same
+medicine safety path or the explicit serial acceptance procedure.
 
-The physical dispense HTTP request is sent once using one fixed body encoding;
-an empty response, disconnect, invalid response or HTTP failure becomes
-`result_unknown` and is never retried with a second encoding. The board also
-serializes all operation IDs at one hardware lock and returns
-`hardware_unavailable` rather than simulated success when neither UART5 nor a
-slot GPIO exists. Physical smoke is still a separate, supervised step and is
-never run by automated tests.
+The physical HTTP request is sent once using one fixed body encoding; an empty
+response, disconnect, invalid response or HTTP failure becomes `result_unknown`
+and is never retried with a second encoding. The board serializes all cabinet
+light operations with one hardware lock and returns `hardware_unavailable`
+instead of simulated success when `/dev/ttyACM0` or the protocol module is
+missing. `OFF` is a separate idempotent operation followed by `STATUS OFF`.
+Physical smoke remains a supervised step and is never run by automated tests.
 
 ## AI And Recognition
 
@@ -403,4 +469,11 @@ The backend also exposes:
 GET /api/device/check
 ```
 
-It returns HTTP 200 in real mode without a gateway and real mode with a gateway. When real mode is unavailable, the response includes warnings and recommendations instead of raising a server error.
+It returns HTTP 200 in real mode without a gateway and real mode with a gateway.
+When real cabinet-light control and the main gateway are available, it performs a
+live read-only `STATUS` call. The response fields `cabinet_light_ok`,
+`cabinet_light_status` and `cabinet_light_cabinet_id` distinguish a verified
+all-off state, one cabinet still lit and an unavailable controller;
+`cabinet_light_ok=true` requires `status=off`. When real mode is unavailable, the
+response includes warnings and recommendations instead of raising a server
+error.

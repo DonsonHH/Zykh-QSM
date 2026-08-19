@@ -34,6 +34,8 @@ class CandidateMedicine(BaseModel):
     review_fingerprint: str = ""
     match_reason: str = ""
     requires_existing_direction: bool = False
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    cabinet_label: str = ""
 
 
 class TreatmentMedicine(CandidateMedicine):
@@ -282,6 +284,8 @@ class InquiryTreatmentDispenseItem(BaseModel):
     inventory_confirmation_required: bool = False
     result_unknown: bool = False
     retry_safe: bool = True
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    cabinet_label: str = ""
 
 
 class InquiryTreatmentConfirmResponse(BaseModel):

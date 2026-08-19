@@ -14,7 +14,7 @@ export const mockDashboard = {
     pending_people: 0,
     pending_plans: 0,
     next_time: "--:--",
-    featured_subject: "家庭药柜",
+    featured_subject: "家庭分类柜",
     featured_medicine: "等待后端数据",
     plans: []
   },
@@ -24,12 +24,12 @@ export const mockDashboard = {
     action_label: "开始问询"
   },
   quick_actions: [
-    { id: "scan", title: "扫码识别", subtitle: "药盒 / 条码 / 药柜编号", tone: "green" },
+    { id: "scan", title: "扫码识别", subtitle: "药盒 / 药品条码", tone: "green" },
     { id: "vitals", title: "身体状态测量", subtitle: "额温 / 心率 / 血氧", tone: "blue" },
     { id: "records", title: "服务记录", subtitle: "本地记录与同步", tone: "purple" }
   ],
   stats: [
-    { id: "cabinet", label: "药柜", value: "0/23", tone: "blue" },
+    { id: "cabinet", label: "分类柜", value: "0/3", tone: "blue" },
     { id: "temperature", label: "体温", value: "未测量", unit: "", tone: "cyan" },
     { id: "device", label: "设备", value: "未检查", tone: "soft" }
   ],

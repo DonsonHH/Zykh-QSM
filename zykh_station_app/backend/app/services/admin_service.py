@@ -19,12 +19,10 @@ from uuid import uuid4
 from .. import db
 from ..config import APP_ROOT, settings
 from ..schemas.admin import AdminAuditRecord
-from ..schemas.dispense import DispenseOpenRequest
 from ..schemas.medicine import MedicineUpdateRequest
 from ..schemas.records import ServiceUserCreateRequest, ServiceUserUpdateRequest, TodayPlanCreateRequest, TodayPlanUpdateRequest
 from ..schemas.settings import BasicSettingsResponse, BasicSettingsUpdateRequest
 from ..repositories.inquiry_repository import InquiryRepository
-from .dispense_service import DispenseService
 from .dispense_archive_service import DispenseArchiveService
 from .fingerprint_service import FingerprintService
 from .identity_service import IdentityService
@@ -267,20 +265,11 @@ class AdminService:
         reason: str,
         request_id: str,
     ) -> object:
-        if confirmation.strip() != f"OPEN {slot}":
-            raise AdminServiceError("开柜操作的二次确认校验失败。")
-        result = DispenseService().open_cabinet(
-            DispenseOpenRequest(
-                slot=slot,
-                quantity=1,
-                reason=reason,
-                confirmed_open=True,
-                request_id=request_id,
-            )
+        del slot, confirmation, reason, request_id
+        raise AdminServiceError(
+            "旧版 1-23 仓位开柜入口已停用；请从现场取药流程按药品点亮对应分类柜。",
+            410,
         )
-        audit_result = "unknown" if result.result_unknown else ("success" if result.ok else "failed")
-        self.audit("cabinet.open", str(slot), audit_result, result.message)
-        return result
 
     def system_action(self, action: str, confirmation: str) -> dict[str, object]:
         if not settings.admin_allow_system_actions:

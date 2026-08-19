@@ -36,6 +36,8 @@ const medicine = {
   id: "slot-13-ibuprofen",
   slot: "13",
   hardware_slot: 13,
+  cabinet_id: 1,
+  cabinet_label: "口服药品",
   barcode: "6913991301572",
   manufacturer: "芬必得",
   name: "布洛芬缓释胶囊",
@@ -96,11 +98,13 @@ const requests = {
   assess: [],
   confirm: [],
   legacyConfirm: [],
-  directDispense: []
+  directDispense: [],
+  lightOff: []
 };
 let assessmentMode = "blocked";
 let confirmationMode = "success";
 let identityMode = "guest";
+let lightOffFailuresRemaining = 1;
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -159,8 +163,24 @@ async function fulfillApiRequest({ requestId, request }) {
     payload = {
       ok: true,
       total: 1,
-      warehouse_total: 23,
+      warehouse_total: 3,
       categories: [medicine.category],
+      cabinets: [{
+        id: 1,
+        label: "口服药品",
+        description: "口服药品分类柜",
+        medicine_ids: [medicine.id]
+      }, {
+        id: 2,
+        label: "外用药品",
+        description: "外用药品分类柜",
+        medicine_ids: []
+      }, {
+        id: 3,
+        label: "医疗护理用品",
+        description: "医疗护理用品分类柜",
+        medicine_ids: []
+      }],
       medicines: [medicine]
     };
   } else if (url.pathname === `/api/medicines/${medicine.id}`) {
@@ -261,6 +281,14 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/dispense") {
     requests.directDispense.push(jsonBody(request));
     payload = { ok: false, message: "隔离测试禁止直接开柜" };
+  } else if (url.pathname === "/api/qsm/cabinet-light/off") {
+    requests.lightOff.push(jsonBody(request));
+    if (lightOffFailuresRemaining > 0) {
+      lightOffFailuresRemaining -= 1;
+      await fulfillJson(requestId, { detail: "控制器未确认 OFF，请重试" }, 503);
+      return;
+    }
+    payload = { ok: true, result: "off", message: "分类柜指示灯已关闭" };
   } else if (["/api/audio/speak", "/api/audio/stream/stop"].includes(url.pathname)) {
     payload = { ok: true, status: "complete" };
   }
@@ -494,7 +522,7 @@ try {
   assert.match(blockedView.detailText, /禁忌提醒[\s\S]*消化性溃疡患者禁用/, "medicine details omit contraindications");
   assert.match(blockedView.detailText, /慎用与指导提醒[\s\S]*请核对包装说明书/, "medicine details omit the independent safety note");
   assert.match(blockedView.text, /既往胃溃疡/, "blocked result does not show the server-provided reason");
-  assert.match(blockedView.text, /柜门未打开/, "blocked result does not explicitly say that the cabinet stayed closed");
+  assert.match(blockedView.text, /分类柜指示灯未亮/, "blocked result does not explicitly say that the cabinet light stayed off");
   assert.match(blockedView.text, /已记录并将同步家属/, "blocked result does not explain family visibility");
 
   assessmentMode = "network_error";
@@ -509,7 +537,7 @@ try {
     return status === "check_failed";
   }, "network-failed assessment check-failed state");
   const unpersistedAssessmentView = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
-  assert.match(unpersistedAssessmentView, /柜门未打开/, "failed assessment does not keep the cabinet closed");
+  assert.match(unpersistedAssessmentView, /分类柜指示灯未亮/, "failed assessment does not keep the cabinet light off");
   assert.doesNotMatch(
     unpersistedAssessmentView,
     /已记录并将同步家属/,
@@ -540,7 +568,7 @@ try {
   }))()`);
   assert.equal(passedView.status, "passed", "PASSED response is not rendered as a passed safety state");
   assert.match(passedView.text, /核查通过/, "PASSED state does not explain the safety result");
-  assert.match(passedView.action, /确认取药并开柜/, "PASSED state has no explicit final confirmation action");
+  assert.match(passedView.action, /确认取药并亮灯/, "PASSED state has no explicit final confirmation action");
 
   await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
   await waitForNodeState(() => requests.confirm.length > 0, "explicit manual confirmation");
@@ -560,8 +588,32 @@ try {
   assert.equal(requests.directDispense.length, 0, "explicit manual confirmation must not call direct dispense");
   await waitForNodeState(async () => {
     const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
-    return text.includes("柜门已打开");
-  }, "confirmed cabinet-open result");
+    return text.includes("分类柜指示灯已亮");
+  }, "confirmed cabinet-light result");
+  const litCabinetView = await evaluate(`(() => ({
+    text: document.querySelector('.dispense-modal')?.innerText || '',
+    action: document.querySelector('.biometric-confirm-action:not([disabled])')?.textContent || ''
+  }))()`);
+  assert.match(litCabinetView.text, /请自行打开亮灯的分类柜取药/);
+  assert.match(litCabinetView.action, /我已取药，关闭指示灯/);
+  assert.equal(requests.lightOff.length, 0, "cabinet light must remain on until the user confirms taking the medicine");
+  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 1, "explicit cabinet light OFF request");
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("控制器未确认 OFF，请重试");
+  }, "cabinet light OFF failure recovery message");
+  assert.equal(
+    await evaluate(`Boolean(document.querySelector('.dispense-modal .biometric-confirm-action:not([disabled])'))`),
+    true,
+    "failed OFF acknowledgement must remain on screen with a retry action"
+  );
+  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 2, "retried cabinet light OFF request");
+  await waitForNodeState(
+    async () => evaluate(`!document.querySelector('.dispense-modal')`),
+    "dispense modal closing after cabinet light OFF"
+  );
 
   confirmationMode = "server_error";
   Object.values(requests).forEach((items) => { items.length = 0; });
@@ -586,11 +638,17 @@ try {
   }))()`);
   assert.equal(uncertainView.status, "result_unknown");
   assert.match(uncertainView.text, /请勿重复操作/, "uncertain physical result does not prevent retry");
-  assert.match(uncertainView.text, /现场确认柜门状态/, "uncertain physical result has no safe next step");
-  assert.match(uncertainView.action, /返回药品列表/, "uncertain physical result exposes another dispense action");
-  assert.doesNotMatch(uncertainView.action, /确认|开柜|重试/, "uncertain physical result can be retried");
+  assert.match(uncertainView.text, /现场确认指示灯状态/, "uncertain physical result has no safe next step");
+  assert.match(uncertainView.action, /关闭分类柜指示灯/, "uncertain physical result has no explicit safe OFF action");
+  assert.doesNotMatch(uncertainView.action, /确认取药|点亮|再次/, "uncertain physical result can be physically retried");
   assert.equal(requests.legacyConfirm.length, 0);
   assert.equal(requests.directDispense.length, 0);
+  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 1, "uncertain-result cabinet light OFF request");
+  await waitForNodeState(
+    async () => evaluate(`!document.querySelector('.dispense-modal')`),
+    "uncertain-result modal closing only after cabinet light OFF"
+  );
 
   confirmationMode = "network_error";
   Object.values(requests).forEach((items) => { items.length = 0; });
@@ -613,10 +671,16 @@ try {
     action: document.querySelector('.biometric-confirm-action:not([disabled])')?.textContent || ''
   }))()`);
   assert.match(networkUnknownView.text, /请勿重复操作/);
-  assert.match(networkUnknownView.text, /现场确认柜门状态/);
-  assert.match(networkUnknownView.action, /返回药品列表/);
+  assert.match(networkUnknownView.text, /现场确认指示灯状态/);
+  assert.match(networkUnknownView.action, /关闭分类柜指示灯/);
   assert.equal(requests.legacyConfirm.length, 0);
   assert.equal(requests.directDispense.length, 0);
+  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 1, "network-unknown cabinet light OFF request");
+  await waitForNodeState(
+    async () => evaluate(`!document.querySelector('.dispense-modal')`),
+    "network-unknown modal closing only after cabinet light OFF"
+  );
 
   confirmationMode = "conflict";
   Object.values(requests).forEach((items) => { items.length = 0; });
@@ -639,7 +703,7 @@ try {
     action: document.querySelector('.biometric-confirm-action:not([disabled])')?.textContent || ''
   }))()`);
   assert.match(rejectedView.text, /安全核查凭据已失效/);
-  assert.match(rejectedView.text, /柜门未打开/, "explicitly rejected confirmation does not keep the door closed");
+  assert.match(rejectedView.text, /分类柜指示灯未亮/, "explicitly rejected confirmation does not keep the light off");
   assert.doesNotMatch(
     rejectedView.text,
     /已记录并将同步家属/,
@@ -663,7 +727,7 @@ try {
     return status === "check_failed";
   }, "unverified face check-failed state");
   const unverifiedFaceView = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
-  assert.match(unverifiedFaceView, /柜门未打开/);
+  assert.match(unverifiedFaceView, /分类柜指示灯未亮/);
   assert.doesNotMatch(
     unverifiedFaceView,
     /已记录并将同步家属/,
@@ -723,7 +787,7 @@ try {
   }))()`);
   assert.equal(guestView.status, "check_failed", "PROFILE_UNAVAILABLE is not shown as CHECK_FAILED");
   assert.equal(guestView.role, "alert", "guest CHECK_FAILED result is not announced assertively");
-  assert.match(guestView.text, /柜门未打开/, "guest CHECK_FAILED result does not explicitly keep the cabinet closed");
+  assert.match(guestView.text, /分类柜指示灯未亮/, "guest CHECK_FAILED result does not explicitly keep the cabinet light off");
   assert.doesNotMatch(guestView.text, /确认访客取药/, "guest still has a bypass action after identity verification");
 
   if (interceptionError) throw interceptionError;

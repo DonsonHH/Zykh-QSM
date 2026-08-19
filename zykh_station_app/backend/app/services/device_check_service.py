@@ -39,6 +39,21 @@ class DeviceCheckService:
         camera_ok = camera_status == "available"
         offline_tts_ok = bool(speech_status.get("offline_available"))
         fingerprint_ok = fingerprint_status.ok
+        cabinet_light_enabled = real_dispense_enabled()
+        cabinet_light = (
+            self.qsm_client.cabinet_light_status()
+            if cabinet_light_enabled and qsm_status.mode == "real" and qsm_status.connected
+            else {}
+        )
+        cabinet_light_status = str(cabinet_light.get("status") or "unknown")
+        cabinet_light_ok = bool(cabinet_light.get("ok")) and cabinet_light_status == "off"
+        cabinet_light_cabinet_id = cabinet_light.get("cabinet_id")
+        try:
+            cabinet_light_cabinet_id = int(cabinet_light_cabinet_id)
+        except (TypeError, ValueError):
+            cabinet_light_cabinet_id = None
+        if cabinet_light_cabinet_id not in {1, 2, 3}:
+            cabinet_light_cabinet_id = None
 
         if qsm_status.mode == "real" and not qsm_status.connected:
             warnings.append("外设网关未连接。")
@@ -58,9 +73,16 @@ class DeviceCheckService:
         if not fingerprint_ok:
             warnings.append("指纹模块暂不可用。")
             recommendations.append("请检查 AS608 USB 连接、指纹网关和 18086 端口转发；取药时可改用面部确认。")
-        if not real_dispense_enabled():
-            warnings.append("开柜当前未启用真实联动。")
-            recommendations.append("真实开柜需要 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1，并完成取药安全确认。")
+        if not cabinet_light_enabled:
+            warnings.append("分类柜亮灯当前未启用真实联动。")
+            recommendations.append("真实亮灯需要 DISPENSE_DRY_RUN=false、ENABLE_REAL_DISPENSE=1，并完成取药安全确认。")
+        elif qsm_status.mode == "real" and qsm_status.connected and not cabinet_light.get("ok"):
+            warnings.append("分类柜控制器状态暂不可用。")
+            recommendations.append("请检查 /dev/ttyACM0、115200 串口协议及 QSM 分类柜网关。")
+        elif cabinet_light_status.startswith("cabinet_"):
+            active_id = cabinet_light_cabinet_id or cabinet_light_status.removeprefix("cabinet_")
+            warnings.append(f"{active_id}号分类柜指示灯仍亮着。")
+            recommendations.append("请确认现场取药完成并执行 OFF，待三个分类柜均熄灭后再继续。")
         if not recommendations:
             recommendations.append("系统检查通过，可以继续真实外设流程。")
 
@@ -78,6 +100,9 @@ class DeviceCheckService:
             fingerprint_ok=fingerprint_ok,
             fingerprint_status=fingerprint_status.status,
             fingerprint_bound_users=fingerprint_status.bound_users,
+            cabinet_light_ok=cabinet_light_ok,
+            cabinet_light_status=cabinet_light_status,
+            cabinet_light_cabinet_id=cabinet_light_cabinet_id,
             offline_tts_ok=offline_tts_ok,
             offline_tts_engine=str(offline_voice.get("engine") or ""),
             offline_tts_model=str(offline_voice.get("model") or ""),

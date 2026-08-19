@@ -510,7 +510,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(outcome.dispense_status, "DISPENSED")
         self.assertTrue(outcome.inventory_confirmation_required)
         self.assertTrue(replay.inventory_confirmation_required)
-        self.assertEqual(self.qsm.calls, [("14", 1, False)])
+        self.assertEqual(self.qsm.calls, [(1, 1, False)])
         record = self.service.list_records()[0]
         self.assertEqual(record.target_user_id, "li-yeye")
         self.assertEqual(record.target_user_name, "李爷爷")
@@ -544,7 +544,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
 
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PACKAGE_UNVERIFIED"])
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(self.qsm.calls, [])
 
     def test_unreviewed_inquiry_medicine_is_rejected_before_qsm_dispense(self) -> None:
@@ -674,7 +674,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertFalse(result.inventory_confirmation_required)
-        self.assertIn("请勿重复开柜", result.message)
+        self.assertIn("请勿重复发起亮灯", result.message)
         refreshed = MedicineRepository().get_by_id(medicine.id)
         self.assertIsNotNone(refreshed)
         self.assertEqual(refreshed.stock, medicine.stock)
@@ -864,7 +864,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
 
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(self.qsm.calls, [])
 
     def test_user_records_hide_dry_run_entries(self) -> None:

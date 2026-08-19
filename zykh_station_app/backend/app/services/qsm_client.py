@@ -17,33 +17,6 @@ from ..config import real_dispense_enabled, settings
 from ..schemas.qsm import QsmStatus
 
 
-CABINET_CONTROL_CODE_BY_SLOT: dict[int, int] = {
-    1: 3,
-    2: 2,
-    3: 1,
-    4: 0,
-    5: 7,
-    6: 6,
-    7: 5,
-    8: 4,
-    9: 9,
-    10: 8,
-    11: 11,
-    12: 10,
-    13: 13,
-    14: 12,
-    15: 16,
-    16: 15,
-    17: 14,
-    18: 19,
-    19: 18,
-    20: 17,
-    21: 22,
-    22: 21,
-    23: 20,
-}
-
-
 class _VitalsMeasurementCoordinator:
     def __init__(self) -> None:
         self._condition = threading.Condition()
@@ -697,31 +670,47 @@ class QsmClient:
 
     def dispense(
         self,
-        slot: str,
+        cabinet_id: int,
         quantity: int,
         dry_run: bool = True,
         operation_id: str = "",
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"slot": slot, "quantity": quantity}
+        try:
+            numeric_cabinet_id = int(cabinet_id)
+        except (TypeError, ValueError):
+            numeric_cabinet_id = 0
+        if numeric_cabinet_id < 1 or numeric_cabinet_id > 3:
+            return {
+                "ok": False,
+                "dry_run": dry_run,
+                "cabinet_id": numeric_cabinet_id,
+                "quantity": quantity,
+                "detail": "分类柜编号必须为 1、2 或 3。",
+                "result_unknown": False,
+                "retry_safe": True,
+            }
+        payload: dict[str, Any] = {
+            "cabinet_id": numeric_cabinet_id,
+            "quantity": quantity,
+        }
         if operation_id:
             payload["operation_id"] = operation_id
-        try:
-            numeric_slot = int(slot)
-            if 1 <= numeric_slot <= 23:
-                # UI/backend use 1-23; the physical cabinet wiring has mirrored rows.
-                payload["control_code"] = CABINET_CONTROL_CODE_BY_SLOT[numeric_slot]
-        except ValueError:
-            pass
         if dry_run:
             return {
                 "ok": True,
                 "dry_run": True,
-                "slot": slot,
+                "cabinet_id": numeric_cabinet_id,
                 "quantity": quantity,
                 "detail": "dry-run only",
             }
         if self.mode != "real":
-            return {"ok": False, "dry_run": False, "slot": slot, "quantity": quantity, "detail": "QSM real 模式未启用。"}
+            return {
+                "ok": False,
+                "dry_run": False,
+                "cabinet_id": numeric_cabinet_id,
+                "quantity": quantity,
+                "detail": "QSM real 模式未启用。",
+            }
         payload, error = self._request_json(
             settings.qsm_dispense_path,
             method="POST",
@@ -738,7 +727,7 @@ class QsmClient:
             return {
                 "ok": False,
                 "dry_run": False,
-                "slot": slot,
+                "cabinet_id": numeric_cabinet_id,
                 "quantity": quantity,
                 "detail": error,
                 # Once an HTTP write is attempted, a timeout/disconnect cannot
@@ -751,11 +740,84 @@ class QsmClient:
         return {
             "ok": ok,
             "dry_run": False,
-            "slot": slot,
+            "cabinet_id": numeric_cabinet_id,
             "quantity": quantity,
             "detail": payload.get("message") or payload.get("detail") or payload.get("error") or payload.get("result") or "外设网关已返回。",
             "result_unknown": result_unknown,
             "retry_safe": bool(payload.get("retry_safe", not result_unknown)),
+            "raw": payload,
+        }
+
+    def cabinet_light_off(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {
+                "ok": True,
+                "mode": self.mode,
+                "result": "success",
+                "status": "off",
+                "result_unknown": False,
+                "retry_safe": True,
+                "detail": "模拟模式：分类柜指示灯已关闭。",
+            }
+        payload, error = self._request_json(
+            settings.qsm_cabinet_light_off_path,
+            method="POST",
+            payload={},
+            body_format="json",
+        )
+        if error:
+            return {
+                "ok": False,
+                "mode": "real",
+                "result": "result_unknown",
+                "status": "unknown",
+                "result_unknown": True,
+                # OFF is idempotent: an explicit user retry is safe even when
+                # the first HTTP response was lost.
+                "retry_safe": True,
+                "detail": error,
+            }
+        ok = bool(payload.get("ok")) and payload.get("status") == "off"
+        result_unknown = bool(payload.get("result_unknown")) or not ok
+        return {
+            "ok": ok,
+            "mode": "real",
+            "result": payload.get("result") or ("success" if ok else "failed"),
+            "status": str(payload.get("status") or "unknown"),
+            "result_unknown": result_unknown,
+            "retry_safe": bool(payload.get("retry_safe", True)),
+            "detail": payload.get("detail") or payload.get("error") or "外设网关已返回。",
+            "raw": payload,
+        }
+
+    def cabinet_light_status(self) -> dict[str, Any]:
+        if self.mode != "real":
+            return {
+                "ok": True,
+                "mode": self.mode,
+                "result": "success",
+                "status": "off",
+                "detail": "模拟模式：分类柜指示灯均已关闭。",
+            }
+        payload, error = self._request_json(
+            settings.qsm_cabinet_light_status_path,
+            method="GET",
+        )
+        if error:
+            return {
+                "ok": False,
+                "mode": "real",
+                "result": "status_unavailable",
+                "status": "unknown",
+                "detail": error,
+            }
+        return {
+            "ok": bool(payload.get("ok")),
+            "mode": "real",
+            "result": payload.get("result") or "success",
+            "status": str(payload.get("status") or "unknown"),
+            "cabinet_id": payload.get("cabinet_id"),
+            "detail": payload.get("detail") or payload.get("error") or "外设网关已返回。",
             "raw": payload,
         }
 

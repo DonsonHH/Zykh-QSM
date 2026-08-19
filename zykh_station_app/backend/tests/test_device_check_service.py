@@ -14,6 +14,9 @@ from app.services.device_check_service import DeviceCheckService  # noqa: E402
 
 
 class FakeQsm:
+    def __init__(self, cabinet_light=None) -> None:
+        self.cabinet_light = cabinet_light or {"ok": True, "status": "off"}
+
     def get_qsm_status(self):
         return SimpleNamespace(
             mode="real",
@@ -23,6 +26,9 @@ class FakeQsm:
 
     def read_vitals(self):
         return {"source": "real"}
+
+    def cabinet_light_status(self):
+        return self.cabinet_light
 
 
 class FakeCamera:
@@ -47,10 +53,10 @@ class FakeSpeech:
 
 
 class DeviceCheckServiceTest(unittest.TestCase):
-    def _check(self, available: bool):
+    def _check(self, available: bool, cabinet_light=None):
         with patch("app.services.device_check_service.real_dispense_enabled", return_value=True):
             return DeviceCheckService(
-                qsm_client=FakeQsm(),
+                qsm_client=FakeQsm(cabinet_light),
                 qsm_camera=FakeCamera(),
                 fingerprint=FakeFingerprint(),
                 speech=FakeSpeech(available),
@@ -69,6 +75,26 @@ class DeviceCheckServiceTest(unittest.TestCase):
         self.assertFalse(result.offline_tts_ok)
         self.assertIn("本地语音暂未就绪。", result.warnings)
         self.assertTrue(any("deploy_offline_tts.sh" in item for item in result.recommendations))
+
+    def test_system_check_requires_a_confirmed_off_cabinet_status(self) -> None:
+        result = self._check(
+            True,
+            {"ok": False, "status": "unknown", "detail": "serial unavailable"},
+        )
+
+        self.assertFalse(result.cabinet_light_ok)
+        self.assertEqual(result.cabinet_light_status, "unknown")
+        self.assertIn("分类柜控制器状态暂不可用。", result.warnings)
+
+    def test_system_check_warns_when_a_cabinet_light_is_still_on(self) -> None:
+        result = self._check(
+            True,
+            {"ok": True, "status": "cabinet_2", "cabinet_id": 2},
+        )
+
+        self.assertFalse(result.cabinet_light_ok)
+        self.assertEqual(result.cabinet_light_cabinet_id, 2)
+        self.assertIn("2号分类柜指示灯仍亮着。", result.warnings)
 
 
 if __name__ == "__main__":

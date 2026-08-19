@@ -194,7 +194,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(first.dispense_status, "NOT_STARTED")
         self.assertEqual(first.reason_codes, ["CONDITION_CONTRAINDICATION"])
         self.assertIn("既往胃溃疡", first.message)
-        self.assertIn("柜门未打开", first.message)
+        self.assertIn("分类柜指示灯未亮", first.message)
         self.assertEqual(replay, first)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_checks(request_id=command.request_id), 1)
@@ -244,7 +244,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "BLOCKED")
         self.assertEqual(assessment.reason_codes, ["CONDITION_CONTRAINDICATION"])
         self.assertIn("2 型糖尿病", assessment.message)
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
     def test_passed_non_otc_check_requires_one_time_confirm_and_calls_dispense_once(self) -> None:
@@ -660,7 +660,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             outcome = DispenseServiceManualAdapter(service).confirm_manual(execution)
 
         self.assertEqual(outcome.dispense_status, "DISPENSED")
-        self.assertEqual(qsm.calls, [("14", 1, False, "manual-op-001")])
+        self.assertEqual(qsm.calls, [(1, 1, False, "manual-op-001")])
 
     def test_distinct_manual_operations_keep_the_availability_flag_at_one(self) -> None:
         from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
@@ -717,8 +717,8 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(
             qsm.calls,
             [
-                ("14", 1, False, "manual-last-stock-001"),
-                ("14", 1, False, "manual-last-stock-002"),
+                (1, 1, False, "manual-last-stock-001"),
+                (1, 1, False, "manual-last-stock-002"),
             ],
         )
         self.assertEqual(
@@ -819,7 +819,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             ).confirm_manual(command)
 
         self.assertEqual(outcome.dispense_status, "HARDWARE_FAILED")
-        self.assertIn("外设开柜失败", outcome.message)
+        self.assertIn("分类柜指示灯未能点亮", outcome.message)
         self.assertEqual(
             MedicineRepository().get_by_id(command.medicine_id).stock,
             5,
@@ -916,7 +916,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertFalse(response.inventory_confirmation_required)
         self.assertEqual(
             qsm.calls,
-            [("14", 1, True, "manual-dry-run-stock-001")],
+            [(1, 1, True, "manual-dry-run-stock-001")],
         )
         refreshed = MedicineRepository().get_by_id(command.medicine_id)
         self.assertIsNotNone(refreshed)
@@ -990,7 +990,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             "_request_json",
             return_value=({}, "timed out after request write"),
         ):
-            result = client.dispense("14", 1, dry_run=False)
+            result = client.dispense(1, 1, dry_run=False)
 
         self.assertFalse(result["ok"])
         self.assertTrue(result["result_unknown"])
@@ -1013,7 +1013,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             ),
         ):
             result = client.dispense(
-                "14",
+                1,
                 1,
                 dry_run=False,
                 operation_id="manual-operation-unknown-001",
@@ -1596,7 +1596,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
 
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
         from app.services.medication_safety_outbox import MedicationSafetyOutbox
@@ -1903,7 +1903,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -1974,7 +1974,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -2055,7 +2055,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -2131,7 +2131,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -2208,7 +2208,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -2291,7 +2291,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
         self.assertEqual(assessment.expires_at, "")
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
         self.assertEqual(dispense.calls, [])
         self.assertEqual(repository.count_outbox_events(check_id=assessment.check_id), 1)
 
@@ -2359,7 +2359,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
 
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["PROFILE_UNAVAILABLE"])
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
 
     def test_explicit_no_current_medication_conclusion_is_auditable(self) -> None:
         from app.repositories.identity_assertion_repository import IdentityAssertionRepository
@@ -2560,7 +2560,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(assessment.check_status, "CHECK_FAILED")
         self.assertEqual(assessment.reason_codes, ["MEDICINE_DATA_UNREVIEWED"])
         self.assertNotIn("已过有效期", assessment.message)
-        self.assertIn("柜门未打开", assessment.message)
+        self.assertIn("分类柜指示灯未亮", assessment.message)
 
     def test_stock_change_invalidates_a_pass_before_the_dispense_boundary(self) -> None:
         from app.repositories.identity_assertion_repository import IdentityAssertionRepository
@@ -2684,7 +2684,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
                 (medicine.id,),
             )
 
-        with self.assertRaisesRegex(ValueError, "仓位映射已经变化"):
+        with self.assertRaisesRegex(ValueError, "逻辑库存身份已经变化"):
             module.confirm(
                 ConfirmManualMedicationCommand(
                     request_id="confirm-hardware-slot-binding-001",
@@ -2755,7 +2755,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertTrue(response.dry_run)
-        self.assertEqual(qsm.calls, [("17", 1, True)])
+        self.assertEqual(qsm.calls, [(2, 1, True)])
 
 
 if __name__ == "__main__":

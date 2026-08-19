@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from ..config import DATA_DIR, settings
 from ..repositories.medicine_repository import MedicineRepository
 from ..schemas.medicine import MedicineScanResult, MedicineVisualRecognizeResponse
+from .cabinet_v2_catalog import CabinetMappingError, cabinet_for_medicine_id
 from .qsm_camera_service import QsmCameraService
 
 
@@ -138,6 +139,10 @@ class MedicineScanService:
                 source=source,
                 error_message="条码未匹配到家庭药柜药品，请人工核验。",
             )
+        try:
+            cabinet = cabinet_for_medicine_id(medicine.id)
+        except CabinetMappingError:
+            cabinet = None
         return MedicineScanResult(
             ok=True,
             status="matched",
@@ -150,6 +155,8 @@ class MedicineScanService:
             quantity=f"{medicine.stock}{medicine.unit}",
             expire_date=medicine.expire_date,
             slot=str(medicine.hardware_slot or medicine.slot),
+            cabinet_id=cabinet.id if cabinet else None,
+            cabinet_label=cabinet.label if cabinet else "",
             source=source,
         )
 

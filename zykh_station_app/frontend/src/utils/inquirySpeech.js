@@ -45,11 +45,12 @@ export function buildRecommendationSpeech(result, selectedOption) {
   const selectionGuide = optionCount > 1
     ? "屏幕上有推荐方案和备选方案，请点选其中一个，不要同时使用。"
     : "屏幕上有一个推荐方案，请核对后选择。";
-  const body = `${safetyNoticeText}${conditionText}${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。${seekCareText}确认后系统会依次打开对应药柜。`;
+  const body = `${safetyNoticeText}${conditionText}${selectionGuide}${label}包含${medicineNames}。${reason}${instruction}。${seekCareText}确认后系统会按顺序点亮对应分类柜指示灯，请自行打开亮灯的分类柜取药。`;
   return `${body.slice(0, Math.max(0, MAX_SPEECH_LENGTH - disclaimer.length))}${disclaimer}`;
 }
 
 export function buildActionSpeech(actionMessage) {
-  const message = String(actionMessage || "").trim();
+  const message = normalizeCabinetLightMessage(actionMessage).trim();
   return message ? `${message}请按屏幕提示取药，并再次核对药品名称。` : "";
 }
+import { normalizeCabinetLightMessage } from "./cabinetLightPresentation.js";

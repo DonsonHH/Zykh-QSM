@@ -21,10 +21,11 @@ from ..schemas.dispense import (
     DispenseRecord,
 )
 from ..schemas.manual_medication_access import ManualDispenseExecutionCommand
-from .qsm_client import QsmClient
+from .cabinet_v2_catalog import CabinetMappingError, cabinet_for_medicine_id
 from .dispense_archive_service import DispenseArchiveService
 from .dispense_route import classify_dispense_route
 from .medicine_knowledge_repository import MedicineKnowledgeRepository
+from .qsm_client import QsmClient
 
 
 class DispenseError(Exception):
@@ -104,7 +105,7 @@ class DispenseService:
         if medicine is None:
             raise DispenseError("未找到该药品。", status_code=404)
         if request.slot != medicine.slot:
-            raise DispenseError("药品仓位与当前库存记录不一致。")
+            raise DispenseError("药品身份与当前库存记录不一致。")
         if request.confirmed_safety_notice is not True:
             raise DispenseError("请先阅读并确认药品说明与安全提示。")
         if medicine.guidance_source == "pending":
@@ -196,7 +197,7 @@ class DispenseService:
             and not request.request_id.strip()
         ):
             raise DispenseError(
-                "问询取药缺少稳定动作标识，本次柜门未打开；请返回原问询会话重试。",
+                "问询取药缺少稳定动作标识，本次分类柜指示灯未亮；请返回原问询会话重试。",
                 status_code=409,
             )
         if validated_manual and not dry_run:
@@ -218,10 +219,14 @@ class DispenseService:
             )
             if inventory_token is None:
                 raise DispenseError(
-                    "药品库存记录已变化，本次柜门未打开。",
+                    "药品库存记录已变化，本次分类柜指示灯未亮。",
                     status_code=409,
                 )
-        qsm_slot = str(medicine.hardware_slot or medicine.slot)
+        try:
+            cabinet = cabinet_for_medicine_id(medicine.id)
+        except CabinetMappingError as exc:
+            raise DispenseError(str(exc), status_code=409) from exc
+        qsm_cabinet_id = cabinet.id
         if (
             not qsm_operation_id
             and request.today_plan_id.strip()
@@ -247,14 +252,14 @@ class DispenseService:
             qsm_operation_id = self._inquiry_operation_id(request.request_id)
         if qsm_operation_id:
             qsm_result = self.qsm_client.dispense(
-                qsm_slot,
+                qsm_cabinet_id,
                 request.quantity,
                 dry_run=dry_run,
                 operation_id=qsm_operation_id,
             )
         else:
             qsm_result = self.qsm_client.dispense(
-                qsm_slot,
+                qsm_cabinet_id,
                 request.quantity,
                 dry_run=dry_run,
             )
@@ -264,9 +269,9 @@ class DispenseService:
         qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
         if not dry_run and (not qsm_ok or result_unknown):
             if result_unknown:
-                message = "柜门结果待现场确认，请勿自动重试。"
+                message = "分类柜亮灯结果待现场确认，请勿自动重试。"
             else:
-                message = f"外设开柜失败：{qsm_detail or '未返回成功状态'}"
+                message = f"分类柜指示灯未能点亮：{qsm_detail or '未返回成功状态'}"
             if request.today_plan_id and qsm_operation_id:
                 if plan_records_service is None:
                     from .records_service import RecordsService
@@ -281,7 +286,7 @@ class DispenseService:
                 except ValueError:
                     result_unknown = True
                     retry_safe = False
-                    message = "柜门结果待现场确认，请勿自动重试。"
+                    message = "分类柜亮灯结果待现场确认，请勿自动重试。"
             record = self._build_record(
                 request,
                 medicine,
@@ -302,9 +307,15 @@ class DispenseService:
                 qsm_detail=qsm_detail,
                 result_unknown=result_unknown,
                 retry_safe=retry_safe,
+                cabinet_id=cabinet.id,
+                cabinet_label=cabinet.label,
             )
 
-        message = "本地测试记录已保存，未打开柜门。" if dry_run else "取药确认已完成，柜门已打开。"
+        message = (
+            "本地测试记录已保存，未点亮分类柜指示灯。"
+            if dry_run
+            else f"{cabinet.id}号{cabinet.label}指示灯已亮起，请自行打开亮灯的分类柜取药。"
+        )
         record = self._build_record(
             request,
             medicine,
@@ -326,8 +337,8 @@ class DispenseService:
             )
             if not inventory_observation_pending:
                 message = (
-                    "柜门已打开；库存记录在开柜期间已更新，"
-                    "本次不再接受旧现场确认，请勿重复开柜。"
+                    "分类柜指示灯已亮；库存记录在亮灯期间已更新，"
+                    "本次不再接受旧现场确认，请勿重复发起亮灯。"
                 )
         else:
             self.dispense_repository.append(record)
@@ -348,6 +359,8 @@ class DispenseService:
             record_id=record.id,
             qsm_detail=qsm_detail,
             inventory_confirmation_required=inventory_observation_pending,
+            cabinet_id=cabinet.id,
+            cabinet_label=cabinet.label,
         )
 
     @staticmethod
@@ -374,7 +387,7 @@ class DispenseService:
             or medicine.slot != command.slot
             or int(medicine.hardware_slot or 0) != command.expected_hardware_slot
         ):
-            raise DispenseError("药品仓位映射已经变化，请重新核查。", status_code=409)
+            raise DispenseError("药品逻辑库存身份已经变化，请重新核查。", status_code=409)
         if medicine.stock != command.expected_stock:
             raise DispenseError("药品库存记录已经变化，请重新核查。", status_code=409)
         if (
@@ -403,102 +416,11 @@ class DispenseService:
             return
 
     def open_cabinet(self, request: DispenseOpenRequest) -> DispenseOpenResponse:
-        if request.confirmed_open is not True:
-            raise DispenseError("请先确认现场安全，避免误开柜门。")
-
-        allowed_slot = settings.real_dispense_test_slot.strip()
-        dry_run = settings.dispense_dry_run or not settings.enable_real_dispense
-        if not dry_run and allowed_slot and allowed_slot != str(request.slot):
-            raise DispenseError("真实开柜测试仓位与请求仓位不一致，已拒绝执行。")
-        if not dry_run and not request.request_id.strip():
-            raise DispenseError(
-                "管理员开柜缺少稳定动作标识，本次柜门未打开。",
-                status_code=409,
-            )
-
-        qsm_result = self.qsm_client.dispense(
-            str(request.slot),
-            request.quantity,
-            dry_run=dry_run,
-            operation_id=(
-                self._admin_operation_id(request.request_id)
-                if request.request_id.strip()
-                else ""
-            ),
+        del request
+        raise DispenseError(
+            "旧版 1-23 仓位开柜能力已停用；请按药品执行现场安全取药，系统将点亮对应分类柜。",
+            status_code=410,
         )
-        qsm_ok = bool(qsm_result.get("ok"))
-        result_unknown = bool(qsm_result.get("result_unknown"))
-        retry_safe = bool(qsm_result.get("retry_safe", not result_unknown))
-        qsm_detail = str(qsm_result.get("detail") or qsm_result.get("error_message") or "")
-        if dry_run:
-            return DispenseOpenResponse(
-                ok=True,
-                dry_run=True,
-                slot=request.slot,
-                message="本地测试记录已保存，未打开柜门。",
-                qsm_detail=qsm_detail,
-            )
-        if result_unknown:
-            return DispenseOpenResponse(
-                ok=False,
-                dry_run=False,
-                slot=request.slot,
-                message="柜门结果待现场确认，请勿自动重试。",
-                qsm_detail=qsm_detail,
-                result_unknown=True,
-                retry_safe=False,
-            )
-        if not qsm_ok:
-            return DispenseOpenResponse(
-                ok=False,
-                dry_run=False,
-                slot=request.slot,
-                message=f"外设开柜失败：{qsm_detail or '未返回成功状态'}",
-                qsm_detail=qsm_detail,
-                retry_safe=retry_safe,
-            )
-        if request.target_user_name and request.medicine_id:
-            medicine = self.medicine_repository.get_by_id(request.medicine_id)
-            if medicine is not None:
-                target_user_name, target_user_type, persona_generation = self._resolve_identity(
-                    request.target_user_id,
-                    request.target_user_name,
-                    require_known=False,
-                )
-                record = DispenseRecord(
-                    id=f"dispense-{uuid4().hex[:12]}",
-                    medicine_id=medicine.id,
-                    medicine_name=medicine.name,
-                    slot=medicine.slot,
-                    hardware_slot=medicine.hardware_slot,
-                    quantity=request.quantity,
-                    unit=medicine.unit,
-                    reason=request.reason,
-                    dry_run=False,
-                    message=f"{target_user_name}已打开{medicine.hardware_slot}号柜。",
-                    qsm_ok=True,
-                    qsm_detail=qsm_detail,
-                    target_user_id=request.target_user_id,
-                    persona_generation=persona_generation,
-                    target_user_name=target_user_name,
-                    verification_method="manual",
-                    verification_score=None,
-                    target_user_type=target_user_type,
-                    created_at=now_text(),
-                )
-                self.dispense_repository.append(record)
-        return DispenseOpenResponse(
-            ok=True,
-            dry_run=False,
-            slot=request.slot,
-            message=f"{request.slot}号柜门已打开。",
-            qsm_detail=qsm_detail,
-        )
-
-    @staticmethod
-    def _admin_operation_id(request_id: str) -> str:
-        logical_action = f"admin-v1|{request_id.strip()}"
-        return f"admin-{sha256(logical_action.encode('utf-8')).hexdigest()[:40]}"
 
     def list_records(self) -> list[DispenseRecord]:
         return self.dispense_repository.list_records()
@@ -520,9 +442,12 @@ class DispenseService:
         allowed_slot = settings.real_dispense_test_slot.strip()
         if not allowed_slot:
             return False
-        hardware_slot = str(medicine.hardware_slot or "")
-        if allowed_slot not in {hardware_slot, medicine.slot}:
-            raise DispenseError("真实取药测试仓位与当前药品仓位不一致，已拒绝执行。")
+        try:
+            cabinet_id = str(cabinet_for_medicine_id(medicine.id).id)
+        except CabinetMappingError as exc:
+            raise DispenseError(str(exc), status_code=409) from exc
+        if allowed_slot != cabinet_id:
+            raise DispenseError("真实取药测试分类柜与当前药品分类柜不一致，已拒绝执行。")
         return False
 
     @staticmethod

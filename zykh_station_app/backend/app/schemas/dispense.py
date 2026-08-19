@@ -23,7 +23,7 @@ class DispenseConfirmRequest(BaseModel):
 class DispenseOpenRequest(BaseModel):
     slot: int = Field(ge=1, le=23)
     quantity: int = Field(default=1, ge=1)
-    reason: str = "现场开柜确认"
+    reason: str = "旧版仓位操作（已停用）"
     confirmed_open: bool = False
     medicine_id: str | None = None
     target_user_id: str = ""
@@ -40,6 +40,8 @@ class DispenseConfirmResponse(BaseModel):
     result_unknown: bool = False
     retry_safe: bool = True
     inventory_confirmation_required: bool = False
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    cabinet_label: str = ""
 
 
 class DispenseOpenResponse(BaseModel):

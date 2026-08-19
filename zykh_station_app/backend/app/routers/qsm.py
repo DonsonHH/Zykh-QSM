@@ -10,6 +10,7 @@ from ..repositories.device_action_repository import DeviceActionRecord, DeviceAc
 from ..repositories.vitals_repository import VitalsRecord, VitalsRepository
 from ..schemas.dispense import DispenseConfirmRequest
 from ..schemas.qsm import (
+    QsmCabinetLightResponse,
     QsmCameraCaptureResponse,
     QsmCapabilitiesResponse,
     QsmDryRunRequest,
@@ -27,6 +28,29 @@ router = APIRouter(prefix="/api/qsm", tags=["qsm"])
 @router.get("/status", response_model=QsmStatus)
 def qsm_status() -> QsmStatus:
     return QsmClient().get_qsm_status()
+
+
+def _cabinet_light_response(payload: dict[str, object]) -> QsmCabinetLightResponse:
+    return QsmCabinetLightResponse(
+        ok=bool(payload.get("ok")),
+        mode=str(payload.get("mode") or "real"),
+        result=str(payload.get("result") or "failed"),
+        status=str(payload.get("status") or "unknown"),
+        message=str(payload.get("detail") or "分类柜指示灯状态暂无法确认。"),
+        cabinet_id=_int_or_none(payload.get("cabinet_id")),
+        result_unknown=bool(payload.get("result_unknown")),
+        retry_safe=bool(payload.get("retry_safe", True)),
+    )
+
+
+@router.post("/cabinet-light/off", response_model=QsmCabinetLightResponse)
+def qsm_cabinet_light_off() -> QsmCabinetLightResponse:
+    return _cabinet_light_response(QsmClient().cabinet_light_off())
+
+
+@router.get("/cabinet-light/status", response_model=QsmCabinetLightResponse)
+def qsm_cabinet_light_status() -> QsmCabinetLightResponse:
+    return _cabinet_light_response(QsmClient().cabinet_light_status())
 
 
 @router.get("/vitals", response_model=QsmVitalsResponse)
@@ -316,7 +340,7 @@ def _vitals_record_description(response: QsmVitalsResponse) -> str:
 def _camera_record_description(response: QsmCameraCaptureResponse) -> str:
     if response.mock_recognition_result:
         item = response.mock_recognition_result
-        return f"识别到 {item.name}，匹配度 {item.match_percent}%，仓位 {item.slot}。"
+        return f"识别到 {item.name}，匹配度 {item.match_percent}%，请核对所属分类柜。"
     if response.status == "unavailable":
         return "摄像头暂不可用，已保留本地记录。"
     return "完成本机摄像头入口检查。"

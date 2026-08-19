@@ -20,10 +20,12 @@ export function buildDispenseGuidanceSpeech(medicine, plan = null, method = "fin
 
 export function buildDispenseSuccessSpeech(medicine) {
   const name = String(medicine?.name || "药品").trim();
-  return `${name}已弹出，请取出药品并关闭柜门。`;
+  const cabinet = describeMedicineCabinet(medicine).split(" · ")[0];
+  return `${name}所在的${cabinet}指示灯已亮，请自行打开亮灯的分类柜取药。取好后请点击“我已取药”。`;
 }
 
 export function buildDispenseFailureSpeech(message) {
   const detail = String(message || "身份确认未完成").replace(/[。！!]+$/g, "").slice(0, MAX_FAILURE_LENGTH);
   return `${detail}，请按屏幕提示重新确认。`;
 }
+import { describeMedicineCabinet } from "./cabinetLightPresentation.js";

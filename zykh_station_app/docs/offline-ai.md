@@ -22,7 +22,12 @@ AI_INQUIRY_REASONING_EFFORT=off
 OFFLINE_INQUIRY_MODE=rules
 ```
 
-密钥只从环境变量或本机私有文件读取，不写入 Git、Markdown 或前端资源。云端输出仍必须经过本地 schema 校验、危险信号规则、候选准入、禁忌/重复成分检查和开柜前实时复核。
+密钥只从环境变量或本机私有文件读取，不写入 Git、Markdown 或前端资源。云端输出仍必须经过本地 schema 校验、危险信号规则、候选准入、禁忌/重复成分检查和分类柜亮灯前实时复核。
+
+问询模型只处理稳定药品 ID 和 23 项逻辑库存身份，不选择或生成物理柜号。
+所有安全规则通过后，本地 `cabinet_v2_catalog.py` 才把药品映射到
+`cabinet_id=1..3`；未配置映射时失败关闭。三个分类名称属于本地界面建议，
+不会进入 CloudBase 或被模型当作已经确认的实机摆放事实。
 
 ## QSM 语言模型资产
 
@@ -40,4 +45,4 @@ OFFLINE_INQUIRY_MODE=rules
 4. 模式切换不关闭实际 Wi-Fi/SIM；
 5. 前端普通文案不暴露 provider、QSM 模型或内部路由名称。
 
-测试必须使用 fake provider、临时数据库和 `QSM_MODE=mock`，不得访问真实密钥、QSM 或药柜。
+测试必须使用 fake provider、临时数据库和 `QSM_MODE=mock`，不得访问真实密钥、QSM 或分类柜指示灯控制器。

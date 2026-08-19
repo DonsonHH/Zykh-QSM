@@ -310,7 +310,7 @@ class InquiryOrchestrator:
             if session.action_status not in {"ready", "opening"}:
                 raise DispenseError("本次方案已经处理或当前不可执行，请重新开始问询。", status_code=409)
             if session.risk_level not in {"low", "medium"} or not session.can_view_medicines:
-                raise DispenseError("当前风险等级不允许执行开柜操作。", status_code=409)
+                raise DispenseError("当前风险等级不允许执行分类柜亮灯取药。", status_code=409)
 
             if session.action_status == "opening" and session.selected_option_id != request.option_id:
                 raise DispenseError("已有方案正在执行，不能切换到其他方案。", status_code=409)
@@ -329,10 +329,10 @@ class InquiryOrchestrator:
             if guard.risk_level not in {"low", "medium"}:
                 self._replace_with_guard_failure(session, guard)
                 self._commit(session)
-                raise DispenseError("安全状态已经变化，本次不再执行开柜。", status_code=409)
+                raise DispenseError("安全状态已经变化，本次不再点亮分类柜。", status_code=409)
 
             if not self._medicine_information_confirmed(session.extracted_information):
-                raise DispenseError("用药和过敏信息尚未确认，不能执行开柜。", status_code=409)
+                raise DispenseError("用药和过敏信息尚未确认，不能点亮分类柜。", status_code=409)
             self._refresh_registered_user_safety_context(session)
             direction_plans = self._existing_direction_plans(session.user_id)
             completed_direction_ids = {
@@ -439,21 +439,28 @@ class InquiryOrchestrator:
                 raise DispenseError("所选方案没有可执行药品。", status_code=409)
             if session.action_status == "ready":
                 if request.expected_item_index != 0:
-                    raise DispenseError("开柜进度已经失效，请重新核对方案。", status_code=409)
+                    raise DispenseError("分类柜亮灯进度已经失效，请重新核对方案。", status_code=409)
                 session.selected_option_id = request.option_id
                 session.action_progress_index = 0
                 session.action_total_items = expected
                 session.action_items = []
             if request.expected_item_index != session.action_progress_index:
-                raise DispenseError("开柜进度已经更新，请刷新后继续。", status_code=409)
+                raise DispenseError("分类柜亮灯进度已经更新，请刷新后继续。", status_code=409)
             if session.action_progress_index >= expected:
-                raise DispenseError("本方案对应药柜已经全部处理。", status_code=409)
+                raise DispenseError("本方案对应的分类柜亮灯步骤已经全部处理。", status_code=409)
 
             item_index = session.action_progress_index
             treatment_medicine = fresh_option.medicines[item_index]
+            cabinet_text = (
+                f"{treatment_medicine.cabinet_id}号{treatment_medicine.cabinet_label or '分类柜'}"
+                if treatment_medicine.cabinet_id
+                else "对应分类柜"
+            )
             session.action_status = "opening"
             session.action_total_items = expected
-            session.action_message = f"正在打开第 {item_index + 1}/{expected} 个药柜：{treatment_medicine.slot}号柜。"
+            session.action_message = (
+                f"正在点亮第 {item_index + 1}/{expected} 项药品所在的{cabinet_text}指示灯。"
+            )
             session.reply = session.action_message
             self._commit(session)
 
@@ -467,6 +474,8 @@ class InquiryOrchestrator:
                     ok=False,
                     dry_run=False,
                     message="药品库存记录已经变化。",
+                    cabinet_id=treatment_medicine.cabinet_id,
+                    cabinet_label=treatment_medicine.cabinet_label,
                 )
             else:
                 try:
@@ -477,7 +486,7 @@ class InquiryOrchestrator:
                             quantity=1,
                             reason=(
                                 f"AI应急问询 {session.session_id} 方案 {request.option_id} "
-                                f"第{item_index + 1}/{expected}柜"
+                                f"第{item_index + 1}/{expected}项分类柜亮灯"
                             ),
                             confirmed_safety_notice=True,
                             confirm_real_dispense=True,
@@ -508,6 +517,8 @@ class InquiryOrchestrator:
                         ),
                         result_unknown=result.result_unknown,
                         retry_safe=result.retry_safe,
+                        cabinet_id=result.cabinet_id,
+                        cabinet_label=result.cabinet_label,
                     )
                 except DispenseError as exc:
                     item = InquiryTreatmentDispenseItem(
@@ -517,6 +528,8 @@ class InquiryOrchestrator:
                         ok=False,
                         dry_run=False,
                         message=exc.message,
+                        cabinet_id=treatment_medicine.cabinet_id,
+                        cabinet_label=treatment_medicine.cabinet_label,
                     )
 
             session.action_items = [*session.action_items, item.model_dump()]
@@ -526,8 +539,8 @@ class InquiryOrchestrator:
             if not item.ok:
                 status = "partial" if session.action_progress_index > 0 else "failed"
                 message = (
-                    f"已处理 {session.action_progress_index}/{expected} 个药柜，"
-                    f"{treatment_medicine.slot}号柜未完成：{item.message}"
+                    f"已处理 {session.action_progress_index}/{expected} 项分类柜亮灯，"
+                    f"{cabinet_text}未完成：{item.message}"
                 )
                 ok = False
             elif session.action_progress_index >= expected:
@@ -536,7 +549,7 @@ class InquiryOrchestrator:
                     1 for value in session.action_items if value.get("ok") and not value.get("dry_run")
                 )
                 message = (
-                    f"方案 {request.option_id} 的 {opened} 个药柜已按顺序完成开柜。"
+                    f"方案 {request.option_id} 的 {opened} 项分类柜指示灯已按取药顺序点亮。"
                     if opened
                     else f"方案 {request.option_id} 的 {expected} 项本地测试记录已完成。"
                 )
@@ -544,9 +557,14 @@ class InquiryOrchestrator:
             else:
                 status = "opening"
                 next_item = fresh_option.medicines[session.action_progress_index]
+                next_cabinet_text = (
+                    f"{next_item.cabinet_id}号{next_item.cabinet_label or '分类柜'}"
+                    if next_item.cabinet_id
+                    else "对应分类柜"
+                )
                 message = (
-                    f"已打开 {item_index + 1}/{expected}：{treatment_medicine.slot}号柜；"
-                    f"下一步打开 {next_item.slot}号柜。"
+                    f"已点亮 {item_index + 1}/{expected}：{cabinet_text}；"
+                    f"请取药并关闭指示灯后，再点亮下一项的{next_cabinet_text}。"
                 )
                 ok = True
 
@@ -1094,7 +1112,7 @@ class InquiryOrchestrator:
                 session.stage = "result"
                 session.next_action = "complete"
                 session.reply = (
-                    "本次没有检测到合适药物，因此不打开药柜；可以先做基础护理和观察。"
+                    "本次没有检测到合适药物，因此不会点亮分类柜指示灯；可以先做基础护理和观察。"
                     "如果出现红肿、持续疼痛、发热或症状明显加重，请及时联系医生或家人。"
                 )
         else:
@@ -2419,7 +2437,7 @@ class InquiryOrchestrator:
         session.action_items = []
         session.stage = "escalated"
         session.next_action = "escalate"
-        session.action_message = "安全状态已经变化，本次不再执行开柜。"
+        session.action_message = "安全状态已经变化，本次不再点亮分类柜。"
         session.reply = session.action_message
 
     @staticmethod

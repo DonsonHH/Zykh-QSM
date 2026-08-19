@@ -18,6 +18,7 @@ const detailPanel = fs.readFileSync(
 );
 
 const base = {
+  cabinet_id: 1,
   is_otc: true,
   package_verified: true,
   guidance_source: "label_reference",
@@ -25,6 +26,18 @@ const base = {
 };
 
 assert.equal(manualDispenseBlockReason(base, new Date("2026-08-05")), "");
+assert.equal(
+  manualDispenseBlockReason({ ...base, cabinet_id: null }, new Date("2026-08-05")),
+  "该药品尚未配置分类柜，暂不可取药"
+);
+assert.equal(
+  manualDispenseButtonLabel({ ...base, cabinet_id: null }, new Date("2026-08-05")),
+  "待配置分类柜"
+);
+assert.equal(
+  manualDispenseBlockHint({ ...base, cabinet_id: 4 }, new Date("2026-08-05")),
+  "需先完成药品与分类柜的映射配置"
+);
 assert.equal(
   manualDispenseBlockReason({ ...base, package_verified: false }, new Date("2026-08-05")),
   "包装规格待人工核验，暂不可取药"

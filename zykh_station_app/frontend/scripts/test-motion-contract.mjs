@@ -369,18 +369,19 @@ assert.doesNotMatch(
 );
 assert.match(dispenseModal, /FACE_VERIFICATION_FRAME_INTERVAL_MS\s*=\s*250/, "face verification preview refresh is not bounded");
 assert.match(dispenseModal, /\/api\/identity\/frame\?t=/, "face verification does not use the recognition-owned live frame source");
-assert.match(dispenseModal, /DISPENSE_COMPLETE_HOLD_MS\s*=\s*1200/, "successful dispense does not briefly show the cabinet-open result");
+assert.doesNotMatch(dispenseModal, /DISPENSE_COMPLETE_HOLD_MS/, "successful dispense still auto-skips the lit-cabinet state");
 assert.match(
   dispenseModal,
-  /phase === "complete"[\s\S]*window\.setTimeout\([\s\S]*setPhase\("inventory_check"\)[\s\S]*DISPENSE_COMPLETE_HOLD_MS/,
-  "successful dispense does not continue to inventory confirmation"
+  /async function acknowledgeMedicineTaken\(\)[\s\S]*await turnOffCabinetLight\(\)[\s\S]*setPhase\("inventory_check"\)/,
+  "successful dispense cannot explicitly acknowledge medicine collection and turn the light off"
 );
-assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "auto-close callback is not stable across parent clock renders");
-assert.match(dispenseModal, /onCancelRef\.current\(\)/, "auto-close timer does not call the latest close callback");
+assert.match(dispenseModal, /我已取药，关闭指示灯/, "lit-cabinet state has no explicit completion action");
+assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "modal close callback is not stable across parent renders");
+assert.match(dispenseModal, /onCancelRef\.current\(\)/, "modal does not call the latest close callback");
 assert.match(
   dispenseModal,
-  /if \(open && phase === "complete"\)[\s\S]*?\}, \[dispenseRecordId, inventoryEligible, open, phase\]\);/,
-  "inventory confirmation timer can still restart whenever a parent recreates the close callback"
+  /cabinetLightMayBeOnRef[\s\S]*turnOffCabinetLight\(\)\.catch/,
+  "closing or unmounting cannot make a best-effort cabinet-light OFF request"
 );
 assert.match(dispenseModal, /<MedicineRemainingPrompt/, "dispense flow does not ask whether medicine remains");
 assert.match(
@@ -423,7 +424,7 @@ assert.match(dispenseModal, /await submitDispense\(verification\.user/, "known u
 assert.doesNotMatch(dispenseModal, /confirmAndOpen|verifyIdentity/, "dispense still requires a second confirmation click");
 assert.match(dispenseModal, /setPhase\("guest_confirm"\)/, "unknown face flow has no second confirmation state");
 assert.match(dispenseModal, /face_guest_confirmed/, "unknown face confirmation is not recorded explicitly");
-assert.match(dispenseModal, /确认访客取药并开柜/, "visitor confirmation does not use the requested action label");
+assert.match(dispenseModal, /确认访客取药并亮灯/, "visitor confirmation does not use the cabinet-light action label");
 assert.match(dispenseModal, /biometric-action-row[\s\S]*faceVerificationActive[\s\S]*正在确认面部[\s\S]*访客取药/, "face verification actions are not split into equal bottom controls");
 assert.match(dispenseModal, /正在确认面部/, "face verification status does not use the requested wording");
 assert.match(dispenseModal, /guestTrigger === "recognition_failed"[\s\S]*重新识别/, "failed face verification cannot be retried");

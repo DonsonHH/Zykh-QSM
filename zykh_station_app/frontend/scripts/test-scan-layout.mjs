@@ -21,6 +21,9 @@ assert.match(
   /className="scan-meta-wide"[\s\S]*?<span>规格<\/span>/,
   "medicine specification is not given a full-width result row"
 );
+assert.match(scanPage, /<span>所属分类柜<\/span>/, "scan result does not show the v2 category cabinet");
+assert.doesNotMatch(scanPage, /<span>仓位<\/span>/, "scan result still exposes a legacy physical slot");
+assert.match(scanPage, /核对固定药品档案/, "scan UI still promises to create an unmapped medicine record");
 assert.match(
   scanPage,
   /scan-live-status-row/,

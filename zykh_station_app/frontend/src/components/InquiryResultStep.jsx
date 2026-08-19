@@ -4,8 +4,8 @@ import {
   Check,
   CircleCheckBig,
   Cpu,
-  DoorOpen,
   Home,
+  Lightbulb,
   LoaderCircle,
   MessageCircle,
   Pill,
@@ -20,6 +20,10 @@ import { MedicineRemainingPrompt } from "./MedicineRemainingPrompt.jsx";
 import { aiSourcePresentation } from "../utils/ai.js";
 import { speakText, stopAudioPlayback } from "../api/audio.js";
 import { buildActionSpeech, buildRecommendationSpeech } from "../utils/inquirySpeech.js";
+import {
+  describeMedicineCabinet,
+  normalizeCabinetLightMessage
+} from "../utils/cabinetLightPresentation.js";
 
 const riskLabels = {
   medium: "中风险",
@@ -27,7 +31,7 @@ const riskLabels = {
   emergency: "紧急风险"
 };
 
-const terminalStatuses = new Set(["complete", "partial", "failed"]);
+const terminalStatuses = new Set(["complete", "partial", "failed", "result_unknown"]);
 
 export function InquiryResultStep({
   result,
@@ -39,6 +43,7 @@ export function InquiryResultStep({
   onConfirmTreatment,
   onInventoryHasStock,
   onInventoryDepleted,
+  onCabinetLightOff,
   onRestart,
   onHome
 }) {
@@ -48,7 +53,7 @@ export function InquiryResultStep({
   const highRisk = ["high", "emergency"].includes(result?.risk_level);
   const requiresEscalation = highRisk || result?.next_action === "escalate";
   const actionStatus = actionResult?.status || result?.action_status || "idle";
-  const actionMessage = actionResult?.message || result?.action_message || "";
+  const actionMessage = normalizeCabinetLightMessage(actionResult?.message || result?.action_message || "");
   const canProceed = Boolean(result?.can_view_medicines && options.length && !highRisk);
   const resultStatusLabel = result?.risk_level === "medium"
     ? riskLabels.medium
@@ -56,6 +61,8 @@ export function InquiryResultStep({
       ? riskLabels[result?.risk_level] || "需要协助"
       : canProceed ? "可取药" : "核验完成";
   const actionFinished = terminalStatuses.has(actionStatus) && !inventoryConfirmation;
+  const confirmationMode = inventoryConfirmation?.confirmation_mode
+    || (inventoryConfirmation?.inventory_confirmation_required ? "inventory" : "pickup");
   const activelyOpening = opening;
   const resumePending = !opening && actionStatus === "opening";
   const selectedOption = useMemo(
@@ -126,9 +133,11 @@ export function InquiryResultStep({
 
   function beginConfirmation() {
     if (!selectedOptionId || activelyOpening || inventoryConfirmation || actionFinished) return;
-    const cabinetText = selectedOption?.medicines?.map((medicine) => `${medicine.slot}号柜`).join("、") || "对应药柜";
+    const cabinetText = [...new Set(
+      (selectedOption?.medicines || []).map((medicine) => describeMedicineCabinet(medicine))
+    )].join("、") || "对应分类柜";
     playResultSpeech(
-      `方案已确认，三秒后将依次打开${cabinetText}，请准备取药。`,
+      `方案已确认，三秒后将按取药顺序点亮${cabinetText}的指示灯。看到灯亮后，请自行开柜取药。`,
       playbackGenerationRef
     );
     setCountdown(3);
@@ -141,7 +150,11 @@ export function InquiryResultStep({
           {result?.risk_level === "low" ? <ShieldCheck size={38} /> : <AlertTriangle size={38} />}
         </span>
         <div>
-          <h2>{inventoryConfirmation ? "请确认柜内库存" : requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
+          <h2>{inventoryConfirmation
+            ? confirmationMode === "inventory"
+              ? "请确认柜内库存"
+              : confirmationMode === "result_unknown" ? "请安全关闭分类柜指示灯" : "请确认已取药"
+            : requiresEscalation ? "请优先联系专业人员" : canProceed ? "请选择一个方案" : "本次护理建议"}</h2>
         </div>
         <div className="treatment-result-meta">
           <RiskBadge level={result?.risk_level} label={resultStatusLabel} />
@@ -154,10 +167,13 @@ export function InquiryResultStep({
           <section className="inquiry-inventory-confirmation" aria-label="本次取药库存确认">
             <MedicineRemainingPrompt
               medicine={inventoryConfirmation}
+              mode={confirmationMode}
               busy={inventoryConfirmationBusy}
               error={inventoryConfirmationError}
+              lightTurnsOffOnConfirm
               onHasStock={onInventoryHasStock}
               onDepleted={onInventoryDepleted}
+              onAcknowledge={onCabinetLightOff}
             />
           </section>
         ) : (
@@ -208,7 +224,7 @@ export function InquiryResultStep({
                           <small className="medicine-safety-note">慎用与指导提醒：{medicine.safety_note}</small>
                         ) : null}
                       </span>
-                      <em>{medicine.slot}号柜</em>
+                      <em>{describeMedicineCabinet(medicine)}</em>
                     </span>
                   ))}
                 </span>
@@ -251,15 +267,15 @@ export function InquiryResultStep({
             {countdown !== null ? (
               <div className="treatment-countdown" role="status">
                 <strong>{countdown}</strong>
-                <span>秒后{resumePending ? "继续" : "开始"}打开 {resumePending ? remainingCount : totalCount} 个对应药柜</span>
-                <button type="button" onClick={() => setCountdown(null)} aria-label="取消开柜倒计时"><X size={20} /></button>
+                <span>秒后{resumePending ? "继续" : "开始"} {resumePending ? remainingCount : totalCount} 项分类柜指示灯引导</span>
+                <button type="button" onClick={() => setCountdown(null)} aria-label="取消亮灯倒计时"><X size={20} /></button>
               </div>
             ) : activelyOpening ? (
               <div className="treatment-opening-progress" role="status" aria-live="polite">
                 <span><LoaderCircle className="spin" size={22} /></span>
                 <div>
-                  <strong>正在逐柜处理 {Math.min(completedCount + 1, totalCount)}/{totalCount}</strong>
-                  <small>{nextMedicine ? `当前：${nextMedicine.slot}号柜 · ${nextMedicine.name}` : "正在确认柜门状态"}</small>
+                  <strong>正在逐项点亮分类柜指示灯 {Math.min(completedCount + 1, totalCount)}/{totalCount}</strong>
+                  <small>{nextMedicine ? `当前：${describeMedicineCabinet(nextMedicine)} · ${nextMedicine.name}` : "正在确认指示灯状态"}</small>
                 </div>
                 <em>{completedCount}/{totalCount}</em>
               </div>
@@ -270,8 +286,8 @@ export function InquiryResultStep({
                 disabled={activelyOpening}
                 onClick={beginConfirmation}
               >
-                <DoorOpen size={23} />
-                {resumePending ? "继续打开下一柜" : "确认方案并逐柜打开"}
+                <Lightbulb size={23} />
+                {resumePending ? "继续下一项亮灯" : "确认方案并开始亮灯"}
               </button>
             )}
           </div>

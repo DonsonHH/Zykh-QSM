@@ -5,10 +5,10 @@ import {
   CheckCircle2,
   Fingerprint,
   HeartPulse,
+  Lightbulb,
   Mic,
   RefreshCcw,
   Router,
-  ShieldCheck,
   Signal,
   Volume2,
   WifiOff,
@@ -32,6 +32,9 @@ const fallbackCheck = {
   fingerprint_ok: false,
   fingerprint_status: "unavailable",
   fingerprint_bound_users: 0,
+  cabinet_light_ok: false,
+  cabinet_light_status: "unknown",
+  cabinet_light_cabinet_id: null,
   dispense_dry_run: true,
   offline_tts_ok: false,
   offline_tts_engine: "",
@@ -151,10 +154,16 @@ export function SystemCheckModal({ open, syncLabel, networkStatus, onNetworkStat
       ok: check.fingerprint_ok
     },
     {
-      icon: ShieldCheck,
-      label: "开柜控制",
-      value: check.dispense_dry_run ? "未启用" : "真实联动",
-      ok: !check.dispense_dry_run
+      icon: Lightbulb,
+      label: "分类柜亮灯控制",
+      value: check.dispense_dry_run
+        ? "未启用"
+        : check.cabinet_light_status === "off"
+          ? "已连接，三柜熄灭"
+          : check.cabinet_light_status?.startsWith("cabinet_")
+            ? `${check.cabinet_light_cabinet_id || "有"}号柜仍亮`
+            : "状态不可用",
+      ok: Boolean(check.cabinet_light_ok)
     },
     {
       icon: Mic,

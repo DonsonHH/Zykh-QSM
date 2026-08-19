@@ -48,6 +48,14 @@ export function dryRunQsmDispense(payload) {
   return apiPost("/api/qsm/dispense/dry-run", payload);
 }
 
+export async function turnOffCabinetLight() {
+  const response = await apiPost("/api/qsm/cabinet-light/off", {});
+  if (response?.ok !== true) {
+    throw new Error(response?.message || "分类柜指示灯关闭结果未确认");
+  }
+  return response;
+}
+
 export function loadQsmCapabilities() {
   return apiGet("/api/qsm/capabilities");
 }

@@ -432,22 +432,75 @@ class CloudSyncServiceTest(unittest.TestCase):
                 "user_name": "张三",
                 "title": "张三头晕问询",
                 "risk_level": "medium",
+                "primary_candidate": {
+                    "id": "slot-01-test",
+                    "cabinet_id": 1,
+                    "cabinet_label": "仅本地分类柜",
+                },
+                "treatment_options": [
+                    {
+                        "medicines": [
+                            {
+                                "id": "slot-01-test",
+                                "cabinet_id": 1,
+                                "cabinet_label": "仅本地分类柜",
+                                "cabinet_description": "仅本地展示",
+                            }
+                        ]
+                    }
+                ],
+                "action_items": [
+                    {
+                        "medicine_id": "slot-01-test",
+                        "cabinet_id": 1,
+                        "cabinet_label": "仅本地分类柜",
+                    }
+                ],
                 "messages": [{"role": "user", "content": "有些头晕"}],
                 "created_at": "2026-07-19 08:00:00",
                 "updated_at": "2026-07-19 08:03:00",
             },
         )
+        legacy_result = SimpleNamespace(
+            inquiry_id="result-local-cabinet-projection",
+            created_at="2026-07-19 07:00:00",
+            model_dump=lambda mode: {
+                "inquiry_id": "result-local-cabinet-projection",
+                "candidate_medicines": [
+                    {
+                        "id": "slot-02-test",
+                        "cabinet_id": 2,
+                        "cabinet_label": "仅本地分类柜",
+                    }
+                ],
+                "created_at": "2026-07-19 07:00:00",
+            },
+        )
         with patch("app.services.cloud_sync_service.InquiryRepository") as repository_class:
             repository_class.return_value.list_sessions.return_value = [session]
-            repository_class.return_value.list_records.return_value = []
+            repository_class.return_value.list_records.return_value = [legacy_result]
 
             snapshot = CloudSyncWorker._build_snapshot()
 
-        row = snapshot["inquiries"][0]
+        row = next(
+            item for item in snapshot["inquiries"] if item["inquiry_id"] == "session-current"
+        )
         self.assertEqual(row["inquiry_id"], "session-current")
         self.assertEqual(row["target_user_name"], "张三")
         self.assertEqual(row["symptoms_summary"], "轻微头晕")
         self.assertEqual(row["updatedAt"], "2026-07-19 08:03:00")
+        self.assertNotIn("cabinet_id", json.dumps(row, ensure_ascii=False))
+        self.assertNotIn("cabinet_label", json.dumps(row, ensure_ascii=False))
+        self.assertNotIn("cabinet_description", json.dumps(row, ensure_ascii=False))
+        result_row = next(
+            item
+            for item in snapshot["inquiries"]
+            if item["inquiry_id"] == "result-local-cabinet-projection"
+        )
+        self.assertNotIn("cabinet_id", json.dumps(result_row, ensure_ascii=False))
+        self.assertNotIn("cabinet_label", json.dumps(result_row, ensure_ascii=False))
+        self.assertNotIn("cabinet_id", json.dumps(snapshot["medicines"], ensure_ascii=False))
+        self.assertNotIn("cabinet_label", json.dumps(snapshot["medicines"], ensure_ascii=False))
 
     def test_sync_summary_excludes_full_dialogue_messages(self) -> None:
         summary = CloudSyncWorker._sync_summary(

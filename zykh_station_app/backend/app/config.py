@@ -139,6 +139,14 @@ class Settings:
     qsm_fingerprint_wake_path: str = _env("QSM_FINGERPRINT_WAKE_PATH", "/api/fingerprint/wake")
     qsm_fingerprint_template_start: int = int(_env("QSM_FINGERPRINT_TEMPLATE_START", "16"))
     qsm_dispense_path: str = _env("QSM_DISPENSE_PATH", "/api/dispense")
+    qsm_cabinet_light_off_path: str = _env(
+        "QSM_CABINET_LIGHT_OFF_PATH",
+        "/api/cabinet/light/off",
+    )
+    qsm_cabinet_light_status_path: str = _env(
+        "QSM_CABINET_LIGHT_STATUS_PATH",
+        "/api/cabinet/light/status",
+    )
     qsm_audio_asr_path: str = _env("QSM_AUDIO_ASR_PATH", "/api/audio/asr")
     qsm_audio_status_path: str = _env("QSM_AUDIO_STATUS_PATH", "/api/audio/status")
     qsm_audio_speak_path: str = _env("QSM_AUDIO_SPEAK_PATH", "/api/audio/speak")

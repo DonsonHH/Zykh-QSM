@@ -15,7 +15,7 @@ export function InquiryStartStep({
       <div className="inquiry-flow-heading">
         <p>AI 应急问询</p>
         <h2>请告诉我你现在哪里不舒服</h2>
-        <span>AI 会像对话一样逐步追问，并结合体征、用药记录和家庭药柜库存给出风险提示。</span>
+        <span>AI 会像对话一样逐步追问，并结合体征、用药记录和家庭分类柜库存给出风险提示。</span>
       </div>
 
       <button className="voice-entry-button" type="button" onClick={onVoiceInput} disabled={listening}>

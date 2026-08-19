@@ -32,8 +32,16 @@ export function isMedicineExpired(value, referenceDate = new Date()) {
     || (expiry.year === referenceDate.getFullYear() && expiry.month < referenceDate.getMonth() + 1);
 }
 
+function hasAssignedCabinet(medicine) {
+  const cabinetId = Number(medicine?.cabinet_id);
+  return Number.isInteger(cabinetId) && cabinetId >= 1 && cabinetId <= 3;
+}
+
 export function manualDispenseBlockReason(medicine, referenceDate = new Date()) {
   if (!medicine) return "请先选择药品";
+  if (!hasAssignedCabinet(medicine)) {
+    return "该药品尚未配置分类柜，暂不可取药";
+  }
   if (medicine.package_verified === false) {
     return "包装规格待人工核验，暂不可取药";
   }
@@ -49,6 +57,7 @@ export function manualDispenseBlockReason(medicine, referenceDate = new Date()) 
 export function manualDispenseButtonLabel(medicine, referenceDate = new Date()) {
   const reason = manualDispenseBlockReason(medicine, referenceDate);
   if (!reason) return "确认身份并核查";
+  if (!hasAssignedCabinet(medicine)) return "待配置分类柜";
   if (medicine?.package_verified === false) return "待包装核验";
   if (medicine?.guidance_source === "pending" || !parseExpiry(medicine?.expire_date)) return "待资料补录";
   if (isMedicineExpired(medicine?.expire_date, referenceDate)) return "已过有效期";
@@ -58,6 +67,7 @@ export function manualDispenseButtonLabel(medicine, referenceDate = new Date()) 
 export function manualDispenseBlockHint(medicine, referenceDate = new Date()) {
   const reason = manualDispenseBlockReason(medicine, referenceDate);
   if (!reason) return "";
+  if (!hasAssignedCabinet(medicine)) return "需先完成药品与分类柜的映射配置";
   if (medicine?.package_verified === false) return "需管理员核验实物包装规格";
   if (medicine?.guidance_source === "pending" || !parseExpiry(medicine?.expire_date)) return "需补全药品资料与有效期";
   if (isMedicineExpired(medicine?.expire_date, referenceDate)) return "药品已过期，请联系管理员";

@@ -174,3 +174,14 @@ class QsmCapabilitiesResponse(BaseModel):
     voice: str
     qsm_connected: bool
     mode: str
+
+
+class QsmCabinetLightResponse(BaseModel):
+    ok: bool
+    mode: str
+    result: str
+    status: str
+    message: str
+    cabinet_id: int | None = Field(default=None, ge=1, le=3)
+    result_unknown: bool = False
+    retry_safe: bool = True

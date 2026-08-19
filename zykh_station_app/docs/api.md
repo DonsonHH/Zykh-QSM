@@ -10,7 +10,7 @@ http://127.0.0.1:8000
 
 ### GET /api/health
 
-Returns service, database, QSM mode and cabinet-control mode.
+Returns service, database, QSM mode and three-category-cabinet light-control mode.
 
 ### GET /api/status
 
@@ -20,7 +20,7 @@ Returns top-level station status for the terminal shell:
 - AI mode;
 - peripheral device status;
 - sync status;
-- cabinet-control mode;
+- cabinet-light-control mode;
 - status chips.
 
 ### GET /api/site
@@ -55,14 +55,30 @@ Returns the demonstration readiness check:
 - QSM base URL;
 - QSM status and vitals readiness;
 - QSM camera and face-service readiness;
-- dispense safety flag;
+- cabinet-light safety flag;
+- a live, read-only cabinet-controller probe: `cabinet_light_ok`,
+  `cabinet_light_status` and `cabinet_light_cabinet_id` distinguish all-off,
+  one cabinet still lit and unavailable state;
 - errors, warnings and recommendations.
 
-The endpoint always returns HTTP 200 for expected missing-device cases so the terminal UI can degrade gracefully.
+When real light control is enabled and the main QSM gateway is connected, this
+endpoint calls the controller's `STATUS` route instead of treating configuration
+alone as readiness. `cabinet_light_ok=true` requires a confirmed `status=off`.
+The endpoint always returns HTTP 200 for expected missing-device cases so the
+terminal UI can degrade gracefully.
 
 ### GET /api/medicines
 
-Returns the home medicine list and available categories. Each medicine includes
+Returns the home medicine list and available categories. `warehouse_total=3` and
+the `cabinets` array describe the three local physical cabinets; every returned
+local medicine also carries `cabinet_id`, `cabinet_label` and
+`cabinet_description`. These fields are a local projection from stable medicine
+ID and do not replace the existing `hardware_slot=1..23` logical inventory
+identity. The current cabinet names and membership are a local configuration
+proposal and require comparison with the real placement sheet before site
+acceptance. An unmapped medicine fails closed at the physical boundary.
+
+Each medicine includes
 database-backed `aliases`, `active_ingredients`, `structured_contraindications`,
 `indications`, `dosage`, review metadata and package-verification state. When a
 medicine identity field (`name`, `manufacturer`, `barcode`, `spec` or `category`)
@@ -83,7 +99,7 @@ must exactly match a case-scoped reviewed combination whose member identity and
 safety-review fingerprints still match the current rows. A repeated active
 ingredient or a reviewed `block` rule in the ingredient-conflict matrix overrides
 an approved combination. More than four medicines are rejected as a whole and
-are never truncated. The fixed cabinet seeds only three versioned, evidence-backed
+are never truncated. The fixed logical medicine catalog seeds only three versioned, evidence-backed
 combination artifacts: two low-risk superficial-wound care sequences and one
 low-risk adult watery-diarrhoea sequence with separated administration. Their
 provenance, case predicates, member order, reviewed usage and source references
@@ -103,10 +119,10 @@ Returns a single medicine detail.
 
 ### POST /api/medicines/{medicine_id}/inventory-confirmation
 
-Reconciles the physical remainder after the latest successful, non-dry cabinet
-action for this medicine. The request contains a stable `request_id`, the
+Reconciles the physical remainder after the latest successful, non-dry
+cabinet-light guidance action for this medicine. The request contains a stable `request_id`, the
 server-issued `dispense_record_id`, and exactly one observation:
-`HAS_REMAINING` or `DEPLETED`. Fixed-cabinet stock is an availability flag, not
+`HAS_REMAINING` or `DEPLETED`. Fixed logical-item stock is an availability flag, not
 a decrementing package count: the first keeps `stock=1 / AVAILABLE`, and only
 the second records `stock=0 / DEPLETED`.
 
@@ -114,32 +130,41 @@ The request is stored in a SQLite idempotency ledger. Replaying the same ID and
 payload returns the saved result; changing its medicine, dispense record or
 observation returns HTTP 409. A stale/nonmatching/failed/dry-run dispense record,
 or a second confirmation for the same physical action, also returns HTTP 409.
-Until an explicit `DEPLETED` observation is saved, a successful physical action
+Until an explicit `DEPLETED` observation is saved, a successful light action
 keeps the normal `stock=1 / AVAILABLE` truth and remains linked to the latest
-dispense record for optional confirmation. A cabinet action alone never proves
+dispense record for optional confirmation. A cabinet light alone never proves
 that the medicine has run out.
 
 ### POST /api/dispense/confirm
 
-This public endpoint is the existing PLAN cabinet boundary. Inquiry dispensing
-must use the original inquiry session confirmation endpoint; a client-supplied
-`verification_method=inquiry_confirmed` is rejected here before the cabinet
+This public endpoint is the existing PLAN physical-execution boundary. Inquiry
+dispensing must use the original inquiry session confirmation endpoint; a
+client-supplied `verification_method=inquiry_confirmed` is rejected here before the cabinet-light
 service is reached. The boundary requires the safety
 notice confirmation flag and writes a local 取药确认 record. By default it calls
 the QSM dispense path when `DISPENSE_DRY_RUN=false`, `ENABLE_REAL_DISPENSE=1`,
-and request body `confirm_real_dispense=true`. `REAL_DISPENSE_TEST_SLOT` is
-optional; when configured, only the matching slot can open. A medicine-page
+and request body `confirm_real_dispense=true`. The server resolves the medicine's
+stable ID to `cabinet_id=1..3`; clients do not submit a physical cabinet. The
+legacy-named `REAL_DISPENSE_TEST_SLOT` is optional and now accepts one physical
+cabinet ID `1`, `2` or `3`; when configured, only medicines mapped to it can light
+that cabinet. A medicine-page
 `MANUAL_INVENTORY` request without a server-consumed safety check is rejected
 with HTTP 409 before QSM is called.
+
+A successful non-dry response includes the resolved `cabinet_id` and
+`cabinet_label`. It means the exact light ACK and `STATUS CABINET n` were
+verified; it does not mean a door opened. The frontend asks the user to open the
+lit cabinet manually and, after explicit pickup confirmation, calls
+`POST /api/qsm/cabinet-light/off`.
 
 An inquiry-originated confirmation created inside the persisted inquiry session also
 requires reviewed safety metadata and carries the exact review fingerprint that
 the user saw. The dispense boundary reloads both that fingerprint and live stock
 immediately before the QSM call; a changed identity, safety review or depleted
-stock returns HTTP 409 without calling the cabinet. `draft` remains an AI
+stock or cabinet mapping returns HTTP 409 without lighting a cabinet. `draft` remains an AI
 candidate gate for PLAN/INQUIRY behavior. The separate manual-access module
 requires reviewed medicine facts because it performs a person-medicine safety
-assessment before opening a cabinet.
+assessment before lighting a cabinet.
 
 ### POST /api/manual-medication-access/assess
 
@@ -177,21 +202,22 @@ content returns HTTP 409.
 
 Consumes one matching `PASSED` check after the user confirms the medicine notice.
 Immediately before the physical boundary it reloads the identity assertion,
-person generation/revision, medicine review fingerprint, display and hardware
-slots, exact stock snapshot, expiry and reviewed state. Any change returns HTTP
+person generation/revision, medicine review fingerprint, display slot, logical
+`hardware_slot`, local `cabinet_id`, exact stock snapshot, expiry and reviewed
+state. Any change returns HTTP
 409 without calling QSM.
 
-The physical result is independent from `check_status` and is one of
+The cabinet-light result is independent from `check_status` and is one of
 `DISPENSED`, `HARDWARE_FAILED`, or `RESULT_UNKNOWN`. The last state means the
-request may have reached the cabinet but its result cannot be proven; the same
+request may have reached the light controller but its result cannot be proven; the same
 operation is never automatically retried. Confirm request IDs are idempotent and
 the passed check is consumed once. Concurrent calls with the same request ID and
 payload wait for the active owner and replay its terminal result; a payload
 mismatch returns HTTP 409. The host forwards a stable `qsm_operation_id`
 to the board. The board persists `reserved`, `sent`, and final states under a
-file lock: identical replays return the saved result, payload mismatches conflict,
-and an interrupted or unprovable execution returns `RESULT_UNKNOWN` without a
-second UART/GPIO pulse.
+file lock: identical `cabinet_id + quantity` replays return the saved result,
+payload mismatches conflict, and an interrupted or unprovable execution returns
+`RESULT_UNKNOWN` without a second `CABINET n` command.
 
 One safety check maps to one stable caregiver event. `BLOCKED` and
 `CHECK_FAILED` checks enter the outbox at assessment time; `PASSED` checks enter
@@ -339,18 +365,18 @@ the model when complete core vitals are available.
 
 Confirms exactly one mutually exclusive treatment option. The request contains
 only `option_id`, `confirmed_safety_notice` and the persisted
-`expected_item_index`; medicine IDs and cabinet slots are never accepted from
-the frontend. Immediately before each cabinet action, the backend recalculates
+`expected_item_index`; medicine IDs, logical slots and physical cabinet IDs are
+never accepted from the frontend. Immediately before each cabinet-light action, the backend recalculates
 risk, contraindications, expiry, stock and current eligibility. If the displayed
-option changed, the request is rejected with `409` and no cabinet is opened. A
+option changed, the request is rejected with `409` and no cabinet is lit. A
 multi-medicine option also re-authorizes the grounded case facts, explicit
 absence of every required red flag, member review fingerprints, ingredient
 matrix and combination status before every item. A case fact is admitted only
 when its observation evidence is an exact normalized fragment of an immutable
 user message and its positive/negative polarity agrees with that message; model
 summaries and fabricated absences cannot authorize a combination. Revoking a
-combination between two cabinet actions prevents the remaining cabinet from
-opening. A
+combination between two cabinet-light actions prevents the remaining cabinet
+from being lit. A
 successful confirmation executes the selected option through the existing
 `DispenseService`, records each action and rejects stale or duplicate submissions.
 
@@ -364,7 +390,7 @@ Returns recent inquiry results.
 
 ### GET /api/records/summary
 
-Returns record-page counters. `local_record_count` includes only successful real dispense actions; dry-run and failed device actions remain available to protected diagnostics but are not counted as family pickup records.
+Returns record-page counters. `local_record_count` includes only successful real cabinet-light guidance actions; dry-run and failed device actions remain available to protected diagnostics but are not counted as family pickup records. A successful light response is not described as proof that a door opened automatically.
 
 ### GET /api/records/recent
 
@@ -392,12 +418,15 @@ Compatibility endpoint for the Scan page. It calls the QSM camera path and retur
 
 ### POST /api/qsm/dispense/dry-run
 
-Runs a dry-run dispense integration check and writes a local dry-run record. Request body:
+Runs a dry-run integration check and writes a local dry-run record. The request
+retains the medicine's logical display `slot`; the server resolves the medicine ID
+to its local `cabinet_id`, but dry-run sends no HTTP or serial light command.
+Request body:
 
 ```json
 {
-  "slot": "B02",
-  "medicine_id": "lianhua-qingwen",
+  "slot": "S13",
+  "medicine_id": "slot-13-ibuprofen",
   "quantity": 1,
   "reason": "联调验证"
 }
@@ -405,13 +434,26 @@ Runs a dry-run dispense integration check and writes a local dry-run record. Req
 
 The response always keeps `dry_run=true`.
 
+### POST /api/qsm/cabinet-light/off
+
+Sends the idempotent QSM `OFF` command and accepts success only after the board
+also reports `STATUS OFF`. The response includes `ok`, `result`, `status`,
+`cabinet_id`, `result_unknown`, `retry_safe` and a user-facing `message`. A lost
+response may be retried explicitly because `OFF` is idempotent.
+
+### GET /api/qsm/cabinet-light/status
+
+Reads the QSM light state without changing it. `status` is `off`, `cabinet_1`,
+`cabinet_2`, `cabinet_3` or `unknown`; `cabinet_id` is present only when one
+cabinet is confirmed lit.
+
 ### GET /api/qsm/capabilities
 
 Returns current peripheral capability states:
 
 - camera;
 - vitals;
-- dispense;
+- cabinet-light guidance;
 - voice;
 - QSM connection state;
 - mode.
@@ -518,6 +560,9 @@ Proxies the QSM MJPEG stream to the browser and stores a recent real frame for a
 ### POST /api/medicine/scan
 
 Captures an image, tries local barcode decoding, then Qwen visual recognition when configured. If both fail, it returns `manual_required` instead of a fake match.
+For a matched bundled medicine the response includes local-only `cabinet_id` and
+`cabinet_label`; the terminal displays that category cabinet and does not expose
+the retained 1–23 logical inventory slot as a physical location.
 
 ### GET /api/identity/status
 
@@ -541,7 +586,7 @@ Returns AS608 availability, module template count and host-side bound-user count
 
 ### POST /api/fingerprint/identify
 
-Waits for a finger, matches the AS608 template and returns the bound service user. An unbound board template returns `status=unbound` and cannot open a cabinet.
+Waits for a finger, matches the AS608 template and returns the bound service user. An unbound board template returns `status=unbound` and cannot authorize a cabinet-light action.
 
 ### POST /api/fingerprint/standby and POST /api/fingerprint/wake
 
@@ -628,7 +673,7 @@ Accepts a partial payload containing `wifi_enabled`, `sim_enabled`, `network_mod
 - `GET|PATCH /api/admin/medicines...`
 - `GET|POST|PATCH|DELETE /api/admin/today-plans...`
 - `POST /api/admin/pairing-codes`
-- `POST /api/admin/cabinet/{slot}/open`
+- `POST /api/admin/cabinet/{slot}/open` — legacy compatibility route; always returns HTTP 410 and performs no hardware action
 - `POST /api/admin/system/action`
 
 The browser cannot submit shell commands. System actions use a server-side allowlist and configured fixed commands. The UI uses a normal yes/no confirmation while the server still validates an internal operation token; every protected action creates an `admin_audit_records` entry. Log output is limited to an allowlist, updates only while the log page is mounted, and redacts API keys, bearer tokens and secrets.

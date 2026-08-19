@@ -1,65 +1,46 @@
 import React from "react";
+import { groupMedicinesByCabinet } from "../utils/cabinetV2.js";
 
-const mediumSlots = [
-  [14, 13],
-  [12, 11],
-  [10, 9]
-];
-
-const smallSlots = [
-  [23, 22, 21],
-  [20, 19, 18],
-  [17, 16, 15]
-];
-
-const largeSlots = [
-  [8, 7, 6, 5],
-  [4, 3, 2, 1]
-];
-
-export function CabinetSlotMap({ medicines, selectedMedicine, onSelect, notify }) {
-  const medicineBySlot = new Map(medicines.map((medicine) => [medicine.hardware_slot, medicine]));
-
-  function renderSlot(slot, size) {
-    const medicine = medicineBySlot.get(slot);
-    const selected = Boolean(medicine && selectedMedicine?.id === medicine.id);
-    return (
-      <button
-        key={slot}
-        type="button"
-        className={`cabinet-slot ${size} ${selected ? "selected" : ""} ${medicine ? "" : "empty"}`}
-        aria-pressed={selected}
-        onClick={() => {
-          if (medicine) {
-            onSelect(medicine);
-            return;
-          }
-          notify(`${slot}号仓暂无药品`);
-        }}
-      >
-        <span className="cabinet-slot-number">{slot}</span>
-        <strong>{medicine?.name || "空仓"}</strong>
-      </button>
-    );
-  }
-
-  function renderZone(title, slots, size) {
-    return (
-      <section className={`cabinet-zone ${size}`} aria-label={title}>
-        <div>
-          {slots.flatMap((row) => row.map((slot) => renderSlot(slot, size)))}
-        </div>
-      </section>
-    );
-  }
+export function CabinetSlotMap({ cabinets, medicines, selectedMedicine, onSelect }) {
+  const groups = groupMedicinesByCabinet(medicines, cabinets);
 
   return (
-    <div className="cabinet-map" aria-label="药柜 1 到 23 号仓位">
-      <div className="cabinet-map-top">
-        {renderZone("9-14 号中仓", mediumSlots, "medium")}
-        {renderZone("15-23 号小仓", smallSlots, "small")}
-      </div>
-      {renderZone("1-8 号大仓", largeSlots, "large")}
+    <div className="cabinet-map" role="list" aria-label="三个分类药柜">
+      {groups.map((cabinet) => (
+        <section
+          key={cabinet.id}
+          className={`cabinet-group cabinet-group-${cabinet.id}`}
+          role="listitem"
+          aria-labelledby={`cabinet-group-title-${cabinet.id}`}
+        >
+          <header className="cabinet-group-heading">
+            <span className="cabinet-group-number" aria-hidden="true">{cabinet.id}</span>
+            <div>
+              <h3 id={`cabinet-group-title-${cabinet.id}`}>{cabinet.label}</h3>
+              <p>{cabinet.description}</p>
+            </div>
+            <span className="cabinet-light-label">{cabinet.id}号分类柜指示灯</span>
+          </header>
+          <div className="cabinet-medicine-list">
+            {cabinet.medicines.map((medicine) => {
+              const selected = selectedMedicine?.id === medicine.id;
+              return (
+                <button
+                  key={medicine.id}
+                  type="button"
+                  className={`cabinet-medicine ${selected ? "selected" : ""} ${medicine.stock > 0 ? "" : "depleted"}`}
+                  aria-pressed={selected}
+                  aria-label={`${cabinet.id}号分类柜 ${cabinet.label}，${medicine.name}`}
+                  onClick={() => onSelect(medicine)}
+                >
+                  <strong>{medicine.name}</strong>
+                  <small>{medicine.category}{medicine.stock > 0 ? "" : " · 暂无库存"}</small>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
