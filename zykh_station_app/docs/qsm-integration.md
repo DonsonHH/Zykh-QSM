@@ -278,7 +278,8 @@ proxies the latter two as `POST /api/qsm/cabinet-light/off` and
 
 The controller only indicates the cabinet. It never drives or proves a door-open
 mechanism: the user opens the illuminated cabinet manually, takes the medicine,
-confirms completion in the UI and causes the host to send `OFF`.
+answers the “还有药吗” prompt, and the host automatically sends `OFF` after the
+success prompt disappears.
 
 Deploy the protocol module, station patch and fail-safe startup wrapper together:
 
@@ -321,7 +322,7 @@ WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes fr
 
 The host SIM fallback is a routed USB link rather than an ADB-forwarded HTTP request. QSM `usb0` is the EC200A WAN, QSM `usb1` is the RNDIS link to host `usb0`, and `qsm_gateway/start_host_tether.sh` enables forwarding and NAT. The root-owned host helper assigns `192.168.77.2/24` and a metric-700 default route through `192.168.77.1`; WiFi remains the preferred lower-metric route. Install the helper once with `sudo sh scripts/install_qsm_tether_helper.sh`. Settings refuses to disable WiFi when this route cannot be verified.
 
-By default the app uses the real cabinet-light path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues to the gateway light call after identity and optional today-plan ownership checks succeed. The UI then instructs the user to open the illuminated cabinet manually and provides an explicit completion action that sends `OFF`. Successful real light-guidance actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. The legacy-named `REAL_DISPENSE_TEST_SLOT` now accepts a physical cabinet ID `1`, `2` or `3` and can limit supervised hardware tests. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
+By default the app uses the real cabinet-light path: `DISPENSE_DRY_RUN=false` and `ENABLE_REAL_DISPENSE=1`. One tap in the 取药确认 modal starts fingerprint or face confirmation and automatically continues through the local safety check to the gateway light call when all checks pass; conflicts keep the existing blocked UI and never call QSM. The UI then instructs the user to open the illuminated cabinet manually and asks “还有药吗”. After that inventory answer is saved and its success prompt disappears, the UI automatically sends and verifies `OFF` without another light-control click. Successful real light-guidance actions are written to the family pickup record; dry-run and failed calls stay out of that user-facing list. The legacy-named `REAL_DISPENSE_TEST_SLOT` now accepts a physical cabinet ID `1`, `2` or `3` and can limit supervised hardware tests. For non-physical checks, use `POST /api/qsm/dispense/dry-run` or temporarily set `DISPENSE_DRY_RUN=true`.
 
 `scripts/deploy_qsm_gateway.sh` can install the AS608 payload when it finds `QSM368ZP-AS608-offline-deploy(1).zip` at the repository root, or when `QSM_FINGERPRINT_BUNDLE` points to the package. Template IDs `0..15` remain reserved; host-created bindings start at 16. Fingerprint templates stay inside AS608 and face features stay on QSM. The host stores only local subject mappings, match counters, last-seen timestamps and dispense audit records.
 

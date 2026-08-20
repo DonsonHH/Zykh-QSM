@@ -13,9 +13,11 @@ export function MedicineRemainingPrompt({
   confirmedState = "",
   cabinetLightOff = false,
   lightTurnsOffOnConfirm = false,
+  lightTurnsOffAfterPrompt = false,
   onHasStock,
   onDepleted,
-  onAcknowledge
+  onAcknowledge,
+  onRetryLightOff
 }) {
   const [seconds, setSeconds] = useState(INVENTORY_CONFIRM_SECONDS);
   const cabinet = describeMedicineCabinet(medicine);
@@ -65,9 +67,11 @@ export function MedicineRemainingPrompt({
             : `${medicine.name} · ${cabinet}`}
         </span>
         {!message && cabinetLightOff ? <small>分类柜指示灯已关闭，请核对取药后的实际库存。</small> : null}
+        {!message && lightTurnsOffAfterPrompt ? <small>请取药并选择实际库存；确认页面结束后，分类柜指示灯会自动关闭。</small> : null}
         {!message && lightTurnsOffOnConfirm ? <small>取药完成后请选择实际库存，提交时会关闭分类柜指示灯。</small> : null}
         {!message && mode === "pickup" ? <small>请自行打开亮灯的分类柜取药，取好后关闭指示灯再继续。</small> : null}
         {!message && unknownMode ? <small>指示灯可能仍亮着；请现场确认后关灯，不要再次发起亮灯。</small> : null}
+        {message && busy && onRetryLightOff ? <small>正在自动关闭分类柜指示灯…</small> : null}
         {error ? <small role="alert">{error}</small> : null}
       </div>
       {!message ? (
@@ -102,6 +106,18 @@ export function MedicineRemainingPrompt({
             )}
           </div>
         </>
+      ) : error && onRetryLightOff ? (
+        <div className="remaining-prompt-actions">
+          <button
+            type="button"
+            className="primary-action inventory-light-off-retry"
+            onClick={onRetryLightOff}
+            disabled={busy}
+          >
+            <CheckCircle2 size={22} aria-hidden="true" />
+            {busy ? "正在关闭指示灯" : "重试关闭指示灯"}
+          </button>
+        </div>
       ) : null}
     </div>
   );

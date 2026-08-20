@@ -49,6 +49,79 @@ function dispenseRequestMayHaveReachedHardware(error) {
   return !Number.isInteger(responseStatus) || responseStatus >= 500;
 }
 
+const CABINET_LIGHT_PRECONDITION_ERROR_CODE = "CABINET_LIGHT_OFF_UNVERIFIED";
+let cabinetLightCommandTail = Promise.resolve();
+let cabinetLightRequiresVerifiedOff = false;
+
+async function runCabinetLightCommand(command) {
+  const predecessor = cabinetLightCommandTail;
+  let releaseCommand;
+  cabinetLightCommandTail = new Promise((resolve) => {
+    releaseCommand = resolve;
+  });
+  await predecessor;
+  try {
+    return await command();
+  } finally {
+    releaseCommand();
+  }
+}
+
+async function runCabinetIlluminationRequest(request, sessionIsCurrent) {
+  return runCabinetLightCommand(async () => {
+    if (!sessionIsCurrent()) {
+      return { ignored: true, outcome: null };
+    }
+    if (cabinetLightRequiresVerifiedOff) {
+      try {
+        await turnOffCabinetLightAndTrack();
+      } catch (requestError) {
+        const preconditionError = new Error(
+          `无法确认上一会话的分类柜指示灯已关闭，本次未点灯：${requestError.message || "请重试或联系值守员。"}`
+        );
+        preconditionError.code = CABINET_LIGHT_PRECONDITION_ERROR_CODE;
+        preconditionError.status = 412;
+        preconditionError.cause = requestError;
+        throw preconditionError;
+      }
+      if (!sessionIsCurrent()) {
+        return { ignored: true, outcome: null };
+      }
+    }
+    try {
+      const outcome = await request();
+      if (sessionIsCurrent()) {
+        return { ignored: false, outcome };
+      }
+    } catch (requestError) {
+      if (sessionIsCurrent()) {
+        throw requestError;
+      }
+    }
+    await turnOffCabinetLightAndTrack().catch(() => undefined);
+    return { ignored: true, outcome: null };
+  });
+}
+
+async function turnOffCabinetLightAndTrack() {
+  try {
+    const response = await turnOffCabinetLight();
+    cabinetLightRequiresVerifiedOff = false;
+    return response;
+  } catch (requestError) {
+    cabinetLightRequiresVerifiedOff = true;
+    throw requestError;
+  }
+}
+
+function turnOffCabinetLightInOrder() {
+  return runCabinetLightCommand(() => turnOffCabinetLightAndTrack());
+}
+
+function bestEffortTurnOffCabinetLight() {
+  void turnOffCabinetLightInOrder().catch(() => undefined);
+}
+
 function faceFailureOutcome(verification = {}) {
   const status = String(verification.status || "unavailable");
   if (status === "no_face") {
@@ -133,7 +206,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     if (open) {
       if (cabinetLightMayBeOnRef.current) {
         cabinetLightMayBeOnRef.current = false;
-        void turnOffCabinetLight().catch(() => undefined);
+        bestEffortTurnOffCabinetLight();
       }
       const initialMethod = plan ? "fingerprint" : "face";
       sessionRef.current += 1;
@@ -165,7 +238,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       verificationAttemptRef.current += 1;
       if (cabinetLightMayBeOnRef.current) {
         cabinetLightMayBeOnRef.current = false;
-        void turnOffCabinetLight().catch(() => undefined);
+        bestEffortTurnOffCabinetLight();
       }
     }
     window.clearTimeout(previewRetryTimerRef.current);
@@ -175,12 +248,14 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
 
   useEffect(() => {
     return () => {
+      sessionRef.current += 1;
+      verificationAttemptRef.current += 1;
       window.clearTimeout(previewRetryTimerRef.current);
       window.clearTimeout(autoCloseTimerRef.current);
       settlePreviewReadiness(false);
       if (cabinetLightMayBeOnRef.current) {
         cabinetLightMayBeOnRef.current = false;
-        void turnOffCabinetLight().catch(() => undefined);
+        bestEffortTurnOffCabinetLight();
       }
     };
   }, []);
@@ -210,7 +285,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
 
   useEffect(() => {
     if (!open || !medicine) return;
-    if (phase === "complete") {
+    if (["complete", "inventory_check"].includes(phase)) {
       playSpeech(`complete:${medicine.id}`, buildDispenseSuccessSpeech(medicine));
       return;
     }
@@ -367,6 +442,16 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     return previewFrame;
   }
 
+  function continueAfterCabinetLight(recordId, inventoryConfirmationRequired) {
+    const normalizedRecordId = String(recordId || "");
+    const requiresInventoryConfirmation = Boolean(inventoryConfirmationRequired);
+    setDispenseRecordId(normalizedRecordId);
+    setInventoryEligible(requiresInventoryConfirmation);
+    inventoryRequestIdRef.current = createManualRequestId("inventory");
+    cabinetLightMayBeOnRef.current = true;
+    setPhase(requiresInventoryConfirmation && normalizedRecordId ? "inventory_check" : "complete");
+  }
+
   async function submitDispense(identity, verificationMethod, score, session) {
     setVerificationError("");
     setPhase("opening");
@@ -376,22 +461,38 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     }
     let dispense;
     try {
-      dispense = await onSubmit({
-        medicine_id: medicine.id,
-        slot: medicine.slot,
-        quantity: 1,
-        reason: guest ? "访客二次确认取药" : "家庭分类柜取药确认",
-        confirmed_safety_notice: true,
-        confirm_real_dispense: true,
-        target_user_id: identity?.id || "",
-        target_user_name: identity?.name || anonymousGuest.name,
-        verification_method: verificationMethod,
-        verification_score: score ?? null,
-        today_plan_id: guest ? "" : plan?.id || "",
-        archive_identity_snapshot: guest && verificationMethod === "face_guest_confirmed"
-      });
+      const requestResult = await runCabinetIlluminationRequest(
+        () => onSubmit({
+          medicine_id: medicine.id,
+          slot: medicine.slot,
+          quantity: 1,
+          reason: guest ? "访客二次确认取药" : "家庭分类柜取药确认",
+          confirmed_safety_notice: true,
+          confirm_real_dispense: true,
+          target_user_id: identity?.id || "",
+          target_user_name: identity?.name || anonymousGuest.name,
+          verification_method: verificationMethod,
+          verification_score: score ?? null,
+          today_plan_id: guest ? "" : plan?.id || "",
+          archive_identity_snapshot: guest && verificationMethod === "face_guest_confirmed"
+        }),
+        () => session === sessionRef.current
+      );
+      if (requestResult.ignored) return;
+      dispense = requestResult.outcome;
     } catch (requestError) {
-      if (session === sessionRef.current && dispenseRequestMayHaveReachedHardware(requestError)) {
+      if (session !== sessionRef.current) {
+        if (dispenseRequestMayHaveReachedHardware(requestError)) {
+          bestEffortTurnOffCabinetLight();
+        }
+        return;
+      }
+      if (requestError.code === CABINET_LIGHT_PRECONDITION_ERROR_CODE) {
+        setVerificationError(normalizeCabinetLightMessage(requestError.message));
+        setPhase("dispense_failed");
+        return;
+      }
+      if (dispenseRequestMayHaveReachedHardware(requestError)) {
         cabinetLightMayBeOnRef.current = true;
         setVerificationError(normalizeCabinetLightMessage(
           `${requestError.message || "分类柜亮灯服务未返回可确认结果"}。亮灯结果待现场确认，请勿重复操作。`
@@ -401,30 +502,29 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       }
       throw requestError;
     }
+    if (session !== sessionRef.current) {
+      bestEffortTurnOffCabinetLight();
+      return;
+    }
     if (dispense?.result_unknown || (dispense?.ok === false && dispense?.retry_safe === false)) {
-      if (session === sessionRef.current) {
-        setGuestTrigger("");
-        setDispenseRecordId(String(dispense?.record_id || ""));
-        setInventoryEligible(false);
-        cabinetLightMayBeOnRef.current = true;
-        setVerificationError(normalizeCabinetLightMessage(
-          dispense?.message || "分类柜亮灯结果待现场确认，请勿重复操作。"
-        ));
-        setPhase("result_unknown");
-      }
+      setGuestTrigger("");
+      setDispenseRecordId(String(dispense?.record_id || ""));
+      setInventoryEligible(false);
+      cabinetLightMayBeOnRef.current = true;
+      setVerificationError(normalizeCabinetLightMessage(
+        dispense?.message || "分类柜亮灯结果待现场确认，请勿重复操作。"
+      ));
+      setPhase("result_unknown");
       return;
     }
     if (dispense && dispense.ok === false) {
       throw new Error(normalizeCabinetLightMessage(dispense.message || "分类柜指示灯未能点亮"));
     }
-    if (session === sessionRef.current) {
-      setGuestTrigger("");
-      setDispenseRecordId(String(dispense?.record_id || ""));
-      setInventoryEligible(Boolean(dispense?.inventory_confirmation_required));
-      inventoryRequestIdRef.current = createManualRequestId("inventory");
-      cabinetLightMayBeOnRef.current = true;
-      setPhase("complete");
-    }
+    setGuestTrigger("");
+    continueAfterCabinetLight(
+      dispense?.record_id,
+      dispense?.inventory_confirmation_required
+    );
   }
 
   async function assessManualAccess(identity, verification, verificationMethod, session, attempt) {
@@ -456,15 +556,21 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       });
       if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
       const status = String(assessment?.check_status || "CHECK_FAILED").toUpperCase();
-      setManualAssessment(assessment
+      const resolvedAssessment = assessment
         ? { ...assessment, persisted: true }
         : {
           check_status: "CHECK_FAILED",
           reason_codes: ["MEDICINE_DATA_UNREVIEWED"],
           message: "未能完成可靠核查，本次分类柜指示灯未亮。",
           persisted: false
-        });
-      setPhase(status === "PASSED" ? "passed" : status === "BLOCKED" ? "blocked" : "check_failed");
+        };
+      setManualAssessment(resolvedAssessment);
+      if (status === "PASSED") {
+        setPhase("passed");
+        await confirmManualAccess(resolvedAssessment, session);
+        return;
+      }
+      setPhase(status === "BLOCKED" ? "blocked" : "check_failed");
     } catch (requestError) {
       if (session !== sessionRef.current || attempt !== verificationAttemptRef.current) return;
       const message = requestError.message || "个人用药安全核查失败";
@@ -478,24 +584,35 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     }
   }
 
-  async function confirmManualAccess() {
-    if (phase !== "passed" || !manualAssessment?.check_id || !onConfirmManual) return;
-    const session = sessionRef.current;
+  async function confirmManualAccess(assessment = manualAssessment, session = sessionRef.current) {
+    if (
+      session !== sessionRef.current
+      || String(assessment?.check_status || "").toUpperCase() !== "PASSED"
+      || !assessment?.check_id
+      || !onConfirmManual
+    ) return;
     setVerificationError("");
     setPhase("opening");
     try {
-      const outcome = await onConfirmManual({
-        request_id: createManualRequestId("confirm"),
-        safety_check_id: manualAssessment.check_id,
-        confirmed_safety_notice: true
-      });
-      if (session !== sessionRef.current) return;
+      const requestResult = await runCabinetIlluminationRequest(
+        () => onConfirmManual({
+          request_id: createManualRequestId("confirm"),
+          safety_check_id: assessment.check_id,
+          confirmed_safety_notice: true
+        }),
+        () => session === sessionRef.current
+      );
+      if (requestResult.ignored) return;
+      const outcome = requestResult.outcome;
+      if (session !== sessionRef.current) {
+        bestEffortTurnOffCabinetLight();
+        return;
+      }
       if (outcome?.ok && outcome.dispense_status === "DISPENSED") {
-        setDispenseRecordId(String(outcome.dispense_record_id || ""));
-        setInventoryEligible(Boolean(outcome.inventory_confirmation_required));
-        inventoryRequestIdRef.current = createManualRequestId("inventory");
-        cabinetLightMayBeOnRef.current = true;
-        setPhase("complete");
+        continueAfterCabinetLight(
+          outcome.dispense_record_id,
+          outcome.inventory_confirmation_required
+        );
         return;
       }
       setManualAssessment((current) => ({
@@ -510,7 +627,21 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
         setPhase("dispense_failed");
       }
     } catch (requestError) {
-      if (session !== sessionRef.current) return;
+      if (session !== sessionRef.current) {
+        if (dispenseRequestMayHaveReachedHardware(requestError)) {
+          bestEffortTurnOffCabinetLight();
+        }
+        return;
+      }
+      if (requestError.code === CABINET_LIGHT_PRECONDITION_ERROR_CODE) {
+        setManualAssessment((current) => ({
+          ...current,
+          dispense_status: "HARDWARE_FAILED",
+          message: normalizeCabinetLightMessage(requestError.message)
+        }));
+        setPhase("dispense_failed");
+        return;
+      }
       const responseStatus = Number(requestError.status);
       if (!Number.isInteger(responseStatus) || responseStatus >= 500) {
         const detail = normalizeCabinetLightMessage(requestError.message || "分类柜亮灯服务未返回可确认结果");
@@ -665,10 +796,6 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     if (busy || phase === "complete") {
       return;
     }
-    if (phase === "passed") {
-      await confirmManualAccess();
-      return;
-    }
     const session = sessionRef.current;
     if (phase === "guest_confirm") {
       try {
@@ -693,7 +820,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     setPreviewActive(false);
     if (cabinetLightMayBeOnRef.current) {
       cabinetLightMayBeOnRef.current = false;
-      void turnOffCabinetLight().catch(() => undefined);
+      bestEffortTurnOffCabinetLight();
     }
     void stopAudioPlayback().catch(() => undefined);
     onCancelRef.current();
@@ -705,7 +832,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     setLightOffBusy(true);
     setLightOffError("");
     try {
-      await turnOffCabinetLight();
+      await turnOffCabinetLightInOrder();
       if (session !== sessionRef.current) return;
       cabinetLightMayBeOnRef.current = false;
       if (inventoryEligible && dispenseRecordId) {
@@ -730,7 +857,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     setLightOffBusy(true);
     setLightOffError("");
     try {
-      await turnOffCabinetLight();
+      await turnOffCabinetLightInOrder();
       if (session !== sessionRef.current) return;
       cabinetLightMayBeOnRef.current = false;
       cancelSession();
@@ -745,12 +872,33 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     }
   }
 
+  async function finishInventorySession(session) {
+    if (session !== sessionRef.current || lightOffBusy) return;
+    setLightOffBusy(true);
+    setInventoryError("");
+    try {
+      await turnOffCabinetLightInOrder();
+      if (session !== sessionRef.current) return;
+      cabinetLightMayBeOnRef.current = false;
+      cancelSession();
+    } catch (requestError) {
+      if (session === sessionRef.current) {
+        setInventoryError(normalizeCabinetLightMessage(
+          `库存已保存，但指示灯关闭失败：${requestError.message || "请重试或联系值守员。"}`
+        ));
+      }
+    } finally {
+      if (session === sessionRef.current) setLightOffBusy(false);
+    }
+  }
+
   async function confirmInventory(observation) {
     if (inventoryUpdating) return;
     if (!dispenseRecordId) {
       setInventoryError("缺少本次取药记录，无法更新库存；请联系值守员核对。");
       return;
     }
+    const session = sessionRef.current;
     setInventoryUpdating(true);
     setInventoryError("");
     try {
@@ -762,6 +910,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
         dispense_record_id: dispenseRecordId,
         observation
       });
+      if (session !== sessionRef.current) return;
       const updatedMedicine = {
         ...medicine,
         stock: response.stock,
@@ -773,11 +922,15 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       window.dispatchEvent(new CustomEvent("zykh:medicine-updated", { detail: updatedMedicine }));
       setInventoryConfirmedState(response.inventory_state);
       setInventoryMessage(observation === "DEPLETED" ? "已触发库存警告" : "已确认分类柜内还有药");
-      autoCloseTimerRef.current = window.setTimeout(cancelSession, 900);
+      autoCloseTimerRef.current = window.setTimeout(() => {
+        void finishInventorySession(session);
+      }, 900);
     } catch (requestError) {
-      setInventoryError(requestError.message || "库存确认未保存，请重新选择或联系值守员核对");
+      if (session === sessionRef.current) {
+        setInventoryError(requestError.message || "库存确认未保存，请重新选择或联系值守员核对");
+      }
     } finally {
-      setInventoryUpdating(false);
+      if (session === sessionRef.current) setInventoryUpdating(false);
     }
   }
 
@@ -852,7 +1005,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
   return createPortal(
     <div className={`modal-layer${exiting ? " is-exiting" : ""}`} role="presentation">
       <section className="dispense-modal biometric-dispense-modal" role="dialog" aria-modal="true" aria-labelledby="dispense-title">
-        <button className="modal-close" type="button" onClick={cancelSession} aria-label="关闭取药确认" disabled={phase === "opening" || phase === "complete" || phase === "result_unknown" || submitting || lightOffBusy}>
+        <button className="modal-close" type="button" onClick={cancelSession} aria-label="关闭取药确认" disabled={phase === "opening" || phase === "complete" || phase === "inventory_check" || phase === "result_unknown" || submitting || inventoryUpdating || lightOffBusy}>
           <X size={24} aria-hidden="true" />
         </button>
 
@@ -869,11 +1022,12 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
         {phase === "inventory_check" ? (
           <MedicineRemainingPrompt
             medicine={medicine}
-            busy={inventoryUpdating}
+            busy={inventoryUpdating || lightOffBusy}
             message={inventoryMessage}
             error={inventoryError}
             confirmedState={inventoryConfirmedState}
-            cabinetLightOff
+            lightTurnsOffAfterPrompt
+            onRetryLightOff={() => finishInventorySession(sessionRef.current)}
             onHasStock={() => confirmInventory("HAS_REMAINING")}
             onDepleted={() => confirmInventory("DEPLETED")}
           />

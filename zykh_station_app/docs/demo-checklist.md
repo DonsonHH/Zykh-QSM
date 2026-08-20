@@ -89,16 +89,19 @@ when the result is `unknown` or a cabinet is unexpectedly lit.
 1. Verify the homepage loads with today medication and emergency inquiry cards.
 2. Verify the medicines page shows exactly three physical cabinet cards and all
    23 logical medicine items appear exactly once. Confirm that the original
-   `hardware_slot=1..23` identities remain available through the API. Treat the
-   displayed group names as a local proposal: compare every medicine with the
-   signed real-placement sheet before accepting the grouping.
+   `hardware_slot=1..23` identities remain available through the API. The cards
+   must be `日常用药 / 外用护理 / 慢病处方储备` with 9/8/6 items. Confirm S09
+   双歧杆菌 is physically in cabinet 3 only after its current package storage
+   instructions have been checked; if it requires refrigeration, stop this item
+   and do not place it in an ordinary cabinet.
 3. Verify the ordinary service-user list contains only `王奶奶` and `李爷爷`,
    and the four demo plans match their exact IDs, medicines, times and dose
    snapshots. Existing administrator edits must remain unchanged after restart.
-4. Open the medicines page and verify the manual path is identity → checking →
-   passed/blocked/check-failed. A passed result still requires the explicit
-   “确认并点亮分类柜” action; blocked, failed and guest results must say the
-   cabinet light was not activated.
+4. Open the medicines page and tap “确认身份并点亮分类柜” once. The UI must
+   automatically continue through identity → checking. A passed result must
+   immediately continue to the correct cabinet light and the “还有药吗” page
+   without a second confirmation; blocked, failed and guest results must keep
+   the existing conflict/failure screen and say the cabinet light was not activated.
 5. In a hardware-isolated run, verify `王奶奶 + S13 布洛芬` and
    `李爷爷 + S05 蜜炼川贝枇杷膏` both return
    `BLOCKED / CONDITION_CONTRAINDICATION`, create one safety event and call the
@@ -131,11 +134,13 @@ when the result is `unknown` or a cabinet is unexpectedly lit.
     `REAL_DISPENSE_TEST_SLOT` to physical cabinet ID `1`, `2` or `3` to limit the
     test. Verify exactly one expected panel lights and the other two stay off;
     the user must open the illuminated cabinet manually.
-15. After the user confirms pickup, verify the UI sends `OFF` and
-    `GET /api/qsm/cabinet-light/status` returns `status=off`. Repeat the
-    supervised observation for cabinets 1, 2 and 3 only after the placement map
-    is confirmed. A timeout or mismatched ACK must show `RESULT_UNKNOWN`; inspect
-    the lights physically and do not press confirm again.
+15. On “还有药吗”, choose the observed inventory state once. Verify its success
+    message disappears, the UI automatically sends `OFF`, and
+    `GET /api/qsm/cabinet-light/status` returns `status=off`; there must be no
+    separate light-off click. Repeat the supervised observation for cabinets 1,
+    2 and 3 only after the placement map is confirmed. A timeout or mismatched
+    ACK must show `RESULT_UNKNOWN`; inspect the lights physically and do not press
+    confirm again.
 
 ## Expected Degradation
 

@@ -96,7 +96,11 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(response.warehouse_total, 3)
         self.assertEqual(
             [(cabinet.id, cabinet.label) for cabinet in response.cabinets],
-            [(1, "口服药品"), (2, "外用药品"), (3, "医疗护理用品")],
+            [(1, "日常用药"), (2, "外用护理"), (3, "慢病处方储备")],
+        )
+        self.assertEqual(
+            [len(cabinet.medicine_ids) for cabinet in response.cabinets],
+            [9, 8, 6],
         )
         self.assertEqual(
             {medicine_id for cabinet in response.cabinets for medicine_id in cabinet.medicine_ids},
@@ -105,7 +109,11 @@ class MedicineInventoryContractTest(unittest.TestCase):
         # The 1-23 values remain logical inventory/cloud identities only.
         self.assertEqual([item.hardware_slot for item in response.medicines], list(range(1, 24)))
         self.assertEqual(response.medicines[12].cabinet_id, 1)
-        self.assertEqual(response.medicines[12].cabinet_label, "口服药品")
+        self.assertEqual(response.medicines[12].cabinet_label, "日常用药")
+        self.assertEqual(response.medicines[21].cabinet_id, 2)
+        self.assertEqual(response.medicines[21].cabinet_label, "外用护理")
+        self.assertEqual(response.medicines[8].cabinet_id, 3)
+        self.assertEqual(response.medicines[8].cabinet_label, "慢病处方储备")
         expected_names = (
             "复方感冒灵颗粒", "多维元素片", "蒙脱石散", "阿莫西林胶囊",
             "蜜炼川贝枇杷膏", "乳果糖口服液", "银黄颗粒", "藿香正气丸",
@@ -122,7 +130,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertIsNotNone(medicine)
         self.assertEqual(medicine.hardware_slot, 18)
         self.assertEqual(medicine.cabinet_id, 2)
-        self.assertEqual(medicine.cabinet_label, "外用药品")
+        self.assertEqual(medicine.cabinet_label, "外用护理")
 
     def test_known_package_fields_match_the_physical_inventory(self) -> None:
         medicines = {item.hardware_slot: item for item in list_medicines().medicines}

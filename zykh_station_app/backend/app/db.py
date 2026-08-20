@@ -591,6 +591,18 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS medicine_safety_checks_status_created_idx "
             "ON medicine_safety_checks(check_status, created_at DESC)"
         )
+        outbox_columns_before_wire_migration = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(medication_safety_outbox)"
+            ).fetchall()
+        }
+        needs_legacy_outbox_wire_backfill = bool(
+            outbox_columns_before_wire_migration
+        ) and not {
+            "wire_payload_json",
+            "wire_payload_digest",
+        }.issubset(outbox_columns_before_wire_migration)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS medication_safety_outbox (
@@ -599,6 +611,8 @@ def init_db() -> None:
               event_type TEXT NOT NULL,
               payload_json TEXT NOT NULL,
               payload_digest TEXT NOT NULL,
+              wire_payload_json TEXT NOT NULL DEFAULT '',
+              wire_payload_digest TEXT NOT NULL DEFAULT '',
               status TEXT NOT NULL DEFAULT 'pending',
               attempts INTEGER NOT NULL DEFAULT 0,
               next_attempt_at TEXT NOT NULL,
@@ -607,6 +621,30 @@ def init_db() -> None:
             )
             """
         )
+        _ensure_column(
+            conn,
+            "medication_safety_outbox",
+            "wire_payload_json",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        _ensure_column(
+            conn,
+            "medication_safety_outbox",
+            "wire_payload_digest",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        if needs_legacy_outbox_wire_backfill:
+            conn.execute(
+                """
+                UPDATE medication_safety_outbox
+                SET wire_payload_json=payload_json,
+                    wire_payload_digest=payload_digest
+                WHERE status IN ('pending', 'sending')
+                  AND (attempts>0 OR status='sending')
+                  AND wire_payload_json=''
+                  AND wire_payload_digest=''
+                """
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS medication_safety_outbox_pending_idx "
             "ON medication_safety_outbox(status, next_attempt_at, created_at)"

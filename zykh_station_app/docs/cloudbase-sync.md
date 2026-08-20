@@ -12,23 +12,53 @@ SQLite / QSM 外设
   -> 微信小程序
 ```
 
-## v2.0.0 分类柜兼容边界
+## 3.0 小程序投影与实体柜边界
 
-三分类柜改造只发生在本地界面、FastAPI 映射和 QSM 灯光执行层；本版本没有修改
-`cloudbase/` 下的云函数、小程序 helper 或集合 schema，也不要求为该硬件变化重新
-部署 CloudBase。云端继续看到 23 项药品逻辑库存身份：
+本轮只适配 Station 到现有 Zykh-Miniprogram 3.0 药库契约，不修改或部署
+`zykh_station_app/cloudbase/**`，也不修改小程序代码。Station 本地稳定
+`Medicine.id` 与小程序 canonical `medicineId` 由
+`medicine_cloud_projection.py` 转换；溯源码、条码、药名、标签和实体柜号都不是
+药品身份。
 
-- `hardware_slot=1..23` 仍是 `UPSERT_MEDICINE`、SQLite 行、快照和历史记录的稳定键；
-- `cabinet_id=1..3` 只用于本机投影和实体分类柜指示灯，不上传替换 `hardware_slot`；
-- 三个分类名称和 14/6/3 药品分组已作为 v2.0.0 本地实机布局确认，但不会写入 CloudBase，云端数据也不能用来重建该物理摆放；
-- 云端仍无开柜或亮灯命令。历史 `OPEN_CABINET` 继续失败关闭，不会到达 QSM。
+QSM 实体柜使用独立的 9/8/6 映射：
+
+| QSM 实体柜 | 本地标签 | Station 本地编号 | 数量 |
+| --- | --- | --- | --- |
+| 1 | 日常用药 | S01、S03、S05、S07、S08、S11、S12、S13、S23 | 9 |
+| 2 | 外用护理 | S10、S15、S16、S17、S18、S19、S20、S22 | 8 |
+| 3 | 慢病处方储备 | S02、S04、S06、S09、S14、S21 | 6 |
+
+小程序 `storageBox` 使用另一套 9/8/5/1 只读投影：
+
+| `storageBox` | 小程序名称 | canonical 兼容编号 | 数量 |
+| --- | --- | --- | --- |
+| `DAILY` | 日常高频内服 | 1、3、5、7、8、11、12、13、23 | 9 |
+| `CARE` | 外用消毒护理 | 10、15、16、17、18、19、20、22 | 8 |
+| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、14、21 | 5 |
+| `COLD` | 冷藏药品 | 9 | 1 |
+
+S09 双歧杆菌实体放在 3 号柜，但对外仍为 `storageBox=COLD`。本地 S03
+蒙脱石散上传为小程序 canonical `slot-13-montmorillonite` / 兼容编号 13；
+本地 S13 布洛芬上传为 `slot-03-ibuprofen` / 兼容编号 3。反向命令执行相反
+转换，身份、编号或 `storageBox` 冲突时失败关闭。
+
+S09 的软件映射不是药品储存条件判定。现场必须核对当前实物包装；若要求冷藏，
+不得按该映射放入普通柜，应暂停该项现场取药并重新确认摆放方案。
+
+`cabinet_id` 永不上传，也不能从 `storageBox` 反推。目标 CloudBase 探针为
+`schemaRevision=3.0-three-box-library`、`medicineStorageBoxes=v1`；探针不匹配时
+停止 Station 上线，不得在本轮临时修改或部署 CloudBase。完整契约见
+[`miniprogram-sync-contract.md`](miniprogram-sync-contract.md)。
+
+云端仍无开柜或远程亮灯命令。历史 `OPEN_CABINET` 继续失败关闭，
+不会到达 QSM；药柜灯只能由本地安全核查通过后的现场流程点亮。
 
 小程序允许的反向操作通过 `commands` 集合完成。主机拉取命令并将其置为 `running`，执行后 ACK 为 `done` 或 `failed`。`cloud_command_history` 保存本地执行结果，同一命令 ID 即使重复下发也不会重复执行。远程开柜不属于允许动作；历史 `OPEN_CABINET` 命令会被改写为失败且不会调用 QSM。
 
 ## 已同步数据
 
 - 设备在线状态和同步代理版本；
-- 23 项逻辑药品库存身份及药品信息，包括 `hardware_slot`、规格、追溯码、库存、低库存线和原始有效期精度；
+- 23 项药品的小程序 canonical `medicineId`、兼容编号、只读 `storageBox` 及药品信息，包括规格、追溯码、库存、低库存线和原始有效期精度；
 - 服务对象；
 - 今日计划；
 - 体征记录；
@@ -44,76 +74,37 @@ SQLite / QSM 外设
 计划和取药记录也携带生成时的 `persona_generation`；问询、体征和安全事件沿用
 各自持久化的人物代次。带 generation map 的 membership 只可读取代次完全一致
 的行，缺失或不一致的旧行均失败关闭，不会因为复用相同 person ID 泄露给新人物。
+问询、体征和用药安全事件在 Station 发送侧仍按 append-only 处理：板端不对问询
+或体征请求 finalize，安全事件不参与快照 finalize。本轮没有修改或部署目标 3.0
+CloudBase，所以这些本地证据不能证明云端读取、人物代次或保留策略；上线前必须对
+实际部署独立验收，不能仅凭 `PING` 能力名称推定实现安全。
 
-线上仍是旧版云函数时，终端自动使用 v1 兼容动作。药品写入 `medicines`，其余新增业务数据以结构化记录写入 `records`。部署 v2 云函数后会自动切换到 `service_users`、`today_plans`、`inquiries` 等独立集合。v2 还会锁定 schema 2 主代理：旧 `cloud_agent.pl` 不能再覆盖设备状态，也不能抢先拉取新命令。
+本版本不再向旧版云函数降级。每个同步周期会先执行只读 `PING`；只有
+`schemaVersion=2`、`schemaRevision=3.0-three-box-library` 且
+`capabilities.medicineStorageBoxes=v1` 同时成立时，才允许发布配对码、拉取命令、
+上传快照或发送安全事件。任一条件不匹配都会在发生云端写入或执行云端命令前失败关闭，
+避免旧仓位语义把 S03/S13 更新到错误药品。
 
-## 部署 v2 云函数
+## CloudBase 基线：本轮不部署
 
-先在微信云开发控制台创建集合：
+本轮发布边界是“适配现有 CloudBase/小程序，更新 Station”，不是云函数迁移。
+禁止从本仓库运行 `tcb` 部署、`deploy_cloudbase_sync.sh`、集合创建或数据清理，
+也禁止把 `zykh_station_app/cloudbase/` 复制到小程序工程覆盖现有实现。
 
-```text
-service_users
-today_plans
-inquiries
-medication_safety_events
-caregiver_event_receipts
-caregiver_notification_outbox
-caregiver_notification_subscriptions
-device_memberships
-device_pairing_codes
-```
+上线前只做以下只读检查：
 
-登录并部署：
+1. 保存线上 `PING` 完整响应，确认目标为
+   `schemaRevision=3.0-three-box-library` 且
+   `capabilities.medicineStorageBoxes=v1`；
+2. 对比发布基线，确认 `zykh_station_app/cloudbase/**` 没有本轮 diff；
+3. 确认 Zykh-Miniprogram 工作树、commit 和已发布版本未被本轮修改；
+4. 使用 fake adapter 验证板端快照和反向命令，不向真实集合写测试数据。
 
-```bash
-tcb login
-sh zykh_station_app/scripts/deploy_cloudbase_sync.sh
-```
-
-部署脚本会先只读核验既有 `api` 和同名通知 worker 的 Event 类型、Node.js
-运行时、handler 及触发器集合；身份冲突时在创建集合或覆盖代码前失败关闭。
-随后它检查并创建上述九个业务集合，用显式白名单小体积 ZIP 更新现有 `api`
-Event 云函数并创建或更新独立 `caregiverNotificationWorker`。原 `/api` HTTP
-路由不会被重建，测试文件不会进入 ZIP，也不依赖容易超时的 COS 上传。
-
-worker 的唯一受管定时器会在更新代码前关闭；部署器只有在 API 返回
-`schemaRevision=2.8-runtime-persona-consistency`，线上小程序运行时能力、人物
-tombstone、配对签发与通知 worker 能力齐全，且 worker 自身无副作用运行探针
-通过后，才可能执行最后的显式启用。
-默认部署始终保持定时器关闭，部署或探针失败也不会留下 OPEN timer。
-
-也可以在微信开发者工具中，把 `zykh_station_app/cloudbase/cloudfunctions/api/` 复制为项目的 `cloudfunctions/api/`，然后右键选择“上传并部署：云端安装依赖”。
-
-当前云开发环境：
-
-```text
-cloud1-d6gv6t2jf3f2c541c
-```
-
-部署后验证：
-
-```bash
-curl -sS -H 'Content-Type: application/json' \
-  -d '{"action":"PING","data":{}}' \
-  https://cloud1-d6gv6t2jf3f2c541c-1441069580.ap-shanghai.app.tcloudbase.com/api
-```
-
-返回中的 `schemaVersion` 应为 `2`，当前 `schemaRevision` 为
-`2.8-runtime-persona-consistency`，并声明
-`medicationSafetyEvents=v1`、`caregiverMembership=v1`、`devicePairing=v1`、
-`devicePairingIssue=v1`、`caregiverNotificationOutbox=v1`、
-`caregiverNotificationWorker=v1`、`inquiryDetail=v1`、`snapshotBatch=v2` 与
-`serviceUserPersonaTombstones=v1`，以及小程序运行时使用的
-`explicitInventoryState=v1`、`personaLifecycle=v1`、`vitalsAttribution=v1`。
-终端把 revision 纳入 snapshot hash；后续云函数清理或映射逻辑升级后会自动
-触发一次完整重同步。
-
-人物迁移必须按“云先、Station 后”的顺序部署。2.8 云函数先兼容旧的
-`<device>-user-<person>` 文档键；收到带代次的新行并成功写入 canonical 文档后，
-只删除 `deviceId/personId` 精确匹配且代次为空或相同的旧键。无关、身份不匹配的
-ownerless 文档不会被 `FINALIZE_SNAPSHOT` 或兼容迁移删除。随后部署 Station 并
-触发一次完整同步，确认王奶奶、李爷爷为活动人物，旧张三、李四、王五为归档
-tombstone，再发布依赖该能力的小程序版本。
+revision、能力、人物代次、membership、append-only 或命令权限任一不匹配时，
+停止 Station 上线并保留快照，不得靠部署 QSM 仓库里的旧云函数“修复”。板端适配
+通过后，真实全量同步仍须按既有运维流程先备份再执行；不得手工删除 ownerless、
+其他所有者或真实业务文档。验证与回滚顺序见
+[`miniprogram-sync-contract.md`](miniprogram-sync-contract.md)。
 
 ## 小程序反向命令
 
@@ -139,12 +130,18 @@ ACTIVE 只表示 membership 当前有效，不会自动授予所有读取能力�
 `CREATE_COMMAND`。`GET_SNAPSHOT` 和 `GET_DEVICE.syncSummary` 只返回当前
 membership 已授权且人物范围匹配的分区；权限数组为空时不返回任何健康分区或
 健康计数。
+配对签发的 `CAREGIVER` 会员具有最小 `CREATE_COMMAND` 权限，但服务端还会按
+角色二次收窄：只允许 `AUDIO_BEEP`、`AUDIO_SPEAK` 和
+`READ_VITALS_ALL`。家属不能借该权限下发 `AI_CHAT`、药品/人物/计划写入、
+`OPEN_CABINET` 或任何未列出命令。
 
 同一 `CREATE_COMMAND.requestId` 在事务中绑定规范化请求摘要：相同内容安全重放，
-不同内容返回 `IDEMPOTENCY_CONFLICT`，并发请求也不能互相覆盖。只读角色或缺少
-`CREATE_COMMAND` 权限的 membership 不能下发命令。人物命令执行前还会从当前
-唯一活动人物行重验 membership 绑定的代次，并由服务端把该代次写入命令；旧代次
-授权不能向同 ID 的新人物发送问询或资料/计划更新。
+不同内容返回 `IDEMPOTENCY_CONFLICT`，并发请求也不能互相覆盖。缺少
+`CREATE_COMMAND` 权限的 membership 不能下发命令，具备该权限也仍受上述角色允许列表限制。
+人物命令执行前还会从当前唯一活动人物行重验 membership 绑定的代次，
+并由服务端把该代次写入命令；旧代次授权不能向同 ID 的新人物发送提醒、
+读取体征、发送问询或更新资料/计划。无人物归属的通用语音设备测试可不携带代次；
+一旦 `AUDIO_SPEAK` 指定人物，云端和 Station 都会复核当前 `persona_generation`。
 
 远程 `READ_VITALS_ALL` 必须携带可核验的服务对象身份，或显式声明
 `attribution_source=STANDALONE`；空身份、空归属请求会失败关闭。人物归属命令由
@@ -196,7 +193,7 @@ helper 后完成双人并发、过期、撤销与跨设备验收；本轮不会�
 node zykh_station_app/cloudbase/miniprogram/test-sync-contract.cjs
 ```
 
-支持：
+云端总命令允许列表为：
 
 ```text
 AUDIO_BEEP
@@ -208,7 +205,16 @@ UPSERT_SERVICE_USER
 UPSERT_TODAY_PLAN
 ```
 
-`UPSERT_MEDICINE` 继续以 `hardware_slot`（兼容 `hardwareSlot` / `slot`）作为 1–23 的逻辑药品身份，不以条码去重，也不接受本地物理 `cabinet_id` 作为替代键。局部修改使用嵌套补丁：
+其中通过家属配对签发的 `CAREGIVER` 只能使用前三项；其余命令仅在更高
+权限角色同时通过其它字段、人物代次和设备权限校验时可用。
+
+旧版反向 `UPSERT_MEDICINE` 命令继续接受 `hardware_slot`（兼容
+`hardwareSlot` / `slot`），但该值属于小程序 canonical 兼容编号；Station 必须先经
+板端投影解析为本地记录，尤其不能直接把小程序 S03/S13 当成本地 S03/S13。
+快照使用小程序 canonical `medicineId`，两条路径都不以条码去重，也不接受本地
+物理 `cabinet_id` 或 `storageBox` 作为药品身份替代键。`storageBox` 是 Station
+快照中受信的小程序药库投影，不属于反向命令可修改字段。局部修改
+使用嵌套补丁：
 
 ```json
 {
@@ -237,7 +243,11 @@ AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提
 显式携带的三类新草稿字段。空仓 `upsert` 也会在创建药品后保存同一 payload 的草稿，
 并保持 `package_verified=false` 与 `safety_review_status=draft`。
 
-终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。快照按逻辑 `slot` 升序提供药品；本地 1–3 分类柜映射不会写进这个同步表。命令字段到 SQLite 与快照字段的对应关系为：
+终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。
+快照以小程序 canonical `medicineId` 作身份，列表仍可按 canonical 兼容 `slot`
+排序；本地 1–3 实体柜映射不会进入快照，只有独立的 `storageBox` /
+`storage_box` 小程序药库投影会上传。实体 `cabinet_id` 不上传，反向药品命令也
+不能修改实体柜或药库投影。命令字段到 SQLite 与快照字段的对应关系为：
 
 | 命令字段 | SQLite | 小程序快照字段 |
 | --- | --- | --- |
@@ -258,7 +268,7 @@ AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提
 
 Station 以 `medication-safety:{check_id}` 为稳定事件 ID：`BLOCKED` 与
 `CHECK_FAILED` 在核查终态写入一条 outbox；`PASSED` 直到确认得到本地分类柜亮灯终态后，
-才把核查与物理执行双轴合并写入同一条事件。为保持现有 CloudBase 契约，字段名和枚举不在 v2.0.0 中迁移；事件同时携带人物 profile revision、
+才把核查与物理执行双轴合并写入同一条事件。为保持现有 CloudBase 契约，字段名和枚举不在本轮板端适配中破坏性迁移；事件同时携带人物 profile revision、
 药品审核指纹与可用的 QSM operation ID。联网且云端声明
 `medicationSafetyEvents=v1` 后，使用设备密钥调用
 `REPORT_MEDICATION_SAFETY_EVENT`；同一 `event_id + payload_digest` 安全重放，

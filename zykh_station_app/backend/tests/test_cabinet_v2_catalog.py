@@ -26,16 +26,56 @@ class CabinetV2CatalogTest(unittest.TestCase):
         groups = cabinet_groups()
 
         self.assertEqual(
-            [(group.id, group.label) for group in groups],
+            [(group.id, group.label, group.description) for group in groups],
             [
-                (1, "口服药品"),
-                (2, "外用药品"),
-                (3, "医疗护理用品"),
+                (1, "日常用药", "感冒、发热、咳嗽、过敏、咽喉与胃肠常用药"),
+                (2, "外用护理", "消毒、伤口、皮肤、鼻部与局部疼痛护理"),
+                (3, "慢病处方储备", "慢病固定用药、处方药与低频储备用药"),
+            ],
+        )
+        self.assertEqual(
+            [group.medicine_ids for group in groups],
+            [
+                frozenset(
+                    {
+                        "slot-01-fufang-ganmaoling",
+                        "slot-03-diosmectite",
+                        "slot-05-nin-jiom-pei-pa-koa",
+                        "slot-07-yinhuang",
+                        "slot-08-huoxiang-zhengqi",
+                        "slot-11-guilin-xiguashuang",
+                        "slot-12-hydrotalcite",
+                        "slot-13-ibuprofen",
+                        "slot-23-desloratadine",
+                    }
+                ),
+                frozenset(
+                    {
+                        "slot-10-gauze",
+                        "slot-15-mupirocin",
+                        "slot-16-ketoconazole",
+                        "slot-17-iodophor",
+                        "slot-18-budesonide-nasal",
+                        "slot-19-ketoprofen-gel",
+                        "slot-20-bandage",
+                        "slot-22-cotton-swab",
+                    }
+                ),
+                frozenset(
+                    {
+                        "slot-02-centrum",
+                        "slot-04-amoxicillin",
+                        "slot-06-lactulose",
+                        "slot-09-bifid-triple",
+                        "slot-14-oseltamivir",
+                        "slot-21-amlodipine",
+                    }
+                ),
             ],
         )
         self.assertEqual(cabinet_for_medicine_id("slot-13-ibuprofen").id, 1)
         self.assertEqual(cabinet_for_medicine_id("slot-18-budesonide-nasal").id, 2)
-        self.assertEqual(cabinet_for_medicine_id("slot-22-cotton-swab").id, 3)
+        self.assertEqual(cabinet_for_medicine_id("slot-09-bifid-triple").id, 3)
 
     def test_every_bundled_medicine_has_one_explicit_local_cabinet_assignment(self) -> None:
         assigned_ids = [
@@ -69,7 +109,7 @@ class CabinetV2CatalogTest(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.cabinet_id, 2)
-        self.assertEqual(result.cabinet_label, "外用药品")
+        self.assertEqual(result.cabinet_label, "外用护理")
         # Retained only as a compatibility identity; the local UI does not render it.
         self.assertEqual(result.slot, "18")
 
@@ -118,7 +158,7 @@ class CabinetV2CatalogTest(unittest.TestCase):
         self.assertFalse(result.created)
         self.assertEqual(result.medicine.id, existing.id)
         self.assertEqual(result.medicine.cabinet_id, 1)
-        self.assertEqual(result.medicine.cabinet_label, "口服药品")
+        self.assertEqual(result.medicine.cabinet_label, "日常用药")
         self.assertFalse(repository.create_called)
 
     def test_scan_registration_rejects_an_unknown_medicine_without_writing(self) -> None:

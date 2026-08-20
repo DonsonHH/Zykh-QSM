@@ -369,24 +369,37 @@ assert.doesNotMatch(
 );
 assert.match(dispenseModal, /FACE_VERIFICATION_FRAME_INTERVAL_MS\s*=\s*250/, "face verification preview refresh is not bounded");
 assert.match(dispenseModal, /\/api\/identity\/frame\?t=/, "face verification does not use the recognition-owned live frame source");
-assert.doesNotMatch(dispenseModal, /DISPENSE_COMPLETE_HOLD_MS/, "successful dispense still auto-skips the lit-cabinet state");
 assert.match(
   dispenseModal,
-  /async function acknowledgeMedicineTaken\(\)[\s\S]*await turnOffCabinetLight\(\)[\s\S]*setPhase\("inventory_check"\)/,
-  "successful dispense cannot explicitly acknowledge medicine collection and turn the light off"
+  /if \(status === "PASSED"\)[\s\S]*await confirmManualAccess\(resolvedAssessment, session\)/,
+  "a passed manual safety assessment does not automatically continue to cabinet lighting"
 );
-assert.match(dispenseModal, /我已取药，关闭指示灯/, "lit-cabinet state has no explicit completion action");
+assert.match(
+  dispenseModal,
+  /function continueAfterCabinetLight[\s\S]*requiresInventoryConfirmation && normalizedRecordId \? "inventory_check" : "complete"/,
+  "successful cabinet lighting does not enter inventory confirmation directly"
+);
+assert.match(
+  dispenseModal,
+  /async function finishInventorySession\(session\)[\s\S]*await turnOffCabinetLightInOrder\(\)[\s\S]*cancelSession\(\)/,
+  "inventory completion does not automatically turn the cabinet light off before closing"
+);
 assert.match(dispenseModal, /const onCancelRef = useRef\(onCancel\)/, "modal close callback is not stable across parent renders");
 assert.match(dispenseModal, /onCancelRef\.current\(\)/, "modal does not call the latest close callback");
 assert.match(
   dispenseModal,
-  /cabinetLightMayBeOnRef[\s\S]*turnOffCabinetLight\(\)\.catch/,
+  /cabinetLightMayBeOnRef[\s\S]*bestEffortTurnOffCabinetLight\(\)/,
   "closing or unmounting cannot make a best-effort cabinet-light OFF request"
+);
+assert.match(
+  dispenseModal,
+  /function bestEffortTurnOffCabinetLight\(\)[\s\S]*turnOffCabinetLightInOrder\(\)\.catch/,
+  "best-effort cabinet-light OFF does not use the serialized hardware command path"
 );
 assert.match(dispenseModal, /<MedicineRemainingPrompt/, "dispense flow does not ask whether medicine remains");
 assert.match(
   dispenseModal,
-  /setInventoryEligible\(Boolean\(dispense\?\.inventory_confirmation_required\)\)[\s\S]*setInventoryEligible\(Boolean\(outcome\.inventory_confirmation_required\)\)/,
+  /continueAfterCabinetLight\([\s\S]*dispense\?\.inventory_confirmation_required[\s\S]*continueAfterCabinetLight\([\s\S]*outcome\.inventory_confirmation_required/,
   "inventory confirmation is not gated by the backend's successful observation binding"
 );
 assert.match(
@@ -396,6 +409,16 @@ assert.match(
 );
 assert.match(dispenseModal, /confirmInventory\("HAS_REMAINING"\)/, "remaining stock is not persisted");
 assert.match(dispenseModal, /confirmInventory\("DEPLETED"\)/, "depleted stock is not persisted");
+assert.match(
+  dispenseModal,
+  /const session = sessionRef\.current[\s\S]*confirmMedicineInventory[\s\S]*if \(session !== sessionRef\.current\) return/,
+  "a stale inventory response can still mutate or close a newer dispense session"
+);
+assert.match(
+  dispenseModal,
+  /disabled=\{phase === "opening"[\s\S]*phase === "inventory_check"[\s\S]*inventoryUpdating \|\| lightOffBusy\}/,
+  "the lit inventory page can be closed before a confirmed OFF request"
+);
 assert.doesNotMatch(dispenseModal, /updateMedicine\(medicine\.id, \{ stock: 0 \}\)/, "inventory still bypasses the confirmation ledger");
 const remainingPrompt = await readFile(`${sourceRoot}/components/MedicineRemainingPrompt.jsx`, "utf8");
 assert.match(remainingPrompt, /INVENTORY_CONFIRM_SECONDS\s*=\s*10/, "inventory confirmation does not keep the requested ten-second window");

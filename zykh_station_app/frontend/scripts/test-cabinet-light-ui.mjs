@@ -20,12 +20,15 @@ assert.match(
   "the frontend must use the local cabinet-light OFF endpoint"
 );
 assert.ok(
-  modal.includes("turnOffCabinetLight") && modal.includes("我已取药，关闭指示灯"),
-  "dispense completion must require an explicit taken-and-lights-off action"
+  modal.includes("continueAfterCabinetLight")
+    && modal.includes('setPhase(requiresInventoryConfirmation && normalizedRecordId ? "inventory_check" : "complete")')
+    && modal.includes("finishInventorySession"),
+  "a successful dispense must enter inventory confirmation directly and turn the light off when it finishes"
 );
 assert.ok(
-  !modal.includes("DISPENSE_COMPLETE_HOLD_MS"),
-  "dispense completion must not automatically skip past the lit-cabinet state"
+  modal.includes("lightTurnsOffAfterPrompt")
+    && modal.includes("库存已保存，但指示灯关闭失败"),
+  "the inventory page must own automatic OFF and expose an OFF failure"
 );
 assert.match(
   modal,
@@ -54,10 +57,17 @@ assert.ok(
 );
 assert.ok(
   inquiryResult.includes("onCabinetLightOff")
+    && inquiryResult.includes("lightTurnsOffOnConfirm")
     && inventoryPrompt.includes('mode = "inventory"')
     && inventoryPrompt.includes("我已取药，关闭指示灯")
     && inventoryPrompt.includes("亮灯结果待确认，请勿重复操作"),
   "inquiry pickup and unknown-result prompts must both require an explicit OFF action"
+);
+assert.ok(
+  inventoryPrompt.includes("lightTurnsOffAfterPrompt")
+    && inventoryPrompt.includes("确认页面结束后，分类柜指示灯会自动关闭")
+    && inventoryPrompt.includes("提交时会关闭分类柜指示灯"),
+  "dispense and inquiry must describe their different cabinet-light OFF timing accurately"
 );
 assert.ok(
   inventoryPrompt.includes("分类柜内还有药吗"),
@@ -78,8 +88,8 @@ assert.ok(
 );
 
 assert.equal(
-  presentation.describeMedicineCabinet({ cabinet_id: 2, cabinet_label: "外用药品" }),
-  "2号分类柜 · 外用药品"
+  presentation.describeMedicineCabinet({ cabinet_id: 2, cabinet_label: "外用护理" }),
+  "2号分类柜 · 外用护理"
 );
 assert.equal(
   presentation.describeMedicineCabinet({ hardware_slot: 13, slot: "13" }),

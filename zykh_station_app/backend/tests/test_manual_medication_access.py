@@ -660,7 +660,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
             outcome = DispenseServiceManualAdapter(service).confirm_manual(execution)
 
         self.assertEqual(outcome.dispense_status, "DISPENSED")
-        self.assertEqual(qsm.calls, [(1, 1, False, "manual-op-001")])
+        self.assertEqual(qsm.calls, [(3, 1, False, "manual-op-001")])
 
     def test_distinct_manual_operations_keep_the_availability_flag_at_one(self) -> None:
         from app.repositories.manual_medication_access_repository import ManualMedicationAccessRepository
@@ -717,8 +717,8 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertEqual(
             qsm.calls,
             [
-                (1, 1, False, "manual-last-stock-001"),
-                (1, 1, False, "manual-last-stock-002"),
+                (3, 1, False, "manual-last-stock-001"),
+                (3, 1, False, "manual-last-stock-002"),
             ],
         )
         self.assertEqual(
@@ -916,7 +916,7 @@ class ManualMedicationAccessTest(unittest.TestCase):
         self.assertFalse(response.inventory_confirmation_required)
         self.assertEqual(
             qsm.calls,
-            [(1, 1, True, "manual-dry-run-stock-001")],
+            [(3, 1, True, "manual-dry-run-stock-001")],
         )
         refreshed = MedicineRepository().get_by_id(command.medicine_id)
         self.assertIsNotNone(refreshed)

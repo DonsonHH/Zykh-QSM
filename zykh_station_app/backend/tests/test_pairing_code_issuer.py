@@ -63,6 +63,7 @@ class PairingCodeIssuerTest(unittest.TestCase):
         self.assertEqual(result.expires_at, "2026-08-10T12:10:00+08:00")
         self.assertEqual(result.ttl_seconds, 600)
         self.assertEqual(result.service_user_ids, ("wang-nainai",))
+        self.assertIn("CREATE_COMMAND", CAREGIVER_READ_PERMISSIONS)
         self.assertEqual(
             published,
             [

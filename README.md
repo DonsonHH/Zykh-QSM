@@ -58,16 +58,20 @@ QSM368ZP-WF
 - [API 契约](zykh_station_app/docs/api.md)
 - [QSM 集成](zykh_station_app/docs/qsm-integration.md)
 - [CloudBase 同步](zykh_station_app/docs/cloudbase-sync.md)
+- [板端—小程序同步契约](zykh_station_app/docs/miniprogram-sync-contract.md)
 - [设备验收清单](zykh_station_app/docs/demo-checklist.md)
 - [v2.0.0 发布说明](CHANGELOG.md)
 
 ## v2 分类柜边界
 
-- SQLite 与 CloudBase 中原有的 `hardware_slot=1..23` 继续作为 23 项固定药品的逻辑库存身份；它们不再表示 23 个独立柜门，也没有迁移成三个云端仓位。
-- 本机通过独立目录把每个药品 ID 映射到 `cabinet_id=1..3`，药品页按已确认的“口服药品 / 外用药品 / 医疗护理用品”三个实体分类柜显示。
+- SQLite 中原有的 `hardware_slot=1..23` 继续作为 23 项固定药品的本地兼容定位字段；小程序使用板端适配后的 canonical `medicineId`。两者都不表示 23 个独立柜门，也没有迁移成三个可远程控制的云端仓位。
+- 本机通过独立目录把每个药品 ID 映射到 `cabinet_id=1..3`，药品页按“日常用药 / 外用护理 / 慢病处方储备”三个实体分类柜显示，数量为 9/8/6。
 - QSM 通过 ST-LINK VCP `/dev/ttyACM0`、115200 8N1 文本协议发送 `CABINET 1|2|3`、`STATUS` 与 `OFF`。旧 `/dev/ttyS5`、9600 和 `slot/control_code` 开柜协议已停用。
-- 安全核验通过后，系统只点亮对应分类柜。用户自行打开亮灯柜门、取药并确认完成，随后系统发送 `OFF` 并复核三柜均熄灭。
-- `v2.0.0` 没有修改 `zykh_station_app/cloudbase/`；云同步继续使用既有 23 项逻辑身份和字段契约。
+- 用户点击一次“确认身份并点亮药柜”后，系统自动完成身份与用药风险核验；无冲突时自动点亮对应分类柜并进入“还有药吗”确认页，有冲突时进入原有拦截界面。用户自行打开亮灯柜门取药，确认页结束后系统自动发送 `OFF` 并复核三柜均熄灭。
+- 双歧杆菌三联活菌肠溶胶囊（本地 S09）实体放在 3 号柜，但为兼容现有小程序仍同步为 `storageBox=COLD`；小程序药库投影为 `DAILY/CARE/PRESCRIPTION/COLD = 9/8/5/1`，不能据此反推实体柜。
+- 本轮没有修改 `zykh_station_app/cloudbase/` 或小程序代码。板端传输适配负责本地 S03 蒙脱石/S13 布洛芬与小程序 canonical S13 蒙脱石/S03 布洛芬之间的双向转换；CloudBase 不能远程开柜或点灯。
+
+> S09 的软件路由不构成常温储存许可。现场摆放前必须核对当前实物包装和说明书的储存条件；若要求冷藏，不得放入普通实体柜，应暂停该项取药并重新确认现场映射。
 
 ## 数据与安全边界
 

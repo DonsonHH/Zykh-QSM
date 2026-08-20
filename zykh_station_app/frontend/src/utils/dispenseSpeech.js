@@ -21,7 +21,7 @@ export function buildDispenseGuidanceSpeech(medicine, plan = null, method = "fin
 export function buildDispenseSuccessSpeech(medicine) {
   const name = String(medicine?.name || "药品").trim();
   const cabinet = describeMedicineCabinet(medicine).split(" · ")[0];
-  return `${name}所在的${cabinet}指示灯已亮，请自行打开亮灯的分类柜取药。取好后请点击“我已取药”。`;
+  return `${name}所在的${cabinet}指示灯已亮，请自行打开亮灯的分类柜取药，并确认柜内是否还有药。确认页面结束后，指示灯会自动关闭。`;
 }
 
 export function buildDispenseFailureSpeech(message) {

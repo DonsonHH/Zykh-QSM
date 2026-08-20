@@ -37,7 +37,7 @@ const medicine = {
   slot: "13",
   hardware_slot: 13,
   cabinet_id: 1,
-  cabinet_label: "口服药品",
+  cabinet_label: "日常用药",
   barcode: "6913991301572",
   manufacturer: "芬必得",
   name: "布洛芬缓释胶囊",
@@ -97,14 +97,18 @@ const consoleMessages = [];
 const requests = {
   assess: [],
   confirm: [],
+  inventory: [],
   legacyConfirm: [],
   directDispense: [],
   lightOff: []
 };
+const requestOrder = [];
 let assessmentMode = "blocked";
 let confirmationMode = "success";
 let identityMode = "guest";
-let lightOffFailuresRemaining = 1;
+let lightOffFailuresRemaining = 0;
+let deferNextInventoryResponse = false;
+const deferredInventoryResponses = [];
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -167,18 +171,18 @@ async function fulfillApiRequest({ requestId, request }) {
       categories: [medicine.category],
       cabinets: [{
         id: 1,
-        label: "口服药品",
-        description: "口服药品分类柜",
+        label: "日常用药",
+        description: "感冒、发热、咳嗽、过敏、咽喉与胃肠常用药",
         medicine_ids: [medicine.id]
       }, {
         id: 2,
-        label: "外用药品",
-        description: "外用药品分类柜",
+        label: "外用护理",
+        description: "消毒、伤口、皮肤、鼻部与局部疼痛护理",
         medicine_ids: []
       }, {
         id: 3,
-        label: "医疗护理用品",
-        description: "医疗护理用品分类柜",
+        label: "慢病处方储备",
+        description: "慢病固定用药、处方药与低频储备用药",
         medicine_ids: []
       }],
       medicines: [medicine]
@@ -213,6 +217,7 @@ async function fulfillApiRequest({ requestId, request }) {
       };
   } else if (url.pathname === "/api/manual-medication-access/assess") {
     requests.assess.push(jsonBody(request));
+    requestOrder.push("assess");
     if (assessmentMode === "network_error") {
       await cdp("Fetch.failRequest", { requestId, errorReason: "ConnectionRefused" });
       return;
@@ -249,6 +254,7 @@ async function fulfillApiRequest({ requestId, request }) {
       };
   } else if (url.pathname === "/api/manual-medication-access/confirm") {
     requests.confirm.push(jsonBody(request));
+    requestOrder.push("confirm");
     if (confirmationMode === "server_error") {
       await fulfillJson(requestId, { detail: "开柜服务响应超时" }, 503);
       return;
@@ -267,7 +273,8 @@ async function fulfillApiRequest({ requestId, request }) {
         safety_check_id: "safety-check-passed",
         dispense_status: "DISPENSED",
         message: "柜门已打开，请取出药品并关闭柜门。",
-        dispense_record_id: "dispense-record-manual-passed"
+        dispense_record_id: "dispense-record-manual-passed",
+        inventory_confirmation_required: true
       }
       : {
         ok: false,
@@ -281,8 +288,27 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/dispense") {
     requests.directDispense.push(jsonBody(request));
     payload = { ok: false, message: "隔离测试禁止直接开柜" };
+  } else if (url.pathname === `/api/medicines/${medicine.id}/inventory-confirmation`) {
+    const inventoryRequest = jsonBody(request);
+    requests.inventory.push(inventoryRequest);
+    requestOrder.push("inventory");
+    const depleted = inventoryRequest.observation === "DEPLETED";
+    const inventoryPayload = {
+      ok: true,
+      medicine_id: medicine.id,
+      inventory_state: depleted ? "DEPLETED" : "AVAILABLE",
+      stock: depleted ? 0 : medicine.stock,
+      inventory_confirmed_at: "2026-08-20 10:00:00"
+    };
+    if (deferNextInventoryResponse) {
+      deferNextInventoryResponse = false;
+      deferredInventoryResponses.push({ requestId, payload: inventoryPayload });
+      return;
+    }
+    payload = inventoryPayload;
   } else if (url.pathname === "/api/qsm/cabinet-light/off") {
     requests.lightOff.push(jsonBody(request));
+    requestOrder.push("off");
     if (lightOffFailuresRemaining > 0) {
       lightOffFailuresRemaining -= 1;
       await fulfillJson(requestId, { detail: "控制器未确认 OFF，请重试" }, 503);
@@ -548,30 +574,16 @@ try {
   assert.equal(requests.directDispense.length, 0);
 
   assessmentMode = "passed";
+  lightOffFailuresRemaining = 1;
   Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
   await cdp("Page.navigate", {
     url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${medicine.id}&dispenseModal=1&scenario=passed`
   });
   await startFingerprintFlow();
   await waitForNodeState(() => requests.assess.length === 1, "PASSED manual assessment");
-  await waitForNodeState(async () => {
-    const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
-    return status === "passed";
-  }, "PASSED assessment result");
-  assert.equal(requests.confirm.length, 0, "PASSED assessment must wait for an explicit user confirmation");
+  await waitForNodeState(() => requests.confirm.length === 1, "automatic manual confirmation after PASSED assessment");
   assert.equal(requests.legacyConfirm.length, 0, "PASSED manual flow must not fall back to legacy dispense");
-
-  const passedView = await evaluate(`(() => ({
-    status: document.querySelector('.manual-access-result')?.getAttribute('data-status') || '',
-    text: document.querySelector('.dispense-modal')?.innerText || '',
-    action: document.querySelector('.biometric-confirm-action:not([disabled])')?.textContent || ''
-  }))()`);
-  assert.equal(passedView.status, "passed", "PASSED response is not rendered as a passed safety state");
-  assert.match(passedView.text, /核查通过/, "PASSED state does not explain the safety result");
-  assert.match(passedView.action, /确认取药并亮灯/, "PASSED state has no explicit final confirmation action");
-
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
-  await waitForNodeState(() => requests.confirm.length > 0, "explicit manual confirmation");
   assert.deepEqual(
     {
       safety_check_id: requests.confirm[0]?.safety_check_id,
@@ -581,51 +593,526 @@ try {
       safety_check_id: "safety-check-passed",
       confirmed_safety_notice: true
     },
-    "manual confirmation must consume the passed one-time safety check"
+    "automatic manual confirmation must consume the passed one-time safety check"
   );
   assert.match(String(requests.confirm[0]?.request_id || ""), /^manual-confirm-/, "confirmation request has no idempotency key");
-  assert.equal(requests.legacyConfirm.length, 0, "explicit manual confirmation must not call the legacy endpoint");
-  assert.equal(requests.directDispense.length, 0, "explicit manual confirmation must not call direct dispense");
+  assert.equal(requests.legacyConfirm.length, 0, "automatic manual confirmation must not call the legacy endpoint");
+  assert.equal(requests.directDispense.length, 0, "automatic manual confirmation must not call direct dispense");
   await waitForNodeState(async () => {
     const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
-    return text.includes("分类柜指示灯已亮");
-  }, "confirmed cabinet-light result");
-  const litCabinetView = await evaluate(`(() => ({
+    return text.includes("分类柜内还有药吗？");
+  }, "automatic inventory confirmation after cabinet light");
+  const inventoryView = await evaluate(`(() => ({
     text: document.querySelector('.dispense-modal')?.innerText || '',
-    action: document.querySelector('.biometric-confirm-action:not([disabled])')?.textContent || ''
+    actions: [...document.querySelectorAll('.dispense-modal button')].map((button) => button.textContent.trim())
   }))()`);
-  assert.match(litCabinetView.text, /请自行打开亮灯的分类柜取药/);
-  assert.match(litCabinetView.action, /我已取药，关闭指示灯/);
-  assert.equal(requests.lightOff.length, 0, "cabinet light must remain on until the user confirms taking the medicine");
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
-  await waitForNodeState(() => requests.lightOff.length === 1, "explicit cabinet light OFF request");
+  assert.match(inventoryView.text, /分类柜内还有药吗？/);
+  assert.doesNotMatch(inventoryView.actions.join(" "), /确认取药并亮灯|我已取药，关闭指示灯/);
+  assert.equal(requests.lightOff.length, 0, "cabinet light must remain on while the inventory page is visible");
+  await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
+    .find((button) => button.textContent.includes('还有药'))).click()`);
+  await waitForNodeState(() => requests.inventory.length === 1, "inventory observation after medicine collection");
+  assert.equal(requests.inventory[0]?.dispense_record_id, "dispense-record-manual-passed");
+  assert.equal(requests.inventory[0]?.observation, "HAS_REMAINING");
   await waitForNodeState(async () => {
     const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
-    return text.includes("控制器未确认 OFF，请重试");
-  }, "cabinet light OFF failure recovery message");
+    return text.includes("已确认分类柜内还有药") && !text.includes("分类柜内还有药吗？");
+  }, "inventory question disappearing after the observation is saved");
+  assert.equal(requests.lightOff.length, 0, "cabinet light must not turn off before the inventory question disappears");
+  await waitForNodeState(() => requests.lightOff.length === 1, "automatic cabinet light OFF after inventory page disappears");
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("库存已保存，但指示灯关闭失败");
+  }, "visible automatic OFF failure");
   assert.equal(
-    await evaluate(`Boolean(document.querySelector('.dispense-modal .biometric-confirm-action:not([disabled])'))`),
+    await evaluate(`Boolean(document.querySelector('.inventory-light-off-retry:not([disabled])'))`),
     true,
-    "failed OFF acknowledgement must remain on screen with a retry action"
+    "an automatic OFF failure must remain visible with a safe retry action"
   );
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
-  await waitForNodeState(() => requests.lightOff.length === 2, "retried cabinet light OFF request");
+  await evaluate(`document.querySelector('.inventory-light-off-retry:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 2, "retried automatic cabinet light OFF request");
   await waitForNodeState(
     async () => evaluate(`!document.querySelector('.dispense-modal')`),
-    "dispense modal closing after cabinet light OFF"
+    "dispense modal closing only after OFF is confirmed"
   );
+  assert.deepEqual(requestOrder, ["assess", "confirm", "inventory", "off", "off"]);
+
+  assessmentMode = "passed";
+  confirmationMode = "success";
+  lightOffFailuresRemaining = 1;
+  Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
+  await cdp("Page.navigate", {
+    url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${medicine.id}&dispenseModal=1&scenario=depleted-off-failure`
+  });
+  await startFingerprintFlow();
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "depleted inventory confirmation after cabinet light");
+  await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
+    .find((button) => button.textContent.includes('已经用完'))).click()`);
+  await waitForNodeState(() => requests.inventory.length === 1, "depleted inventory observation");
+  await waitForNodeState(() => requests.lightOff.length === 1, "automatic OFF after depleted inventory page");
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("库存已保存，但指示灯关闭失败");
+  }, "visible depleted-inventory OFF failure");
+  assert.equal(
+    await evaluate(`Boolean(document.querySelector('.inventory-light-off-retry:not([disabled])'))`),
+    true,
+    "depleted inventory must not dismiss the retry action before OFF is confirmed"
+  );
+  assert.doesNotMatch(
+    await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`),
+    /指示灯已关闭/,
+    "a failed depleted-inventory OFF must not claim that the cabinet light is off"
+  );
+  await evaluate(`document.querySelector('.inventory-light-off-retry:not([disabled])').click()`);
+  await waitForNodeState(() => requests.lightOff.length === 2, "retried depleted-inventory OFF request");
+  await waitForNodeState(
+    async () => evaluate(`!document.querySelector('.dispense-modal')`),
+    "depleted-inventory modal closing only after OFF is confirmed"
+  );
+  assert.deepEqual(requestOrder, ["assess", "confirm", "inventory", "off", "off"]);
+
+  assessmentMode = "passed";
+  confirmationMode = "success";
+  identityMode = "guest";
+  lightOffFailuresRemaining = 0;
+  deferNextInventoryResponse = true;
+  deferredInventoryResponses.length = 0;
+  Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
+  await evaluate(`(async () => {
+    const ReactModule = await import('/@id/react');
+    const React = ReactModule.default || ReactModule;
+    const ReactDOMClientModule = await import('/@id/react-dom/client');
+    const { createRoot } = ReactDOMClientModule.default || ReactDOMClientModule;
+    const { DispenseConfirmModal } = await import('/src/components/DispenseConfirmModal.jsx');
+    const raceMedicine = ${JSON.stringify(medicine)};
+    const racePlan = {
+      id: 'race-plan',
+      service_user_id: '${registeredUser.id}',
+      target_user: '${registeredUser.name}',
+      time: '10:00'
+    };
+    const medicineUpdatedListener = () => { window.__lateInventoryUpdateCount += 1; };
+    window.__lateInventoryUpdateCount = 0;
+    window.addEventListener('zykh:medicine-updated', medicineUpdatedListener);
+    const mount = (sessionName) => {
+      const host = document.createElement('div');
+      host.dataset.raceSession = sessionName;
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      root.render(React.createElement(DispenseConfirmModal, {
+        medicine: raceMedicine,
+        plan: { ...racePlan, id: 'race-plan-' + sessionName },
+        open: true,
+        submitting: false,
+        result: '',
+        error: '',
+        onCancel: () => undefined,
+        onSubmit: async () => ({
+          ok: true,
+          record_id: 'race-dispense-' + sessionName,
+          inventory_confirmation_required: true
+        })
+      }));
+      return { host, root };
+    };
+    window.__inventoryRaceHarness = {
+      active: mount('a'),
+      mount,
+      medicineUpdatedListener
+    };
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "race session A inventory confirmation");
+  await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
+    .find((button) => button.textContent.includes('还有药'))).click()`);
+  await waitForNodeState(
+    () => requests.inventory.length === 1 && deferredInventoryResponses.length === 1,
+    "deferred race session A inventory request"
+  );
+  await evaluate(`(() => {
+    window.__inventoryRaceHarness.active.root.unmount();
+    window.__inventoryRaceHarness.active.host.remove();
+    window.__inventoryRaceHarness.active = null;
+  })()`);
+  await waitForNodeState(() => requests.lightOff.length === 1, "race session A unmount OFF");
+  await evaluate(`(async () => {
+    window.__inventoryRaceHarness.active = window.__inventoryRaceHarness.mount('b');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "race session B cabinet light and inventory confirmation");
+  const deferredInventory = deferredInventoryResponses.shift();
+  await fulfillJson(deferredInventory.requestId, deferredInventory.payload);
+  await delay(1250);
+  assert.equal(
+    requests.lightOff.length,
+    1,
+    "session A's late inventory response must not turn off session B's cabinet light"
+  );
+  assert.equal(
+    await evaluate(`window.__lateInventoryUpdateCount`),
+    0,
+    "session A's late inventory response must not publish an update into session B"
+  );
+  assert.match(
+    await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`),
+    /分类柜内还有药吗？/,
+    "session B must remain on its own inventory confirmation page"
+  );
+  await evaluate(`(() => {
+    const harness = window.__inventoryRaceHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    window.removeEventListener('zykh:medicine-updated', harness.medicineUpdatedListener);
+    delete window.__inventoryRaceHarness;
+  })()`);
+  await waitForNodeState(() => requests.lightOff.length === 2, "race session B cleanup OFF");
+
+  Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
+  await evaluate(`(async () => {
+    const ReactModule = await import('/@id/react');
+    const React = ReactModule.default || ReactModule;
+    const ReactDOMClientModule = await import('/@id/react-dom/client');
+    const { createRoot } = ReactDOMClientModule.default || ReactDOMClientModule;
+    const { DispenseConfirmModal } = await import('/src/components/DispenseConfirmModal.jsx');
+    let resolveConfirmation;
+    const confirmation = new Promise((resolve) => { resolveConfirmation = resolve; });
+    window.__illuminateRaceAssessments = [];
+    window.__illuminateRaceConfirmStarts = [];
+    const mount = (sessionName) => {
+      const host = document.createElement('div');
+      host.dataset.illuminateRace = sessionName;
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      root.render(React.createElement(DispenseConfirmModal, {
+        medicine: ${JSON.stringify(medicine)},
+        manualAccess: true,
+        open: true,
+        submitting: false,
+        result: '',
+        error: '',
+        onCancel: () => undefined,
+        onAssessManual: async () => {
+          window.__illuminateRaceAssessments.push(sessionName);
+          return {
+            ok: true,
+            check_id: 'illuminate-race-check-' + sessionName,
+            check_status: 'PASSED',
+            reason_codes: [],
+            message: '核查通过',
+            expires_at: '2026-08-20 10:01:30',
+            dispense_status: 'NOT_STARTED'
+          };
+        },
+        onConfirmManual: async () => {
+          window.__illuminateRaceConfirmStarts.push(sessionName);
+          if (sessionName === 'a') return confirmation;
+          return {
+            ok: true,
+            safety_check_id: 'illuminate-race-check-' + sessionName,
+            dispense_status: 'DISPENSED',
+            dispense_record_id: 'illuminate-race-dispense-' + sessionName,
+            inventory_confirmation_required: true
+          };
+        }
+      }));
+      return { host, root };
+    };
+    window.__illuminateRaceHarness = {
+      active: mount('a'),
+      mount,
+      resolveSuccess: () => resolveConfirmation({
+        ok: true,
+        safety_check_id: 'illuminate-race-check-a',
+        dispense_status: 'DISPENSED',
+        dispense_record_id: 'illuminate-race-dispense-a',
+        inventory_confirmation_required: true
+      })
+    };
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__illuminateRaceConfirmStarts.includes('a')`),
+    "deferred cabinet illumination request for session A"
+  );
+  await evaluate(`(() => {
+    const harness = window.__illuminateRaceHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    harness.active = harness.mount('b');
+  })()`);
+  assert.equal(requests.lightOff.length, 0, "an unresolved illuminate request must not claim that OFF already ran");
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__illuminateRaceAssessments.includes('b')`),
+    "session B safety assessment while session A is settling"
+  );
+  await delay(150);
+  assert.deepEqual(
+    await evaluate(`window.__illuminateRaceConfirmStarts`),
+    ["a"],
+    "session B must not illuminate until session A's stale request has settled and been turned off"
+  );
+  await evaluate(`window.__illuminateRaceHarness.resolveSuccess()`);
+  await waitForNodeState(
+    () => requests.lightOff.length === 1,
+    "best-effort OFF after session A's late illuminate success"
+  );
+  await waitForNodeState(
+    async () => evaluate(`window.__illuminateRaceConfirmStarts.includes('b')`),
+    "session B illumination after session A cleanup"
+  );
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "session B cabinet light and inventory confirmation");
+  assert.equal(
+    requests.lightOff.length,
+    1,
+    "session A's stale cleanup must finish before session B illuminates"
+  );
+  await evaluate(`(() => {
+    const harness = window.__illuminateRaceHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    delete window.__illuminateRaceHarness;
+    delete window.__illuminateRaceAssessments;
+    delete window.__illuminateRaceConfirmStarts;
+  })()`);
+  await waitForNodeState(() => requests.lightOff.length === 2, "session B cleanup OFF");
+
+  lightOffFailuresRemaining = 2;
+  Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
+  await evaluate(`(async () => {
+    const ReactModule = await import('/@id/react');
+    const React = ReactModule.default || ReactModule;
+    const ReactDOMClientModule = await import('/@id/react-dom/client');
+    const { createRoot } = ReactDOMClientModule.default || ReactDOMClientModule;
+    const { DispenseConfirmModal } = await import('/src/components/DispenseConfirmModal.jsx');
+    let resolveConfirmation;
+    const confirmation = new Promise((resolve) => { resolveConfirmation = resolve; });
+    window.__failedCleanupAssessments = [];
+    window.__failedCleanupConfirmStarts = [];
+    const mount = (sessionName) => {
+      const host = document.createElement('div');
+      host.dataset.failedCleanupRace = sessionName;
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      root.render(React.createElement(DispenseConfirmModal, {
+        medicine: ${JSON.stringify(medicine)},
+        manualAccess: true,
+        open: true,
+        submitting: false,
+        result: '',
+        error: '',
+        onCancel: () => undefined,
+        onAssessManual: async () => {
+          window.__failedCleanupAssessments.push(sessionName);
+          return {
+            ok: true,
+            check_id: 'failed-cleanup-check-' + sessionName,
+            check_status: 'PASSED',
+            reason_codes: [],
+            message: '核查通过',
+            expires_at: '2026-08-20 10:01:30',
+            dispense_status: 'NOT_STARTED'
+          };
+        },
+        onConfirmManual: async () => {
+          window.__failedCleanupConfirmStarts.push(sessionName);
+          if (sessionName === 'a') return confirmation;
+          return {
+            ok: true,
+            safety_check_id: 'failed-cleanup-check-' + sessionName,
+            dispense_status: 'DISPENSED',
+            dispense_record_id: 'failed-cleanup-dispense-' + sessionName,
+            inventory_confirmation_required: true
+          };
+        }
+      }));
+      return { host, root };
+    };
+    window.__failedCleanupHarness = {
+      active: mount('a'),
+      mount,
+      resolveA: () => resolveConfirmation({
+        ok: true,
+        safety_check_id: 'failed-cleanup-check-a',
+        dispense_status: 'DISPENSED',
+        dispense_record_id: 'failed-cleanup-dispense-a',
+        inventory_confirmation_required: true
+      })
+    };
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__failedCleanupConfirmStarts.includes('a')`),
+    "failed-cleanup session A illumination request"
+  );
+  await evaluate(`(() => {
+    const harness = window.__failedCleanupHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    harness.active = harness.mount('b');
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__failedCleanupAssessments.includes('b')`),
+    "failed-cleanup session B safety assessment"
+  );
+  await evaluate(`window.__failedCleanupHarness.resolveA()`);
+  await waitForNodeState(
+    () => requests.lightOff.length === 2,
+    "failed stale OFF followed by failed strict pre-illumination OFF",
+    2_000
+  );
+  await waitForNodeState(async () => {
+    const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
+    return status === "dispense_failed";
+  }, "visible pre-illumination OFF failure");
+  assert.deepEqual(
+    await evaluate(`window.__failedCleanupConfirmStarts`),
+    ["a"],
+    "session B must not call the illumination endpoint while verified OFF cannot be established"
+  );
+  assert.match(
+    await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`),
+    /无法确认.*指示灯已关闭|未能确认.*指示灯已关闭/,
+    "session B does not explain why illumination was blocked"
+  );
+  await evaluate(`(() => {
+    const harness = window.__failedCleanupHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    harness.active = harness.mount('c');
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__failedCleanupAssessments.includes('c')`),
+    "recovery session C safety assessment"
+  );
+  await waitForNodeState(
+    () => requests.lightOff.length === 3,
+    "successful strict OFF before recovery session C illumination"
+  );
+  await waitForNodeState(
+    async () => evaluate(`window.__failedCleanupConfirmStarts.includes('c')`),
+    "recovery session C illumination after verified OFF"
+  );
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "recovery session C cabinet light and inventory confirmation");
+  assert.deepEqual(
+    await evaluate(`window.__failedCleanupConfirmStarts`),
+    ["a", "c"],
+    "only a session preceded by a successful verified OFF may illuminate after cleanup failure"
+  );
+  assert.equal(
+    requests.lightOff.length,
+    3,
+    "recovery session C must illuminate only after the successful strict OFF"
+  );
+  await evaluate(`(() => {
+    const harness = window.__failedCleanupHarness;
+    harness.active.root.unmount();
+    harness.active.host.remove();
+    delete window.__failedCleanupHarness;
+    delete window.__failedCleanupAssessments;
+    delete window.__failedCleanupConfirmStarts;
+  })()`);
+  await waitForNodeState(() => requests.lightOff.length === 4, "recovery session C cleanup OFF");
+
+  Object.values(requests).forEach((items) => { items.length = 0; });
+  requestOrder.length = 0;
+  await evaluate(`(async () => {
+    const ReactModule = await import('/@id/react');
+    const React = ReactModule.default || ReactModule;
+    const ReactDOMClientModule = await import('/@id/react-dom/client');
+    const { createRoot } = ReactDOMClientModule.default || ReactDOMClientModule;
+    const { DispenseConfirmModal } = await import('/src/components/DispenseConfirmModal.jsx');
+    const host = document.createElement('div');
+    host.dataset.illuminateRace = 'late-network-error';
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    let rejectDispense;
+    const dispense = new Promise((resolve, reject) => { rejectDispense = reject; });
+    window.__ambiguousIlluminateStarted = false;
+    root.render(React.createElement(DispenseConfirmModal, {
+      medicine: ${JSON.stringify(medicine)},
+      plan: {
+        id: 'ambiguous-illuminate-plan',
+        service_user_id: '${registeredUser.id}',
+        target_user: '${registeredUser.name}',
+        time: '10:00'
+      },
+      open: true,
+      submitting: false,
+      result: '',
+      error: '',
+      onCancel: () => undefined,
+      onSubmit: async () => {
+        window.__ambiguousIlluminateStarted = true;
+        return dispense;
+      }
+    }));
+    window.__ambiguousIlluminateHarness = {
+      host,
+      root,
+      reject: () => rejectDispense(new TypeError('亮灯请求连接中断'))
+    };
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
+  })()`);
+  await startFingerprintFlow();
+  await waitForNodeState(
+    async () => evaluate(`window.__ambiguousIlluminateStarted === true`),
+    "deferred plan illumination request"
+  );
+  await evaluate(`(() => {
+    const harness = window.__ambiguousIlluminateHarness;
+    harness.root.unmount();
+    harness.host.remove();
+  })()`);
+  assert.equal(requests.lightOff.length, 0, "an in-flight ambiguous illuminate request cannot be cleaned before it settles");
+  await evaluate(`window.__ambiguousIlluminateHarness.reject()`);
+  await waitForNodeState(
+    () => requests.lightOff.length === 1,
+    "best-effort OFF after a stale ambiguous illuminate result"
+  );
+  await evaluate(`(() => {
+    delete window.__ambiguousIlluminateHarness;
+    delete window.__ambiguousIlluminateStarted;
+  })()`);
 
   confirmationMode = "server_error";
+  lightOffFailuresRemaining = 0;
   Object.values(requests).forEach((items) => { items.length = 0; });
   await cdp("Page.navigate", {
     url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${medicine.id}&dispenseModal=1&scenario=confirm-503`
   });
   await startFingerprintFlow();
-  await waitForNodeState(async () => {
-    const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
-    return status === "passed";
-  }, "PASSED assessment before uncertain confirmation");
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
   await waitForNodeState(() => requests.confirm.length === 1, "503 manual confirmation");
   await waitForNodeState(async () => {
     const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
@@ -651,16 +1138,12 @@ try {
   );
 
   confirmationMode = "network_error";
+  lightOffFailuresRemaining = 0;
   Object.values(requests).forEach((items) => { items.length = 0; });
   await cdp("Page.navigate", {
     url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${medicine.id}&dispenseModal=1&scenario=confirm-network-error`
   });
   await startFingerprintFlow();
-  await waitForNodeState(async () => {
-    const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
-    return status === "passed";
-  }, "PASSED assessment before network-failed confirmation");
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
   await waitForNodeState(() => requests.confirm.length === 1, "network-failed manual confirmation");
   await waitForNodeState(async () => {
     const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
@@ -688,11 +1171,6 @@ try {
     url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${medicine.id}&dispenseModal=1&scenario=confirm-409`
   });
   await startFingerprintFlow();
-  await waitForNodeState(async () => {
-    const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);
-    return status === "passed";
-  }, "PASSED assessment before rejected confirmation");
-  await evaluate(`document.querySelector('.biometric-confirm-action:not([disabled])').click()`);
   await waitForNodeState(() => requests.confirm.length === 1, "409 manual confirmation");
   await waitForNodeState(async () => {
     const status = await evaluate(`document.querySelector('.manual-access-result')?.getAttribute('data-status') || ''`);

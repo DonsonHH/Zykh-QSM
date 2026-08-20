@@ -167,6 +167,15 @@ class MedicineInventoryConfirmationTest(unittest.TestCase):
         self.assertFalse(first.replayed)
         self.assertTrue(replay.replayed)
         self.assertEqual(replay.inventory_confirmed_at, first.inventory_confirmed_at)
+        cloud_row = next(
+            row
+            for row in CloudSyncWorker._build_snapshot()["medicines"]
+            if row["id"] == self.medicine.id
+        )
+        self.assertEqual(cloud_row["depletionConfirmedAt"], first.inventory_confirmed_at)
+        self.assertEqual(cloud_row["depletion_confirmed_at"], first.inventory_confirmed_at)
+        self.assertEqual(cloud_row["depletionConfirmationSource"], "ON_DEVICE_CONFIRMATION")
+        self.assertEqual(cloud_row["depletion_confirmation_source"], "ON_DEVICE_CONFIRMATION")
         with self.assertRaises(MedicineInventoryConfirmationConflictError):
             module.confirm(
                 self.medicine.id,

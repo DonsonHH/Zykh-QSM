@@ -17,6 +17,9 @@ CAREGIVER_READ_PERMISSIONS = (
     "READ_RECORD",
     "READ_VITALS",
     "READ_MEDICINE",
+    # This capability is narrowed again by the CloudBase command-type policy:
+    # paired caregivers may only request reminders, beeps and vitals.
+    "CREATE_COMMAND",
 )
 
 
@@ -112,7 +115,7 @@ class PairingCodeIssuer:
             or len(published_permissions) != len(CAREGIVER_READ_PERMISSIONS)
             or set(published_permissions) != set(CAREGIVER_READ_PERMISSIONS)
         ):
-            raise PairingCodeIssueError("云端返回的家属权限不符合只读授权要求。")
+            raise PairingCodeIssueError("云端返回的家属权限不符合最小协同授权要求。")
         expires_at = str(published.get("expiresAt", "")).strip()
         if not expires_at:
             raise PairingCodeIssueError("云端未确认配对码有效期，请重试。")

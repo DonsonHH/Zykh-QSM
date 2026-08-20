@@ -9,7 +9,7 @@ import {
 const medicine = {
   name: "藿香正气丸",
   cabinet_id: 1,
-  cabinet_label: "口服药品",
+  cabinet_label: "日常用药",
   dosage: "口服，一次1丸，一日2次。",
   safety_note: "注意补液并观察。"
 };
@@ -24,7 +24,7 @@ assert.match(buildDispenseGuidanceSpeech(medicine, { dose: "1丸" }, "fingerprin
 assert.doesNotMatch(buildDispenseGuidanceSpeech(medicine, null, "face"), /本次用法|一次1丸/);
 assert.equal(
   buildDispenseSuccessSpeech(medicine),
-  "藿香正气丸所在的1号分类柜指示灯已亮，请自行打开亮灯的分类柜取药。取好后请点击“我已取药”。"
+  "藿香正气丸所在的1号分类柜指示灯已亮，请自行打开亮灯的分类柜取药，并确认柜内是否还有药。确认页面结束后，指示灯会自动关闭。"
 );
 assert.match(buildDispenseFailureSpeech("未识别到指纹"), /未识别到指纹/);
 

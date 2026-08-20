@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATH = ROOT / "main.c"
 LINKER_PATH = ROOT / "linker.ld"
-EXPECTED_SOURCE_SHA256 = "00b14db5fc1160858f1926294a40112223528b990391779dc79d57022e59d5d2"
+EXPECTED_SOURCE_SHA256 = "e8bf18ff9facc8986bef3ccbb38230e308efc330eff71f0ea2896429e3c86617"
 EXPECTED_LINKER_SHA256 = "43d76886940e95a6f32d3c26ba888f6888a2472c4376095d5dd58642a99c4881"
 
 
@@ -39,7 +39,8 @@ def main() -> None:
     assert sha256(LINKER_PATH) == EXPECTED_LINKER_SHA256, "linker script changed"
 
     assert define(source, "LED_COUNT") == 64
-    assert define(source, "ACTIVE_LED_COUNT") == 24
+    assert define(source, "LEDS_PER_ROW") == 8
+    assert define(source, "REAR_ROWS_FIRST_LED") == 40
     assert define(source, "PANEL_BRIGHTNESS") == 30
     assert define(source, "WS_PERIOD_TICKS") == 20
     assert define(source, "WS_T0H_TICKS") == 5
@@ -52,7 +53,9 @@ def main() -> None:
         "ws2812_send_panel(&TIM1_CCR1, selected == 1u);",
         "ws2812_send_panel(&TIM1_CCR2, selected == 2u);",
         "ws2812_send_panel(&TIM1_CCR3, selected == 3u);",
-        "if (enabled && led < ACTIVE_LED_COUNT)",
+        "uint32_t cabinet_v2_pixel_brightness(uint32_t led, uint32_t enabled)",
+        "uint32_t value = cabinet_v2_pixel_brightness(led, enabled);",
+        "static inline __attribute__((always_inline))",
     )
 
     require_tokens(
@@ -113,7 +116,8 @@ def main() -> None:
     assert reset_us == 500.0
     print(
         "FIRMWARE_CONTRACT PASS "
-        "cabinet_outputs=PA8,PB0,PB1 active_leds=24 brightness=30 "
+        "cabinet_outputs=PA8,PB0,PB1 active_led_ranges=0-7,40-63 "
+        "active_leds=32 brightness=30 "
         "uart=/dev/ttyACM0@115200 protocol=PING,CABINET,STATUS,OFF "
         f"source_sha256={sha256(SOURCE_PATH)}"
     )

@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUT=${1:-"$ROOT/build"}
-EXPECTED_BIN_SHA256=897129e7ec7b448e47af0c072e17bcc5fc511abda960f752867e4d250e408271
+EXPECTED_BIN_SHA256=91776e0fac42163f7151fb0e1c4df6cf2c2bb81b8e80c17581a77523776813db
 
 if [ -n "${TOOLCHAIN:-}" ]; then
     CC=${CC:-"$TOOLCHAIN/arm-none-eabi-gcc"}

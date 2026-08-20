@@ -5,7 +5,10 @@ import json
 import re
 import threading
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -28,11 +31,20 @@ from ..schemas.records import (
 from ..schemas.sync import SyncStatus
 from .ai_service import AiService
 from .medication_safety_outbox import MedicationSafetyOutbox
+from .medicine_cloud_projection import (
+    MedicineCloudProjectionError,
+    cloud_projection_for_local_medicine_id,
+    resolve_cloud_medicine,
+    validate_local_medicine_catalog,
+)
 from .qsm_client import QsmClient
 from .speech_service import SpeechService
 
 
 REMOTE_CABINET_DISABLED_ERROR = "远程开柜已禁用，请在终端现场完成身份确认和用药核查。"
+REQUIRED_CLOUD_SCHEMA_VERSION = 2
+REQUIRED_CLOUD_SCHEMA_REVISION = "3.0-three-box-library"
+REQUIRED_MEDICINE_STORAGE_BOXES_CAPABILITY = "v1"
 LOCAL_ONLY_CABINET_FIELDS = frozenset(
     {"cabinet_id", "cabinet_label", "cabinet_description"}
 )
@@ -53,6 +65,13 @@ def _without_local_cabinet_projection(value: Any) -> Any:
 
 class CloudSyncError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class CloudContract:
+    schema_version: int
+    schema_revision: str
+    capabilities: Mapping[str, object]
 
 
 class CloudSyncWorker:
@@ -110,6 +129,7 @@ class CloudSyncWorker:
         if not self._run_lock.acquire(blocking=False):
             return 0, "同步正在进行。"
         try:
+            cloud_contract = self._ensure_cloud_contract()
             self._flush_unacked_commands()
             commands = self._request("PULL_COMMANDS", {"limit": 10, "agentVersion": 2})
             if not isinstance(commands, list):
@@ -137,19 +157,24 @@ class CloudSyncWorker:
             )
 
             encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            schema_version = self._detect_schema_version()
             safety_events_sent = MedicationSafetyOutbox().flush(
                 self._request,
-                capabilities=self._cloud_capabilities,
+                capabilities=dict(cloud_contract.capabilities),
             )
             snapshot_hash = hashlib.sha256(
-                f"{schema_version}:{self._cloud_schema_revision}:{encoded}".encode("utf-8")
+                (
+                    f"{cloud_contract.schema_version}:"
+                    f"{cloud_contract.schema_revision}:{encoded}"
+                ).encode("utf-8")
             ).hexdigest()
             synced_count = 0
             if not self._last_snapshot_hash:
                 self._last_snapshot_hash = db.get_setting("cloud_snapshot_hash", "")
             if snapshot_hash != self._last_snapshot_hash:
-                synced_count = self._sync_snapshot(snapshot)
+                synced_count = self._sync_snapshot(
+                    snapshot,
+                    schema_version=cloud_contract.schema_version,
+                )
                 self._last_snapshot_hash = snapshot_hash
                 db.set_setting("cloud_snapshot_hash", snapshot_hash)
             synced_count += safety_events_sent
@@ -246,7 +271,8 @@ class CloudSyncWorker:
             raise CloudSyncError("云端配对服务未配置。")
         if not self._device_secret():
             raise CloudSyncError("设备云端密钥未配置。")
-        return self._call("ISSUE_DEVICE_PAIRING_CODE", payload)
+        self._ensure_cloud_contract()
+        return self._request("ISSUE_DEVICE_PAIRING_CODE", payload)
 
     def _ensure_realtime_enabled(self) -> None:
         if not self._realtime_enabled():
@@ -266,19 +292,66 @@ class CloudSyncWorker:
     def _build_snapshot() -> dict[str, list[dict[str, object]]]:
         from .records_service import RecordsService
 
+        medicine_rows = MedicineRepository().list_all()
+        try:
+            validate_local_medicine_catalog(
+                (medicine.id, medicine.hardware_slot)
+                for medicine in medicine_rows
+            )
+        except MedicineCloudProjectionError as exc:
+            raise CloudSyncError(str(exc)) from exc
+        with db.connect() as conn:
+            confirmed_depletions = conn.execute(
+                """
+                SELECT medicine_id, request_id, confirmed_at
+                FROM medicine_inventory_confirmations
+                WHERE observation='DEPLETED'
+                ORDER BY confirmed_at DESC, rowid DESC
+                """
+            ).fetchall()
+        confirmed_depletion_by_medicine: dict[str, tuple[str, str]] = {}
+        for confirmation in confirmed_depletions:
+            confirmed_depletion_by_medicine.setdefault(
+                str(confirmation["medicine_id"]),
+                (
+                    str(confirmation["request_id"]),
+                    str(confirmation["confirmed_at"]),
+                ),
+            )
+
         medicines = []
-        for medicine in MedicineRepository().list_all():
+        for medicine in medicine_rows:
             row = medicine.model_dump(mode="json")
+            try:
+                cloud_projection = cloud_projection_for_local_medicine_id(medicine.id)
+            except MedicineCloudProjectionError as exc:
+                raise CloudSyncError(str(exc)) from exc
+            cloud_medicine_id = cloud_projection.cloud_medicine_id
+            cloud_legacy_slot = cloud_projection.cloud_legacy_slot
+            storage_box = cloud_projection.storage_box
             cloud_inventory_state = {
                 "AVAILABLE": "STOCKED",
                 "DEPLETED": "DEPLETED",
                 "UNKNOWN": "UNKNOWN",
             }.get(medicine.inventory_state, "UNKNOWN")
             cloud_quantity = 0 if cloud_inventory_state == "DEPLETED" else 1
+            confirmed_depletion = confirmed_depletion_by_medicine.get(medicine.id)
+            depletion_confirmed_at = ""
+            if (
+                cloud_inventory_state == "DEPLETED"
+                and confirmed_depletion is not None
+                and confirmed_depletion
+                == (medicine.last_inventory_request_id, medicine.inventory_confirmed_at)
+            ):
+                depletion_confirmed_at = medicine.inventory_confirmed_at
             row.update(
                 {
-                    "slot": medicine.hardware_slot,
-                    "hardwareSlot": medicine.hardware_slot,
+                    "medicineId": cloud_medicine_id,
+                    "medicine_id": cloud_medicine_id,
+                    "legacySlot": cloud_legacy_slot,
+                    "slot": cloud_legacy_slot,
+                    "hardwareSlot": cloud_legacy_slot,
+                    "hardware_slot": cloud_legacy_slot,
                     "spec": medicine.spec,
                     "traceCode": medicine.trace_code,
                     "stock": cloud_quantity,
@@ -293,6 +366,22 @@ class CloudSyncWorker:
                     "lowStockLine": medicine.low_stock_line,
                 }
             )
+            if storage_box:
+                row.update(
+                    {
+                        "storageBox": storage_box,
+                        "storage_box": storage_box,
+                    }
+                )
+            if depletion_confirmed_at:
+                row.update(
+                    {
+                        "depletionConfirmedAt": depletion_confirmed_at,
+                        "depletion_confirmed_at": depletion_confirmed_at,
+                        "depletionConfirmationSource": "ON_DEVICE_CONFIRMATION",
+                        "depletion_confirmation_source": "ON_DEVICE_CONFIRMATION",
+                    }
+                )
             medicines.append(row)
 
         records_service = RecordsService()
@@ -426,8 +515,13 @@ class CloudSyncWorker:
             return name if str(name).startswith("游客") else f"游客（{name or '未登记'}）"
         return name or "家庭成员"
 
-    def _sync_snapshot(self, snapshot: dict[str, list[dict[str, object]]]) -> int:
-        if self._cloud_schema_version < 2:
+    def _sync_snapshot(
+        self,
+        snapshot: dict[str, list[dict[str, object]]],
+        *,
+        schema_version: int,
+    ) -> int:
+        if schema_version < 2:
             return self._sync_snapshot_v1(snapshot)
 
         synced = 0
@@ -464,16 +558,71 @@ class CloudSyncWorker:
             batches.append(current)
         return batches
 
-    def _detect_schema_version(self) -> int:
+    def _detect_cloud_contract(self, *, force: bool = False) -> CloudContract:
         now = time.monotonic()
-        if self._cloud_schema_version is None or now - self._cloud_schema_checked_at >= 30:
-            ping = self._request("PING", {})
-            self._cloud_schema_version = int(ping.get("schemaVersion") or 1) if isinstance(ping, dict) else 1
-            self._cloud_schema_revision = str(ping.get("schemaRevision") or "") if isinstance(ping, dict) else ""
-            capabilities = ping.get("capabilities") if isinstance(ping, dict) else {}
-            self._cloud_capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        with self._state_lock:
+            if (
+                not force
+                and self._cloud_schema_version is not None
+                and now - self._cloud_schema_checked_at < 30
+            ):
+                return CloudContract(
+                    schema_version=self._cloud_schema_version,
+                    schema_revision=self._cloud_schema_revision,
+                    capabilities=MappingProxyType(dict(self._cloud_capabilities)),
+                )
+
+        ping = self._request("PING", {})
+        schema_version = (
+            int(ping.get("schemaVersion") or 1)
+            if isinstance(ping, dict)
+            else 1
+        )
+        schema_revision = (
+            str(ping.get("schemaRevision") or "")
+            if isinstance(ping, dict)
+            else ""
+        )
+        raw_capabilities = ping.get("capabilities") if isinstance(ping, dict) else {}
+        capabilities = (
+            dict(raw_capabilities)
+            if isinstance(raw_capabilities, dict)
+            else {}
+        )
+        with self._state_lock:
+            self._cloud_schema_version = schema_version
+            self._cloud_schema_revision = schema_revision
+            self._cloud_capabilities = dict(capabilities)
             self._cloud_schema_checked_at = now
-        return self._cloud_schema_version
+        return CloudContract(
+            schema_version=schema_version,
+            schema_revision=schema_revision,
+            capabilities=MappingProxyType(dict(capabilities)),
+        )
+
+    def _detect_schema_version(self, *, force: bool = False) -> int:
+        return self._detect_cloud_contract(force=force).schema_version
+
+    def _ensure_cloud_contract(self) -> CloudContract:
+        contract = self._detect_cloud_contract(force=True)
+        if (
+            contract.schema_version != REQUIRED_CLOUD_SCHEMA_VERSION
+            or contract.schema_revision != REQUIRED_CLOUD_SCHEMA_REVISION
+        ):
+            raise CloudSyncError(
+                "云端同步协议不兼容：要求 "
+                f"schemaVersion={REQUIRED_CLOUD_SCHEMA_VERSION}、"
+                f"schemaRevision={REQUIRED_CLOUD_SCHEMA_REVISION}。"
+            )
+        if (
+            str(contract.capabilities.get("medicineStorageBoxes") or "").strip()
+            != REQUIRED_MEDICINE_STORAGE_BOXES_CAPABILITY
+        ):
+            raise CloudSyncError(
+                "云端同步协议不兼容：要求 "
+                "capabilities.medicineStorageBoxes=v1。"
+            )
+        return contract
 
     def _sync_snapshot_v1(self, snapshot: dict[str, list[dict[str, object]]]) -> int:
         synced = 0
@@ -662,6 +811,21 @@ class CloudSyncWorker:
         payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
         if command_type in {"AI_CHAT", "UPSERT_SERVICE_USER", "UPSERT_TODAY_PLAN"}:
             self._require_current_command_persona(command_type, payload)
+        if command_type == "AUDIO_SPEAK":
+            person_id = self._command_text_value(
+                payload,
+                "使用人",
+                "target_user_id",
+                "targetUserId",
+                "service_user_id",
+                "serviceUserId",
+                "user_id",
+                "userId",
+                "person_id",
+                "personId",
+            )
+            if person_id:
+                self._require_current_command_persona(command_type, payload)
         if command_type == "AUDIO_BEEP":
             return QsmClient().audio_beep(self._int(payload.get("volume")))
         if command_type == "AUDIO_SPEAK":
@@ -903,12 +1067,79 @@ class CloudSyncWorker:
         ):
             raise CloudSyncError("药品字段 仓位存在冲突值。")
         selected_slot = slot_value if slot_present else source_slot_value
-        slot = CloudSyncWorker._int(selected_slot)
-        if slot is None or not 1 <= slot <= 23:
-            raise CloudSyncError("补药命令缺少有效仓位。")
+        cloud_slot = CloudSyncWorker._int(selected_slot)
+        if selected_slot not in (None, "") and (
+            cloud_slot is None or not 1 <= cloud_slot <= 23
+        ):
+            raise CloudSyncError("补药命令包含无效兼容仓位。")
+
+        identity_present, identity_value = CloudSyncWorker._consistent_value(
+            payload, "药品身份", "medicineId", "medicine_id"
+        )
+        source_identity_present, source_identity_value = CloudSyncWorker._consistent_value(
+            source, "药品身份", "medicineId", "medicine_id"
+        )
+        if (
+            source is not payload
+            and identity_present
+            and source_identity_present
+            and str(identity_value or "").strip()
+            != str(source_identity_value or "").strip()
+        ):
+            raise CloudSyncError("药品字段 药品身份存在冲突值。")
+        selected_identity = identity_value if identity_present else source_identity_value
+
+        storage_present, storage_value = CloudSyncWorker._consistent_value(
+            payload,
+            "storageBox",
+            "storageBox",
+            "storage_box",
+            "boxType",
+            "box_type",
+        )
+        source_storage_present, source_storage_value = CloudSyncWorker._consistent_value(
+            source,
+            "storageBox",
+            "storageBox",
+            "storage_box",
+            "boxType",
+            "box_type",
+        )
+        if (
+            source is not payload
+            and storage_present
+            and source_storage_present
+            and str(storage_value or "").strip().upper()
+            != str(source_storage_value or "").strip().upper()
+        ):
+            raise CloudSyncError("药品字段 storageBox 存在冲突值。")
+        selected_storage = storage_value if storage_present else source_storage_value
+
+        try:
+            cloud_projection = resolve_cloud_medicine(
+                medicine_id=str(selected_identity or "").strip(),
+                legacy_slot=cloud_slot,
+            )
+        except MedicineCloudProjectionError as exc:
+            raise CloudSyncError(str(exc)) from exc
+        if (
+            (storage_present or source_storage_present)
+            and str(selected_storage or "").strip().upper()
+            != cloud_projection.storage_box
+        ):
+            raise CloudSyncError("storageBox 与固定药品目录不一致。")
+
+        slot = cloud_projection.local_legacy_slot
 
         repository = MedicineRepository()
-        existing = repository.get_by_hardware_slot(slot)
+        existing = repository.get_by_id(cloud_projection.local_medicine_id)
+        if existing is None:
+            raise CloudSyncError(
+                f"本地固定药品 {cloud_projection.local_medicine_id} 缺失，"
+                "拒绝创建不稳定身份。"
+            )
+        if existing.hardware_slot != slot:
+            raise CloudSyncError("本地固定药品身份与兼容仓位不一致。")
         updates: dict[str, object] = {}
         aliases = {
             "name": ("name",),
@@ -1035,46 +1266,12 @@ class CloudSyncWorker:
             if precision_present and str(supplied_precision or "") != precision:
                 raise CloudSyncError("expiryPrecision 与有效期格式不一致。")
 
-        if existing:
-            if operation == "patch" and not updates:
-                raise CloudSyncError("药品补丁没有可更新字段。")
-            updated = repository.update(
-                existing.id,
-                updates,
-            )
-        else:
-            name = str(updates.get("name") or "").strip()
-            if not name:
-                raise CloudSyncError("新仓位药品缺少名称。")
-            updated = repository.create_at_hardware_slot(
-                hardware_slot=slot,
-                barcode=str(updates.get("barcode") or ""),
-                manufacturer=str(updates.get("manufacturer") or ""),
-                name=name,
-                spec=str(updates.get("spec") or ""),
-                trace_code=str(updates.get("trace_code") or ""),
-                expire_date=str(updates.get("expire_date") or ""),
-                stock=int(updates["stock"]) if "stock" in updates else 1,
-                low_stock_line=int(updates["low_stock_line"]) if "low_stock_line" in updates else 1,
-                unit=str(updates.get("unit") or "盒"),
-                category=str(updates.get("category") or "家庭常用"),
-            )
-            draft_updates = {
-                field: updates[field]
-                for field in (
-                    "aliases",
-                    "active_ingredients",
-                    "structured_contraindications",
-                    "safety_review_status",
-                    "safety_reviewed_by",
-                    "safety_reviewed_at",
-                    "guidance_review_required",
-                    "inventory_state",
-                )
-                if field in updates
-            }
-            if draft_updates:
-                updated = repository.update(updated.id, draft_updates) or updated
+        if operation == "patch" and not updates:
+            raise CloudSyncError("药品补丁没有可更新字段。")
+        updated = repository.update(
+            existing.id,
+            updates,
+        )
         return {"medicine": updated.model_dump(mode="json") if updated else None}
 
     @staticmethod

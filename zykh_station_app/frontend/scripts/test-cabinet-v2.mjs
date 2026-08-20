@@ -8,32 +8,50 @@ import {
 
 
 const cabinets = [
-  { id: 1, label: "口服药品", description: "口服常用药", medicine_ids: ["oral-a", "oral-b"] },
-  { id: 2, label: "外用药品", description: "局部使用药品", medicine_ids: ["topical-a"] },
-  { id: 3, label: "医疗护理用品", description: "护理耗材", medicine_ids: ["care-a"] }
+  {
+    id: 1,
+    label: "日常用药",
+    description: "感冒、发热、咳嗽、过敏、咽喉与胃肠常用药",
+    medicine_ids: ["slot-01-fufang-ganmaoling", "slot-13-ibuprofen"]
+  },
+  {
+    id: 2,
+    label: "外用护理",
+    description: "消毒、伤口、皮肤、鼻部与局部疼痛护理",
+    medicine_ids: ["slot-18-budesonide-nasal", "slot-22-cotton-swab"]
+  },
+  {
+    id: 3,
+    label: "慢病处方储备",
+    description: "慢病固定用药、处方药与低频储备用药",
+    medicine_ids: ["slot-09-bifid-triple"]
+  }
 ];
 const medicines = [
-  { id: "oral-a", name: "口服药A", hardware_slot: 1, stock: 1 },
-  { id: "oral-b", name: "口服药B", hardware_slot: 13, stock: 1 },
-  { id: "topical-a", name: "外用药A", hardware_slot: 18, stock: 1 },
-  { id: "care-a", name: "护理用品A", hardware_slot: 22, stock: 1 }
+  { id: "slot-01-fufang-ganmaoling", name: "复方感冒灵颗粒", hardware_slot: 1, stock: 1 },
+  { id: "slot-13-ibuprofen", name: "布洛芬缓释胶囊", hardware_slot: 13, stock: 1 },
+  { id: "slot-18-budesonide-nasal", name: "布地奈德鼻喷雾剂", hardware_slot: 18, stock: 1 },
+  { id: "slot-22-cotton-swab", name: "医用棉签", hardware_slot: 22, stock: 1 },
+  { id: "slot-09-bifid-triple", name: "双歧杆菌三联活菌肠溶胶囊", hardware_slot: 9, stock: 1 }
 ];
 
 const projected = projectMedicinesToCabinets(medicines, cabinets);
 assert.deepEqual(
   projected.map(({ id, cabinet_id, cabinet_label }) => ({ id, cabinet_id, cabinet_label })),
   [
-    { id: "oral-a", cabinet_id: 1, cabinet_label: "口服药品" },
-    { id: "oral-b", cabinet_id: 1, cabinet_label: "口服药品" },
-    { id: "topical-a", cabinet_id: 2, cabinet_label: "外用药品" },
-    { id: "care-a", cabinet_id: 3, cabinet_label: "医疗护理用品" }
+    { id: "slot-01-fufang-ganmaoling", cabinet_id: 1, cabinet_label: "日常用药" },
+    { id: "slot-13-ibuprofen", cabinet_id: 1, cabinet_label: "日常用药" },
+    { id: "slot-18-budesonide-nasal", cabinet_id: 2, cabinet_label: "外用护理" },
+    { id: "slot-22-cotton-swab", cabinet_id: 2, cabinet_label: "外用护理" },
+    { id: "slot-09-bifid-triple", cabinet_id: 3, cabinet_label: "慢病处方储备" }
   ]
 );
 
 const grouped = groupMedicinesByCabinet(projected, cabinets);
 assert.equal(grouped.length, 3);
-assert.deepEqual(grouped.map((group) => group.medicines.length), [2, 1, 1]);
+assert.deepEqual(grouped.map((group) => group.medicines.length), [2, 2, 1]);
 assert.equal(grouped[0].medicines[1].hardware_slot, 13, "logical slot identity remains unchanged");
+assert.equal(grouped[1].medicines[1].hardware_slot, 22, "S22 is physically routed to cabinet 2");
 const [unassigned] = projectMedicinesToCabinets(
   [{ id: "unmapped", name: "未知药", cabinet_id: 23, cabinet_label: "旧药柜" }],
   cabinets
@@ -43,7 +61,7 @@ assert.equal(unassigned.cabinet_label, "分类柜待配置");
 assert.equal(unassigned.cabinet_unassigned, true);
 assert.deepEqual(
   groupMedicinesByCabinet([...projected, unassigned], cabinets).map((group) => group.medicines.length),
-  [2, 1, 1],
+  [2, 2, 1],
   "unassigned legacy medicines remain visible to list views but are not routed to physical cabinets"
 );
 

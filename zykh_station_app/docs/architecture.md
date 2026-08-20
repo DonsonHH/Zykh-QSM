@@ -60,7 +60,8 @@ The gateway adapter supports:
   before the `/dev/ttyACM0` 115200 text exchange, replays the stored result for
   the same `cabinet_id + quantity` payload and never retries an
   in-flight/ambiguous illuminate operation. Success requires exact `CABINET n`
-  ACK and `STATUS CABINET n`; user completion sends and verifies `OFF`.
+  ACK and `STATUS CABINET n`; after the inventory-confirmation prompt completes,
+  the UI automatically sends and verifies `OFF`.
 
 Real mode failure must not break the dashboard. The backend returns a normal `/api/qsm/status` response with `connected=false`; the terminal UI only shows a user-facing device state such as “暂不可用”. Communication, startup and device failures are not replaced by filled data. The optional core-vitals completion applies only after a started session returns a valid real temperature and an eligible hand-signal stabilization failure. It retains any available sensor readings, fills only missing core metrics, records provenance and quality in `vitals_records`, and follows the normal sync path.
 
@@ -154,9 +155,10 @@ Deployment and lifecycle details are documented in [`offline-ai.md`](offline-ai.
 
 The medicine and administrator views consume the local three-cabinet projection,
 while domain checks and sync continue to use medicine ID plus logical
-`hardware_slot`. The pickup modal describes a light, manual door opening and an
-explicit `OFF` completion; it never infers that a successful light ACK proves a
-door opened.
+`hardware_slot`. The pickup modal describes a light and manual door opening. One
+initial action runs identity and safety checks and, when they pass, continues to
+illumination; after the “还有药吗” prompt completes it automatically sends `OFF`.
+It never infers that a successful light ACK proves a door opened.
 
 `Vitals.jsx` consumes the session module state and intent methods as a presentation caller; it does not call the vitals gateway or own polling/session refs.
 

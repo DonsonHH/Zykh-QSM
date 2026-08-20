@@ -32,21 +32,39 @@ class FakeCloudSyncWorker(CloudSyncWorker):
     def _call(self, action: str, data: dict[str, object]):
         self.calls.append((action, data))
         if action == "PING":
-            return {"ok": True, "schemaVersion": 1}
+            return {
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": "3.0-three-box-library",
+                "capabilities": {"medicineStorageBoxes": "v1"},
+            }
         if action == "PULL_COMMANDS":
             return []
         return {"ok": True}
 
 
+class LegacyCloudSyncWorker(FakeCloudSyncWorker):
+    def _call(self, action: str, data: dict[str, object]):
+        self.calls.append((action, data))
+        if action == "PING":
+            return {"ok": True, "schemaVersion": 1}
+        return {"ok": True}
+
+
 class FakeV2CloudSyncWorker(FakeCloudSyncWorker):
-    def __init__(self, revision: str = "2.1") -> None:
+    def __init__(self, revision: str = "3.0-three-box-library") -> None:
         super().__init__()
         self.revision = revision
 
     def _call(self, action: str, data: dict[str, object]):
         self.calls.append((action, data))
         if action == "PING":
-            return {"ok": True, "schemaVersion": 2, "schemaRevision": self.revision}
+            return {
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": self.revision,
+                "capabilities": {"medicineStorageBoxes": "v1"},
+            }
         if action == "PULL_COMMANDS":
             return []
         if action == "UPSERT_SNAPSHOT_BATCH":
@@ -62,8 +80,11 @@ class FakeSafetyEventCloudSyncWorker(FakeV2CloudSyncWorker):
             return {
                 "ok": True,
                 "schemaVersion": 2,
-                "schemaRevision": "2.5-caregiver-safety-events",
-                "capabilities": {"medicationSafetyEvents": "v1"},
+                "schemaRevision": "3.0-three-box-library",
+                "capabilities": {
+                    "medicineStorageBoxes": "v1",
+                    "medicationSafetyEvents": "v1",
+                },
             }
         if action == "PULL_COMMANDS":
             return []
@@ -95,7 +116,7 @@ class AckFailureWorker(FakeCloudSyncWorker):
 
 class MedicineRoundTripWorker(FakeV2CloudSyncWorker):
     def __init__(self, command: dict[str, object]) -> None:
-        super().__init__(revision="2.4-medicine-safety-contract")
+        super().__init__()
         self.command = command
         self.delivered = False
 
@@ -107,7 +128,12 @@ class MedicineRoundTripWorker(FakeV2CloudSyncWorker):
             self.delivered = True
             return [self.command]
         if action == "PING":
-            return {"ok": True, "schemaVersion": 2, "schemaRevision": self.revision}
+            return {
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": self.revision,
+                "capabilities": {"medicineStorageBoxes": "v1"},
+            }
         if action == "UPSERT_SNAPSHOT_BATCH":
             rows = data.get("rows", [])
             return {
@@ -125,6 +151,13 @@ class PauseAfterPullWorker(FakeCloudSyncWorker):
 
     def _call(self, action: str, data: dict[str, object]):
         self.calls.append((action, data))
+        if action == "PING":
+            return {
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": "3.0-three-box-library",
+                "capabilities": {"medicineStorageBoxes": "v1"},
+            }
         if action == "PULL_COMMANDS":
             db.set_setting("network_mode", "local")
             return [
@@ -155,17 +188,73 @@ class CloudSyncServiceTest(unittest.TestCase):
     def test_remote_cabinet_is_disabled_by_default(self) -> None:
         self.assertFalse(Settings().cloud_remote_cabinet_enabled)
 
-    def test_v1_cloud_uses_compatible_actions_and_marks_synced(self) -> None:
-        worker = FakeCloudSyncWorker()
-        count, _ = worker.run_once()
+    def test_legacy_cloud_contract_is_rejected_before_pull_or_snapshot(self) -> None:
+        worker = LegacyCloudSyncWorker()
 
-        actions = [action for action, _ in worker.calls]
-        self.assertEqual(actions[0], "PULL_COMMANDS")
-        self.assertIn("REPORT_DEVICE", actions)
-        self.assertIn("UPLOAD_MEDICINES", actions)
-        self.assertNotIn("UPLOAD_SNAPSHOT", actions)
-        self.assertGreater(count, 0)
-        self.assertEqual(SyncRepository().get_status().sync_status, "已同步")
+        with self.assertRaisesRegex(CloudSyncError, "3.0-three-box-library"):
+            worker.run_once()
+
+        self.assertEqual([action for action, _ in worker.calls], ["PING"])
+
+    def test_wrong_storage_box_capability_is_rejected_before_pull_or_snapshot(self) -> None:
+        worker = FakeCloudSyncWorker()
+
+        def incompatible_ping(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": {"medicineStorageBoxes": "v2"},
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=incompatible_ping):
+            with self.assertRaisesRegex(CloudSyncError, "medicineStorageBoxes=v1"):
+                worker.run_once()
+
+        self.assertEqual([action for action, _ in worker.calls], ["PING"])
+
+    def test_each_sync_cycle_rechecks_contract_before_pulling_commands(self) -> None:
+        worker = FakeCloudSyncWorker()
+        ping_count = 0
+
+        def changing_contract(action: str, data: dict[str, object]):
+            nonlocal ping_count
+            worker.calls.append((action, data))
+            if action == "PING":
+                ping_count += 1
+                if ping_count == 1:
+                    return {
+                        "ok": True,
+                        "schemaVersion": 2,
+                        "schemaRevision": "3.0-three-box-library",
+                        "capabilities": {"medicineStorageBoxes": "v1"},
+                    }
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "2.9-stable-medicine-identity",
+                    "capabilities": {"medicineStorageBoxes": "v1"},
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                return {"ok": True, "count": len(rows), "ids": []}
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=changing_contract):
+            worker.run_once()
+            second_cycle_start = len(worker.calls)
+            with self.assertRaisesRegex(CloudSyncError, "3.0-three-box-library"):
+                worker.run_once()
+
+        self.assertEqual(
+            [action for action, _ in worker.calls[second_cycle_start:]],
+            ["PING"],
+        )
 
     def test_local_display_mode_pauses_miniprogram_realtime_calls(self) -> None:
         db.set_setting("network_mode", "local")
@@ -191,7 +280,10 @@ class CloudSyncServiceTest(unittest.TestCase):
         with patch("app.services.cloud_sync_service.settings", configured):
             worker.issue_pairing_code_hash(payload)
 
-        self.assertEqual(worker.calls, [("ISSUE_DEVICE_PAIRING_CODE", payload)])
+        self.assertEqual(
+            worker.calls,
+            [("PING", {}), ("ISSUE_DEVICE_PAIRING_CODE", payload)],
+        )
 
         for missing in (
             replace(configured, cloud_sync_endpoint=""),
@@ -202,7 +294,50 @@ class CloudSyncServiceTest(unittest.TestCase):
                     with self.assertRaises(CloudSyncError):
                         worker.issue_pairing_code_hash(payload)
 
-        self.assertEqual(worker.calls, [("ISSUE_DEVICE_PAIRING_CODE", payload)])
+        self.assertEqual(
+            worker.calls,
+            [("PING", {}), ("ISSUE_DEVICE_PAIRING_CODE", payload)],
+        )
+
+        legacy_worker = LegacyCloudSyncWorker()
+        with patch("app.services.cloud_sync_service.settings", configured):
+            with self.assertRaisesRegex(CloudSyncError, "3.0-three-box-library"):
+                legacy_worker.issue_pairing_code_hash(payload)
+        self.assertEqual(legacy_worker.calls, [("PING", {})])
+
+    def test_pairing_stops_if_local_mode_is_selected_after_contract_ping(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "codeHash": "b" * 64,
+            "serviceUserScopes": ["wang-nainai"],
+            "ttlSeconds": 600,
+        }
+        configured = replace(
+            settings,
+            cloud_sync_endpoint="https://cloud.example.test/pairing",
+            cloud_sync_device_secret="device-test-secret",
+        )
+
+        def pause_after_ping(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                db.set_setting("network_mode", "local")
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": {"medicineStorageBoxes": "v1"},
+                }
+            return {"ok": True}
+
+        with (
+            patch("app.services.cloud_sync_service.settings", configured),
+            patch.object(worker, "_call", side_effect=pause_after_ping),
+        ):
+            with self.assertRaisesRegex(CloudSyncError, "本地模式"):
+                worker.issue_pairing_code_hash(payload)
+
+        self.assertEqual(worker.calls, [("PING", {})])
 
     def test_switching_local_after_pull_stops_the_remaining_sync_cycle(self) -> None:
         worker = PauseAfterPullWorker()
@@ -210,7 +345,10 @@ class CloudSyncServiceTest(unittest.TestCase):
         with self.assertRaisesRegex(CloudSyncError, "本地模式"):
             worker.run_once()
 
-        self.assertEqual([action for action, _ in worker.calls], ["PULL_COMMANDS"])
+        self.assertEqual(
+            [action for action, _ in worker.calls],
+            ["PING", "PULL_COMMANDS"],
+        )
         self.assertEqual(worker.handled_commands, [])
 
     def test_local_display_mode_hides_stale_cloud_connection_error(self) -> None:
@@ -376,6 +514,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         payload = {
             "event_id": "event-sync-001",
             "check_id": "safety-check-sync-001",
+            "medicine_id": "slot-01-fufang-ganmaoling",
             "check_status": "BLOCKED",
         }
         payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -407,15 +546,80 @@ class CloudSyncServiceTest(unittest.TestCase):
             ).fetchone()["status"]
         self.assertEqual(status, "sent")
 
-    def test_schema_revision_change_forces_full_snapshot_resync(self) -> None:
-        first = FakeV2CloudSyncWorker("2.1")
-        first.run_once()
-        second = FakeV2CloudSyncWorker("2.2")
+    def test_sync_cycle_uses_its_validated_contract_snapshot_if_shared_probe_state_changes(self) -> None:
+        payload = {
+            "event_id": "event-contract-snapshot-001",
+            "check_id": "safety-check-contract-snapshot-001",
+            "medicine_id": "slot-01-fufang-ganmaoling",
+            "check_status": "BLOCKED",
+        }
+        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = __import__("hashlib").sha256(payload_json.encode("utf-8")).hexdigest()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO medication_safety_outbox(
+                  event_id, aggregate_id, event_type, payload_json, payload_digest,
+                  status, attempts, next_attempt_at, created_at, sent_at
+                ) VALUES (?, ?, 'MEDICATION_SAFETY_EVENT_RECORDED', ?, ?,
+                          'pending', 0, ?, ?, '')
+                """,
+                (
+                    payload["event_id"],
+                    payload["check_id"],
+                    payload_json,
+                    digest,
+                    db.now_text(),
+                    db.now_text(),
+                ),
+            )
+        worker = FakeSafetyEventCloudSyncWorker()
+        original_call = worker._call
 
-        count, _ = second.run_once()
+        def mutate_shared_probe_after_report(action: str, data: dict[str, object]):
+            result = original_call(action, data)
+            if action == "REPORT_DEVICE":
+                worker._cloud_schema_version = 1
+                worker._cloud_schema_revision = "legacy-concurrent-probe"
+                worker._cloud_capabilities = {}
+            return result
 
-        self.assertGreater(count, 0)
-        self.assertTrue(any(action == "UPSERT_SNAPSHOT_BATCH" for action, _ in second.calls))
+        with patch.object(worker, "_call", side_effect=mutate_shared_probe_after_report):
+            worker.run_once()
+
+        actions = [action for action, _ in worker.calls]
+        self.assertIn("REPORT_MEDICATION_SAFETY_EVENT", actions)
+        self.assertIn("UPSERT_SNAPSHOT_BATCH", actions)
+        self.assertNotIn("UPLOAD_MEDICINES", actions)
+
+    def test_wrong_three_box_schema_revision_fails_closed(self) -> None:
+        worker = FakeV2CloudSyncWorker("2.9-stable-medicine-identity")
+
+        with self.assertRaisesRegex(CloudSyncError, "3.0-three-box-library"):
+            worker.run_once()
+
+        self.assertEqual([action for action, _ in worker.calls], ["PING"])
+
+    def test_detects_current_three_box_cloud_contract_without_local_cloud_deployment(self) -> None:
+        worker = CloudSyncWorker()
+        with patch.object(
+            worker,
+            "_request",
+            return_value={
+                "ok": True,
+                "schemaVersion": 2,
+                "schemaRevision": "3.0-three-box-library",
+                "capabilities": {
+                    "medicineStorageBoxes": "v1",
+                    "explicitInventoryState": "v1",
+                },
+            },
+        ):
+            version = worker._detect_schema_version()
+
+        self.assertEqual(version, 2)
+        self.assertEqual(worker._cloud_schema_revision, "3.0-three-box-library")
+        self.assertEqual(worker._cloud_capabilities["medicineStorageBoxes"], "v1")
 
     def test_snapshot_publishes_current_inquiry_sessions_for_miniprogram_history(self) -> None:
         session = SimpleNamespace(
@@ -710,7 +914,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         CloudSyncWorker._upsert_medicine(
             {
                 "operation": "patch",
-                "hardware_slot": 13,
+                "hardware_slot": 3,
                 "patch": {"spec": "身份已变化的新规格"},
             }
         )
@@ -747,7 +951,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         CloudSyncWorker._upsert_medicine(
             {
                 "operation": "patch",
-                "hardware_slot": 13,
+                "hardware_slot": 3,
                 "patch": {
                     "aliases": ["远程草稿别名"],
                     "active_ingredients": ["远程草稿成分"],
@@ -787,7 +991,7 @@ class CloudSyncServiceTest(unittest.TestCase):
         CloudSyncWorker._upsert_medicine(
             {
                 "operation": "patch",
-                "hardware_slot": 13,
+                "hardware_slot": 3,
                 "patch": {
                     "spec": "新身份规格",
                     "aliases": ["新身份草稿别名"],
@@ -822,50 +1026,35 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(updated.safety_review_status, "draft")
         self.assertFalse(updated.package_verified)
 
-    def test_empty_slot_create_persists_draft_safety_facts_from_the_same_payload(self) -> None:
+    def test_empty_fixed_slot_rejects_remote_creation_with_dynamic_identity(self) -> None:
         MedicineRepository().list_all()
         with db.connect() as conn:
             conn.execute("DELETE FROM medicines WHERE hardware_slot=23")
 
-        CloudSyncWorker._upsert_medicine(
-            {
-                "operation": "upsert",
-                "hardware_slot": 23,
-                "name": "云端新建草稿药品",
-                "manufacturer": "草稿厂家",
-                "barcode": "draft-create-barcode",
-                "spec": "草稿规格",
-                "expireDate": "2030-12",
-                "inventoryState": "UNKNOWN",
-                "aliases": ["新建草稿别名"],
-                "active_ingredients": ["新建草稿成分"],
-                "structured_contraindications": [
-                    {
-                        "concept_code": "ingredient_allergy",
-                        "display_text": "新建草稿辅料过敏者禁用",
-                    }
-                ],
-                "safety_review_status": "draft",
-            }
-        )
-
-        created = MedicineRepository().get_by_hardware_slot(23)
-        self.assertEqual(created.name, "云端新建草稿药品")
-        self.assertEqual(created.aliases, ["新建草稿别名"])
-        self.assertEqual(created.active_ingredients, ["新建草稿成分"])
-        self.assertEqual(
-            created.structured_contraindications,
-            [
+        with self.assertRaisesRegex(CloudSyncError, "本地固定药品.*缺失"):
+            CloudSyncWorker._upsert_medicine(
                 {
-                    "concept_code": "ingredient_allergy",
-                    "display_text": "新建草稿辅料过敏者禁用",
+                    "operation": "upsert",
+                    "hardware_slot": 23,
+                    "name": "云端新建草稿药品",
+                    "manufacturer": "草稿厂家",
+                    "barcode": "draft-create-barcode",
+                    "spec": "草稿规格",
+                    "expireDate": "2030-12",
+                    "inventoryState": "UNKNOWN",
+                    "aliases": ["新建草稿别名"],
+                    "active_ingredients": ["新建草稿成分"],
+                    "structured_contraindications": [
+                        {
+                            "concept_code": "ingredient_allergy",
+                            "display_text": "新建草稿辅料过敏者禁用",
+                        }
+                    ],
+                    "safety_review_status": "draft",
                 }
-            ],
-        )
-        self.assertEqual(created.safety_review_status, "draft")
-        self.assertFalse(created.package_verified)
-        self.assertEqual(created.inventory_state, "UNKNOWN")
-        self.assertEqual(created.stock, 1)
+            )
+
+        self.assertIsNone(MedicineRepository().get_by_hardware_slot(23))
 
     def test_medicine_patch_rejects_an_unknown_operation(self) -> None:
         with self.assertRaisesRegex(CloudSyncError, "不支持的药品操作"):
@@ -890,35 +1079,31 @@ class CloudSyncServiceTest(unittest.TestCase):
                 }
             )
 
-    def test_medicine_upsert_uses_hardware_slot_not_barcode_as_identity(self) -> None:
+    def test_medicine_upsert_does_not_recreate_missing_fixed_identity_from_barcode(self) -> None:
         repository = MedicineRepository()
         slot_one = repository.get_by_hardware_slot(1)
         self.assertIsNotNone(slot_one)
         with db.connect() as conn:
             conn.execute("DELETE FROM medicines WHERE hardware_slot=23")
 
-        result = CloudSyncWorker._upsert_medicine(
-            {
-                "hardware_slot": 23,
-                "name": "二十三号仓同条码药",
-                "barcode": slot_one.barcode,
-                "quantity": 0,
-                "inventoryState": "DEPLETED",
-                "unit": "盒",
-                "category": "家庭常用",
-                "spec": "10片",
-                "traceCode": "TRACE-023",
-                "lowStockLine": 2,
-                "expireDate": "2030-02",
-            }
-        )
+        with self.assertRaisesRegex(CloudSyncError, "本地固定药品.*缺失"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "hardware_slot": 23,
+                    "name": "二十三号仓同条码药",
+                    "barcode": slot_one.barcode,
+                    "quantity": 0,
+                    "inventoryState": "DEPLETED",
+                    "unit": "盒",
+                    "category": "家庭常用",
+                    "spec": "10片",
+                    "traceCode": "TRACE-023",
+                    "lowStockLine": 2,
+                    "expireDate": "2030-02",
+                }
+            )
 
-        slot_twenty_three = repository.get_by_hardware_slot(23)
-        self.assertEqual(result["medicine"]["hardware_slot"], 23)
-        self.assertIsNotNone(slot_twenty_three)
-        self.assertNotEqual(slot_twenty_three.id, slot_one.id)
-        self.assertEqual(slot_twenty_three.barcode, slot_one.barcode)
-        self.assertEqual(slot_twenty_three.stock, 0)
+        self.assertIsNone(repository.get_by_hardware_slot(23))
         self.assertEqual(repository.get_by_hardware_slot(1).id, slot_one.id)
 
     def test_snapshot_preserves_medicine_extension_fields_and_expiry_precision(self) -> None:
@@ -945,6 +1130,166 @@ class CloudSyncServiceTest(unittest.TestCase):
         daily = next(row for row in CloudSyncWorker._build_snapshot()["medicines"] if row["slot"] == 1)
         self.assertEqual(daily["expireDate"], "2029-01-31")
         self.assertEqual(daily["expiryPrecision"], "day")
+
+    def test_snapshot_publishes_stable_medicine_identity_independent_of_legacy_slot(self) -> None:
+        medicine = MedicineRepository().get_by_hardware_slot(1)
+
+        row = next(
+            item
+            for item in CloudSyncWorker._build_snapshot()["medicines"]
+            if item["slot"] == 1
+        )
+
+        self.assertEqual(row["medicineId"], medicine.id)
+        self.assertEqual(row["medicine_id"], medicine.id)
+        self.assertEqual(row["legacySlot"], medicine.hardware_slot)
+        self.assertEqual(row["storageBox"], "DAILY")
+        self.assertEqual(row["storage_box"], "DAILY")
+
+    def test_snapshot_translates_local_slot_three_and_thirteen_to_cloud_catalog_identities(self) -> None:
+        rows = {
+            row["id"]: row
+            for row in CloudSyncWorker._build_snapshot()["medicines"]
+        }
+
+        montmorillonite = rows["slot-03-diosmectite"]
+        ibuprofen = rows["slot-13-ibuprofen"]
+        self.assertEqual(
+            (
+                montmorillonite["medicineId"],
+                montmorillonite["medicine_id"],
+                montmorillonite["legacySlot"],
+                montmorillonite["slot"],
+                montmorillonite["hardwareSlot"],
+                montmorillonite["hardware_slot"],
+            ),
+            ("slot-13-montmorillonite", "slot-13-montmorillonite", 13, 13, 13, 13),
+        )
+        self.assertEqual(
+            (
+                ibuprofen["medicineId"],
+                ibuprofen["medicine_id"],
+                ibuprofen["legacySlot"],
+                ibuprofen["slot"],
+                ibuprofen["hardwareSlot"],
+                ibuprofen["hardware_slot"],
+            ),
+            ("slot-03-ibuprofen", "slot-03-ibuprofen", 3, 3, 3, 3),
+        )
+
+    def test_snapshot_projects_the_confirmed_three_cabinet_distribution(self) -> None:
+        rows = CloudSyncWorker._build_snapshot()["medicines"]
+        counts: dict[str, int] = {}
+        for row in rows:
+            self.assertEqual(row["storageBox"], row["storage_box"])
+            counts[row["storageBox"]] = counts.get(row["storageBox"], 0) + 1
+
+        self.assertEqual(counts, {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 5, "COLD": 1})
+
+    def test_snapshot_rejects_an_unmapped_historical_medicine(self) -> None:
+        MedicineRepository().list_all()
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE medicines SET id='scan-legacy-unmapped' WHERE hardware_slot=1"
+            )
+
+        with self.assertRaisesRegex(CloudSyncError, "未配置小程序同步投影"):
+            CloudSyncWorker._build_snapshot()
+
+    def test_snapshot_rejects_a_missing_fixed_medicine_before_finalize(self) -> None:
+        MedicineRepository().list_all()
+        with db.connect() as conn:
+            conn.execute("DELETE FROM medicines WHERE id='slot-23-desloratadine'")
+
+        with self.assertRaisesRegex(CloudSyncError, "本地固定药品目录.*不完整"):
+            CloudSyncWorker._build_snapshot()
+
+    def test_snapshot_rejects_a_local_identity_slot_mismatch(self) -> None:
+        MedicineRepository().list_all()
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE medicines SET hardware_slot=99 WHERE id='slot-23-desloratadine'"
+            )
+
+        with self.assertRaisesRegex(CloudSyncError, "身份或兼容仓位错位"):
+            CloudSyncWorker._build_snapshot()
+
+    def test_medicine_patch_translates_cloud_catalog_slot_to_local_identity(self) -> None:
+        repository = MedicineRepository()
+        local_ibuprofen = repository.get_by_hardware_slot(13)
+        local_montmorillonite = repository.get_by_hardware_slot(3)
+
+        result = CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "slot": 3,
+                "patch": {"spec": "云端布洛芬规格"},
+            }
+        )
+
+        self.assertEqual(result["medicine"]["id"], local_ibuprofen.id)
+        self.assertEqual(repository.get_by_hardware_slot(13).spec, "云端布洛芬规格")
+        self.assertEqual(
+            repository.get_by_hardware_slot(3).spec,
+            local_montmorillonite.spec,
+        )
+
+    def test_medicine_patch_accepts_canonical_identity_without_legacy_slot(self) -> None:
+        result = CloudSyncWorker._upsert_medicine(
+            {
+                "operation": "patch",
+                "medicineId": "slot-13-montmorillonite",
+                "patch": {
+                    "medicine_id": "slot-13-montmorillonite",
+                    "spec": "云端蒙脱石规格",
+                },
+            }
+        )
+
+        self.assertEqual(result["medicine"]["id"], "slot-03-diosmectite")
+        self.assertEqual(
+            MedicineRepository().get_by_hardware_slot(3).spec,
+            "云端蒙脱石规格",
+        )
+
+    def test_medicine_upsert_rejects_a_missing_fixed_local_identity(self) -> None:
+        MedicineRepository().list_all()
+        with db.connect() as conn:
+            conn.execute("DELETE FROM medicines WHERE id='slot-23-desloratadine'")
+
+        with self.assertRaisesRegex(CloudSyncError, "本地固定药品.*缺失"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "upsert",
+                    "medicineId": "slot-23-desloratadine",
+                    "slot": 23,
+                    "storageBox": "DAILY",
+                    "name": "枸地氯雷他定胶囊",
+                }
+            )
+
+        self.assertIsNone(MedicineRepository().get_by_hardware_slot(23))
+
+    def test_medicine_patch_rejects_conflicting_canonical_identity_and_storage(self) -> None:
+        with self.assertRaisesRegex(CloudSyncError, "药品身份与兼容仓位不一致"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "medicineId": "slot-03-ibuprofen",
+                    "slot": 13,
+                    "patch": {"spec": "不应写入"},
+                }
+            )
+
+        with self.assertRaisesRegex(CloudSyncError, "storageBox 与固定药品目录不一致"):
+            CloudSyncWorker._upsert_medicine(
+                {
+                    "operation": "patch",
+                    "slot": 9,
+                    "storageBox": "PRESCRIPTION",
+                    "patch": {"spec": "不应写入"},
+                }
+            )
 
     def test_snapshot_projects_available_inventory_with_explicit_cloud_aliases(self) -> None:
         repository = MedicineRepository()
@@ -996,6 +1341,32 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(row["inventoryState"], "UNKNOWN")
         self.assertEqual(row["quantity"], 1)
         self.assertEqual(row["stock"], 1)
+
+    def test_snapshot_does_not_invent_depletion_confirmation_provenance(self) -> None:
+        repository = MedicineRepository()
+        medicine = repository.get_by_hardware_slot(1)
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE medicines
+                SET stock=0, inventory_state='DEPLETED',
+                    inventory_confirmed_at='2026-08-20 16:30:00', inventory_revision=9
+                WHERE id=?
+                """,
+                (medicine.id,),
+            )
+
+        row = next(
+            item
+            for item in CloudSyncWorker._build_snapshot()["medicines"]
+            if item["slot"] == 1
+        )
+
+        self.assertEqual(row["inventoryState"], "DEPLETED")
+        self.assertNotIn("depletionConfirmedAt", row)
+        self.assertNotIn("depletion_confirmed_at", row)
+        self.assertNotIn("depletionConfirmationSource", row)
+        self.assertNotIn("depletion_confirmation_source", row)
 
     def test_medicine_schema_migration_contains_sync_extension_columns(self) -> None:
         with db.connect() as conn:
@@ -1430,6 +1801,34 @@ class CloudSyncServiceTest(unittest.TestCase):
         speech_factory.return_value.speak_sync.assert_called_once_with(
             "张三，该服用藿香正气丸了。",
             volume=210,
+            speed=None,
+        )
+        self.assertTrue(result["ok"])
+
+    def test_targeted_miniprogram_speak_command_requires_current_persona(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "target_user_id": "wang-nainai",
+            "target_user_name": "王奶奶",
+            "text": "王奶奶请及时用药。",
+            "persona_generation": "stale-persona-v0",
+        }
+
+        with patch("app.services.cloud_sync_service.SpeechService") as speech_factory:
+            with self.assertRaisesRegex(CloudSyncError, "人物代次"):
+                worker._execute_command("AUDIO_SPEAK", {"payload": payload})
+            speech_factory.assert_not_called()
+
+            payload["persona_generation"] = "senior-demo-v1"
+            speech_factory.return_value.speak_sync.return_value = {
+                "ok": True,
+                "detail": "played",
+            }
+            result = worker._execute_command("AUDIO_SPEAK", {"payload": payload})
+
+        speech_factory.return_value.speak_sync.assert_called_once_with(
+            "王奶奶请及时用药。",
+            volume=None,
             speed=None,
         )
         self.assertTrue(result["ok"])

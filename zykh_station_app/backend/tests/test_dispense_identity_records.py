@@ -510,7 +510,7 @@ class DispenseIdentityRecordsTest(unittest.TestCase):
         self.assertEqual(outcome.dispense_status, "DISPENSED")
         self.assertTrue(outcome.inventory_confirmation_required)
         self.assertTrue(replay.inventory_confirmation_required)
-        self.assertEqual(self.qsm.calls, [(1, 1, False)])
+        self.assertEqual(self.qsm.calls, [(3, 1, False)])
         record = self.service.list_records()[0]
         self.assertEqual(record.target_user_id, "li-yeye")
         self.assertEqual(record.target_user_name, "李爷爷")

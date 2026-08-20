@@ -18,51 +18,51 @@ class CabinetGroup:
 _CABINET_GROUPS = (
     CabinetGroup(
         id=1,
-        label="口服药品",
-        description="口服常用药、慢病用药与营养补充",
+        label="日常用药",
+        description="感冒、发热、咳嗽、过敏、咽喉与胃肠常用药",
         medicine_ids=frozenset(
             {
                 "slot-01-fufang-ganmaoling",
-                "slot-02-centrum",
                 "slot-03-diosmectite",
-                "slot-04-amoxicillin",
                 "slot-05-nin-jiom-pei-pa-koa",
-                "slot-06-lactulose",
                 "slot-07-yinhuang",
                 "slot-08-huoxiang-zhengqi",
-                "slot-09-bifid-triple",
+                "slot-11-guilin-xiguashuang",
                 "slot-12-hydrotalcite",
                 "slot-13-ibuprofen",
-                "slot-14-oseltamivir",
-                "slot-21-amlodipine",
                 "slot-23-desloratadine",
             }
         ),
     ),
     CabinetGroup(
         id=2,
-        label="外用药品",
-        description="皮肤、鼻腔、咽喉消毒与局部护理药品",
+        label="外用护理",
+        description="消毒、伤口、皮肤、鼻部与局部疼痛护理",
         medicine_ids=frozenset(
             {
-                "slot-11-guilin-xiguashuang",
+                "slot-10-gauze",
                 "slot-15-mupirocin",
                 "slot-16-ketoconazole",
                 "slot-17-iodophor",
                 "slot-18-budesonide-nasal",
                 "slot-19-ketoprofen-gel",
+                "slot-20-bandage",
+                "slot-22-cotton-swab",
             }
         ),
     ),
     CabinetGroup(
         id=3,
-        label="医疗护理用品",
-        description="纱布、创口贴与医用棉签",
+        label="慢病处方储备",
+        description="慢病固定用药、处方药与低频储备用药",
         medicine_ids=frozenset(
             {
-                "slot-10-gauze",
-                "slot-20-bandage",
-                "slot-22-cotton-swab",
+                "slot-02-centrum",
+                "slot-04-amoxicillin",
+                "slot-06-lactulose",
+                "slot-09-bifid-triple",
+                "slot-14-oseltamivir",
+                "slot-21-amlodipine",
             }
         ),
     ),

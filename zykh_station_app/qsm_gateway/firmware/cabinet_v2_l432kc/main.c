@@ -63,9 +63,10 @@
 #define USART_ISR_RXNE  (1u << 5)
 #define USART_ISR_TXE   (1u << 7)
 
-#define LED_COUNT        64u
-#define ACTIVE_LED_COUNT 24u
-#define PANEL_BRIGHTNESS 30u
+#define LED_COUNT          64u
+#define LEDS_PER_ROW        8u
+#define REAR_ROWS_FIRST_LED 40u
+#define PANEL_BRIGHTNESS   30u
 #define WS_PERIOD_TICKS  20u
 #define WS_T0H_TICKS     5u
 #define WS_T1H_TICKS     10u
@@ -192,13 +193,27 @@ static void tim1_wait_update(void) {
     while ((TIM1_SR & 1u) == 0u) {}
 }
 
+#if defined(CABINET_V2_HOST_TEST)
+#define CABINET_V2_POLICY_LINKAGE
+#else
+#define CABINET_V2_POLICY_LINKAGE static inline __attribute__((always_inline))
+#endif
+
+CABINET_V2_POLICY_LINKAGE
+uint32_t cabinet_v2_pixel_brightness(uint32_t led, uint32_t enabled) {
+    if (!enabled || led >= LED_COUNT) {
+        return 0u;
+    }
+    if (led < LEDS_PER_ROW || led >= REAR_ROWS_FIRST_LED) {
+        return PANEL_BRIGHTNESS;
+    }
+    return 0u;
+}
+
 static uint32_t ws2812_duty_for_bit(uint32_t bit_index, uint32_t enabled) {
     uint32_t led = bit_index / 24u;
     uint32_t component_bit = bit_index % 24u;
-    uint32_t value = 0u;
-    if (enabled && led < ACTIVE_LED_COUNT) {
-        value = PANEL_BRIGHTNESS;
-    }
+    uint32_t value = cabinet_v2_pixel_brightness(led, enabled);
     return (value & (0x80u >> (component_bit & 7u))) != 0u
                ? WS_T1H_TICKS
                : WS_T0H_TICKS;
