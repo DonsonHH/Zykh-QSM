@@ -52,6 +52,21 @@ function dispenseRequestMayHaveReachedHardware(error) {
 const CABINET_LIGHT_PRECONDITION_ERROR_CODE = "CABINET_LIGHT_OFF_UNVERIFIED";
 let cabinetLightCommandTail = Promise.resolve();
 let cabinetLightRequiresVerifiedOff = false;
+let dispenseAudioStopTail = Promise.resolve();
+
+async function stopDispenseAudioInOrder() {
+  const predecessor = dispenseAudioStopTail;
+  let releaseStop;
+  dispenseAudioStopTail = new Promise((resolve) => {
+    releaseStop = resolve;
+  });
+  await predecessor;
+  try {
+    return await stopAudioPlayback();
+  } finally {
+    releaseStop();
+  }
+}
 
 async function runCabinetLightCommand(command) {
   const predecessor = cabinetLightCommandTail;
@@ -236,6 +251,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     } else {
       sessionRef.current += 1;
       verificationAttemptRef.current += 1;
+      setPhase("idle");
       if (cabinetLightMayBeOnRef.current) {
         cabinetLightMayBeOnRef.current = false;
         bestEffortTurnOffCabinetLight();
@@ -303,7 +319,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
     if (!text || spokenAnnouncementsRef.current.has(key)) return;
     spokenAnnouncementsRef.current.add(key);
     const session = sessionRef.current;
-    void stopAudioPlayback()
+    void stopDispenseAudioInOrder()
       .catch(() => undefined)
       .then(() => {
         if (session === sessionRef.current) {
@@ -822,7 +838,7 @@ export function DispenseConfirmModal({ medicine: currentMedicine, plan = null, m
       cabinetLightMayBeOnRef.current = false;
       bestEffortTurnOffCabinetLight();
     }
-    void stopAudioPlayback().catch(() => undefined);
+    void stopDispenseAudioInOrder().catch(() => undefined);
     onCancelRef.current();
   }
 

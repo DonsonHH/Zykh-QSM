@@ -126,12 +126,15 @@ const requests = {
   audio: []
 };
 const requestOrder = [];
+const requestTimeline = [];
 let assessmentMode = "blocked";
 let confirmationMode = "success";
 let identityMode = "guest";
 let lightOffFailuresRemaining = 0;
 let deferNextInventoryResponse = false;
 const deferredInventoryResponses = [];
+let deferNextAudioStopResponse = false;
+const deferredAudioStopResponses = [];
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -280,6 +283,7 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/manual-medication-access/confirm") {
     requests.confirm.push(jsonBody(request));
     requestOrder.push("confirm");
+    requestTimeline.push({ type: "confirm" });
     if (confirmationMode === "server_error") {
       await fulfillJson(requestId, { detail: "开柜服务响应超时" }, 503);
       return;
@@ -344,10 +348,19 @@ async function fulfillApiRequest({ requestId, request }) {
     }
     payload = { ok: true, result: "off", message: "分类柜指示灯已关闭" };
   } else if (url.pathname === "/api/audio/speak") {
-    requests.audio.push({ type: "speak", text: String(jsonBody(request).text || "") });
+    const speech = { type: "speak", text: String(jsonBody(request).text || "") };
+    requests.audio.push(speech);
+    requestTimeline.push(speech);
     payload = { ok: true, status: "complete" };
   } else if (url.pathname === "/api/audio/stream/stop") {
-    requests.audio.push({ type: "stop", text: "" });
+    const stop = { type: "stop", text: "" };
+    requests.audio.push(stop);
+    requestTimeline.push(stop);
+    if (deferNextAudioStopResponse) {
+      deferNextAudioStopResponse = false;
+      deferredAudioStopResponses.push({ requestId });
+      return;
+    }
     payload = { ok: true, status: "complete" };
   }
   await fulfillJson(requestId, payload);
@@ -646,6 +659,7 @@ try {
     () => requests.audio.some((entry) => entry.type === "speak" && entry.text.includes(firstCabinetLightSpeech)),
     "cabinet 1 collection speech"
   );
+  deferNextAudioStopResponse = true;
   await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
     .find((button) => button.textContent.includes('还有药'))).click()`);
   await waitForNodeState(() => requests.inventory.length === 1, "inventory observation after medicine collection");
@@ -684,9 +698,75 @@ try {
     (entry, index) => index > firstCabinetSpeechIndex && entry.type === "stop"
   );
 
-  await cdp("Page.navigate", {
-    url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${secondMedicine.id}&dispenseModal=1&scenario=second-cabinet-speech`
-  });
+  const secondModalAudioStart = requests.audio.length;
+  const secondModalTimelineStart = requestTimeline.length;
+  await evaluate(`(async () => {
+    const waitFor = async (predicate, label, timeoutMs = 9000) => {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('Timed out waiting for ' + label);
+    };
+    const card = await waitFor(
+      () => [...document.querySelectorAll('.medicine-card, .cabinet-medicine')]
+        .find((item) => item.textContent.includes('${secondMedicine.name}')),
+      'cabinet 2 medicine card'
+    );
+    card.click();
+    const action = await waitFor(
+      () => {
+        const panel = document.querySelector('.medicine-detail-panel');
+        const button = panel?.querySelector('.detail-action:not([disabled])');
+        return panel?.textContent.includes('${secondMedicine.name}') ? button : null;
+      },
+      'cabinet 2 manual dispense action'
+    );
+    action.click();
+    await waitFor(() => document.querySelector('.dispense-modal'), 'cabinet 2 dispense modal');
+    return true;
+  })()`);
+  await delay(250);
+  assert.equal(
+    deferredAudioStopResponses.length,
+    1,
+    "cabinet 1 close did not leave the controlled audio STOP pending"
+  );
+  assert.equal(
+    requests.audio.slice(secondModalAudioStart).some((entry) => entry.type === "speak"),
+    false,
+    "cabinet 2 speech started before cabinet 1's close STOP had completed"
+  );
+  const deferredAudioStop = deferredAudioStopResponses.shift();
+  await fulfillJson(deferredAudioStop.requestId, { ok: true, status: "complete" });
+  await waitForNodeState(
+    () => requests.audio.slice(secondModalAudioStart).some((entry) => entry.type === "speak"),
+    "first speech after cabinet 2 modal opens"
+  );
+  const firstSecondModalSpeech = requests.audio
+    .slice(secondModalAudioStart)
+    .find((entry) => entry.type === "speak");
+  assert.match(
+    firstSecondModalSpeech?.text || "",
+    new RegExp(`^${secondMedicine.name}，请`),
+    `cabinet 2 modal first played stale cabinet-light speech: ${firstSecondModalSpeech?.text || "<none>"}`
+  );
+  assert.doesNotMatch(
+    firstSecondModalSpeech?.text || "",
+    /指示灯已亮/,
+    "cabinet 2 modal must not begin with a cabinet-light completion announcement"
+  );
+  await delay(220);
+  const preIdentitySpeeches = requests.audio
+    .slice(secondModalAudioStart)
+    .filter((entry) => entry.type === "speak");
+  assert.equal(
+    preIdentitySpeeches.some((entry) => entry.text.includes("指示灯已亮")),
+    false,
+    `cabinet 2 modal announced cabinet illumination before identity confirmation: ${JSON.stringify(preIdentitySpeeches)}`
+  );
   await startFingerprintFlow();
   await waitForNodeState(() => requests.assess.length === 2, "cabinet 2 manual assessment");
   await waitForNodeState(() => requests.confirm.length === 2, "cabinet 2 automatic confirmation");
@@ -716,8 +796,18 @@ try {
     && entry.type === "speak"
     && entry.text.includes(secondCabinetLightSpeech)
   ));
+  const secondSessionTimeline = requestTimeline.slice(secondModalTimelineStart);
+  const secondConfirmTimelineIndex = secondSessionTimeline.findIndex((entry) => entry.type === "confirm");
+  const secondCabinetSpeechTimelineIndex = secondSessionTimeline.findIndex((entry) => (
+    entry.type === "speak" && entry.text.includes(secondCabinetLightSpeech)
+  ));
   assert.ok(secondGuidanceIndex > firstCabinetCloseStopIndex, "cabinet 2 identity page did not speak its own guidance");
   assert.ok(secondCabinetSpeechIndex > secondGuidanceIndex, "cabinet 2 collection speech did not follow its identity guidance");
+  assert.ok(secondConfirmTimelineIndex >= 0, "cabinet 2 collection speech has no preceding confirmation request");
+  assert.ok(
+    secondCabinetSpeechTimelineIndex > secondConfirmTimelineIndex,
+    "cabinet 2 collection speech started before the cabinet confirmation request"
+  );
   assert.equal(
     requests.audio[secondGuidanceIndex - 1]?.type,
     "stop",
