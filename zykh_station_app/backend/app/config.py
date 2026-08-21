@@ -111,6 +111,7 @@ class Settings:
         "on",
     }
     qsm_status_path: str = _env("QSM_STATUS_PATH", "/api/status")
+    qsm_safe_status_path: str = _env("QSM_SAFE_STATUS_PATH", "/api/audio/status")
     qsm_vitals_path: str = _env("QSM_VITALS_PATH", "/api/vitals/read")
     qsm_vitals_all_path: str = _env("QSM_VITALS_ALL_PATH", "/api/vitals/read_all")
     qsm_temp_path: str = _env("QSM_TEMP_PATH", "/api/vitals/temp/read")
@@ -177,7 +178,7 @@ class Settings:
     )
     network_host_tether_address: str = _env("NETWORK_HOST_TETHER_ADDRESS", "192.168.77.2")
     network_host_tether_gateway: str = _env("NETWORK_HOST_TETHER_GATEWAY", "192.168.77.1")
-    network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "false").strip().lower() in {
+    network_demo_simulate: bool = _env("NETWORK_DEMO_SIMULATE", "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -349,6 +350,10 @@ class Settings:
         "no",
         "off",
     }
+
+    @property
+    def qsm_gateway_health_path(self) -> str:
+        return self.qsm_safe_status_path if self.network_demo_simulate else self.qsm_status_path
 
 
 settings = Settings()

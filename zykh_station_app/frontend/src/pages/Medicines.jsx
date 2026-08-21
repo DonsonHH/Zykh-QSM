@@ -6,7 +6,7 @@ import { CabinetSlotMap } from "../components/CabinetSlotMap.jsx";
 import { DispenseConfirmModal } from "../components/DispenseConfirmModal.jsx";
 import { MedicineCard } from "../components/MedicineCard.jsx";
 import { MedicineDetailPanel } from "../components/MedicineDetailPanel.jsx";
-import { projectMedicinesToCabinets } from "../utils/cabinetV2.js";
+import { projectMedicinesToCabinets, sortMedicinesByDispenseCount } from "../utils/cabinetV2.js";
 import { normalizeCabinetLightMessage } from "../utils/cabinetLightPresentation.js";
 import { manualDispenseBlockReason } from "../utils/medicineSafety.js";
 
@@ -144,7 +144,7 @@ function VirtualMedicineGrid({ medicines, selectedMedicine, onSelect }) {
 
 export function Medicines({ notify, focus, onNavigate }) {
   const initialParams = new URLSearchParams(window.location.search);
-  const initialMedicineView = initialParams.get("medicineView") === "cabinet" ? "cabinet" : "list";
+  const initialMedicineView = initialParams.get("medicineView") === "list" ? "list" : "cabinet";
   const initialMedicineId = initialParams.get("medicineId");
   const [medicines, setMedicines] = useState([]);
   const [cabinets, setCabinets] = useState([]);
@@ -155,6 +155,7 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
   const [viewMode, setViewMode] = useState(initialMedicineView);
+  const [sortMode, setSortMode] = useState("usage_desc");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [detailMedicine, setDetailMedicine] = useState(null);
@@ -166,10 +167,13 @@ export function Medicines({ notify, focus, onNavigate }) {
       .then((data) => {
         const loadedCabinets = data.cabinets || [];
         const loadedMedicines = projectMedicinesToCabinets(data.medicines || [], loadedCabinets);
+        const sortedMedicines = sortMedicinesByDispenseCount(loadedMedicines);
         setCabinets(loadedCabinets);
         setMedicines(loadedMedicines);
         setSelectedMedicine(
-          loadedMedicines.find((medicine) => medicine.id === initialMedicineId) || loadedMedicines[0] || null
+          loadedMedicines.find((medicine) => medicine.id === initialMedicineId)
+            || (initialMedicineView === "list" ? sortedMedicines[0] : loadedMedicines[0])
+            || null
         );
         setLoading(false);
       })
@@ -190,8 +194,8 @@ export function Medicines({ notify, focus, onNavigate }) {
       setSelectedMedicine((current) => current?.id === projected.id ? projected : current);
       notify(
         updated.inventory_state === "DEPLETED"
-          ? `${projected.cabinet_id}号分类柜的${updated.name}已标记为缺药`
-          : `${projected.cabinet_id}号分类柜的${updated.name}库存已确认`
+          ? `${projected.cabinet_id}号柜的${updated.name}已标记为缺药`
+          : `${projected.cabinet_id}号柜的${updated.name}库存已确认`
       );
     };
     window.addEventListener("zykh:medicine-updated", updateInventory);
@@ -257,6 +261,8 @@ export function Medicines({ notify, focus, onNavigate }) {
   }, [selectedMedicine]);
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
+  const sortedMedicines = useMemo(() => sortMedicinesByDispenseCount(medicines), [medicines]);
+  const displayMedicines = sortMode === "usage_desc" ? sortedMedicines : medicines;
   const unassignedCount = useMemo(
     () => medicines.filter((medicine) => medicine.cabinet_unassigned || !medicine.cabinet_id).length,
     [medicines]
@@ -267,6 +273,19 @@ export function Medicines({ notify, focus, onNavigate }) {
     )).length,
     [cabinets, medicines]
   );
+
+  function selectViewMode(nextViewMode) {
+    setViewMode(nextViewMode);
+    if (nextViewMode === "list") {
+      setSelectedMedicine(displayMedicines[0] || null);
+    }
+  }
+
+  function selectSortMode(nextSortMode) {
+    setSortMode(nextSortMode);
+    const nextMedicines = nextSortMode === "usage_desc" ? sortedMedicines : medicines;
+    setSelectedMedicine(nextMedicines[0] || null);
+  }
 
   function openConfirm() {
     if (!detailMedicine) {
@@ -330,14 +349,14 @@ export function Medicines({ notify, focus, onNavigate }) {
               <button
                 type="button"
                 className={viewMode === "list" ? "active" : ""}
-                onClick={() => setViewMode("list")}
+                onClick={() => selectViewMode("list")}
               >
                 药品
               </button>
               <button
                 type="button"
                 className={viewMode === "cabinet" ? "active" : ""}
-                onClick={() => setViewMode("cabinet")}
+                onClick={() => selectViewMode("cabinet")}
               >
                 分类柜
               </button>
@@ -372,11 +391,24 @@ export function Medicines({ notify, focus, onNavigate }) {
             <small>{loadError}</small>
           </div>
         ) : viewMode === "list" ? (
-          <VirtualMedicineGrid
-            medicines={medicines}
-            selectedMedicine={selectedMedicine}
-            onSelect={setSelectedMedicine}
-          />
+          <div className="medicine-list-view">
+            <label className="medicine-sort-control">
+              <span>药品排序</span>
+              <select
+                className="medicine-sort-select"
+                value={sortMode}
+                onChange={(event) => selectSortMode(event.target.value)}
+              >
+                <option value="usage_desc">使用次数从高到低</option>
+                <option value="cabinet_order">默认柜位顺序</option>
+              </select>
+            </label>
+            <VirtualMedicineGrid
+              medicines={displayMedicines}
+              selectedMedicine={selectedMedicine}
+              onSelect={setSelectedMedicine}
+            />
+          </div>
         ) : (
           <CabinetSlotMap
             cabinets={cabinets}

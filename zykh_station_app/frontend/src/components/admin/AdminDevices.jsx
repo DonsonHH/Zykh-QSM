@@ -54,6 +54,7 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
     .join("、");
   const devices = overview?.devices || {};
   const network = overview?.network || {};
+  const networkSimulated = Boolean(networkSettings?.network_simulated ?? network.simulated);
   const rows = [
     ["外设网关", devices.gateway],
     ["摄像头", devices.camera],
@@ -105,13 +106,14 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
   }, [issuedPairing]);
 
   function updatePhysicalNetwork(key, enabled) {
-    const label = key === "wifi_enabled" ? "Wi-Fi" : "数据网络";
+    const simulated4gSetting = networkSimulated && key === "sim_enabled";
+    const label = key === "wifi_enabled" ? "Wi-Fi" : simulated4gSetting ? "临时 4G 展示状态" : "数据网络";
     setNetworkBusy(key);
     updateAdminNetwork({ [key]: enabled })
       .then((result) => {
         setNetworkSettings(result.settings || null);
         const warning = result.warnings?.[0];
-        notify(warning || `${label}已${enabled ? "开启" : "关闭"}`);
+        notify(warning || `${label}已${enabled ? "开启" : "关闭"}${simulated4gSetting ? "（仅保存本地设置）" : ""}`);
         onRefresh();
       })
       .catch((error) => {
@@ -160,7 +162,13 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
       <div className="admin-devices-layout">
         <div className="admin-device-column">
           <section className="admin-network-controls">
-            <header><Signal size={20} /><div><h3>物理网络</h3><p>真实控制主机 Wi-Fi 与 QSM 数据网络</p></div></header>
+            <header>
+              <Signal size={20} />
+              <div>
+                <h3>{networkSimulated ? "网络与临时 4G 展示" : "物理网络"}</h3>
+                <p>{networkSimulated ? "4G 开关仅保存本地展示状态，不连接或控制物理模块" : "真实控制主机 Wi-Fi 与 QSM 数据网络"}</p>
+              </div>
+            </header>
             <div className="admin-network-control-grid">
               <article>
                 <span className="admin-network-icon"><Wifi size={21} /></span>
@@ -169,8 +177,11 @@ export function AdminDevices({ overview, loading, onRefresh, notify, onSessionEx
               </article>
               <article>
                 <span className="admin-network-icon"><Signal size={21} /></span>
-                <div><strong>数据网络</strong><small>{networkSettings?.sim_connected ? networkSettings.sim_operator || "已连接" : network.sim_present ? "已检测 SIM" : "未连接"}</small></div>
-                <NetworkSwitch checked={Boolean(networkSettings?.sim_enabled)} busy={!networkSettings || networkBusy === "sim_enabled"} label="真实切换数据网络" onChange={(enabled) => updatePhysicalNetwork("sim_enabled", enabled)} />
+                <div>
+                  <strong>{networkSimulated ? "临时 4G 展示" : "数据网络"}</strong>
+                  <small>{networkSimulated ? (networkSettings?.sim_enabled ? "临时展示已开启" : "临时展示已关闭") : networkSettings?.sim_connected ? networkSettings.sim_operator || "已连接" : network.sim_present ? "已检测 SIM" : "未连接"}</small>
+                </div>
+                <NetworkSwitch checked={Boolean(networkSettings?.sim_enabled)} busy={!networkSettings || networkBusy === "sim_enabled"} label={networkSimulated ? "切换临时 4G 展示状态" : "真实切换数据网络"} onChange={(enabled) => updatePhysicalNetwork("sim_enabled", enabled)} />
               </article>
             </div>
           </section>

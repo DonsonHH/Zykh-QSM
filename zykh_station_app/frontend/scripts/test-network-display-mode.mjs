@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { getNetworkIndicators, isLocalNetworkMode } from "../src/utils/network.js";
+import {
+  DEFAULT_NETWORK_STATUS,
+  getNetworkIndicators,
+  isLocalNetworkMode
+} from "../src/utils/network.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const settingsPage = await readFile(`${root}src/pages/Settings.jsx`, "utf8");
@@ -66,6 +70,30 @@ assert.equal(qsmConnectedWithWifi.localMode, false);
 assert.equal(qsmConnectedWithWifi.sim.connected, true);
 assert.equal(qsmConnectedWithWifi.sim.bars, 4);
 
+const simulated4g = getNetworkIndicators(DEFAULT_NETWORK_STATUS);
+assert.equal(simulated4g.localMode, false);
+assert.equal(simulated4g.sim.enabled, true);
+assert.equal(simulated4g.sim.connected, true);
+assert.equal(simulated4g.sim.bars, 3);
+assert.equal(simulated4g.sim.tone, "good");
+assert.match(simulated4g.sim.label, /^4G 信号良好/);
+
+const app = await readFile(`${root}src/App.jsx`, "utf8");
+const launcher = await readFile(`${root}../scripts/launch_kiosk.sh`, "utf8");
+assert.match(app, /useState\(DEFAULT_NETWORK_STATUS\)/, "the top bar must start with the good 4G default");
+assert.equal(
+  (app.match(/loadNetworkStatus\(\)\.then\(updateNetworkStatus\)\.catch\(\(\) => undefined\)/g) || []).length,
+  2,
+  "initial and polling failures must preserve the initial default or last known network state"
+);
+assert.doesNotMatch(
+  app,
+  /catch\(\(\) => updateNetworkStatus\(DEFAULT_NETWORK_STATUS\)\)/,
+  "a transient failure must never overwrite a known real status with the simulated default"
+);
+assert.match(launcher, /KIOSK_INSTALL_QSM_TETHER:-0/, "kiosk must not install the 4G tether helper by default");
+assert.match(launcher, /KIOSK_QSM_TETHER:-0/, "kiosk must not start the physical 4G tether by default");
+
 assert.doesNotMatch(
   settingsPage,
   /wifi_enabled|sim_enabled|切换 Wi-Fi|切换数据网络/,
@@ -79,6 +107,31 @@ assert.doesNotMatch(
   "demo settings exposes internal implementation details"
 );
 assert.match(adminDevices, /updateAdminNetwork/, "device console is missing real network controls");
+assert.match(
+  adminDevices,
+  /const networkSimulated = Boolean\(networkSettings\?\.network_simulated \?\? network\.simulated\)/,
+  "device console does not use settings provenance with overview fallback"
+);
+assert.match(
+  adminDevices,
+  /networkSimulated \? "网络与临时 4G 展示" : "物理网络"/,
+  "simulated 4G is still presented as a physical network panel"
+);
+assert.match(
+  adminDevices,
+  /4G 开关仅保存本地展示状态，不连接或控制物理模块/,
+  "simulated 4G controls do not disclose their local-only behavior"
+);
+assert.match(
+  adminDevices,
+  /networkSimulated \? "切换临时 4G 展示状态" : "真实切换数据网络"/,
+  "the simulated 4G switch still claims to control the physical data network"
+);
+assert.match(
+  adminDevices,
+  /临时展示已开启|临时展示已关闭/,
+  "simulated 4G status still claims a physical connection"
+);
 assert.doesNotMatch(
   adminOverview,
   /问询模式|云端问询|本地问询/,

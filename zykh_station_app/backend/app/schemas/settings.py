@@ -7,6 +7,8 @@ class BasicSettings(BaseModel):
     wifi_enabled: bool
     sim_enabled: bool
     network_mode: str
+    network_simulated: bool = False
+    network_source: str = ""
     speaker_volume: int = Field(ge=0, le=255)
     microphone_volume: int = Field(ge=0, le=100)
     display_brightness: int = Field(ge=20, le=100)

@@ -119,7 +119,10 @@ class QsmCameraService:
 
     def capabilities(self) -> str:
         try:
-            with urlopen(Request(f"{self.base_url}{settings.qsm_status_path}", method="GET"), timeout=3) as response:
+            with urlopen(
+                Request(f"{self.base_url}{settings.qsm_gateway_health_path}", method="GET"),
+                timeout=3,
+            ) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return "available" if payload.get("ok", True) else "unavailable"
         except (HTTPError, URLError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError):

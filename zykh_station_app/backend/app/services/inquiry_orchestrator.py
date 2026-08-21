@@ -452,7 +452,7 @@ class InquiryOrchestrator:
             item_index = session.action_progress_index
             treatment_medicine = fresh_option.medicines[item_index]
             cabinet_text = (
-                f"{treatment_medicine.cabinet_id}号{treatment_medicine.cabinet_label or '分类柜'}"
+                f"{treatment_medicine.cabinet_id}号柜 · {treatment_medicine.cabinet_label or '分类柜'}"
                 if treatment_medicine.cabinet_id
                 else "对应分类柜"
             )
@@ -558,7 +558,7 @@ class InquiryOrchestrator:
                 status = "opening"
                 next_item = fresh_option.medicines[session.action_progress_index]
                 next_cabinet_text = (
-                    f"{next_item.cabinet_id}号{next_item.cabinet_label or '分类柜'}"
+                    f"{next_item.cabinet_id}号柜 · {next_item.cabinet_label or '分类柜'}"
                     if next_item.cabinet_id
                     else "对应分类柜"
                 )

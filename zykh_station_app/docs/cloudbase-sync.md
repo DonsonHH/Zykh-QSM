@@ -14,8 +14,8 @@ SQLite / QSM 外设
 
 ## 3.0 小程序投影与实体柜边界
 
-本轮只适配 Station 到现有 Zykh-Miniprogram 3.0 药库契约，不修改或部署
-`zykh_station_app/cloudbase/**`，也不修改小程序代码。Station 本地稳定
+本轮只修改 Station 的 3.0 药库出站投影，不修改或部署
+`zykh_station_app/cloudbase/**`，也不修改外部小程序代码。Station 本地稳定
 `Medicine.id` 与小程序 canonical `medicineId` 由
 `medicine_cloud_projection.py` 转换；溯源码、条码、药名、标签和实体柜号都不是
 药品身份。
@@ -28,26 +28,33 @@ QSM 实体柜使用独立的 9/8/6 映射：
 | 2 | 外用护理 | S10、S15、S16、S17、S18、S19、S20、S22 | 8 |
 | 3 | 慢病处方储备 | S02、S04、S06、S09、S14、S21 | 6 |
 
-小程序 `storageBox` 使用另一套 9/8/5/1 只读投影：
+Station 发出的 `storageBox` 使用同样的 9/8/6 三分类只读投影：
 
 | `storageBox` | 小程序名称 | canonical 兼容编号 | 数量 |
 | --- | --- | --- | --- |
 | `DAILY` | 日常高频内服 | 1、3、5、7、8、11、12、13、23 | 9 |
 | `CARE` | 外用消毒护理 | 10、15、16、17、18、19、20、22 | 8 |
-| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、14、21 | 5 |
-| `COLD` | 冷藏药品 | 9 | 1 |
+| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、9、14、21 | 6 |
 
-S09 双歧杆菌实体放在 3 号柜，但对外仍为 `storageBox=COLD`。本地 S03
-蒙脱石散上传为小程序 canonical `slot-13-montmorillonite` / 兼容编号 13；
+S09 双歧杆菌实体放在 3 号柜，对外也投影为 `storageBox=PRESCRIPTION`，无需
+单设 `COLD` 软件分类。本地 S03 蒙脱石散上传为小程序 canonical
+`slot-13-montmorillonite` / 兼容编号 13；
 本地 S13 布洛芬上传为 `slot-03-ibuprofen` / 兼容编号 3。反向命令执行相反
 转换，身份、编号或 `storageBox` 冲突时失败关闭。
 
-S09 的软件映射不是药品储存条件判定。现场必须核对当前实物包装；若要求冷藏，
-不得按该映射放入普通柜，应暂停该项现场取药并重新确认摆放方案。
+按本次确认的现场分类，S09 无需单设冷藏柜或冷藏软件分类。该软件映射不是通用
+储存建议；更换实物批次或包装时仍须核对其标签与说明书。
+
+当前外部 Zykh-Miniprogram `origin/main` 的固定目录仍把 S09 标为 `COLD`。
+本版本既未修改该仓库，也未部署小程序或 CloudBase，因此上述 9/8/6 只证明
+Station 出站负载；现有小程序可能继续显示旧分类，其 `COLD` 反向负载也会被新版
+Station 按目录冲突失败关闭。小程序须另行修改、验证和发布后，才能宣称端到端界面
+与 Station 一致。
 
 `cabinet_id` 永不上传，也不能从 `storageBox` 反推。目标 CloudBase 探针为
 `schemaRevision=3.0-three-box-library`、`medicineStorageBoxes=v1`；探针不匹配时
-停止 Station 上线，不得在本轮临时修改或部署 CloudBase。完整契约见
+停止 Station 上线，不得在本轮临时修改或部署 CloudBase。探针匹配也不能证明
+外部小程序已接受新的 S09 分类，仍须核对其固定目录 commit。完整契约见
 [`miniprogram-sync-contract.md`](miniprogram-sync-contract.md)。
 
 云端仍无开柜或远程亮灯命令。历史 `OPEN_CABINET` 继续失败关闭，

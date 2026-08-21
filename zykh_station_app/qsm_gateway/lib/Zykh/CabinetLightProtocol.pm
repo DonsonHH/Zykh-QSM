@@ -41,7 +41,7 @@ sub illuminate {
     my $ack = $self->_exchange($handle, $command);
     if (!$ack->{ok}) {
         close $handle;
-        return _after_command_failure($ack, "分类柜 $cabinet_id 亮灯指令");
+        return _after_command_failure($ack, "${cabinet_id}号柜亮灯指令");
     }
     if ($ack->{line} ne "OK CABINET $cabinet_id") {
         close $handle;
@@ -61,7 +61,7 @@ sub illuminate {
         retry_safe => JSON::PP::false,
         cabinet_id => $cabinet_id,
         status => "cabinet_$cabinet_id",
-        detail => "$cabinet_id 号分类柜指示灯已亮起，请用户自行打开亮灯的柜门取药。",
+        detail => "${cabinet_id}号柜指示灯已亮起，请用户自行打开亮灯的柜门取药。",
     };
 }
 
@@ -131,7 +131,7 @@ sub status {
             result => 'success',
             cabinet_id => $cabinet_id,
             status => "cabinet_$cabinet_id",
-            detail => "$cabinet_id 号分类柜指示灯当前亮起。",
+            detail => "${cabinet_id}号柜指示灯当前亮起。",
         };
     }
     return _failure(

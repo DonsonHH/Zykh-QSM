@@ -57,7 +57,7 @@ _MEDICINE_CLOUD_PROJECTIONS = (
     _projection("slot-06-lactulose", 6, "PRESCRIPTION"),
     _projection("slot-07-yinhuang", 7, "DAILY"),
     _projection("slot-08-huoxiang-zhengqi", 8, "DAILY"),
-    _projection("slot-09-bifid-triple", 9, "COLD"),
+    _projection("slot-09-bifid-triple", 9, "PRESCRIPTION"),
     _projection("slot-10-gauze", 10, "CARE"),
     _projection("slot-11-guilin-xiguashuang", 11, "DAILY"),
     _projection("slot-12-hydrotalcite", 12, "DAILY"),

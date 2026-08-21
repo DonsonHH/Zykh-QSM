@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, BadgeCheck, Camera, LoaderCircle, PackageCheck, Pill, ScanLine } from "lucide-react";
 import { loadQsmCapabilities, registerScannedMedicine, scanMedicine } from "../api/qsm.js";
 import { StrokeDrawIcon } from "../components/StrokeDrawIcon.jsx";
+import { describeMedicineCabinet } from "../utils/cabinetLightPresentation.js";
 
 const scanMode = "药品识别";
 
@@ -232,7 +233,7 @@ export function Scan({ notify, onNavigate }) {
                 <span>所属分类柜</span>
                 <strong>
                   {result.cabinet_id
-                    ? `${result.cabinet_id}号 · ${result.cabinet_label || "分类柜"}`
+                    ? describeMedicineCabinet(result)
                     : "待配置"}
                 </strong>
               </article>

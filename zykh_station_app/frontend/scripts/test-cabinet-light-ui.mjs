@@ -89,7 +89,15 @@ assert.ok(
 
 assert.equal(
   presentation.describeMedicineCabinet({ cabinet_id: 2, cabinet_label: "外用护理" }),
-  "2号分类柜 · 外用护理"
+  "2号柜 · 外用护理"
+);
+assert.equal(
+  presentation.normalizeCabinetLightMessage("2号分类柜指示灯已亮"),
+  "2号柜指示灯已亮"
+);
+assert.equal(
+  presentation.normalizeCabinetLightMessage("2 号分类柜指示灯当前亮起"),
+  "2号柜指示灯当前亮起"
 );
 assert.equal(
   presentation.describeMedicineCabinet({ hardware_slot: 13, slot: "13" }),

@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 
 import {
   groupMedicinesByCabinet,
-  projectMedicinesToCabinets
+  projectMedicinesToCabinets,
+  sortMedicinesByDispenseCount
 } from "../src/utils/cabinetV2.js";
+import { describeMedicineCabinet } from "../src/utils/cabinetLightPresentation.js";
 
 
 const cabinets = [
@@ -28,11 +30,11 @@ const cabinets = [
   }
 ];
 const medicines = [
-  { id: "slot-01-fufang-ganmaoling", name: "复方感冒灵颗粒", hardware_slot: 1, stock: 1 },
-  { id: "slot-13-ibuprofen", name: "布洛芬缓释胶囊", hardware_slot: 13, stock: 1 },
-  { id: "slot-18-budesonide-nasal", name: "布地奈德鼻喷雾剂", hardware_slot: 18, stock: 1 },
+  { id: "slot-01-fufang-ganmaoling", name: "复方感冒灵颗粒", hardware_slot: 1, stock: 1, dispense_count: 2 },
+  { id: "slot-13-ibuprofen", name: "布洛芬缓释胶囊", hardware_slot: 13, stock: 1, dispense_count: 8 },
+  { id: "slot-18-budesonide-nasal", name: "布地奈德鼻喷雾剂", hardware_slot: 18, stock: 1, dispense_count: 8 },
   { id: "slot-22-cotton-swab", name: "医用棉签", hardware_slot: 22, stock: 1 },
-  { id: "slot-09-bifid-triple", name: "双歧杆菌三联活菌肠溶胶囊", hardware_slot: 9, stock: 1 }
+  { id: "slot-09-bifid-triple", name: "双歧杆菌三联活菌肠溶胶囊", hardware_slot: 9, stock: 1, dispense_count: 3 }
 ];
 
 const projected = projectMedicinesToCabinets(medicines, cabinets);
@@ -65,13 +67,62 @@ assert.deepEqual(
   "unassigned legacy medicines remain visible to list views but are not routed to physical cabinets"
 );
 
+const originalOrder = projected.map((medicine) => medicine.id);
+assert.deepEqual(
+  sortMedicinesByDispenseCount(projected).map((medicine) => medicine.id),
+  [
+    "slot-13-ibuprofen",
+    "slot-18-budesonide-nasal",
+    "slot-09-bifid-triple",
+    "slot-01-fufang-ganmaoling",
+    "slot-22-cotton-swab"
+  ],
+  "medicine usage sorting must be descending, deterministic on slot ties, and keep missing counts last"
+);
+assert.deepEqual(
+  projected.map((medicine) => medicine.id),
+  originalOrder,
+  "usage sorting must not mutate the cabinet projection"
+);
+assert.equal(
+  describeMedicineCabinet(projected[0]),
+  "1号柜 · 日常用药",
+  "numbered cabinet copy must use the short N号柜 form"
+);
+
 const medicinesPage = await readFile(
   new URL("../src/pages/Medicines.jsx", import.meta.url),
   "utf8"
 );
+const cabinetSlotMap = await readFile(
+  new URL("../src/components/CabinetSlotMap.jsx", import.meta.url),
+  "utf8"
+);
+const medicineCard = await readFile(
+  new URL("../src/components/MedicineCard.jsx", import.meta.url),
+  "utf8"
+);
+const numberedCabinetSources = await Promise.all([
+  "../src/pages/Medicines.jsx",
+  "../src/pages/Scan.jsx",
+  "../src/components/MedicineCard.jsx",
+  "../src/components/MedicineDetailPanel.jsx",
+  "../src/components/CabinetSlotMap.jsx",
+  "../src/components/admin/AdminCabinet.jsx",
+  "../src/components/admin/AdminPlans.jsx"
+].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
 const adminCabinet = await readFile(
   new URL("../src/components/admin/AdminCabinet.jsx", import.meta.url),
   "utf8"
+);
+assert.match(
+  cabinetSlotMap,
+  /<h3[^>]*>\{cabinet\.id\}号柜 · \{cabinet\.label\}<\/h3>/,
+  "the default cabinet view must visibly identify every group as N号柜"
+);
+assert.ok(
+  adminCabinet.includes("<small>号柜</small>"),
+  "admin cabinet tabs must visibly use the same N号柜 wording"
 );
 assert.ok(
   medicinesPage.includes("medicine-cabinet-warning")
@@ -83,5 +134,40 @@ assert.ok(
     && adminCabinet.includes("种药品待配置分类柜"),
   "admin maintenance must show unassigned medicines instead of silently dropping them"
 );
+assert.match(
+  medicinesPage,
+  /initialMedicineView\s*=\s*initialParams\.get\("medicineView"\)\s*===\s*"list"\s*\?\s*"list"\s*:\s*"cabinet"/,
+  "the medicine page must default to the cabinet view unless list is explicitly requested"
+);
+assert.ok(
+  medicinesPage.includes("sortMedicinesByDispenseCount")
+    && medicinesPage.includes("medicine-sort-control")
+    && medicinesPage.includes("medicine-sort-select")
+    && medicinesPage.includes("使用次数从高到低"),
+  "the medicine list view must expose descending usage-count sorting"
+);
+assert.match(
+  medicinesPage,
+  /function selectViewMode[\s\S]*nextViewMode === "list"[\s\S]*setSelectedMedicine\(displayMedicines\[0\]/,
+  "switching to the medicine list must select its highest-usage first item"
+);
+assert.match(
+  medicinesPage,
+  /option value="usage_desc">使用次数从高到低<\/option>[\s\S]*option value="cabinet_order">默认柜位顺序<\/option>/,
+  "the medicine list must let users switch between usage and cabinet ordering"
+);
+assert.match(
+  medicineCard,
+  /medicine-use-count[\s\S]*dispense_count/,
+  "medicine cards must show their successful historical dispense count"
+);
+assert.doesNotMatch(
+  cabinetSlotMap,
+  /cabinet-light-label|号分类柜指示灯/,
+  "the cabinet view must not render a numbered classification-light badge"
+);
+for (const source of numberedCabinetSources) {
+  assert.doesNotMatch(source, /号分类柜/, "numbered cabinet copy must consistently use N号柜");
+}
 
 console.log("cabinet v2 projection contract: ok");

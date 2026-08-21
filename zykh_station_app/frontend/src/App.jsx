@@ -19,6 +19,7 @@ import { AdminConsole } from "./pages/AdminConsole.jsx";
 import { TouchKeyboard } from "./components/TouchKeyboard.jsx";
 import { useFaceIdentity } from "./hooks/useFaceIdentity.js";
 import { clearInquirySession } from "./utils/inquirySession.js";
+import { DEFAULT_NETWORK_STATUS } from "./utils/network.js";
 
 const primaryPageOrder = ["home", "medicines", "inquiry", "records"];
 const PAGE_ENTRY_CUE_WINDOW_MS = 360;
@@ -61,7 +62,7 @@ export function App() {
   const [settingsMounted, setSettingsMounted] = useState(initialPage === "settings");
   const [basicSettingsSnapshot, setBasicSettingsSnapshot] = useState(null);
   const [vitalsReturnPage, setVitalsReturnPage] = useState("home");
-  const [networkStatus, setNetworkStatus] = useState(null);
+  const [networkStatus, setNetworkStatus] = useState(DEFAULT_NETWORK_STATUS);
   const configuredIdleSeconds = Number(import.meta.env.VITE_IDLE_TIMEOUT_SECONDS || 90);
   const [idleSeconds, setIdleSeconds] = useState(Number.isFinite(configuredIdleSeconds) ? Math.max(0, configuredIdleSeconds) : 90);
   const toastTimerRef = useRef(null);
@@ -134,9 +135,9 @@ export function App() {
   }, [basicSettingsSnapshot, idle, page, settingsMounted]);
 
   useEffect(() => {
-    loadNetworkStatus().then(updateNetworkStatus).catch(() => updateNetworkStatus(null));
+    loadNetworkStatus().then(updateNetworkStatus).catch(() => undefined);
     const networkRefresh = window.setInterval(
-      () => loadNetworkStatus().then(updateNetworkStatus).catch(() => updateNetworkStatus(null)),
+      () => loadNetworkStatus().then(updateNetworkStatus).catch(() => undefined),
       15000
     );
     return () => {

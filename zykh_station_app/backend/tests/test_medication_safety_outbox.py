@@ -37,6 +37,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         payload: dict[str, object] | None = None,
         *,
         attempts: int = 0,
+        ready_at: datetime | None = None,
     ) -> str:
         payload = payload or {
             "event_id": event_id,
@@ -52,6 +53,11 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             separators=(",", ":"),
         )
         digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        ready_at_text = (
+            ready_at.strftime("%Y-%m-%d %H:%M:%S")
+            if ready_at is not None
+            else db.now_text()
+        )
         with db.connect() as conn:
             conn.execute(
                 """
@@ -66,8 +72,8 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
                     payload_json,
                     digest,
                     attempts,
-                    db.now_text(),
-                    db.now_text(),
+                    ready_at_text,
+                    ready_at_text,
                 ),
             )
         return digest
@@ -167,6 +173,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         self.assertEqual(row["status"], "sent")
 
     def test_retry_reuses_wire_payload_materialized_before_first_send(self) -> None:
+        now = [datetime(2040, 1, 1, 12, 0, 0)]
         self._insert_pending_event(
             "event-ibuprofen-retry-001",
             {
@@ -176,8 +183,8 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
                 "check_status": "BLOCKED",
                 "dispense_status": "NOT_APPLICABLE",
             },
+            ready_at=now[0],
         )
-        now = [datetime(2026, 8, 21, 12, 0, 0)]
         first_attempts: list[dict[str, object]] = []
 
         def failing_sender(_action: str, payload: dict[str, object]) -> None:
@@ -305,6 +312,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         projector.assert_not_called()
 
     def test_unknown_medicine_never_passes_through_or_materializes_on_retry(self) -> None:
+        now = [datetime(2040, 1, 1, 12, 0, 0)]
         self._insert_pending_event(
             "event-unknown-medicine-001",
             {
@@ -314,8 +322,8 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
                 "check_status": "BLOCKED",
                 "dispense_status": "NOT_APPLICABLE",
             },
+            ready_at=now[0],
         )
-        now = [datetime(2026, 8, 21, 12, 0, 0)]
         calls: list[dict[str, object]] = []
         outbox = MedicationSafetyOutbox(clock=lambda: now[0])
 

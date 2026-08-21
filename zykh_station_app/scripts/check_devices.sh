@@ -15,6 +15,7 @@ FINGERPRINT_DEVICE_PORT="${QSM_FINGERPRINT_FORWARD_DEVICE_PORT:-8086}"
 LOCAL_ASR_HOST_PORT="${QSM_LOCAL_ASR_FORWARD_HOST_PORT:-18084}"
 LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
+QSM_SAFE_STATUS_PATH="${QSM_SAFE_STATUS_PATH:-/api/audio/status}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
 QSM_VITALS_BASE_URL="${QSM_VITALS_BASE_URL:-http://127.0.0.1:${VITALS_HOST_PORT}}"
@@ -124,7 +125,7 @@ else
   warn "未找到 adb 命令；真实外设联调前请安装连接工具。"
 fi
 
-check_http "外设网关状态" "${QSM_BASE_URL}/api/status" 8 || true
+check_http "外设网关状态" "${QSM_BASE_URL}${QSM_SAFE_STATUS_PATH}" 8 || true
 check_http "人脸识别网关" "${QSM_FACE_BASE_URL}/api/face/status" 15 || true
 check_http "FF Camera 麦克风" "${QSM_MIC_BASE_URL}/api/audio/capture/status" 8 || true
 check_http "QSM 体征会话网关" "${QSM_VITALS_BASE_URL}/api/vitals/session/status?session_id=health" 5 || true

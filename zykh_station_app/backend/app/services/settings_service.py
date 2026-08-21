@@ -23,6 +23,8 @@ class SettingsService:
             wifi_enabled=wifi_enabled,
             sim_enabled=sim_enabled,
             network_mode=db.get_setting("network_mode", settings.network_preferred_mode) or "sim",
+            network_simulated=bool(network.get("simulated")),
+            network_source=str(network.get("source") or ""),
             speaker_volume=get_persisted_speaker_gain(),
             microphone_volume=self._int_setting("microphone_volume", 70, 0, 100),
             display_brightness=self._int_setting("display_brightness", 100, 20, 100),
@@ -111,6 +113,8 @@ class SettingsService:
 
     def _set_wifi(self, enabled: bool) -> str:
         if not enabled:
+            if settings.network_demo_simulate:
+                return "4G 当前为模拟状态，不能作为真实备用网络；Wi-Fi 保持开启。"
             if not self._bool_setting("sim_enabled", True):
                 return "请先开启数据网络；为避免失去连接，Wi-Fi 保持开启。"
             sim_result = NetworkService().start_4g()
@@ -131,6 +135,8 @@ class SettingsService:
 
     def _set_sim(self, enabled: bool) -> str:
         db.set_setting("sim_enabled", "true" if enabled else "false")
+        if settings.network_demo_simulate:
+            return ""
         if enabled:
             result = NetworkService().start_4g()
             return "" if result.get("ok") else str(result.get("message") or "SIM 网络启动失败，请检查外设连接。")

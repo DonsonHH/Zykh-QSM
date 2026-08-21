@@ -35,7 +35,7 @@ class MedicineCloudProjectionTest(unittest.TestCase):
         )
         self.assertEqual(
             Counter(item.storage_box for item in projections),
-            {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 5, "COLD": 1},
+            {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 6},
         )
         self.assertEqual(
             {
@@ -44,13 +44,12 @@ class MedicineCloudProjectionTest(unittest.TestCase):
                     for item in projections
                     if item.storage_box == storage_box
                 }
-                for storage_box in ("DAILY", "CARE", "PRESCRIPTION", "COLD")
+                for storage_box in ("DAILY", "CARE", "PRESCRIPTION")
             },
             {
                 "DAILY": {1, 3, 5, 7, 8, 11, 12, 13, 23},
                 "CARE": {10, 15, 16, 17, 18, 19, 20, 22},
-                "PRESCRIPTION": {2, 4, 6, 14, 21},
-                "COLD": {9},
+                "PRESCRIPTION": {2, 4, 6, 9, 14, 21},
             },
         )
 
@@ -58,7 +57,7 @@ class MedicineCloudProjectionTest(unittest.TestCase):
         probiotic = cloud_projection_for_local_medicine_id("slot-09-bifid-triple")
 
         self.assertEqual(cabinet_for_medicine_id(probiotic.local_medicine_id).id, 3)
-        self.assertEqual(probiotic.storage_box, "COLD")
+        self.assertEqual(probiotic.storage_box, "PRESCRIPTION")
         self.assertEqual(probiotic.cloud_medicine_id, "slot-09-bifid-triple")
 
     def test_projection_adapts_the_two_different_catalog_identities(self) -> None:

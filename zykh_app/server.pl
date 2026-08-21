@@ -481,7 +481,14 @@ sub api_status {
             uart  => [map { basename($_) } glob('/dev/ttyS*')],
             pwm   => [map { basename($_) } glob('/sys/class/pwm/pwmchip*')],
         },
-        network => qsm_network_status(),
+        # ZYKH_STATION_STATUS_NO_MODEM_PROBE_V1
+        # Generic health must remain side-effect free. EC200A AT, route and
+        # ping probes are available only through /api/network/status.
+        network => {
+            ok => JSON::PP::true,
+            network_probe => 'not_requested',
+            detail => '通用状态检查不探测 4G；请显式请求 /api/network/status。',
+        },
     };
 }
 

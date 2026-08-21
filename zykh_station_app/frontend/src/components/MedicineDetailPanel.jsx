@@ -1,6 +1,7 @@
 import React from "react";
 import { CalendarDays, ClipboardList, PackageOpen, ShieldAlert, Stethoscope } from "lucide-react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
+import { describeMedicineCabinet } from "../utils/cabinetLightPresentation.js";
 import {
   manualDispenseBlockHint,
   manualDispenseBlockReason,
@@ -33,7 +34,7 @@ export function MedicineDetailPanel({ medicine, onConfirm }) {
               {medicine.manufacturer ? <span className="detail-manufacturer">{medicine.manufacturer}</span> : null}
               <span className="detail-category">{medicine.category}</span>
               <span className="detail-slot">
-                {medicine.cabinet_id ? `${medicine.cabinet_id}号分类柜 · ${medicine.cabinet_label}` : "分类柜待配置"}
+                {medicine.cabinet_id ? describeMedicineCabinet(medicine) : "分类柜待配置"}
               </span>
             </p>
           </div>

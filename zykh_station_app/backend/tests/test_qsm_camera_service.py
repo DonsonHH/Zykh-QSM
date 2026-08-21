@@ -4,6 +4,7 @@ import sys
 import threading
 import tempfile
 import unittest
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -14,9 +15,47 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.qsm_camera_service import QsmCameraService  # noqa: E402
+from app.config import settings  # noqa: E402
 
 
 class QsmCameraServiceTest(unittest.TestCase):
+    def test_simulated_network_mode_uses_the_modem_free_health_route(self) -> None:
+        response = BytesIO(b'{"ok":true}')
+        with (
+            patch(
+                "app.services.qsm_camera_service.settings",
+                replace(settings, network_demo_simulate=True),
+            ),
+            patch(
+                "app.services.qsm_camera_service.urlopen",
+                return_value=response,
+            ) as mocked_open,
+        ):
+            status = QsmCameraService(base_url="http://qsm.invalid").capabilities()
+
+        request = mocked_open.call_args.args[0]
+        self.assertEqual(status, "available")
+        self.assertEqual(request.full_url, "http://qsm.invalid/api/audio/status")
+        self.assertNotIn("/api/status", request.full_url)
+
+    def test_physical_network_mode_can_use_the_full_gateway_status_route(self) -> None:
+        response = BytesIO(b'{"ok":true}')
+        with (
+            patch(
+                "app.services.qsm_camera_service.settings",
+                replace(settings, network_demo_simulate=False),
+            ),
+            patch(
+                "app.services.qsm_camera_service.urlopen",
+                return_value=response,
+            ) as mocked_open,
+        ):
+            status = QsmCameraService(base_url="http://qsm.invalid").capabilities()
+
+        request = mocked_open.call_args.args[0]
+        self.assertEqual(status, "available")
+        self.assertEqual(request.full_url, "http://qsm.invalid/api/status")
+
     def test_extract_latest_complete_jpeg_and_keep_partial_tail(self) -> None:
         first = b"\xff\xd8first\xff\xd9"
         second = b"\xff\xd8second\xff\xd9"

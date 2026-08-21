@@ -14,6 +14,28 @@ close $input;
 
 my $changed = 0;
 
+if ($source !~ /ZYKH_STATION_STATUS_NO_MODEM_PROBE_V1/
+        && $source =~ /sub\s+api_status\s*\{/) {
+    my ($status_block) = $source =~ /(sub\s+api_status\s*\{.*?)(?=sub\s+qsm_network_status\s*\{)/s;
+    die "Cannot isolate generic API status before the network probe\n"
+        unless defined $status_block;
+    my $patched_status = $status_block;
+    my $matches = () = $patched_status =~ /network\s*=>\s*qsm_network_status\(\)\s*,/g;
+    die "Expected exactly one modem probe in generic API status, found $matches\n"
+        unless $matches == 1;
+    my $replacement = <<'PERL';
+# ZYKH_STATION_STATUS_NO_MODEM_PROBE_V1
+        network => {
+            ok => JSON::PP::true,
+            network_probe => 'not_requested',
+            detail => 'Generic status does not probe 4G; request /api/network/status explicitly.',
+        },
+PERL
+    $patched_status =~ s/network\s*=>\s*qsm_network_status\(\)\s*,/$replacement/;
+    $source =~ s/\Q$status_block\E/$patched_status/;
+    $changed = 1;
+}
+
 if ($source !~ /ZYKH_STATION_CHILD_EMPTY_REQUEST_EXIT/) {
     my $pattern = qr{
         if\s*\(\s*!\$req\s*\)\s*\{\s*

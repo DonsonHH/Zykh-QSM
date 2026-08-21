@@ -1,5 +1,6 @@
 import React from "react";
 import { MedicineIcon } from "./MedicineIcon.jsx";
+import { describeMedicineCabinet } from "../utils/cabinetLightPresentation.js";
 
 export function MedicineCard({
   medicine,
@@ -37,12 +38,15 @@ export function MedicineCard({
       <span
         className="medicine-card-meta"
         aria-label={medicine.cabinet_id
-          ? `${medicine.cabinet_id}号分类柜 ${medicine.cabinet_label || ""}`
+          ? describeMedicineCabinet(medicine)
           : "分类柜待配置"}
       >
         <em className={medicine.cabinet_id ? "" : "unassigned"}>
-          <b>{medicine.cabinet_id || "待"}</b>
-          <small>{medicine.cabinet_id ? "号分类柜" : "配置分类柜"}</small>
+          <span className="medicine-cabinet-number">
+            <b>{medicine.cabinet_id || "待"}</b>
+            <small>{medicine.cabinet_id ? "号柜" : "配置分类柜"}</small>
+          </span>
+          <small className="medicine-use-count">历史取药 {Number(medicine.dispense_count) || 0} 次</small>
         </em>
       </span>
     </button>

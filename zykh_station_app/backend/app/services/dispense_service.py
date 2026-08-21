@@ -314,7 +314,7 @@ class DispenseService:
         message = (
             "本地测试记录已保存，未点亮分类柜指示灯。"
             if dry_run
-            else f"{cabinet.id}号{cabinet.label}指示灯已亮起，请自行打开亮灯的分类柜取药。"
+            else f"{cabinet.id}号柜 · {cabinet.label}的指示灯已亮起，请自行打开亮灯的分类柜取药。"
         )
         record = self._build_record(
             request,

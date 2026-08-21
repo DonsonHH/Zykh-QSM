@@ -16,10 +16,9 @@ export function CabinetSlotMap({ cabinets, medicines, selectedMedicine, onSelect
           <header className="cabinet-group-heading">
             <span className="cabinet-group-number" aria-hidden="true">{cabinet.id}</span>
             <div>
-              <h3 id={`cabinet-group-title-${cabinet.id}`}>{cabinet.label}</h3>
+              <h3 id={`cabinet-group-title-${cabinet.id}`}>{cabinet.id}号柜 · {cabinet.label}</h3>
               <p>{cabinet.description}</p>
             </div>
-            <span className="cabinet-light-label">{cabinet.id}号分类柜指示灯</span>
           </header>
           <div className="cabinet-medicine-list">
             {cabinet.medicines.map((medicine) => {
@@ -30,7 +29,7 @@ export function CabinetSlotMap({ cabinets, medicines, selectedMedicine, onSelect
                   type="button"
                   className={`cabinet-medicine ${selected ? "selected" : ""} ${medicine.stock > 0 ? "" : "depleted"}`}
                   aria-pressed={selected}
-                  aria-label={`${cabinet.id}号分类柜 ${cabinet.label}，${medicine.name}`}
+                  aria-label={`${cabinet.id}号柜 ${cabinet.label}，${medicine.name}`}
                   onClick={() => onSelect(medicine)}
                 >
                   <strong>{medicine.name}</strong>

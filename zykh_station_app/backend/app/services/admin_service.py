@@ -60,7 +60,7 @@ class AdminService:
                 ),
                 "pending_sync": int(conn.execute("SELECT pending_count FROM sync_state WHERE id=1").fetchone()["pending_count"]),
             }
-        gateway_url = f"{settings.qsm_api_base}{settings.qsm_status_path}"
+        gateway_url = f"{settings.qsm_api_base}{settings.qsm_gateway_health_path}"
         status_urls = {
             "face": f"{settings.qsm_face_api_base}{settings.qsm_face_status_path}",
             "fingerprint": f"{settings.qsm_fingerprint_api_base}{settings.qsm_fingerprint_status_path}",
@@ -118,6 +118,24 @@ class AdminService:
             changed.append(f"wifi={'on' if wifi_enabled else 'off'}")
         if sim_enabled is not None:
             changed.append(f"sim={'on' if sim_enabled else 'off'}")
+        response_settings = getattr(response, "settings", None)
+        network_simulated = bool(getattr(response_settings, "network_simulated", False))
+        if network_simulated and sim_enabled is not None:
+            if wifi_enabled is not None:
+                self.audit(
+                    "network.update",
+                    "physical-network",
+                    "success" if not response.warnings else "warning",
+                    f"wifi={'on' if wifi_enabled else 'off'}",
+                )
+            source = str(getattr(response_settings, "network_source", "") or "simulation")
+            self.audit(
+                "network.update",
+                "network-presentation",
+                "recorded",
+                f"sim-display={'on' if sim_enabled else 'off'}, local-setting-only, source={source}",
+            )
+            return response
         self.audit(
             "network.update",
             "physical-network",

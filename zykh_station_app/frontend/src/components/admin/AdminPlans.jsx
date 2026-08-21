@@ -6,6 +6,7 @@ import {
   loadAdminTodayPlans,
   updateAdminTodayPlan
 } from "../../api/admin.js";
+import { describeMedicineCabinet } from "../../utils/cabinetLightPresentation.js";
 import { AdminConfirmDialog } from "./AdminConfirmDialog.jsx";
 
 const todayText = () => new Date().toLocaleDateString("sv-SE");
@@ -154,7 +155,7 @@ export function AdminPlans({ notify, onSessionExpired }) {
                   </fieldset>
                 ) : null}
                 <label className="span-two"><span>服务对象</span><select value={form.service_user_id} onChange={(event) => setForm({ ...form, service_user_id: event.target.value })}>{data.users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.age || "年龄未填"}</option>)}</select></label>
-                <label className="span-two"><span>分类柜药品</span><select value={form.medicine_id} onChange={(event) => setForm({ ...form, medicine_id: event.target.value })}>{data.medicines.map((medicine) => <option key={medicine.id} value={medicine.id}>{medicine.cabinet_id ? `${medicine.cabinet_id}号分类柜 · ` : ""}{medicine.name}</option>)}</select></label>
+                <label className="span-two"><span>分类柜药品</span><select value={form.medicine_id} onChange={(event) => setForm({ ...form, medicine_id: event.target.value })}>{data.medicines.map((medicine) => <option key={medicine.id} value={medicine.id}>{medicine.cabinet_id ? `${describeMedicineCabinet(medicine)} · ` : ""}{medicine.name}</option>)}</select></label>
                 <label className="span-two"><span>单次用量</span><input value={form.dose} maxLength={40} onChange={(event) => setForm({ ...form, dose: event.target.value })} /></label>
               </div>
               <footer className="admin-editor-actions">

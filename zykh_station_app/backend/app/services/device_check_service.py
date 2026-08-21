@@ -81,7 +81,7 @@ class DeviceCheckService:
             recommendations.append("请检查 /dev/ttyACM0、115200 串口协议及 QSM 分类柜网关。")
         elif cabinet_light_status.startswith("cabinet_"):
             active_id = cabinet_light_cabinet_id or cabinet_light_status.removeprefix("cabinet_")
-            warnings.append(f"{active_id}号分类柜指示灯仍亮着。")
+            warnings.append(f"{active_id}号柜指示灯仍亮着。")
             recommendations.append("请确认现场取药完成并执行 OFF，待三个分类柜均熄灭后再继续。")
         if not recommendations:
             recommendations.append("系统检查通过，可以继续真实外设流程。")

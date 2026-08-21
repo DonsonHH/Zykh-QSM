@@ -1257,6 +1257,39 @@ a:focus-visible {
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
 }
 
+.medicine-list-view {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.medicine-sort-control {
+  justify-self: end;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  background: #eef5ff;
+  color: #2457a7;
+  padding: 5px 11px;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.medicine-sort-select {
+  min-height: 28px;
+  border: 1px solid rgba(36, 87, 167, 0.24);
+  border-radius: 9px;
+  background: #fff;
+  color: #173f7a;
+  padding: 3px 28px 3px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
 .category-tabs {
   min-width: 0;
   display: grid;
@@ -1422,29 +1455,6 @@ a:focus-visible {
   font-size: 13px;
   line-height: 1.28;
   font-weight: 750;
-}
-
-.cabinet-light-label {
-  grid-column: 1 / -1;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  background: #e7f0ff;
-  color: #2457a7;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.cabinet-group-2 .cabinet-light-label {
-  background: #e1f7f0;
-  color: #087c68;
-}
-
-.cabinet-group-3 .cabinet-light-label {
-  background: #f1eafa;
-  color: #6d46a8;
 }
 
 .cabinet-medicine-list {
@@ -1638,14 +1648,21 @@ a:focus-visible {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   border-radius: 16px;
   background: white;
   color: var(--primary);
-  padding: 8px 7px;
+  padding: 5px 6px;
   text-align: center;
   font-style: normal;
   font-weight: 850;
+}
+
+.medicine-cabinet-number {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
 }
 
 .medicine-card-meta em.unassigned {
@@ -1664,6 +1681,12 @@ a:focus-visible {
   font-size: 10px;
   line-height: 1;
   font-weight: 900;
+}
+
+.medicine-card-meta .medicine-use-count {
+  color: #53647a;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .medicine-detail-panel {

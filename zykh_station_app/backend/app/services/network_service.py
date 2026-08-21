@@ -24,6 +24,15 @@ class NetworkService:
 
     def status(self) -> dict[str, object]:
         preferred = db.get_setting("network_mode", settings.network_preferred_mode).strip().lower() or "sim"
+        route = PresentationModePolicy.resolve(preferred)
+        presentation = {
+            "display_mode": route.display_mode,
+            "realtime_sync_enabled": route.realtime_sync_enabled,
+            "ai_mode": route.ai_mode,
+        }
+        if settings.network_demo_simulate:
+            return self._simulated_4g_status(presentation)
+
         interface = settings.network_sim_interface
         sim_ip = self._interface_ipv4(interface)
         default_iface = self._default_interface()
@@ -56,12 +65,6 @@ class NetworkService:
         local_label = "本地模式"
         sim_enabled = self._bool_setting("sim_enabled", True)
         sim_identity = self._sim_identity(qsm_network, qsm_at)
-        route = PresentationModePolicy.resolve(preferred)
-        presentation = {
-            "display_mode": route.display_mode,
-            "realtime_sync_enabled": route.realtime_sync_enabled,
-            "ai_mode": route.ai_mode,
-        }
 
         if wifi["wifi_connected"]:
             return {
@@ -203,6 +206,49 @@ class NetworkService:
             "warnings": ["未检测到可用 SIM 出口。"],
         }
 
+    def _simulated_4g_status(self, presentation: dict[str, object]) -> dict[str, object]:
+        sim_enabled = self._bool_setting("sim_enabled", True)
+        connected = bool(sim_enabled)
+        return {
+            "ok": True,
+            "mode": "sim",
+            "transport": "sim",
+            "status": "good" if connected else "offline",
+            "signal": "good" if connected else "none",
+            "label": "4G 已连接" if connected else "4G 未连接",
+            "sim_interface": settings.network_sim_interface,
+            "sim_ip": "",
+            "default_interface": "",
+            "wifi_connected": False,
+            "wifi_signal": "none",
+            "wifi_ssid": "",
+            "wifi_interface": "",
+            "wifi_signal_dbm": None,
+            "wifi_signal_percent": 0,
+            "wifi_signal_bars": 0,
+            "wifi_signal_level": "none",
+            "sim_present": True,
+            "sim_connected": connected,
+            "qsm_sim_connected": False,
+            "host_tether_ready": False,
+            "sim_signal": "good" if connected else "none",
+            "sim_enabled": sim_enabled,
+            "sim_operator": "",
+            "sim_operator_code": "",
+            "sim_phone_number": "",
+            "sim_signal_csq": None,
+            "sim_signal_dbm": None,
+            "sim_signal_percent": 0,
+            "sim_signal_bars": 3 if connected else 0,
+            "sim_signal_level": "good" if connected else "none",
+            "sim_signal_sample": "simulated",
+            "sim_signal_sample_age_seconds": 0,
+            "simulated": True,
+            "source": "simulation",
+            **presentation,
+            "warnings": [],
+        }
+
     def set_mode(self, mode: str) -> dict[str, object]:
         normalized = (mode or "").strip().lower()
         if normalized not in {"sim", "local", "offline"}:
@@ -302,6 +348,16 @@ class NetworkService:
             return phone_number
 
     def start_4g(self) -> dict[str, object]:
+        if settings.network_demo_simulate:
+            status = self.status()
+            return {
+                "ok": True,
+                "message": "4G 模拟状态已启用，未连接物理模块。",
+                "raw": {"ok": True, "simulated": True},
+                "tether": {"ok": True, "simulated": True},
+                "network": status,
+            }
+
         result = QsmClient().start_4g_network()
         tether = self._prepare_host_tether() if result.get("ok") else {
             "ok": False,

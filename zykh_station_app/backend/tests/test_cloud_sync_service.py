@@ -510,6 +510,54 @@ class CloudSyncServiceTest(unittest.TestCase):
             all(row["persona_generation"] == "senior-demo-v1" for row in device_summary["serviceUsers"])
         )
 
+    def test_device_report_marks_simulation_without_claiming_a_physical_signal(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        with patch(
+            "app.services.network_service.NetworkService.status",
+            return_value={
+                "mode": "sim",
+                "transport": "sim",
+                "signal": "good",
+                "simulated": True,
+                "source": "simulation",
+            },
+        ):
+            worker.run_once()
+
+        report = next(
+            payload
+            for action, payload in worker.calls
+            if action == "REPORT_DEVICE"
+        )
+        self.assertEqual(report["network"], "sim")
+        self.assertEqual(report["signal"], "none")
+        self.assertIs(report["networkSimulated"], True)
+        self.assertEqual(report["networkSource"], "simulation")
+
+    def test_device_report_preserves_a_measured_physical_signal(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        with patch(
+            "app.services.network_service.NetworkService.status",
+            return_value={
+                "mode": "wifi",
+                "transport": "wifi",
+                "signal": "good",
+                "simulated": False,
+                "source": "host",
+            },
+        ):
+            worker.run_once()
+
+        report = next(
+            payload
+            for action, payload in worker.calls
+            if action == "REPORT_DEVICE"
+        )
+        self.assertEqual(report["network"], "wifi")
+        self.assertEqual(report["signal"], "good")
+        self.assertIs(report["networkSimulated"], False)
+        self.assertEqual(report["networkSource"], "host")
+
     def test_v2_capability_flushes_safety_outbox_outside_snapshot_finalize(self) -> None:
         payload = {
             "event_id": "event-sync-001",
@@ -1184,7 +1232,7 @@ class CloudSyncServiceTest(unittest.TestCase):
             self.assertEqual(row["storageBox"], row["storage_box"])
             counts[row["storageBox"]] = counts.get(row["storageBox"], 0) + 1
 
-        self.assertEqual(counts, {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 5, "COLD": 1})
+        self.assertEqual(counts, {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 6})
 
     def test_snapshot_rejects_an_unmapped_historical_medicine(self) -> None:
         MedicineRepository().list_all()
@@ -1286,7 +1334,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                 {
                     "operation": "patch",
                     "slot": 9,
-                    "storageBox": "PRESCRIPTION",
+                    "storageBox": "COLD",
                     "patch": {"spec": "不应写入"},
                 }
             )

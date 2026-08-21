@@ -16,6 +16,7 @@ LOCAL_ASR_DEVICE_PORT="${QSM_LOCAL_ASR_FORWARD_DEVICE_PORT:-6006}"
 AUDIO_STREAM_HOST_PORT="${QSM_AUDIO_STREAM_HOST_PORT:-19001}"
 AUDIO_STREAM_DEVICE_PORT="${QSM_AUDIO_STREAM_DEVICE_PORT:-19001}"
 QSM_BASE_URL="${QSM_BASE_URL:-http://127.0.0.1:${HOST_PORT}}"
+QSM_SAFE_STATUS_PATH="${QSM_SAFE_STATUS_PATH:-/api/audio/status}"
 QSM_FACE_BASE_URL="${QSM_FACE_BASE_URL:-http://127.0.0.1:${FACE_HOST_PORT}}"
 QSM_MIC_BASE_URL="${QSM_MIC_BASE_URL:-http://127.0.0.1:${AUDIO_HOST_PORT}}"
 QSM_VITALS_BASE_URL="${QSM_VITALS_BASE_URL:-http://127.0.0.1:${VITALS_HOST_PORT}}"
@@ -41,7 +42,7 @@ warn() {
 }
 
 gateway_ready() {
-  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "$QSM_BASE_URL/api/status" >/dev/null 2>&1
+  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 "${QSM_BASE_URL}${QSM_SAFE_STATUS_PATH}" >/dev/null 2>&1
 }
 
 face_ready() {

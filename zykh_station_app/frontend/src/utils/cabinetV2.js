@@ -27,6 +27,25 @@ export function projectMedicinesToCabinets(medicines, cabinets) {
   });
 }
 
+export function sortMedicinesByDispenseCount(medicines) {
+  return (medicines || [])
+    .map((medicine, index) => ({ medicine, index }))
+    .sort((left, right) => {
+      const leftCount = Number(left.medicine.dispense_count) || 0;
+      const rightCount = Number(right.medicine.dispense_count) || 0;
+      if (leftCount !== rightCount) return rightCount - leftCount;
+
+      const leftSlot = Number(left.medicine.hardware_slot);
+      const rightSlot = Number(right.medicine.hardware_slot);
+      const leftHasSlot = Number.isFinite(leftSlot);
+      const rightHasSlot = Number.isFinite(rightSlot);
+      if (leftHasSlot && rightHasSlot && leftSlot !== rightSlot) return leftSlot - rightSlot;
+      if (leftHasSlot !== rightHasSlot) return leftHasSlot ? -1 : 1;
+      return left.index - right.index;
+    })
+    .map(({ medicine }) => medicine);
+}
+
 export function groupMedicinesByCabinet(medicines, cabinets) {
   return (cabinets || []).map((cabinet) => ({
     ...cabinet,

@@ -188,6 +188,77 @@ def install_fake_cabinet_protocol(root: Path) -> Path:
 
 
 class StationGatewayPatchTest(unittest.TestCase):
+    def test_generic_status_patch_is_idempotent_and_never_executes_the_at_helper(self) -> None:
+        source = r'''#!/usr/bin/env perl
+use strict;
+use warnings;
+use JSON::PP qw(encode_json);
+# ZYKH_STATION_CHILD_EMPTY_REQUEST_EXIT
+# ZYKH_STATION_CAMERA_STREAM_IDLE_EXIT
+# ZYKH_STATION_AUDIO_STOP_ALL_V2
+# ZYKH_STATION_QSM_TTS
+# ZYKH_STATION_TTS_PROCESS_GROUP
+# ZYKH_STATION_TTS_CANCEL_HELPER
+# ZYKH_STATION_RELEASE_CANCELS_TTS
+# ZYKH_STATION_TTS_CANCEL_RESULT
+# ZYKH_STATION_DISPENSE_OPERATION_IDEMPOTENCY_V1
+# ZYKH_STATION_DISPENSE_OPERATION_DURABLE_V2
+# ZYKH_STATION_DISPENSE_HARDWARE_SEAM_V2
+# ZYKH_STATION_CABINET_LIGHT_PROTOCOL_V3
+# ZYKH_STATION_CABINET_LIGHT_ROUTES_V3
+
+sub api_status {
+    return {
+        ok => JSON::PP::true,
+        network => qsm_network_status(),
+    };
+}
+
+sub qsm_network_status {
+    return { at => read_ec200a_at_status() };
+}
+
+sub read_ec200a_at_status {
+    die "EC200A AT helper must not run from generic status\n";
+}
+
+if (@ARGV && $ARGV[0] eq '--exercise-status') {
+    print encode_json(api_status());
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = Path(directory) / "server.pl"
+            gateway.write_text(source, encoding="utf-8")
+
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            first = gateway.read_text(encoding="utf-8")
+            status = subprocess.run(
+                ["perl", str(gateway), "--exercise-status"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["perl", str(PATCHER), str(gateway)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            second = gateway.read_text(encoding="utf-8")
+
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn('"network_probe":"not_requested"', status.stdout)
+        self.assertNotIn("EC200A AT helper", status.stderr)
+        self.assertIn("ZYKH_STATION_STATUS_NO_MODEM_PROBE_V1", first)
+        self.assertIn("sub qsm_network_status", first)
+        self.assertIn("read_ec200a_at_status()", first)
+        self.assertEqual(first, second)
+
     def test_empty_request_exits_child_instead_of_reentering_accept_loop(self) -> None:
         source = """#!/usr/bin/env perl
 use strict;

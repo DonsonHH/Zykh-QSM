@@ -1,3 +1,28 @@
+export const DEFAULT_NETWORK_STATUS = Object.freeze({
+  ok: true,
+  mode: "sim",
+  transport: "sim",
+  status: "good",
+  signal: "good",
+  label: "4G 已连接",
+  display_mode: "online",
+  realtime_sync_enabled: true,
+  ai_mode: "cloud",
+  wifi_connected: false,
+  wifi_signal: "none",
+  wifi_signal_bars: 0,
+  sim_enabled: true,
+  sim_present: true,
+  sim_connected: true,
+  qsm_sim_connected: false,
+  host_tether_ready: false,
+  sim_signal: "good",
+  sim_signal_bars: 3,
+  sim_signal_level: "good",
+  simulated: true,
+  source: "simulation"
+});
+
 export function isLocalNetworkMode(networkStatus) {
   const displayMode = String(networkStatus?.display_mode || "").toLowerCase();
   if (displayMode) return displayMode === "local";
@@ -74,7 +99,7 @@ export function getNetworkIndicators(networkStatus) {
       bars: simBars,
       dbm: simDbm,
       percent: simPercent,
-      label: signalLabel("SIM", simConnected, simBars, simDbm, simPercent)
+      label: signalLabel("4G", simConnected, simBars, simDbm, simPercent)
     }
   };
 }
@@ -113,7 +138,7 @@ export function localNetworkCopy(networkStatus) {
   }
 
   return {
-    title: networkStatus?.transport === "wifi" ? "WiFi" : "SIM",
+    title: networkStatus?.transport === "wifi" ? "WiFi" : "4G",
     status: networkStatus?.label || "联网状态",
     detail: "保持当前联网状态。"
   };

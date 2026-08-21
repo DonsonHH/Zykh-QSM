@@ -109,6 +109,10 @@ class CabinetLightProtocolTest(unittest.TestCase):
         self.assertEqual(result["result"], "success")
         self.assertEqual(result["cabinet_id"], 2)
         self.assertEqual(result["status"], "cabinet_2")
+        self.assertEqual(
+            result["detail"],
+            "2号柜指示灯已亮起，请用户自行打开亮灯的柜门取药。",
+        )
         self.assertEqual(controller.commands, ["CABINET 2", "STATUS"])
 
     def test_wrong_ack_is_result_unknown_and_never_claims_success(self) -> None:
@@ -126,6 +130,21 @@ class CabinetLightProtocolTest(unittest.TestCase):
         self.assertTrue(result["result_unknown"])
         self.assertFalse(result["retry_safe"])
         self.assertEqual(controller.commands, ["CABINET 3"])
+
+    def test_illuminate_command_failure_uses_numbered_cabinet_wording(self) -> None:
+        master_fd, slave_fd = os.openpty()
+        slave_name = os.ttyname(slave_fd)
+        try:
+            with CabinetController(master_fd, {"CABINET 2": ""}) as controller:
+                result = self.run_protocol("illuminate", slave_name, 2)
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("2号柜亮灯指令", result["detail"])
+        self.assertNotIn("分类柜 2", result["detail"])
+        self.assertEqual(controller.commands, ["CABINET 2"])
 
     def test_off_requires_off_ack_and_status_confirmation(self) -> None:
         master_fd, slave_fd = os.openpty()
@@ -174,6 +193,7 @@ class CabinetLightProtocolTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "cabinet_1")
         self.assertEqual(result["cabinet_id"], 1)
+        self.assertEqual(result["detail"], "1号柜指示灯当前亮起。")
         self.assertEqual(controller.commands, ["STATUS"])
 
     def test_status_works_when_gateway_ignores_sigchld(self) -> None:

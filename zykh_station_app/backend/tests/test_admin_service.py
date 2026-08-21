@@ -87,7 +87,10 @@ class AdminServiceTest(unittest.TestCase):
         self.assertEqual(result["network"]["mode"], "wifi")
 
     def test_protected_network_control_forwards_only_physical_switches_and_audits(self) -> None:
-        response = SimpleNamespace(warnings=[])
+        response = SimpleNamespace(
+            warnings=[],
+            settings=SimpleNamespace(network_simulated=False, network_source="host"),
+        )
         with patch(
             "app.services.admin_service.SettingsService.update",
             return_value=response,
@@ -102,7 +105,34 @@ class AdminServiceTest(unittest.TestCase):
         self.assertFalse(request.wifi_enabled)
         self.assertTrue(request.sim_enabled)
         self.assertIsNone(request.network_mode)
-        self.assertEqual(AdminService().recent_audit(1)[0].action, "network.update")
+        record = AdminService().recent_audit(1)[0]
+        self.assertEqual(record.action, "network.update")
+        self.assertEqual(record.target, "physical-network")
+        self.assertEqual(record.result, "success")
+        self.assertEqual(record.detail, "wifi=off, sim=on")
+
+    def test_simulated_4g_update_is_audited_as_local_presentation_state(self) -> None:
+        response = SimpleNamespace(
+            warnings=[],
+            settings=SimpleNamespace(
+                network_simulated=True,
+                network_source="simulation",
+            ),
+        )
+        with patch(
+            "app.services.admin_service.SettingsService.update",
+            return_value=response,
+        ):
+            AdminService().update_network_settings(sim_enabled=False)
+
+        record = AdminService().recent_audit(1)[0]
+        self.assertEqual(record.action, "network.update")
+        self.assertEqual(record.target, "network-presentation")
+        self.assertEqual(record.result, "recorded")
+        self.assertEqual(
+            record.detail,
+            "sim-display=off, local-setting-only, source=simulation",
+        )
 
     def test_restart_action_uses_only_configured_server_command(self) -> None:
         configured = SimpleNamespace(

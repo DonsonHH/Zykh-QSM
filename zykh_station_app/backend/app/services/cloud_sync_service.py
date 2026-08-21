@@ -142,12 +142,19 @@ class CloudSyncWorker:
             from .network_service import NetworkService
 
             network_status = NetworkService().status()
+            network_simulated = bool(network_status.get("simulated"))
             self._request(
                 "REPORT_DEVICE",
                 {
                     "online": True,
                     "network": str(network_status.get("transport") or network_status.get("mode") or "local"),
-                    "signal": str(network_status.get("signal") or "none"),
+                    "signal": (
+                        "none"
+                        if network_simulated
+                        else str(network_status.get("signal") or "none")
+                    ),
+                    "networkSimulated": network_simulated,
+                    "networkSource": str(network_status.get("source") or "unknown"),
                     "cloudAgent": "zykh_station_app",
                     "localApi": "http://127.0.0.1:8000",
                     "board": "智药康护终端",

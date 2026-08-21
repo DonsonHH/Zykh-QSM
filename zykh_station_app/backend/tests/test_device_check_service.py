@@ -94,7 +94,7 @@ class DeviceCheckServiceTest(unittest.TestCase):
 
         self.assertFalse(result.cabinet_light_ok)
         self.assertEqual(result.cabinet_light_cabinet_id, 2)
-        self.assertIn("2号分类柜指示灯仍亮着。", result.warnings)
+        self.assertIn("2号柜指示灯仍亮着。", result.warnings)
 
 
 if __name__ == "__main__":

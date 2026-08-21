@@ -40,7 +40,7 @@ class QsmCabinetLightRoutesTest(unittest.TestCase):
             "result": "success",
             "status": "cabinet_3",
             "cabinet_id": 3,
-            "detail": "3 号分类柜指示灯当前亮起。",
+            "detail": "3号柜指示灯当前亮起。",
         }
         with patch("app.routers.qsm.QsmClient", return_value=client):
             response = qsm_cabinet_light_status()
@@ -48,6 +48,7 @@ class QsmCabinetLightRoutesTest(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.status, "cabinet_3")
         self.assertEqual(response.cabinet_id, 3)
+        self.assertEqual(response.message, "3号柜指示灯当前亮起。")
         client.cabinet_light_status.assert_called_once_with()
 
 

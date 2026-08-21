@@ -155,7 +155,7 @@ export function AdminCabinet({ notify, onSessionExpired }) {
                   className={cabinet.id === selectedCabinetId ? "active" : ""}
                   onClick={() => selectCabinet(cabinet.id)}
                 >
-                  <strong>{cabinet.id}<small>号</small></strong>
+                  <strong>{cabinet.id}<small>号柜</small></strong>
                   <span>{cabinet.label}</span>
                   <em>{medicineCount} 种药品</em>
                 </button>
@@ -182,7 +182,7 @@ export function AdminCabinet({ notify, onSessionExpired }) {
               </div>
             </div>
           ) : null}
-          <div className="admin-cabinet-medicine-list" role="listbox" aria-label={`${selectedCabinetId}号分类柜药品`}>
+          <div className="admin-cabinet-medicine-list" role="listbox" aria-label={`${selectedCabinetId}号柜药品`}>
             {cabinetMedicines.map((medicine) => (
               <button
                 key={medicine.id}
@@ -201,7 +201,7 @@ export function AdminCabinet({ notify, onSessionExpired }) {
         </section>
         <section className="admin-editor-panel cabinet-editor-panel">
           <header>
-            <div><h3>{selected ? (selected.cabinet_unassigned ? "分类柜待配置" : describeMedicineCabinet(selected)) : `${selectedCabinetId}号分类柜`}</h3><span>{selected ? selected.id : "请选择药品"}</span></div>
+            <div><h3>{selected ? (selected.cabinet_unassigned ? "分类柜待配置" : describeMedicineCabinet(selected)) : `${selectedCabinetId}号柜`}</h3><span>{selected ? selected.id : "请选择药品"}</span></div>
             <Package size={21} aria-hidden="true" />
           </header>
           {selected ? (

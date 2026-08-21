@@ -552,7 +552,7 @@ find_browser() {
 install_qsm_tether_helper_if_needed() {
   helper="/usr/local/sbin/zykh-qsm-tether"
   installer="$ROOT_DIR/scripts/install_qsm_tether_helper.sh"
-  if [ -x "$helper" ] || [ "${KIOSK_INSTALL_QSM_TETHER:-1}" != "1" ]; then
+  if [ -x "$helper" ] || [ "${KIOSK_INSTALL_QSM_TETHER:-0}" != "1" ]; then
     return 0
   fi
   if [ ! -f "$installer" ]; then
@@ -572,7 +572,7 @@ install_qsm_tether_helper_if_needed() {
 }
 
 prepare_sim_fallback() {
-  if [ "${KIOSK_QSM_TETHER:-1}" != "1" ]; then
+  if [ "${KIOSK_QSM_TETHER:-0}" != "1" ]; then
     return 0
   fi
 

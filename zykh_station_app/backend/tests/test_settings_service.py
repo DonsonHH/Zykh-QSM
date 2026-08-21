@@ -60,6 +60,22 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertEqual(result.settings.sim_operator, "中国移动")
         self.assertEqual(result.settings.sim_phone_number, "13800138000")
 
+    def test_get_exposes_simulated_network_provenance_to_admin_clients(self) -> None:
+        service = SettingsService()
+
+        with (
+            patch.object(service, "_wifi_radio_enabled", return_value=True),
+            patch.object(service, "_microphone_available", return_value=True),
+            patch(
+                "app.services.settings_service.NetworkService.status",
+                return_value={"simulated": True, "source": "simulation"},
+            ),
+        ):
+            payload = service.get().model_dump()["settings"]
+
+        self.assertIs(payload["network_simulated"], True)
+        self.assertEqual(payload["network_source"], "simulation")
+
     def test_update_saves_values_and_invokes_fixed_controls(self) -> None:
         service = SettingsService()
         request = BasicSettingsUpdateRequest(
@@ -188,10 +204,31 @@ class SettingsServiceTest(unittest.TestCase):
         self.assertIn("Wi-Fi 保持开启", warning)
         run.assert_not_called()
 
+    def test_wifi_stays_on_when_4g_is_only_simulated(self) -> None:
+        service = SettingsService()
+        with (
+            patch(
+                "app.services.settings_service.settings",
+                SimpleNamespace(network_demo_simulate=True),
+            ),
+            patch("app.services.settings_service.NetworkService.start_4g") as start_4g,
+            patch.object(service, "_run") as run,
+        ):
+            warning = service._set_wifi(False)
+
+        self.assertIn("4G 当前为模拟状态", warning)
+        self.assertIn("Wi-Fi 保持开启", warning)
+        start_4g.assert_not_called()
+        run.assert_not_called()
+
     def test_wifi_can_turn_off_after_sim_backup_is_ready(self) -> None:
         service = SettingsService()
         command_result = SimpleNamespace(returncode=0, stdout="", stderr="")
         with (
+            patch(
+                "app.services.settings_service.settings",
+                SimpleNamespace(network_demo_simulate=False),
+            ),
             patch.object(service, "_bool_setting", return_value=True),
             patch("app.services.settings_service.NetworkService.start_4g", return_value={"ok": True}),
             patch.object(service, "_run", return_value=command_result) as run,
@@ -211,6 +248,7 @@ class SettingsServiceTest(unittest.TestCase):
                 SimpleNamespace(
                     network_keep_sim_transport_when_hidden=True,
                     network_preferred_mode="sim",
+                    network_demo_simulate=False,
                 ),
             ),
             patch("app.services.settings_service.NetworkService.disable_host_tether", return_value={"ok": True}) as disable,
@@ -223,6 +261,27 @@ class SettingsServiceTest(unittest.TestCase):
         disable.assert_called_once_with()
         run.assert_called_once()
 
+    def test_simulated_sim_switch_only_persists_state_without_hardware_access(self) -> None:
+        service = SettingsService()
+        with (
+            patch(
+                "app.services.settings_service.settings",
+                SimpleNamespace(network_demo_simulate=True),
+            ),
+            patch("app.services.settings_service.NetworkService.start_4g") as start_4g,
+            patch("app.services.settings_service.NetworkService.disable_host_tether") as disable_tether,
+            patch.object(service, "_run") as run,
+        ):
+            enabled_warning = service._set_sim(True)
+            disabled_warning = service._set_sim(False)
+
+        self.assertEqual(enabled_warning, "")
+        self.assertEqual(disabled_warning, "")
+        self.assertEqual(db.get_setting("sim_enabled"), "false")
+        start_4g.assert_not_called()
+        disable_tether.assert_not_called()
+        run.assert_not_called()
+
     def test_wifi_stays_on_when_real_sim_control_is_disabled(self) -> None:
         service = SettingsService()
         db.set_setting("sim_enabled", "false")
@@ -234,6 +293,7 @@ class SettingsServiceTest(unittest.TestCase):
                 SimpleNamespace(
                     network_keep_sim_transport_when_hidden=True,
                     network_preferred_mode="sim",
+                    network_demo_simulate=False,
                 ),
             ),
             patch(
@@ -253,6 +313,10 @@ class SettingsServiceTest(unittest.TestCase):
         db.set_setting("network_mode", "local")
         service = NetworkService()
         with (
+            patch(
+                "app.services.network_service.settings",
+                SimpleNamespace(network_demo_simulate=False),
+            ),
             patch("app.services.network_service.QsmClient.start_4g_network", return_value={"ok": True}),
             patch.object(service, "_prepare_host_tether", return_value={"ok": True, "message": "ready"}),
             patch.object(service, "status", return_value={"display_mode": "local"}),

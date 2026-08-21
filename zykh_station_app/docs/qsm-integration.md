@@ -48,6 +48,7 @@ QSM_VITALS_SESSION_START_PATH=/api/vitals/session/start
 QSM_VITALS_SESSION_STATUS_PATH=/api/vitals/session/status
 QSM_VITALS_SESSION_CANCEL_PATH=/api/vitals/session/cancel
 QSM_STATUS_PATH=/api/status
+QSM_SAFE_STATUS_PATH=/api/audio/status
 QSM_VITALS_ALL_PATH=/api/vitals/read_all
 QSM_VITALS_PATH=/api/vitals/read
 QSM_TEMP_PATH=/api/vitals/temp/read
@@ -318,7 +319,9 @@ The FF Camera microphone is captured on QSM by the dedicated port `8082` gateway
 
 The speaker has two serialized playback paths behind `SpeechService`. Online Qwen realtime TTS writes 24 kHz PCM deltas to board port `19001` as they arrive. Local presentation mode calls QSM `/api/audio/speak`, where the board-local Sherpa-ONNX VITS model synthesizes and plays the utterance. Cloud synthesis failures use the same QSM fallback. Normal kiosk startup stops the retired board language-model process to reserve memory for ASR, TTS and peripherals.
 
-WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes from the QSM EC200A `AT+CSQ` response and is converted to dBm, percentage and 0-4 bars. The top bar therefore reflects each live link independently instead of assuming full signal.
+In v2.0.1, `NETWORK_DEMO_SIMULATE=true` is the temporary default. Host status, startup and device checks use the side-effect-free `QSM_SAFE_STATUS_PATH`; the generic board `/api/status` no longer performs EC200A, route or ping probes. The UI deliberately shows a three-bar good 4G presentation with `simulated=true`, while WiFi cannot be disabled against that simulated backup. Set the flag to false before using the dedicated network endpoints below.
+
+In real-network mode, WiFi strength comes from the host `iw ... link` dBm value. SIM strength comes from the QSM EC200A `AT+CSQ` response and is converted to dBm, percentage and 0-4 bars. The top bar therefore reflects each live link independently instead of assuming full signal.
 
 The host SIM fallback is a routed USB link rather than an ADB-forwarded HTTP request. QSM `usb0` is the EC200A WAN, QSM `usb1` is the RNDIS link to host `usb0`, and `qsm_gateway/start_host_tether.sh` enables forwarding and NAT. The root-owned host helper assigns `192.168.77.2/24` and a metric-700 default route through `192.168.77.1`; WiFi remains the preferred lower-metric route. Install the helper once with `sudo sh scripts/install_qsm_tether_helper.sh`. Settings refuses to disable WiFi when this route cannot be verified.
 

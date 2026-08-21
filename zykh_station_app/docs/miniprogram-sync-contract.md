@@ -2,9 +2,8 @@
 
 ## 状态与变更边界
 
-本轮 Station 对接目标是 Zykh-Miniprogram 的 CloudBase schema revision
-`3.0-three-box-library`，药库能力为 `medicineStorageBoxes=v1`。本轮只修改
-Zykh-QSM 的板端传输适配和本地实体柜目录：
+本轮 Station 继续要求 CloudBase schema revision `3.0-three-box-library` 和药库
+能力 `medicineStorageBoxes=v1`，但只修改 Zykh-QSM 的板端传输投影与当前说明：
 
 - 不修改或部署 `zykh_station_app/cloudbase/**`；
 - 不修改或发布 Zykh-Miniprogram 仓库；
@@ -13,7 +12,9 @@ Zykh-QSM 的板端传输适配和本地实体柜目录：
 
 发布前必须只读记录线上 `PING`、小程序 commit 和 QSM commit。若线上 revision
 或能力与本契约不一致，停止 Station 同步适配上线，不得临时改 CloudBase 或小程序
-绕过差异。
+绕过差异。当前外部 Zykh-Miniprogram `origin/main` 仍把 S09 固定为 `COLD`；
+`PING` 能力名称无法证明其目录已经更新。本轮不修改或发布该仓库，因此新的 S09
+板端投影与现有小程序之间存在已知差异，不能宣称小程序界面已经同步。
 
 ## 实体分类柜：9/8/6
 
@@ -28,23 +29,26 @@ Zykh-QSM 的板端传输适配和本地实体柜目录：
 
 实体 3 号柜包含 S09 双歧杆菌三联活菌肠溶胶囊。这是现场摆放与 QSM
 `CABINET 3` 亮灯的权威映射；实体柜目录只由 `cabinet_v2_catalog.py` 维护。
-该软件映射不替代实物储存说明；若当前包装要求冷藏，现场不得放入普通柜，必须
-暂停该项取药并重新确认映射。
+按本次确认的现场分类，S09 无需单设冷藏柜；该软件映射不是通用储存建议，
+更换实物批次或包装时仍须核对其标签与说明书。
 
-## 小程序药库投影：9/8/5/1
+## Station 药库出站投影：9/8/6
 
-小程序的 `storageBox` 是家庭药库显示分类，不是实体柜控制字段：
+Station 发出的 `storageBox` 是家庭药库显示分类，不是实体柜控制字段：
 
 | `storageBox` | 小程序名称 | 小程序 canonical 兼容编号 | 数量 |
 | --- | --- | --- | --- |
 | `DAILY` | 日常高频内服 | 1、3、5、7、8、11、12、13、23 | 9 |
 | `CARE` | 外用消毒护理 | 10、15、16、17、18、19、20、22 | 8 |
-| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、14、21 | 5 |
-| `COLD` | 冷藏药品 | 9 | 1 |
+| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、9、14、21 | 6 |
 
-因此 S09 虽然实体放在 3 号柜，上传时仍必须是 `storageBox=COLD`。小程序把它
-单独显示为冷藏药品，不计入三个普通药柜；Station 不得根据 `COLD` 改变现场
-`cabinet_id=3`，小程序也不能根据实体柜编号覆盖 `COLD`。
+S09 实体放在 3 号柜，Station 上传时也必须是 `storageBox=PRESCRIPTION`；板端
+不再生成 `COLD` 分类。实体 `cabinet_id=3` 仍不上传，也不能从 `storageBox`
+反推出物理控制目标。
+
+外部小程序当前固定目录仍把 S09 单独显示为 `COLD`。这是未在本轮修改的跨仓
+兼容差异，不是 Station 继续发送旧分类的理由。现有小程序在独立更新与发布前可能
+继续显示旧值；携带 `storageBox=COLD` 的反向药品负载会被新版 Station 失败关闭。
 
 ## Canonical 药品身份适配
 
@@ -120,8 +124,8 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 测试必须证明：
 
 - 23 种药品在实体柜中恰好出现一次，数量为 9/8/6；
-- 云投影中恰好出现一次，数量为 9/8/5/1；
-- S09 实体为柜 3、云投影为 `COLD`；
+- Station 出站投影中恰好出现一次，数量为 9/8/6，且不包含 `COLD`；
+- S09 实体为柜 3、Station 出站投影为 `PRESCRIPTION`；
 - S03/S13 快照和反向命令都按 canonical 身份正确转换；
 - 冲突身份、编号或 `storageBox` 失败关闭。
 
@@ -129,10 +133,12 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 
 1. 线上 `PING` 应为目标 `schemaRevision=3.0-three-box-library`，并包含
    `medicineStorageBoxes=v1`；不满足时停止，不部署 QSM 仓库中的 CloudBase。
-2. 用 fake adapter 检查完整快照为 `DAILY=9`、`CARE=8`、
-   `PRESCRIPTION=5`、`COLD=1`，且没有 `cabinet_id`。
-3. 小程序药库应显示三个普通药柜 22 种药品和单独的 1 种冷藏药品；逐项核对
-   S03 蒙脱石、S13 布洛芬和 S09 双歧杆菌。
+   即使探针匹配，也必须单独核对小程序固定目录 commit。
+2. 用 fake adapter 检查 Station 完整快照为 `DAILY=9`、`CARE=8`、
+   `PRESCRIPTION=6`，不含 `COLD` 或 `cabinet_id`。
+3. 记录当前外部小程序仍把 S09 固定为 `COLD` 的已知差异，不把板端测试写成
+   “小程序已经显示三柜”。待小程序另行改为 S09=`PRESCRIPTION` 并发布后，再逐项
+   验收 S03 蒙脱石、S13 布洛芬和 S09 双歧杆菌的真实界面。
 4. 确认小程序不存在 23 仓、远程开柜、远程点灯、自动出药或替用户确认余量的入口。
 
 ### 4. 现场取药
@@ -145,7 +151,7 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 
 ## 回滚原则
 
-本轮没有修改 CloudBase 或小程序，因此代码回滚只回滚 Station 适配与本地实体柜
-目录。若已产生真实余量或安全事件，先停止同步并保留 SQLite、CloudBase 导出与日志，
-不得把程序回滚扩展为删除业务数据。实体映射验收失败时停止现场取药；云投影验收失败
-时停止同步，二者都不得通过改 `storageBox`、药名或旧编号绕过目录。
+本轮没有修改 CloudBase 或小程序，因此代码回滚只回滚 Station 投影。若已产生真实
+余量或安全事件，先停止同步并保留 SQLite、CloudBase 导出与日志，不得把程序回滚
+扩展为删除业务数据。实体映射验收失败时停止现场取药；Station 与外部小程序目录尚未
+完成独立兼容验收时停止端到端同步，不能通过改药名、旧编号或谎报小程序 UI 绕过差异。

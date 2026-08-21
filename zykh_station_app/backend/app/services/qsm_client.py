@@ -117,12 +117,20 @@ class QsmClient:
         if self.mode != "real":
             return self._mock_status()
 
-        payload, error = self._request_json(settings.qsm_status_path, timeout=settings.qsm_timeout_seconds)
+        safe_health_check = settings.network_demo_simulate
+        payload, error = self._request_json(
+            settings.qsm_gateway_health_path,
+            timeout=settings.qsm_timeout_seconds,
+        )
         if error:
             return self._real_unavailable(error)
 
         connected = bool(payload.get("ok", True))
-        devices = self.get_device_status(payload)
+        # Older board gateways include EC200A probing in /api/status. During
+        # temporary 4G presentation simulation, use the side-effect-free audio
+        # health route and avoid inferring unrelated device availability from
+        # its payload.
+        devices = self.get_device_status() if safe_health_check else self.get_device_status(payload)
         vitals = self._unavailable_vitals()
         vitals_status = devices.get("vitals", "available" if connected else "unavailable")
         camera_status = str(devices.get("camera", "reserved"))
@@ -143,7 +151,13 @@ class QsmClient:
             status_label=device_status,
             vitals=vitals,
             devices=devices,
-            detail="外设网关已响应" if connected else "外设网关返回不可用状态",
+            detail=(
+                "外设网关已通过安全健康接口响应"
+                if safe_health_check and connected
+                else "外设网关已响应"
+                if connected
+                else "外设网关返回不可用状态"
+            ),
         )
 
     def read_vitals(self) -> dict[str, Any]:
