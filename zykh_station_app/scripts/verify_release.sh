@@ -44,6 +44,7 @@ node --test "$APP_DIR/cloudbase/miniprogram/test-sync-contract.cjs"
 
 printf 'CHECK shell lifecycle contracts\n'
 bash "$APP_DIR/scripts/tests/test_launch_kiosk_cleanup.sh"
+bash "$APP_DIR/scripts/tests/test_launch_kiosk_backend_supervision.sh"
 bash "$APP_DIR/scripts/tests/test_start_frontend_production.sh"
 
 printf 'CHECK perl syntax\n'

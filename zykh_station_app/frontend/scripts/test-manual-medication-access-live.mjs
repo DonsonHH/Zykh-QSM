@@ -69,6 +69,28 @@ const medicine = {
   review_fingerprint: "review-fingerprint-slot-13",
   dispense_count: 2
 };
+const secondMedicine = {
+  ...medicine,
+  id: "slot-17-iodophor",
+  slot: "17",
+  hardware_slot: 17,
+  cabinet_id: 2,
+  cabinet_label: "外用护理",
+  barcode: "6901234567019",
+  manufacturer: "康护制药",
+  name: "碘伏消毒液",
+  category: "消毒护理",
+  spec: "100毫升",
+  tags: ["皮肤消毒", "伤口护理"],
+  aliases: ["碘伏"],
+  active_ingredients: ["聚维酮碘"],
+  indications: "用于皮肤和浅表伤口消毒",
+  contraindications: [],
+  structured_contraindications: [],
+  safety_note: "仅供外用",
+  review_fingerprint: "review-fingerprint-slot-17",
+  dispense_count: 1
+};
 const registeredUser = {
   id: "wang-nainai",
   name: "王奶奶",
@@ -100,7 +122,8 @@ const requests = {
   inventory: [],
   legacyConfirm: [],
   directDispense: [],
-  lightOff: []
+  lightOff: [],
+  audio: []
 };
 const requestOrder = [];
 let assessmentMode = "blocked";
@@ -166,9 +189,9 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/medicines") {
     payload = {
       ok: true,
-      total: 1,
-      warehouse_total: 3,
-      categories: [medicine.category],
+      total: 2,
+      warehouse_total: 6,
+      categories: [medicine.category, secondMedicine.category],
       cabinets: [{
         id: 1,
         label: "日常用药",
@@ -178,17 +201,19 @@ async function fulfillApiRequest({ requestId, request }) {
         id: 2,
         label: "外用护理",
         description: "消毒、伤口、皮肤、鼻部与局部疼痛护理",
-        medicine_ids: []
+        medicine_ids: [secondMedicine.id]
       }, {
         id: 3,
         label: "慢病处方储备",
         description: "慢病固定用药、处方药与低频储备用药",
         medicine_ids: []
       }],
-      medicines: [medicine]
+      medicines: [medicine, secondMedicine]
     };
-  } else if (url.pathname === `/api/medicines/${medicine.id}`) {
-    payload = { ok: true, medicine };
+  } else if ([medicine, secondMedicine].some((item) => url.pathname === `/api/medicines/${item.id}`)) {
+    const requestedMedicine = [medicine, secondMedicine]
+      .find((item) => url.pathname === `/api/medicines/${item.id}`);
+    payload = { ok: true, medicine: requestedMedicine };
   } else if (url.pathname === "/api/fingerprint/identify") {
     payload = {
       ok: true,
@@ -288,16 +313,19 @@ async function fulfillApiRequest({ requestId, request }) {
   } else if (url.pathname === "/api/dispense") {
     requests.directDispense.push(jsonBody(request));
     payload = { ok: false, message: "隔离测试禁止直接开柜" };
-  } else if (url.pathname === `/api/medicines/${medicine.id}/inventory-confirmation`) {
+  } else if ([medicine, secondMedicine]
+    .some((item) => url.pathname === `/api/medicines/${item.id}/inventory-confirmation`)) {
+    const requestedMedicine = [medicine, secondMedicine]
+      .find((item) => url.pathname === `/api/medicines/${item.id}/inventory-confirmation`);
     const inventoryRequest = jsonBody(request);
     requests.inventory.push(inventoryRequest);
     requestOrder.push("inventory");
     const depleted = inventoryRequest.observation === "DEPLETED";
     const inventoryPayload = {
       ok: true,
-      medicine_id: medicine.id,
+      medicine_id: requestedMedicine.id,
       inventory_state: depleted ? "DEPLETED" : "AVAILABLE",
-      stock: depleted ? 0 : medicine.stock,
+      stock: depleted ? 0 : requestedMedicine.stock,
       inventory_confirmed_at: "2026-08-20 10:00:00"
     };
     if (deferNextInventoryResponse) {
@@ -315,7 +343,11 @@ async function fulfillApiRequest({ requestId, request }) {
       return;
     }
     payload = { ok: true, result: "off", message: "分类柜指示灯已关闭" };
-  } else if (["/api/audio/speak", "/api/audio/stream/stop"].includes(url.pathname)) {
+  } else if (url.pathname === "/api/audio/speak") {
+    requests.audio.push({ type: "speak", text: String(jsonBody(request).text || "") });
+    payload = { ok: true, status: "complete" };
+  } else if (url.pathname === "/api/audio/stream/stop") {
+    requests.audio.push({ type: "stop", text: "" });
     payload = { ok: true, status: "complete" };
   }
   await fulfillJson(requestId, payload);
@@ -609,6 +641,11 @@ try {
   assert.match(inventoryView.text, /分类柜内还有药吗？/);
   assert.doesNotMatch(inventoryView.actions.join(" "), /确认取药并亮灯|我已取药，关闭指示灯/);
   assert.equal(requests.lightOff.length, 0, "cabinet light must remain on while the inventory page is visible");
+  const firstCabinetLightSpeech = `${medicine.name}所在的1号柜指示灯已亮`;
+  await waitForNodeState(
+    () => requests.audio.some((entry) => entry.type === "speak" && entry.text.includes(firstCabinetLightSpeech)),
+    "cabinet 1 collection speech"
+  );
   await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
     .find((button) => button.textContent.includes('还有药'))).click()`);
   await waitForNodeState(() => requests.inventory.length === 1, "inventory observation after medicine collection");
@@ -636,6 +673,93 @@ try {
     "dispense modal closing only after OFF is confirmed"
   );
   assert.deepEqual(requestOrder, ["assess", "confirm", "inventory", "off", "off"]);
+  const firstCabinetSpeechIndex = requests.audio.findIndex(
+    (entry) => entry.type === "speak" && entry.text.includes(firstCabinetLightSpeech)
+  );
+  await waitForNodeState(
+    () => requests.audio.some((entry, index) => index > firstCabinetSpeechIndex && entry.type === "stop"),
+    "audio stop after cabinet 1 session closes"
+  );
+  const firstCabinetCloseStopIndex = requests.audio.findIndex(
+    (entry, index) => index > firstCabinetSpeechIndex && entry.type === "stop"
+  );
+
+  await cdp("Page.navigate", {
+    url: `${baseUrl}?page=medicines&awake=1&touchKeyboard=0&medicineId=${secondMedicine.id}&dispenseModal=1&scenario=second-cabinet-speech`
+  });
+  await startFingerprintFlow();
+  await waitForNodeState(() => requests.assess.length === 2, "cabinet 2 manual assessment");
+  await waitForNodeState(() => requests.confirm.length === 2, "cabinet 2 automatic confirmation");
+  await waitForNodeState(async () => {
+    const text = await evaluate(`document.querySelector('.dispense-modal')?.innerText || ''`);
+    return text.includes("分类柜内还有药吗？");
+  }, "cabinet 2 inventory confirmation page");
+  const secondCabinetLightSpeech = `${secondMedicine.name}所在的2号柜指示灯已亮`;
+  await waitForNodeState(
+    () => requests.audio.some((entry, index) => (
+      index > firstCabinetCloseStopIndex
+      && entry.type === "speak"
+      && entry.text.includes(secondCabinetLightSpeech)
+    )),
+    "cabinet 2 collection speech"
+  );
+
+  const secondSessionAudio = requests.audio.slice(firstCabinetCloseStopIndex + 1);
+  const secondGuidanceIndex = requests.audio.findIndex((entry, index) => (
+    index > firstCabinetCloseStopIndex
+    && entry.type === "speak"
+    && entry.text.includes(secondMedicine.name)
+    && entry.text.includes("请将手指平放在指纹传感器上")
+  ));
+  const secondCabinetSpeechIndex = requests.audio.findIndex((entry, index) => (
+    index > firstCabinetCloseStopIndex
+    && entry.type === "speak"
+    && entry.text.includes(secondCabinetLightSpeech)
+  ));
+  assert.ok(secondGuidanceIndex > firstCabinetCloseStopIndex, "cabinet 2 identity page did not speak its own guidance");
+  assert.ok(secondCabinetSpeechIndex > secondGuidanceIndex, "cabinet 2 collection speech did not follow its identity guidance");
+  assert.equal(
+    requests.audio[secondGuidanceIndex - 1]?.type,
+    "stop",
+    "cabinet 2 identity guidance did not wait for an audio stop boundary"
+  );
+  assert.equal(
+    requests.audio[secondCabinetSpeechIndex - 1]?.type,
+    "stop",
+    "cabinet 2 collection guidance did not stop the identity-page speech first"
+  );
+  assert.equal(
+    secondSessionAudio.some((entry) => entry.type === "speak" && entry.text.includes(firstCabinetLightSpeech)),
+    false,
+    "cabinet 2 session replayed cabinet 1's stale cabinet-light speech"
+  );
+
+  await evaluate(`([...document.querySelectorAll('.dispense-modal button')]
+    .find((button) => button.textContent.includes('还有药'))).click()`);
+  await waitForNodeState(() => requests.inventory.length === 2, "cabinet 2 inventory observation");
+  await waitForNodeState(() => requests.lightOff.length === 3, "cabinet 2 automatic cabinet light OFF");
+  await waitForNodeState(
+    async () => evaluate(`!document.querySelector('.dispense-modal')`),
+    "cabinet 2 modal closing after cabinet light OFF"
+  );
+  await waitForNodeState(
+    () => requests.audio.some((entry, index) => index > secondCabinetSpeechIndex && entry.type === "stop"),
+    "audio stop after cabinet 2 session closes"
+  );
+  const secondCabinetCloseStopIndex = requests.audio.findIndex(
+    (entry, index) => index > secondCabinetSpeechIndex && entry.type === "stop"
+  );
+  assert.deepEqual(
+    [
+      requests.audio[firstCabinetSpeechIndex]?.type,
+      requests.audio[firstCabinetCloseStopIndex]?.type,
+      requests.audio[secondGuidanceIndex]?.type,
+      requests.audio[secondCabinetSpeechIndex]?.type,
+      requests.audio[secondCabinetCloseStopIndex]?.type
+    ],
+    ["speak", "stop", "speak", "speak", "stop"],
+    "two cabinet sessions did not preserve speak/stop session boundaries"
+  );
 
   assessmentMode = "passed";
   confirmationMode = "success";

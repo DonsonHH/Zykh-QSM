@@ -36,8 +36,18 @@ async def _run_blocking(function, /, *args, **kwargs):
         name="zykh-speech-io",
         daemon=True,
     ).start()
+    cancelled = False
     while not done.is_set():
-        await asyncio.sleep(0.01)
+        try:
+            await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            # A synchronous QSM request cannot be interrupted once its worker
+            # thread has entered urllib. Keep the task alive until that worker
+            # exits so /audio/stream/stop can issue the final hardware STOP
+            # after, rather than before, a stale speech request finishes.
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
     if errors:
         raise errors[0]
     return result[0]

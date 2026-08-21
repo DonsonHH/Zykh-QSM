@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import asyncio
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -180,6 +181,70 @@ class AudioTtsRoutingTest(unittest.TestCase):
         self.assertTrue(stopped["ok"])
         self.assertEqual(stopped["cancelled_tts"], 1)
         self.assertEqual(client.stop_calls, 1)
+
+    def test_stream_stop_waits_for_cancelled_offline_tts_before_final_stop(self) -> None:
+        class BlockingOfflineQsmClient(FakeQsmClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.started = threading.Event()
+                self.release = threading.Event()
+                self.events: list[str] = []
+
+            def audio_speak(self, text, volume=None, speed=None, tts_mode="auto"):
+                self.events.append(f"speak:start:{text}")
+                self.started.set()
+                if not self.release.wait(timeout=2):
+                    raise TimeoutError("test did not release the stale offline speech")
+                self.events.append(f"speak:finish:{text}")
+                return super().audio_speak(text, volume, speed, tts_mode)
+
+            def audio_stream_stop(self):
+                self.events.append("stop")
+                return super().audio_stream_stop()
+
+        client = BlockingOfflineQsmClient()
+
+        async def scenario():
+            speak_task = asyncio.create_task(
+                audio.audio_speak(SpeakRequest(text="一号柜指示灯已亮", volume=230))
+            )
+            started = await asyncio.to_thread(client.started.wait, 1)
+            self.assertTrue(started, "offline QSM speech never entered the blocking call")
+            stop_task = asyncio.create_task(audio.audio_stream_stop())
+            await asyncio.sleep(0.05)
+            stop_returned_before_stale_speech = stop_task.done()
+            client.release.set()
+            speak_result, stopped = await asyncio.gather(speak_task, stop_task)
+            next_result = await audio.audio_speak(
+                SpeakRequest(text="二号柜取药确认", volume=230)
+            )
+            return stop_returned_before_stale_speech, speak_result, stopped, next_result
+
+        with (
+            patch.object(audio, "QsmClient", return_value=client),
+            patch.object(audio.db, "get_setting", return_value="local"),
+            patch.object(audio, "_record"),
+        ):
+            returned_early, speak_result, stopped, next_result = asyncio.run(scenario())
+
+        self.assertEqual(
+            client.events,
+            [
+                "speak:start:一号柜指示灯已亮",
+                "speak:finish:一号柜指示灯已亮",
+                "stop",
+                "speak:start:二号柜取药确认",
+                "speak:finish:二号柜取药确认",
+            ],
+        )
+        self.assertFalse(
+            returned_early,
+            "stop returned while the cancelled offline worker could still replay stale speech",
+        )
+        self.assertTrue(speak_result["cancelled"])
+        self.assertTrue(stopped["ok"])
+        self.assertEqual(stopped["cancelled_tts"], 1)
+        self.assertTrue(next_result["ok"])
 
 
 if __name__ == "__main__":

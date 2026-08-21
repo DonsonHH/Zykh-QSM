@@ -14,6 +14,8 @@ KIOSK_RESTORE_RESOLUTION="${KIOSK_RESTORE_RESOLUTION:-1}"
 KIOSK_BROWSER_LOG="${KIOSK_BROWSER_LOG:-file}"
 KIOSK_AUDIO_RELAY="${KIOSK_AUDIO_RELAY:-1}"
 KIOSK_RESTART_BACKEND="${KIOSK_RESTART_BACKEND:-1}"
+KIOSK_BACKEND_HEALTH_INTERVAL_SECONDS="${KIOSK_BACKEND_HEALTH_INTERVAL_SECONDS:-3}"
+KIOSK_BACKEND_FAILURE_THRESHOLD="${KIOSK_BACKEND_FAILURE_THRESHOLD:-2}"
 KIOSK_TOUCH_KEYBOARD="${KIOSK_TOUCH_KEYBOARD:-1}"
 RUN_DIR="$ROOT_DIR/data/run"
 BROWSER_PID=""
@@ -438,6 +440,10 @@ start_backend_if_needed() {
   fi
 
   log "启动后端服务..."
+  launch_backend_process
+}
+
+launch_backend_process() {
   nohup sh "$ROOT_DIR/scripts/start_backend.sh" >"$RUN_DIR/backend.log" 2>&1 &
   echo "$!" >"$RUN_DIR/backend.pid"
 
@@ -446,6 +452,42 @@ start_backend_if_needed() {
   else
     warn "后端未在预期时间内就绪，日志：$RUN_DIR/backend.log"
   fi
+}
+
+restart_backend_after_health_failure() {
+  if backend_ready; then
+    return 0
+  fi
+  warn "后端健康检查持续失败，正在自动恢复服务..."
+  stop_backend_if_managed
+  stop_project_backend_processes
+  launch_backend_process
+}
+
+monitor_browser_and_backend() {
+  failures=0
+  threshold="$KIOSK_BACKEND_FAILURE_THRESHOLD"
+  case "$threshold" in
+    ''|*[!0-9]*) threshold=2 ;;
+    0) threshold=1 ;;
+  esac
+
+  while kill -0 "$BROWSER_PID" >/dev/null 2>&1; do
+    sleep "$KIOSK_BACKEND_HEALTH_INTERVAL_SECONDS"
+    if ! kill -0 "$BROWSER_PID" >/dev/null 2>&1; then
+      break
+    fi
+    if backend_ready; then
+      failures=0
+      continue
+    fi
+    failures=$((failures + 1))
+    if [ "$failures" -ge "$threshold" ]; then
+      restart_backend_after_health_failure
+      failures=0
+    fi
+  done
+  wait "$BROWSER_PID"
 }
 
 start_frontend_if_needed() {
@@ -648,5 +690,5 @@ fi
 
 start_browser "$@"
 start_cleanup_guard
-wait "$BROWSER_PID"
+monitor_browser_and_backend
 BROWSER_PID=""
