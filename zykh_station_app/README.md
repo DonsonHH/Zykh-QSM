@@ -308,10 +308,11 @@ sh scripts/deploy_local_asr.sh
 
 ## QSM 4G 联网
 
-v2.0.1 暂时默认启用 `NETWORK_DEMO_SIMULATE=true`。在该状态下，后端会在任何
-主机网卡、QSM 4G 接口、ADB、AT 指令或 tether 探测之前直接返回一份明确标记
-`simulated=true` 的 4G 状态；普通终端显示“4G 已连接 / 信号良好”，但这不表示
-物理 EC200A 已连接。主机和启动检查改用 `/api/audio/status` 验证网关存活，板端
+v2.0.1 暂时默认启用 `NETWORK_DEMO_SIMULATE=true`。在该状态下，后端只读主机
+默认路由与 Wi-Fi 链路，分别展示当前 Wi-Fi 和临时 4G；它不会探测 QSM 4G 接口，
+也不会执行 ADB、AT 指令或 tether 操作。返回的 4G 状态明确标记
+`simulated=true`；普通终端显示“4G 已连接 / 信号良好”，但这不表示物理 EC200A
+已连接。主机和启动检查改用 `/api/audio/status` 验证网关存活，板端
 通用 `/api/status` 也不再隐式执行 EC200A、路由或 ping 探针；只有显式进入真实
 模式后调用专用 `/api/network/status` 或 `/api/network/start_4g` 才会访问 4G。
 `launch_kiosk.sh` 默认不安装路由助手、不启动 4G tether；模拟模式会拒绝关闭

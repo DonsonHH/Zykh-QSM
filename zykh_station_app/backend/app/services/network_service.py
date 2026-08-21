@@ -31,7 +31,9 @@ class NetworkService:
             "ai_mode": route.ai_mode,
         }
         if settings.network_demo_simulate:
-            return self._simulated_4g_status(presentation)
+            default_iface = self._default_interface()
+            wifi = self._wifi_status(default_iface)
+            return self._simulated_4g_status(presentation, wifi, default_iface)
 
         interface = settings.network_sim_interface
         sim_ip = self._interface_ipv4(interface)
@@ -206,7 +208,12 @@ class NetworkService:
             "warnings": ["未检测到可用 SIM 出口。"],
         }
 
-    def _simulated_4g_status(self, presentation: dict[str, object]) -> dict[str, object]:
+    def _simulated_4g_status(
+        self,
+        presentation: dict[str, object],
+        wifi: dict[str, object],
+        default_iface: str,
+    ) -> dict[str, object]:
         sim_enabled = self._bool_setting("sim_enabled", True)
         connected = bool(sim_enabled)
         return {
@@ -218,15 +225,8 @@ class NetworkService:
             "label": "4G 已连接" if connected else "4G 未连接",
             "sim_interface": settings.network_sim_interface,
             "sim_ip": "",
-            "default_interface": "",
-            "wifi_connected": False,
-            "wifi_signal": "none",
-            "wifi_ssid": "",
-            "wifi_interface": "",
-            "wifi_signal_dbm": None,
-            "wifi_signal_percent": 0,
-            "wifi_signal_bars": 0,
-            "wifi_signal_level": "none",
+            "default_interface": default_iface,
+            **wifi,
             "sim_present": True,
             "sim_connected": connected,
             "qsm_sim_connected": False,

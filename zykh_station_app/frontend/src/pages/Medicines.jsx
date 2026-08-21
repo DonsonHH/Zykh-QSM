@@ -155,7 +155,6 @@ export function Medicines({ notify, focus, onNavigate }) {
   const [modalResult, setModalResult] = useState("");
   const [modalError, setModalError] = useState("");
   const [viewMode, setViewMode] = useState(initialMedicineView);
-  const [sortMode, setSortMode] = useState("usage_desc");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [detailMedicine, setDetailMedicine] = useState(null);
@@ -262,7 +261,6 @@ export function Medicines({ notify, focus, onNavigate }) {
 
   const stockedCount = useMemo(() => medicines.filter((medicine) => medicine.stock > 0).length, [medicines]);
   const sortedMedicines = useMemo(() => sortMedicinesByDispenseCount(medicines), [medicines]);
-  const displayMedicines = sortMode === "usage_desc" ? sortedMedicines : medicines;
   const unassignedCount = useMemo(
     () => medicines.filter((medicine) => medicine.cabinet_unassigned || !medicine.cabinet_id).length,
     [medicines]
@@ -277,14 +275,8 @@ export function Medicines({ notify, focus, onNavigate }) {
   function selectViewMode(nextViewMode) {
     setViewMode(nextViewMode);
     if (nextViewMode === "list") {
-      setSelectedMedicine(displayMedicines[0] || null);
+      setSelectedMedicine(sortedMedicines[0] || null);
     }
-  }
-
-  function selectSortMode(nextSortMode) {
-    setSortMode(nextSortMode);
-    const nextMedicines = nextSortMode === "usage_desc" ? sortedMedicines : medicines;
-    setSelectedMedicine(nextMedicines[0] || null);
   }
 
   function openConfirm() {
@@ -391,24 +383,11 @@ export function Medicines({ notify, focus, onNavigate }) {
             <small>{loadError}</small>
           </div>
         ) : viewMode === "list" ? (
-          <div className="medicine-list-view">
-            <label className="medicine-sort-control">
-              <span>药品排序</span>
-              <select
-                className="medicine-sort-select"
-                value={sortMode}
-                onChange={(event) => selectSortMode(event.target.value)}
-              >
-                <option value="usage_desc">使用次数从高到低</option>
-                <option value="cabinet_order">默认柜位顺序</option>
-              </select>
-            </label>
-            <VirtualMedicineGrid
-              medicines={displayMedicines}
-              selectedMedicine={selectedMedicine}
-              onSelect={setSelectedMedicine}
-            />
-          </div>
+          <VirtualMedicineGrid
+            medicines={sortedMedicines}
+            selectedMedicine={selectedMedicine}
+            onSelect={setSelectedMedicine}
+          />
         ) : (
           <CabinetSlotMap
             cabinets={cabinets}

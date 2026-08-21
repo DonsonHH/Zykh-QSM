@@ -72,6 +72,11 @@ assert.equal(qsmConnectedWithWifi.sim.bars, 4);
 
 const simulated4g = getNetworkIndicators(DEFAULT_NETWORK_STATUS);
 assert.equal(simulated4g.localMode, false);
+assert.equal(
+  simulated4g.wifi.connected,
+  true,
+  "temporary good 4G must not render the currently available WiFi link as disconnected in the top bar"
+);
 assert.equal(simulated4g.sim.enabled, true);
 assert.equal(simulated4g.sim.connected, true);
 assert.equal(simulated4g.sim.bars, 3);

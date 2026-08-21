@@ -42,11 +42,8 @@ export function MedicineCard({
           : "分类柜待配置"}
       >
         <em className={medicine.cabinet_id ? "" : "unassigned"}>
-          <span className="medicine-cabinet-number">
-            <b>{medicine.cabinet_id || "待"}</b>
-            <small>{medicine.cabinet_id ? "号柜" : "配置分类柜"}</small>
-          </span>
-          <small className="medicine-use-count">历史取药 {Number(medicine.dispense_count) || 0} 次</small>
+          <b>{medicine.cabinet_id || "待"}</b>
+          <small>{medicine.cabinet_id ? "号柜" : "配置分类柜"}</small>
         </em>
       </span>
     </button>

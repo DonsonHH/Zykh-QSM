@@ -139,27 +139,35 @@ assert.match(
   /initialMedicineView\s*=\s*initialParams\.get\("medicineView"\)\s*===\s*"list"\s*\?\s*"list"\s*:\s*"cabinet"/,
   "the medicine page must default to the cabinet view unless list is explicitly requested"
 );
-assert.ok(
-  medicinesPage.includes("sortMedicinesByDispenseCount")
-    && medicinesPage.includes("medicine-sort-control")
-    && medicinesPage.includes("medicine-sort-select")
-    && medicinesPage.includes("使用次数从高到低"),
-  "the medicine list view must expose descending usage-count sorting"
+assert.equal(
+  /sortMode|medicine-list-view|medicine-sort-control|medicine-sort-select|药品排序|默认柜位顺序/.test(medicinesPage),
+  false,
+  "the medicine view must keep the v2.0.0 interface without a visible sorting control"
 );
-assert.match(
-  medicinesPage,
-  /function selectViewMode[\s\S]*nextViewMode === "list"[\s\S]*setSelectedMedicine\(displayMedicines\[0\]/,
-  "switching to the medicine list must select its highest-usage first item"
+assert.equal(
+  /const sortedMedicines\s*=\s*useMemo\(\(\)\s*=>\s*sortMedicinesByDispenseCount\(medicines\)/.test(medicinesPage),
+  true,
+  "the medicine view must derive its fixed descending usage order"
 );
-assert.match(
-  medicinesPage,
-  /option value="usage_desc">使用次数从高到低<\/option>[\s\S]*option value="cabinet_order">默认柜位顺序<\/option>/,
-  "the medicine list must let users switch between usage and cabinet ordering"
+assert.equal(
+  /viewMode === "list"\s*\?\s*\(\s*<VirtualMedicineGrid[\s\S]{0,300}?medicines=\{sortedMedicines\}/.test(medicinesPage),
+  true,
+  "the v2.0.0 medicine grid must receive the fixed descending usage order directly"
 );
-assert.match(
-  medicineCard,
-  /medicine-use-count[\s\S]*dispense_count/,
-  "medicine cards must show their successful historical dispense count"
+assert.equal(
+  /function selectViewMode[\s\S]*nextViewMode === "list"[\s\S]*setSelectedMedicine\(sortedMedicines\[0\]/.test(medicinesPage),
+  true,
+  "switching to the medicine view must select from the same fixed descending order"
+);
+assert.equal(
+  /medicines=\{sortedMedicines\}[\s\S]{0,180}?onSelect=\{setSelectedMedicine\}/.test(medicinesPage),
+  true,
+  "selecting a medicine must not replace or reorder the fixed descending list"
+);
+assert.equal(
+  /medicine-use-count|历史取药|dispense_count/.test(medicineCard),
+  false,
+  "the v2.0.0 medicine card must not gain a visible usage-count row"
 );
 assert.doesNotMatch(
   cabinetSlotMap,

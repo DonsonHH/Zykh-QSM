@@ -83,8 +83,18 @@ class NetworkSignalTest(unittest.TestCase):
         self.assertEqual(first, second)
         probe.assert_called_once_with()
 
-    def test_simulated_4g_status_uses_presentation_bars_without_faking_physical_signal(self) -> None:
+    def test_simulated_4g_status_reads_host_wifi_without_touching_4g_hardware(self) -> None:
         service = NetworkService()
+        host_wifi = {
+            "wifi_connected": True,
+            "wifi_signal": "good",
+            "wifi_ssid": "Station",
+            "wifi_interface": "wlan0",
+            "wifi_signal_dbm": -63,
+            "wifi_signal_percent": 74,
+            "wifi_signal_bars": 3,
+            "wifi_signal_level": "good",
+        }
         with (
             patch(
                 "app.services.network_service.settings",
@@ -92,11 +102,16 @@ class NetworkSignalTest(unittest.TestCase):
             ),
             patch("app.services.network_service.db.get_setting", side_effect=lambda _key, default="": default),
             patch.object(service, "_interface_ipv4") as interface_ipv4,
-            patch.object(service, "_default_interface") as default_interface,
-            patch.object(service, "_wifi_status") as wifi_status,
+            patch.object(service, "_default_interface", return_value="wlan0") as default_interface,
+            patch.object(service, "_wifi_status", return_value=host_wifi) as wifi_status,
+            patch.object(service, "_ping_target") as ping_target,
             patch.object(service, "_host_tether_ready") as host_tether_ready,
             patch.object(service, "_qsm_network_status") as qsm_network_status,
             patch.object(service, "_sim_identity") as sim_identity,
+            patch.object(service, "_read_qsm_sim_phone_number") as adb_phone_number,
+            patch("app.services.network_service.QsmClient.get_network_status") as qsm_probe,
+            patch("app.services.network_service.QsmClient.start_4g_network") as qsm_start,
+            patch.object(service, "_prepare_host_tether") as prepare_tether,
         ):
             status = service.status()
 
@@ -116,21 +131,41 @@ class NetworkSignalTest(unittest.TestCase):
         self.assertFalse(status["qsm_sim_connected"])
         self.assertEqual(status["source"], "simulation")
         self.assertEqual(status["warnings"], [])
+        self.assertTrue(status["wifi_connected"])
+        self.assertEqual(status["wifi_ssid"], "Station")
+        self.assertEqual(status["wifi_signal_bars"], 3)
         interface_ipv4.assert_not_called()
-        default_interface.assert_not_called()
-        wifi_status.assert_not_called()
+        default_interface.assert_called_once_with()
+        wifi_status.assert_called_once_with("wlan0")
+        ping_target.assert_not_called()
         host_tether_ready.assert_not_called()
         qsm_network_status.assert_not_called()
         sim_identity.assert_not_called()
+        adb_phone_number.assert_not_called()
+        qsm_probe.assert_not_called()
+        qsm_start.assert_not_called()
+        prepare_tether.assert_not_called()
 
     def test_simulated_4g_start_is_a_hardware_free_noop(self) -> None:
         service = NetworkService()
+        host_wifi = {
+            "wifi_connected": True,
+            "wifi_signal": "good",
+            "wifi_ssid": "Station",
+            "wifi_interface": "wlan0",
+            "wifi_signal_dbm": -63,
+            "wifi_signal_percent": 74,
+            "wifi_signal_bars": 3,
+            "wifi_signal_level": "good",
+        }
         with (
             patch(
                 "app.services.network_service.settings",
                 replace(settings, network_demo_simulate=True),
             ),
             patch("app.services.network_service.db.get_setting", side_effect=lambda _key, default="": default),
+            patch.object(service, "_default_interface", return_value="wlan0") as default_interface,
+            patch.object(service, "_wifi_status", return_value=host_wifi) as wifi_status,
             patch("app.services.network_service.QsmClient.start_4g_network") as start_4g,
             patch.object(service, "_prepare_host_tether") as prepare_tether,
         ):
@@ -138,6 +173,9 @@ class NetworkSignalTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["network"]["simulated"])
+        self.assertTrue(result["network"]["wifi_connected"])
+        default_interface.assert_called_once_with()
+        wifi_status.assert_called_once_with("wlan0")
         start_4g.assert_not_called()
         prepare_tether.assert_not_called()
 
