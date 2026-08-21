@@ -1,30 +1,32 @@
 export const DEFAULT_NETWORK_STATUS = Object.freeze({
-  ok: true,
-  mode: "sim",
-  transport: "sim",
-  status: "good",
-  signal: "good",
-  label: "4G 已连接",
+  ok: false,
+  pending: true,
+  mode: "wifi",
+  transport: "wifi",
+  status: "checking",
+  signal: "none",
+  label: "正在检测 WiFi",
   display_mode: "online",
   realtime_sync_enabled: true,
   ai_mode: "cloud",
-  wifi_connected: true,
-  wifi_signal: "good",
-  wifi_signal_bars: 3,
-  wifi_signal_level: "good",
-  sim_enabled: true,
-  sim_present: true,
-  sim_connected: true,
+  wifi_connected: false,
+  wifi_signal: "none",
+  wifi_signal_bars: 0,
+  wifi_signal_level: "none",
+  sim_enabled: false,
+  sim_present: false,
+  sim_connected: false,
   qsm_sim_connected: false,
   host_tether_ready: false,
-  sim_signal: "good",
-  sim_signal_bars: 3,
-  sim_signal_level: "good",
-  simulated: true,
-  source: "simulation"
+  sim_signal: "none",
+  sim_signal_bars: 0,
+  sim_signal_level: "none",
+  simulated: false,
+  source: "initial"
 });
 
 export function isLocalNetworkMode(networkStatus) {
+  if (networkStatus?.pending) return false;
   const displayMode = String(networkStatus?.display_mode || "").toLowerCase();
   if (displayMode) return displayMode === "local";
   const mode = String(networkStatus?.mode || "").toLowerCase();
@@ -50,7 +52,9 @@ export function isLocalNetworkMode(networkStatus) {
 }
 
 export function getNetworkIndicators(networkStatus) {
+  const pending = Boolean(networkStatus?.pending);
   const explicitLocalMode = isLocalNetworkMode(networkStatus);
+  const requestedTransport = String(networkStatus?.transport || networkStatus?.mode || "").toLowerCase();
   const rawWifiConnected = Boolean(networkStatus?.wifi_connected || networkStatus?.wifi?.connected);
   const rawSimConnected = Boolean(
     networkStatus?.sim_connected ||
@@ -81,9 +85,20 @@ export function getNetworkIndicators(networkStatus) {
   const simDbm = numberOrNull(networkStatus?.sim_signal_dbm ?? networkStatus?.sim?.dbm);
   const wifiPercent = normalizePercent(networkStatus?.wifi_signal_percent ?? networkStatus?.wifi?.percent);
   const simPercent = normalizePercent(networkStatus?.sim_signal_percent ?? networkStatus?.sim?.percent);
+  const activeTransport = explicitLocalMode
+    ? ""
+    : requestedTransport === "wifi" && wifiConnected
+      ? "wifi"
+      : requestedTransport === "sim" && simConnected
+        ? "sim"
+        : wifiConnected
+          ? "wifi"
+          : simConnected ? "sim" : "";
 
   return {
-    localMode: explicitLocalMode || (!wifiConnected && !simConnected && !simEnabled),
+    pending,
+    localMode: pending ? false : explicitLocalMode || (!wifiConnected && !simConnected && !simEnabled),
+    activeTransport,
     wifi: {
       connected: wifiConnected,
       tone: wifiTone,

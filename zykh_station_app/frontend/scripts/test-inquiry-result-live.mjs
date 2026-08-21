@@ -15,6 +15,7 @@ if (!["127.0.0.1", "localhost"].includes(parsedBaseUrl.hostname)) {
 const screenshotPath = process.env.QA_SCREENSHOT_PATH
   ? resolve(process.env.QA_SCREENSHOT_PATH)
   : "";
+const fullRecommendationReason = "李爷爷目前咽痛为主，伴有流鼻涕，且无发热，考虑风热上攻可能。桂林西瓜霜为外用喷剂，直接作用于患处，可缓解咽喉肿痛，请按说明书用法使用并观察症状变化。";
 
 const profileDir = await mkdtemp(join(tmpdir(), "zykh-inquiry-result-live-"));
 const debuggingPort = 10100 + Math.floor(Math.random() * 300);
@@ -96,12 +97,14 @@ const sessionFixture = {
     {
       option_id: "A",
       label: "主方案",
-      when: "当前以咽喉疼痛为主，可优先核对这一方案。",
+      when: fullRecommendationReason,
       medicines: [
         {
           id: "slot-07-yinhuang",
           name: "银黄颗粒",
           category: "咽喉口腔",
+          cabinet_id: 1,
+          cabinet_label: "日常用药",
           slot: "7",
           stock: 1,
           unit: "盒",
@@ -116,6 +119,8 @@ const sessionFixture = {
           id: "slot-22-cotton-swab",
           name: "医用棉签",
           category: "外用护理",
+          cabinet_id: 2,
+          cabinet_label: "外用护理",
           slot: "22",
           stock: 1,
           unit: "包",
@@ -137,6 +142,8 @@ const sessionFixture = {
           id: "slot-11-guilin-xiguashuang",
           name: "桂林西瓜霜",
           category: "咽喉口腔",
+          cabinet_id: 1,
+          cabinet_label: "日常用药",
           slot: "11",
           stock: 1,
           unit: "瓶",
@@ -176,7 +183,22 @@ async function fulfillApiRequest({ requestId, request }) {
   if (url.pathname === "/api/dashboard") {
     payload = mockDashboard;
   } else if (url.pathname === "/api/network/status") {
-    payload = { label: "联网模式", wifi_connected: true, sim_connected: true };
+    payload = {
+      ok: true,
+      mode: "wifi",
+      transport: "wifi",
+      label: "联网正常",
+      wifi_connected: true,
+      wifi_signal: "good",
+      wifi_signal_bars: 4,
+      sim_enabled: true,
+      sim_present: true,
+      sim_connected: true,
+      sim_signal: "good",
+      sim_signal_bars: 3,
+      simulated: true,
+      source: "simulation"
+    };
   } else if (url.pathname === "/api/settings/basic") {
     payload = {
       settings: {
@@ -502,10 +524,15 @@ try {
       const openButton = document.querySelector('.treatment-open-button');
       const medicineList = document.querySelector('.option-medicine-list');
       const optionCard = document.querySelector('.treatment-option-card');
+      const optionDescription = optionCard.querySelector('.option-heading small');
       const medicineRow = optionCard.querySelector('.option-medicine-row:last-child');
       const confirmNotice = document.querySelector('.treatment-confirm-notice');
       const medicationSafetyNotices = document.querySelector('.medication-safety-notices');
       const medicineSafetyNotes = [...document.querySelectorAll('.medicine-safety-note')];
+      const medicineFitReasons = [...document.querySelectorAll('.medicine-fit-reason')];
+      const cabinetBadges = [...document.querySelectorAll('.option-medicine-cabinet-number')];
+      const wifiLink = document.querySelector('.network-link.wifi');
+      const simLink = document.querySelector('.network-link.sim');
       const rect = (element) => {
         const value = element.getBoundingClientRect();
         return { top: value.top, right: value.right, bottom: value.bottom, left: value.left, width: value.width, height: value.height };
@@ -519,6 +546,10 @@ try {
         assessment: rect(assessment),
         footer: rect(footer),
         optionCard: rect(optionCard),
+        optionDescriptionText: optionDescription.textContent.trim(),
+        optionDescriptionLineClamp: getComputedStyle(optionDescription).webkitLineClamp,
+        optionDescriptionOverflow: getComputedStyle(optionDescription).overflow,
+        optionDescriptionScrollDelta: optionDescription.scrollHeight - optionDescription.clientHeight,
         medicineRow: rect(medicineRow),
         confirmNotice: rect(confirmNotice),
         medicationSafetyNotices: rect(medicationSafetyNotices),
@@ -531,11 +562,19 @@ try {
         hasCauseHeading: assessment.textContent.includes('病因分析'),
         hasMedicationSafetyNotice: medicationSafetyNotices.textContent.includes('复方感冒灵颗粒未纳入本次候选'),
         medicineSafetyNoteCount: medicineSafetyNotes.length,
-        hasMedicineSafetyNotes: [
-          '高热或症状持续时联系医生',
-          '仅供外用',
-          '喷敷时避免吸入气道'
-        ].every((note) => medicineSafetyNotes.some((element) => element.textContent.includes(note))),
+        medicineFitReasonCount: medicineFitReasons.length,
+        cabinetBadges: cabinetBadges.map((badge) => ({
+          text: badge.textContent.trim(),
+          ariaLabel: badge.getAttribute('aria-label'),
+          badge: rect(badge),
+          row: rect(badge.closest('.option-medicine-row'))
+        })),
+        hidesMedicineLevelCopy: !options.textContent.includes('适合点：')
+          && !options.textContent.includes('慎用与指导提醒：'),
+        wifiIsActive: wifiLink.classList.contains('active-transport'),
+        wifiAriaLabel: wifiLink.getAttribute('aria-label'),
+        wifiHasDisconnectSlash: Boolean(wifiLink.querySelector('.network-slash')),
+        simIsActive: simLink.classList.contains('active-transport'),
         hasDisclaimer: footer.textContent.includes('不构成诊断或处方') && footer.textContent.includes('请听医嘱')
       };
     })()`));
@@ -619,6 +658,14 @@ try {
     assert.ok(result.resultHorizontalOverflow <= 1, "result shell has horizontal overflow");
     assert.ok(result.bodyHorizontalOverflow <= 1, "result body has horizontal overflow");
     assert.equal(result.bodyOverflowY, "auto", "result body is not the vertical scroll owner");
+    assert.equal(result.wifiIsActive, true, "the top bar does not mark WiFi as the current transport");
+    assert.match(result.wifiAriaLabel, /WiFi.*当前使用/, "the active WiFi icon is not announced as the current transport");
+    assert.equal(result.wifiHasDisconnectSlash, false, "the active WiFi icon still shows a disconnected slash");
+    assert.equal(result.simIsActive, false, "the temporary 4G link is still marked as the current transport");
+    assert.equal(result.optionDescriptionText, fullRecommendationReason, "the recommendation rationale is not rendered in full");
+    assert.equal(result.optionDescriptionLineClamp, "none", "the recommendation rationale is still line-clamped");
+    assert.equal(result.optionDescriptionOverflow, "visible", "the recommendation rationale still hides overflow");
+    assert.ok(result.optionDescriptionScrollDelta <= 1, "the recommendation rationale is visually clipped inside its own element");
     assert.equal(result.medicineListOverflow, "visible", "medicine list created a nested scroll container");
     assert.ok(
       result.medicineRow.bottom <= result.optionCard.bottom + 1,
@@ -626,8 +673,19 @@ try {
     );
     assert.ok(result.assessment.top >= result.options.top, "assessment appears before treatment options");
     assert.equal(result.hasMedicationSafetyNotice, true, "deterministic medication safety notice is not visible");
-    assert.equal(result.medicineSafetyNoteCount, 3, "not every candidate medicine safety note is rendered");
-    assert.equal(result.hasMedicineSafetyNotes, true, "candidate medicine safety note text is not visible");
+    assert.equal(result.medicineSafetyNoteCount, 0, "medicine-level caution copy is still rendered in an option card");
+    assert.equal(result.medicineFitReasonCount, 0, "medicine-level suitability copy is still rendered in an option card");
+    assert.equal(result.hidesMedicineLevelCopy, true, "removed medicine-level labels remain visible in the option grid");
+    assert.deepEqual(result.cabinetBadges.map((badge) => badge.text), ["1", "2", "1"], "cabinet badges must show only their cabinet number");
+    assert.deepEqual(
+      result.cabinetBadges.map((badge) => badge.ariaLabel),
+      ["1号柜 · 日常用药", "2号柜 · 外用护理", "1号柜 · 日常用药"],
+      "cabinet badges must retain a complete accessible label"
+    );
+    for (const badge of result.cabinetBadges) {
+      assert.ok(badge.badge.top >= badge.row.top - 1, "cabinet badge escapes above its medicine block");
+      assert.ok(badge.badge.right <= badge.row.right + 1, "cabinet badge escapes the medicine block right edge");
+    }
     assert.ok(result.medicationSafetyNotices.left >= result.body.left - 1 && result.medicationSafetyNotices.right <= result.body.right + 1, "medication safety notice overflows the result body");
     assert.ok(result.medicationSafetyNotices.bottom <= result.options.top + 1, "medication safety notice must appear before treatment options");
     assert.ok(result.confirmNotice.width >= 200, "medical disclaimer is squeezed into an unreadable column");

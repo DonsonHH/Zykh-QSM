@@ -216,13 +216,17 @@ class NetworkService:
     ) -> dict[str, object]:
         sim_enabled = self._bool_setting("sim_enabled", True)
         connected = bool(sim_enabled)
+        wifi_connected = bool(wifi.get("wifi_connected"))
+        wifi_is_default = wifi_connected and default_iface.startswith(("wl", "wlan"))
+        primary_transport = "wifi" if wifi_is_default else "sim"
+        online = wifi_is_default or connected
         return {
             "ok": True,
-            "mode": "sim",
-            "transport": "sim",
-            "status": "good" if connected else "offline",
-            "signal": "good" if connected else "none",
-            "label": "4G 已连接" if connected else "4G 未连接",
+            "mode": primary_transport,
+            "transport": primary_transport,
+            "status": "good" if online else "offline",
+            "signal": str(wifi.get("wifi_signal") or "good") if wifi_is_default else ("good" if connected else "none"),
+            "label": "联网正常" if wifi_is_default else ("4G 已连接" if connected else "4G 未连接"),
             "sim_interface": settings.network_sim_interface,
             "sim_ip": "",
             "default_interface": default_iface,

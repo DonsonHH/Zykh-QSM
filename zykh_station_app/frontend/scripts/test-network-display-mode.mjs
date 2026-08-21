@@ -69,14 +69,41 @@ const qsmConnectedWithWifi = getNetworkIndicators({
 assert.equal(qsmConnectedWithWifi.localMode, false);
 assert.equal(qsmConnectedWithWifi.sim.connected, true);
 assert.equal(qsmConnectedWithWifi.sim.bars, 4);
-
-const simulated4g = getNetworkIndicators(DEFAULT_NETWORK_STATUS);
-assert.equal(simulated4g.localMode, false);
 assert.equal(
-  simulated4g.wifi.connected,
-  true,
-  "temporary good 4G must not render the currently available WiFi link as disconnected in the top bar"
+  qsmConnectedWithWifi.activeTransport,
+  "wifi",
+  "the top bar must identify WiFi as the active link when it is the default transport"
 );
+
+const pendingNetwork = getNetworkIndicators(DEFAULT_NETWORK_STATUS);
+assert.equal(DEFAULT_NETWORK_STATUS.ok, false);
+assert.equal(DEFAULT_NETWORK_STATUS.pending, true);
+assert.equal(pendingNetwork.pending, true);
+assert.equal(pendingNetwork.localMode, false);
+assert.equal(
+  pendingNetwork.wifi.connected,
+  false,
+  "the first paint must not claim a physical WiFi connection before the status response arrives"
+);
+assert.equal(pendingNetwork.sim.connected, false);
+assert.equal(pendingNetwork.activeTransport, "");
+
+const simulated4g = getNetworkIndicators({
+  mode: "wifi",
+  transport: "wifi",
+  wifi_connected: true,
+  wifi_signal: "good",
+  wifi_signal_bars: 4,
+  sim_enabled: true,
+  sim_present: true,
+  sim_connected: true,
+  sim_signal: "good",
+  sim_signal_bars: 3,
+  simulated: true,
+  source: "simulation"
+});
+assert.equal(simulated4g.wifi.connected, true);
+assert.equal(simulated4g.activeTransport, "wifi");
 assert.equal(simulated4g.sim.enabled, true);
 assert.equal(simulated4g.sim.connected, true);
 assert.equal(simulated4g.sim.bars, 3);
@@ -85,7 +112,7 @@ assert.match(simulated4g.sim.label, /^4G 信号良好/);
 
 const app = await readFile(`${root}src/App.jsx`, "utf8");
 const launcher = await readFile(`${root}../scripts/launch_kiosk.sh`, "utf8");
-assert.match(app, /useState\(DEFAULT_NETWORK_STATUS\)/, "the top bar must start with the good 4G default");
+assert.match(app, /useState\(DEFAULT_NETWORK_STATUS\)/, "the top bar must start with the explicit pending network state");
 assert.equal(
   (app.match(/loadNetworkStatus\(\)\.then\(updateNetworkStatus\)\.catch\(\(\) => undefined\)/g) || []).length,
   2,

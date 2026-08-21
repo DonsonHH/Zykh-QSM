@@ -115,8 +115,9 @@ class NetworkSignalTest(unittest.TestCase):
         ):
             status = service.status()
 
-        self.assertEqual(status["mode"], "sim")
-        self.assertEqual(status["transport"], "sim")
+        self.assertEqual(status["mode"], "wifi")
+        self.assertEqual(status["transport"], "wifi")
+        self.assertEqual(status["label"], "联网正常")
         self.assertEqual(status["status"], "good")
         self.assertEqual(status["signal"], "good")
         self.assertEqual(status["sim_signal"], "good")
@@ -178,6 +179,35 @@ class NetworkSignalTest(unittest.TestCase):
         wifi_status.assert_called_once_with("wlan0")
         start_4g.assert_not_called()
         prepare_tether.assert_not_called()
+
+    def test_simulated_4g_does_not_claim_wifi_is_primary_when_default_route_is_elsewhere(self) -> None:
+        service = NetworkService()
+        host_wifi = {
+            "wifi_connected": True,
+            "wifi_signal": "good",
+            "wifi_ssid": "Station",
+            "wifi_interface": "wlan0",
+            "wifi_signal_dbm": -63,
+            "wifi_signal_percent": 74,
+            "wifi_signal_bars": 3,
+            "wifi_signal_level": "good",
+        }
+        with (
+            patch(
+                "app.services.network_service.settings",
+                replace(settings, network_demo_simulate=True),
+            ),
+            patch("app.services.network_service.db.get_setting", side_effect=lambda _key, default="": default),
+            patch.object(service, "_default_interface", return_value="usb0"),
+            patch.object(service, "_wifi_status", return_value=host_wifi),
+            patch("app.services.network_service.QsmClient.get_network_status") as qsm_probe,
+        ):
+            status = service.status()
+
+        self.assertEqual(status["mode"], "sim")
+        self.assertEqual(status["transport"], "sim")
+        self.assertEqual(status["label"], "4G 已连接")
+        qsm_probe.assert_not_called()
 
     def test_qsm_modem_is_reported_connected_without_host_tether(self) -> None:
         service = NetworkService()

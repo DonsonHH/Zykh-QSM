@@ -6,9 +6,25 @@ import { NETWORK_ACTIVITY_EVENT } from "../utils/networkActivity.js";
 const activityHoldMs = 900;
 
 export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
-  const { localMode, wifi, sim } = getNetworkIndicators(networkStatus);
-  const transport = String(networkStatus?.transport || networkStatus?.mode || "").toLowerCase();
+  const { pending, localMode, activeTransport, wifi, sim } = getNetworkIndicators(networkStatus);
   const activity = useNetworkActivity();
+
+  if (pending) {
+    return (
+      <div className={`network-icons ${variant} single-link pending`} role="group" aria-label="正在检测 WiFi 状态">
+        <NetworkLink
+          kind="wifi"
+          connected={false}
+          bars={0}
+          tone="pending"
+          label="正在检测 WiFi"
+          active={false}
+          pending
+          activity={activity}
+        />
+      </div>
+    );
+  }
 
   if (localMode) {
     return (
@@ -28,7 +44,7 @@ export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
         bars={wifi.bars}
         tone={wifi.tone}
         label={wifi.label}
-        active={transport === "wifi"}
+        active={activeTransport === "wifi"}
         activity={activity}
       />
       {sim.enabled ? (
@@ -38,7 +54,7 @@ export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
           bars={sim.bars}
           tone={sim.tone}
           label={sim.label}
-          active={transport === "sim"}
+          active={activeTransport === "sim"}
           activity={activity}
         />
       ) : null}
@@ -46,7 +62,7 @@ export function NetworkStatusIcons({ networkStatus, variant = "header" }) {
   );
 }
 
-function NetworkLink({ kind, connected, bars, tone, label, active, activity }) {
+function NetworkLink({ kind, connected, bars, tone, label, active, pending = false, activity }) {
   const accessibleLabel = `${label}${active ? "，当前使用" : ""}`;
   return (
     <span
@@ -54,7 +70,7 @@ function NetworkLink({ kind, connected, bars, tone, label, active, activity }) {
       aria-label={accessibleLabel}
     >
       {kind === "wifi" ? (
-        <WifiSignalGlyph connected={connected} bars={bars} />
+        <WifiSignalGlyph connected={connected} bars={bars} pending={pending} />
       ) : (
         <Cellular4GGlyph connected={connected} bars={bars} />
       )}
@@ -66,7 +82,7 @@ function NetworkLink({ kind, connected, bars, tone, label, active, activity }) {
   );
 }
 
-function WifiSignalGlyph({ connected, bars }) {
+function WifiSignalGlyph({ connected, bars, pending = false }) {
   const level = connected ? Math.max(0, Math.min(4, Number(bars) || 0)) : 0;
   return (
     <svg className="wifi-signal-glyph" viewBox="0 0 34 32" aria-hidden="true">
@@ -74,7 +90,7 @@ function WifiSignalGlyph({ connected, bars }) {
       <path className={level >= 3 ? "is-on" : ""} d="M8 16c5-4.5 13-4.5 18 0" />
       <path className={level >= 2 ? "is-on" : ""} d="M12.5 21.5c2.5-2.1 6.5-2.1 9 0" />
       <circle className={level >= 1 ? "is-on" : ""} cx="17" cy="26" r="2" />
-      {!connected ? <path className="network-slash" d="M5 5 29 29" /> : null}
+      {!connected && !pending ? <path className="network-slash" d="M5 5 29 29" /> : null}
     </svg>
   );
 }

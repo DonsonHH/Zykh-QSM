@@ -214,17 +214,17 @@ export function InquiryResultStep({
                       <Pill size={18} aria-hidden="true" />
                       <span>
                         <strong>{medicine.name}</strong>
-                        {medicine.match_reason ? (
-                          <small className="medicine-fit-reason">适合点：{medicine.match_reason}</small>
-                        ) : null}
                         <small className={medicine.requires_existing_direction ? "direction-required" : ""}>
                           用法：{medicine.recommended_usage || medicine.dosage || (medicine.requires_existing_direction ? "按既往医嘱核对" : medicine.role)}
                         </small>
-                        {medicine.safety_note ? (
-                          <small className="medicine-safety-note">慎用与指导提醒：{medicine.safety_note}</small>
-                        ) : null}
                       </span>
-                      <em>{describeMedicineCabinet(medicine)}</em>
+                      <span
+                        className="option-medicine-cabinet-number"
+                        role="img"
+                        aria-label={describeMedicineCabinet(medicine)}
+                      >
+                        {medicine.cabinet_id || "?"}
+                      </span>
                     </span>
                   ))}
                 </span>
