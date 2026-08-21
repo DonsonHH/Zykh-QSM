@@ -127,13 +127,22 @@ class MedicationSafetyOutbox:
             event = claimed_event
             try:
                 event = self._materialize_wire_payload(event)
-                sender(
+                receipt = sender(
                     "REPORT_MEDICATION_SAFETY_EVENT",
                     {
                         "event": event.wire_payload,
                         "payloadDigest": event.wire_payload_digest,
                     },
                 )
+                if (
+                    not isinstance(receipt, dict)
+                    or receipt.get("eventId") != event.event_id
+                ):
+                    raise ValueError("安全事件云端回执 eventId 与发送事件不一致。")
+                if receipt.get("payloadDigest") != event.wire_payload_digest:
+                    raise ValueError(
+                        "安全事件云端回执 payloadDigest 与发送载荷不一致。"
+                    )
             except Exception:
                 self._mark_failed(event)
                 raise

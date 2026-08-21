@@ -96,7 +96,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(response.warehouse_total, 3)
         self.assertEqual(
             [(cabinet.id, cabinet.label) for cabinet in response.cabinets],
-            [(1, "日常用药"), (2, "外用护理"), (3, "慢病处方储备")],
+            [(1, "日常用药"), (2, "外用护理"), (3, "慢病处方")],
         )
         self.assertEqual(
             [len(cabinet.medicine_ids) for cabinet in response.cabinets],
@@ -113,7 +113,7 @@ class MedicineInventoryContractTest(unittest.TestCase):
         self.assertEqual(response.medicines[21].cabinet_id, 2)
         self.assertEqual(response.medicines[21].cabinet_label, "外用护理")
         self.assertEqual(response.medicines[8].cabinet_id, 3)
-        self.assertEqual(response.medicines[8].cabinet_label, "慢病处方储备")
+        self.assertEqual(response.medicines[8].cabinet_label, "慢病处方")
         expected_names = (
             "复方感冒灵颗粒", "多维元素片", "蒙脱石散", "阿莫西林胶囊",
             "蜜炼川贝枇杷膏", "乳果糖口服液", "银黄颗粒", "藿香正气丸",

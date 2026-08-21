@@ -26,7 +26,7 @@ QSM 实体柜使用独立的 9/8/6 映射：
 | --- | --- | --- | --- |
 | 1 | 日常用药 | S01、S03、S05、S07、S08、S11、S12、S13、S23 | 9 |
 | 2 | 外用护理 | S10、S15、S16、S17、S18、S19、S20、S22 | 8 |
-| 3 | 慢病处方储备 | S02、S04、S06、S09、S14、S21 | 6 |
+| 3 | 慢病处方 | S02、S04、S06、S09、S14、S21 | 6 |
 
 Station 发出的 `storageBox` 使用同样的 9/8/6 三分类只读投影：
 
@@ -34,27 +34,26 @@ Station 发出的 `storageBox` 使用同样的 9/8/6 三分类只读投影：
 | --- | --- | --- | --- |
 | `DAILY` | 日常高频内服 | 1、3、5、7、8、11、12、13、23 | 9 |
 | `CARE` | 外用消毒护理 | 10、15、16、17、18、19、20、22 | 8 |
-| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、9、14、21 | 6 |
+| `PRESCRIPTION` | 慢病处方 | 2、4、6、9、14、21 | 6 |
 
 S09 双歧杆菌实体放在 3 号柜，对外也投影为 `storageBox=PRESCRIPTION`，无需
 单设 `COLD` 软件分类。本地 S03 蒙脱石散上传为小程序 canonical
 `slot-13-montmorillonite` / 兼容编号 13；
-本地 S13 布洛芬上传为 `slot-03-ibuprofen` / 兼容编号 3。反向命令执行相反
-转换，身份、编号或 `storageBox` 冲突时失败关闭。
+本地 S13 布洛芬上传为 `slot-03-ibuprofen` / 兼容编号 3。板端药库是权威源；
+远程 `UPSERT_MEDICINE` 失败关闭，不能反向改写本地药品、分类或安全资料。
 
 按本次确认的现场分类，S09 无需单设冷藏柜或冷藏软件分类。该软件映射不是通用
 储存建议；更换实物批次或包装时仍须核对其标签与说明书。
 
-当前外部 Zykh-Miniprogram `origin/main` 的固定目录仍把 S09 标为 `COLD`。
-本版本既未修改该仓库，也未部署小程序或 CloudBase，因此上述 9/8/6 只证明
-Station 出站负载；现有小程序可能继续显示旧分类，其 `COLD` 反向负载也会被新版
-Station 按目录冲突失败关闭。小程序须另行修改、验证和发布后，才能宣称端到端界面
-与 Station 一致。
+当前外部 Zykh-Miniprogram `origin/main@9dd43c7` 的家属药库已固定为 22 药、
+`DAILY/CARE/PRESCRIPTION=9/8/5`，并主动过滤 S09。Station 仍发送完整 23 药并把
+S09 放入 finalize 保留集；云端继续保存这条数据，但当前小程序家属界面不会显示它。
+这是不修改小程序的明确限制，不能通过删除板端第 23 种药来伪造一致。
 
-`cabinet_id` 永不上传，也不能从 `storageBox` 反推。目标 CloudBase 探针为
-`schemaRevision=3.0-three-box-library`、`medicineStorageBoxes=v1`；探针不匹配时
-停止 Station 上线，不得在本轮临时修改或部署 CloudBase。探针匹配也不能证明
-外部小程序已接受新的 S09 分类，仍须核对其固定目录 commit。完整契约见
+`cabinet_id` 永不上传，也不能从 `storageBox` 反推。药库限定模式要求目标 CloudBase 为
+`schemaRevision=3.0-three-box-library`，并具备 `snapshotBatch:v2`、
+`explicitInventoryState:v1`、`medicineStorageBoxes:v1`；基础探针不匹配时停止 Station 同步。
+人物、计划、问询、体征、记录、安全事件、配对和远程命令只在完整人物代次能力门禁通过时开启。完整契约见
 [`miniprogram-sync-contract.md`](miniprogram-sync-contract.md)。
 
 云端仍无开柜或远程亮灯命令。历史 `OPEN_CABINET` 继续失败关闭，
@@ -62,16 +61,13 @@ Station 按目录冲突失败关闭。小程序须另行修改、验证和发布
 
 小程序允许的反向操作通过 `commands` 集合完成。主机拉取命令并将其置为 `running`，执行后 ACK 为 `done` 或 `failed`。`cloud_command_history` 保存本地执行结果，同一命令 ID 即使重复下发也不会重复执行。远程开柜不属于允许动作；历史 `OPEN_CABINET` 命令会被改写为失败且不会调用 QSM。
 
-## 已同步数据
+## 同步分区
 
-- 设备在线状态和同步代理版本；
-- 23 项药品的小程序 canonical `medicineId`、兼容编号、只读 `storageBox` 及药品信息，包括规格、追溯码、库存、低库存线和原始有效期精度；
-- 服务对象；
-- 今日计划；
-- 体征记录；
-- AI 问询记录；
-- 站点取药记录。
-- 人物—药品安全核查及物理结果（独立 append-only 事件，不属于快照）。
+- **药库限定模式：**发送无人物信息的设备心跳，以及 23 项药品的 canonical
+  `medicineId`、兼容编号、只读 `storageBox`、规格、追溯码、库存、低库存线和有效期精度。
+  不拉取/确认命令，不发人物、计划、问询、体征、记录或安全事件。
+- **完整安全模式：**只在人物代次/tombstone、membership、体征归属和安全事件能力全部通过时，
+  才额外发送服务对象、今日计划、问询、体征、取药记录和 append-only 安全事件，并处理允许的远程命令。
 
 人物同步不是普通的“当前列表”覆盖：Station 会把活动人物和归档 tombstone 一起
 写入 `service_users`。每行都必须有稳定 `persona_generation`；文档键由
@@ -86,11 +82,10 @@ Station 按目录冲突失败关闭。小程序须另行修改、验证和发布
 CloudBase，所以这些本地证据不能证明云端读取、人物代次或保留策略；上线前必须对
 实际部署独立验收，不能仅凭 `PING` 能力名称推定实现安全。
 
-本版本不再向旧版云函数降级。每个同步周期会先执行只读 `PING`；只有
-`schemaVersion=2`、`schemaRevision=3.0-three-box-library` 且
-`capabilities.medicineStorageBoxes=v1` 同时成立时，才允许发布配对码、拉取命令、
-上传快照或发送安全事件。任一条件不匹配都会在发生云端写入或执行云端命令前失败关闭，
-避免旧仓位语义把 S03/S13 更新到错误药品。
+本版本不再向旧版云函数降级。每个同步周期先执行只读 `PING`；基础药库三能力通过后
+可进入药库限定模式。完整安全模式还要求 `medicationSafetyEvents:v1`、
+`caregiverMembership:v1`、`personaLifecycle:v1`、`serviceUserPersonaTombstones:v1`
+与 `vitalsAttribution:v1`。未通过完整门禁时，程序不会因为能发 medicines 就顺带泄露人物数据。
 
 ## CloudBase 基线：本轮不部署
 
@@ -101,15 +96,14 @@ CloudBase，所以这些本地证据不能证明云端读取、人物代次或�
 上线前只做以下只读检查：
 
 1. 保存线上 `PING` 完整响应，确认目标为
-   `schemaRevision=3.0-three-box-library` 且
-   `capabilities.medicineStorageBoxes=v1`；
+   `schemaRevision=3.0-three-box-library`，并记录基础药库三能力与完整人物安全能力；
 2. 对比发布基线，确认 `zykh_station_app/cloudbase/**` 没有本轮 diff；
 3. 确认 Zykh-Miniprogram 工作树、commit 和已发布版本未被本轮修改；
 4. 使用 fake adapter 验证板端快照和反向命令，不向真实集合写测试数据。
 
-revision、能力、人物代次、membership、append-only 或命令权限任一不匹配时，
-停止 Station 上线并保留快照，不得靠部署 QSM 仓库里的旧云函数“修复”。板端适配
-通过后，真实全量同步仍须按既有运维流程先备份再执行；不得手工删除 ownerless、
+revision 或药库基础能力不匹配时停止所有同步；人物代次、membership、append-only 或命令权限不匹配时，
+只保留药库限定模式，禁止人物分区、配对与命令。不得靠部署 QSM 仓库里的旧云函数“修复”。
+真实全量同步仍须按既有运维流程先备份再执行；不得手工删除 ownerless、
 其他所有者或真实业务文档。验证与回滚顺序见
 [`miniprogram-sync-contract.md`](miniprogram-sync-contract.md)。
 
@@ -200,76 +194,23 @@ helper 后完成双人并发、过期、撤销与跨设备验收；本轮不会�
 node zykh_station_app/cloudbase/miniprogram/test-sync-contract.cjs
 ```
 
-云端总命令允许列表为：
+完整安全模式下 Station 的远端命令允许列表为：
 
 ```text
 AUDIO_BEEP
 AUDIO_SPEAK
 READ_VITALS_ALL
 AI_CHAT
-UPSERT_MEDICINE
 UPSERT_SERVICE_USER
 UPSERT_TODAY_PLAN
 ```
 
 其中通过家属配对签发的 `CAREGIVER` 只能使用前三项；其余命令仅在更高
-权限角色同时通过其它字段、人物代次和设备权限校验时可用。
+权限角色同时通过其它字段、人物代次和设备权限校验时可用。药库限定模式不会拉取任何命令。
 
-旧版反向 `UPSERT_MEDICINE` 命令继续接受 `hardware_slot`（兼容
-`hardwareSlot` / `slot`），但该值属于小程序 canonical 兼容编号；Station 必须先经
-板端投影解析为本地记录，尤其不能直接把小程序 S03/S13 当成本地 S03/S13。
-快照使用小程序 canonical `medicineId`，两条路径都不以条码去重，也不接受本地
-物理 `cabinet_id` 或 `storageBox` 作为药品身份替代键。`storageBox` 是 Station
-快照中受信的小程序药库投影，不属于反向命令可修改字段。局部修改
-使用嵌套补丁：
-
-```json
-{
-  "operation": "patch",
-  "hardware_slot": 13,
-  "patch": {
-    "name": "布洛芬缓释胶囊",
-    "spec": "0.3克×10粒",
-    "traceCode": "TRACE-EXAMPLE",
-    "quantity": 0,
-    "lowStockLine": 2,
-    "expireDate": "2029-01",
-    "expiryPrecision": "month"
-  }
-}
-```
-
-小程序可以上传待审核的安全资料草稿：`aliases`、`active_ingredients`、
-`structured_contraindications`，并可显式携带
-`safety_review_status: "draft"`。终端会清空草稿的审核人和审核时间，且草稿不会进入
-AI 问询候选池。小程序不能把资料标记为 `reviewed`，也不能提交
-`safety_reviewed_by` 或 `safety_reviewed_at`；这些审核动作只允许在受控本地流程完成。
-药师组合白名单和成分冲突矩阵同样不接受小程序远程写入。
-
-若补丁同时更换药品身份，终端会清空未在该补丁中提供的旧安全资料，但保留同一补丁
-显式携带的三类新草稿字段。空仓 `upsert` 也会在创建药品后保存同一 payload 的草稿，
-并保持 `package_verified=false` 与 `safety_review_status=draft`。
-
-终端只修改 `patch` 中明确出现的字段，库存和低库存线允许为 `0`。
-快照以小程序 canonical `medicineId` 作身份，列表仍可按 canonical 兼容 `slot`
-排序；本地 1–3 实体柜映射不会进入快照，只有独立的 `storageBox` /
-`storage_box` 小程序药库投影会上传。实体 `cabinet_id` 不上传，反向药品命令也
-不能修改实体柜或药库投影。命令字段到 SQLite 与快照字段的对应关系为：
-
-| 命令字段 | SQLite | 小程序快照字段 |
-| --- | --- | --- |
-| `hardware_slot` / `hardwareSlot` / `slot` | `hardware_slot` | `slot`, `hardwareSlot` |
-| `spec` | `spec` | `spec` |
-| `traceCode` / `trace_code` | `trace_code` | `traceCode`, `trace_code` |
-| `quantity` / `stock` | `stock` | `quantity`, `stock` |
-| `lowStockLine` / `low_stock_line` | `low_stock_line` | `lowStockLine`, `low_stock_line` |
-| `aliases` | `aliases_json`（草稿） | `aliases` |
-| `active_ingredients` | `active_ingredients_json`（草稿） | `active_ingredients` |
-| `structured_contraindications` | `structured_contraindications_json`（草稿） | `structured_contraindications` |
-| `safety_review_status` | 远程只允许 `draft` | `safety_review_status` |
-| `expireDate` / `expire_date` | `expire_date` | `expireDate`, `expire_date`, `expiryPrecision` |
-
-`expireDate` 原样保留 `YYYY-MM` 或 `YYYY-MM-DD`；`expiryPrecision` 由终端据此生成为 `month` 或 `day`。命令中若同时携带 `expiryPrecision`，云函数会先校验它与日期格式一致。
+`UPSERT_MEDICINE` 不在 Station 允许列表中。无论云端是否接受该类型，板端都以
+“药品、分类和仓位以板端固定药库为准”失败 ACK，不修改 SQLite、安全资料或本地实体柜映射。
+快照仍以 canonical `medicineId` 作身份，但这是单向发布投影，不是远端可写入接口。
 
 ## 家属安全事件只读接口
 

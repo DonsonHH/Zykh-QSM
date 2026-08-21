@@ -42,9 +42,42 @@ from .speech_service import SpeechService
 
 
 REMOTE_CABINET_DISABLED_ERROR = "远程开柜已禁用，请在终端现场完成身份确认和用药核查。"
+REMOTE_MEDICINE_MUTATION_DISABLED_ERROR = (
+    "远端药品修改已禁用；药品、分类和仓位以板端固定药库为准。"
+)
+REMOTE_COMMAND_IDENTITY_MISMATCH_ERROR = (
+    "云端命令 ID 与本地历史命令类型不一致，已拒绝重放。"
+)
+REMOTE_COMMAND_ALLOWLIST = frozenset(
+    {
+        "AUDIO_BEEP",
+        "AUDIO_SPEAK",
+        "READ_VITALS_ALL",
+        "AI_CHAT",
+        "UPSERT_SERVICE_USER",
+        "UPSERT_TODAY_PLAN",
+    }
+)
 REQUIRED_CLOUD_SCHEMA_VERSION = 2
 REQUIRED_CLOUD_SCHEMA_REVISION = "3.0-three-box-library"
-REQUIRED_MEDICINE_STORAGE_BOXES_CAPABILITY = "v1"
+REQUIRED_MEDICINE_SYNC_CAPABILITIES: Mapping[str, str] = MappingProxyType(
+    {
+        "snapshotBatch": "v2",
+        "explicitInventoryState": "v1",
+        "medicineStorageBoxes": "v1",
+    }
+)
+REQUIRED_FULL_SYNC_CAPABILITIES: Mapping[str, str] = MappingProxyType(
+    {
+        **REQUIRED_MEDICINE_SYNC_CAPABILITIES,
+        "medicationSafetyEvents": "v1",
+        "caregiverMembership": "v1",
+        "personaLifecycle": "v1",
+        "serviceUserPersonaTombstones": "v1",
+        "vitalsAttribution": "v1",
+    }
+)
+REQUIRED_DEVICE_PAIRING_ISSUE_CAPABILITY = "v1"
 LOCAL_ONLY_CABINET_FIELDS = frozenset(
     {"cabinet_id", "cabinet_label", "cabinet_description"}
 )
@@ -61,6 +94,109 @@ def _without_local_cabinet_projection(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_local_cabinet_projection(item) for item in value]
     return value
+
+
+def _first_present(row: Mapping[str, object], *keys: str) -> object | None:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _javascript_string(value: object) -> str:
+    """Mirror JavaScript String() for the scalar snapshot identity fields."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _javascript_truthy(value: object) -> bool:
+    if value is None or value is False or value == "":
+        return False
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    return True
+
+
+def _cloud_safe_id(value: object) -> str:
+    text = _javascript_string(value if _javascript_truthy(value) else "unknown")
+    # The 3.0 cloud function's /.../g regex has no Unicode flag, so it replaces
+    # each UTF-16 code unit independently. Preserve that behavior for astral
+    # characters as well as ordinary Chinese text.
+    units = text.encode("utf-16-le", errors="surrogatepass")
+    allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+    return "".join(
+        character if character in allowed else "-"
+        for character in (
+            chr(int.from_bytes(units[index : index + 2], "little"))
+            for index in range(0, len(units), 2)
+        )
+    )
+
+
+def _snapshot_document_id(
+    kind: str,
+    device_id: str,
+    row: Mapping[str, object],
+) -> str:
+    """Derive the exact CloudBase 3.0 document ID for one submitted row."""
+    if kind == "medicines":
+        legacy_slot = row.get("slot") or row.get("hardware_slot")
+        legacy_identity = f"legacy-slot-{legacy_slot}" if legacy_slot else None
+        fallback_identity = (
+            f"{row.get('name') or 'medicine'}-"
+            f"{row.get('expireDate') or row.get('expire_date') or 'unknown'}-"
+            f"{row.get('spec') or ''}"
+        )
+        identity = _first_present(
+            row,
+            "medicineId",
+            "medicine_id",
+            "traceCode",
+            "trace_code",
+            "barcode",
+            "code",
+            "id",
+            "_id",
+        )
+        return (
+            f"{device_id}-medicine-"
+            f"{_cloud_safe_id(identity if identity is not None else legacy_identity or fallback_identity)}"
+        )
+    if kind == "serviceUsers":
+        identity = _first_present(
+            row,
+            "id",
+            "service_user_id",
+            "serviceUserId",
+            "user_id",
+            "userId",
+            "name",
+        )
+        generation = _first_present(
+            row,
+            "persona_generation",
+            "personaGeneration",
+        )
+        return (
+            f"{device_id}-user-{_cloud_safe_id(identity if identity is not None else 'unknown')}-generation-"
+            f"{_cloud_safe_id(generation if generation is not None else 'legacy')}"
+        )
+    if kind == "plans":
+        return f"{device_id}-plan-{_cloud_safe_id(row.get('id'))}"
+    if kind == "inquiries":
+        identity = _first_present(row, "inquiry_id", "session_id", "id")
+        return f"{device_id}-inquiry-{_cloud_safe_id(identity)}"
+    if kind == "vitals":
+        identity = _first_present(row, "id", "measured_at", "createdAt")
+        return f"{device_id}-vitals-{_cloud_safe_id(identity)}"
+    if kind == "records":
+        identity = _first_present(row, "id", "created_at", "createdAt")
+        return f"{device_id}-record-{_cloud_safe_id(identity)}"
+    raise CloudSyncError(f"不支持的云端快照分区：{kind}")
 
 
 class CloudSyncError(RuntimeError):
@@ -130,15 +266,39 @@ class CloudSyncWorker:
             return 0, "同步正在进行。"
         try:
             cloud_contract = self._ensure_cloud_contract()
-            self._flush_unacked_commands()
-            commands = self._request("PULL_COMMANDS", {"limit": 10, "agentVersion": 2})
-            if not isinstance(commands, list):
-                commands = commands.get("commands", []) if isinstance(commands, dict) else []
-            for command in commands:
-                self._ensure_realtime_enabled()
-                self._handle_command(command)
+            full_sync_permitted = self._supports_capabilities(
+                cloud_contract,
+                REQUIRED_FULL_SYNC_CAPABILITIES,
+            )
+            commands: list[object] = []
+            if full_sync_permitted:
+                self._flush_unacked_commands()
+                pulled_commands = self._request(
+                    "PULL_COMMANDS",
+                    {"limit": 10, "agentVersion": 2},
+                )
+                if isinstance(pulled_commands, list):
+                    commands = pulled_commands
+                elif isinstance(pulled_commands, dict):
+                    raw_commands = pulled_commands.get("commands", [])
+                    commands = raw_commands if isinstance(raw_commands, list) else []
+                for command in commands:
+                    if not isinstance(command, dict):
+                        continue
+                    self._ensure_realtime_enabled()
+                    self._handle_command(command)
 
             snapshot = self._build_snapshot()
+            snapshot_kinds = (
+                None
+                if full_sync_permitted
+                else ("medicines",)
+            )
+            outbound_snapshot = (
+                snapshot
+                if full_sync_permitted
+                else {"medicines": snapshot.get("medicines", [])}
+            )
             from .network_service import NetworkService
 
             network_status = NetworkService().status()
@@ -159,19 +319,31 @@ class CloudSyncWorker:
                     "localApi": "http://127.0.0.1:8000",
                     "board": "智药康护终端",
                     "schemaVersion": 2,
-                    "syncSummary": self._sync_summary(snapshot),
+                    "syncSummary": (
+                        self._sync_summary(snapshot)
+                        if full_sync_permitted
+                        else self._medicine_sync_summary(snapshot)
+                    ),
                 },
             )
 
-            encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            safety_events_sent = MedicationSafetyOutbox().flush(
-                self._request,
-                capabilities=dict(cloud_contract.capabilities),
+            encoded = json.dumps(
+                outbound_snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
             )
+            safety_events_sent = 0
+            if full_sync_permitted:
+                safety_events_sent = MedicationSafetyOutbox().flush(
+                    self._request,
+                    capabilities=dict(cloud_contract.capabilities),
+                )
+            sync_scope = "full" if full_sync_permitted else "medicines-only"
             snapshot_hash = hashlib.sha256(
                 (
                     f"{cloud_contract.schema_version}:"
-                    f"{cloud_contract.schema_revision}:{encoded}"
+                    f"{cloud_contract.schema_revision}:{sync_scope}:{encoded}"
                 ).encode("utf-8")
             ).hexdigest()
             synced_count = 0
@@ -179,8 +351,9 @@ class CloudSyncWorker:
                 self._last_snapshot_hash = db.get_setting("cloud_snapshot_hash", "")
             if snapshot_hash != self._last_snapshot_hash:
                 synced_count = self._sync_snapshot(
-                    snapshot,
+                    outbound_snapshot,
                     schema_version=cloud_contract.schema_version,
+                    snapshot_kinds=snapshot_kinds,
                 )
                 self._last_snapshot_hash = snapshot_hash
                 db.set_setting("cloud_snapshot_hash", snapshot_hash)
@@ -191,7 +364,11 @@ class CloudSyncWorker:
             pending_safety_events = MedicationSafetyOutbox().pending_count()
             SyncRepository().save_status(
                 SyncStatus(
-                    sync_status="已同步" if pending_safety_events == 0 else "待同步",
+                    sync_status=(
+                        "已同步" if pending_safety_events == 0 else "待同步"
+                    )
+                    if full_sync_permitted
+                    else "药库已同步（人物同步暂停）",
                     pending_count=pending_safety_events,
                     last_sync_at=now,
                     network_mode=current.network_mode or "家庭网络",
@@ -205,6 +382,8 @@ class CloudSyncWorker:
             with self._state_lock:
                 self._connected = True
                 self._last_error = ""
+            if not full_sync_permitted:
+                return synced_count, "药库限定同步完成；人物同步与远端命令已安全暂停。"
             return synced_count, f"云端同步完成，处理 {len(commands)} 条命令。"
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__
@@ -278,7 +457,24 @@ class CloudSyncWorker:
             raise CloudSyncError("云端配对服务未配置。")
         if not self._device_secret():
             raise CloudSyncError("设备云端密钥未配置。")
-        self._ensure_cloud_contract()
+        contract = self._ensure_cloud_contract()
+        for capability, required_version in REQUIRED_FULL_SYNC_CAPABILITIES.items():
+            if (
+                str(contract.capabilities.get(capability) or "").strip()
+                != required_version
+            ):
+                raise CloudSyncError(
+                    "云端配对协议不兼容：要求 "
+                    f"capabilities.{capability}={required_version}。"
+                )
+        if (
+            str(contract.capabilities.get("devicePairingIssue") or "").strip()
+            != REQUIRED_DEVICE_PAIRING_ISSUE_CAPABILITY
+        ):
+            raise CloudSyncError(
+                "云端配对协议不兼容：要求 "
+                "capabilities.devicePairingIssue=v1。"
+            )
         return self._request("ISSUE_DEVICE_PAIRING_CODE", payload)
 
     def _ensure_realtime_enabled(self) -> None:
@@ -527,6 +723,7 @@ class CloudSyncWorker:
         snapshot: dict[str, list[dict[str, object]]],
         *,
         schema_version: int,
+        snapshot_kinds: tuple[str, ...] | None = None,
     ) -> int:
         if schema_version < 2:
             return self._sync_snapshot_v1(snapshot)
@@ -537,15 +734,94 @@ class CloudSyncWorker:
         # older row that was simply outside this upload, so those two kinds are
         # append/update only.
         finalize_kinds = {"medicines", "serviceUsers", "plans", "records"}
-        for key in ("medicines", "serviceUsers", "plans", "inquiries", "vitals", "records"):
+        selected_snapshot_kinds = snapshot_kinds or (
+            "medicines",
+            "serviceUsers",
+            "plans",
+            "inquiries",
+            "vitals",
+            "records",
+        )
+        snapshot_ids: dict[str, list[str]] = {}
+        for key in selected_snapshot_kinds:
             ids: list[str] = []
+            seen_ids: set[str] = set()
             for rows in self._snapshot_batches(snapshot.get(key, [])):
+                expected_ids = [
+                    _snapshot_document_id(
+                        key,
+                        settings.cloud_sync_device_id,
+                        row,
+                    )
+                    for row in rows
+                ]
                 result = self._request("UPSERT_SNAPSHOT_BATCH", {"kind": key, "rows": rows})
-                if isinstance(result, dict):
-                    ids.extend(str(value) for value in result.get("ids", []))
-                    synced += int(result.get("count") or 0)
+                if not isinstance(result, dict):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执格式无效，拒绝完成快照"
+                    )
+                if result.get("kind") != key:
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执 kind 不一致，拒绝完成快照"
+                    )
+                count = result.get("count")
+                if isinstance(count, bool) or not isinstance(count, int) or count != len(rows):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执 count 与提交行数不一致，"
+                        "拒绝完成快照"
+                    )
+                receipt_ids = result.get("ids")
+                if not isinstance(receipt_ids, list) or len(receipt_ids) != len(rows):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执 ids 与提交行数不一致，"
+                        "拒绝完成快照"
+                    )
+                if any(
+                    not isinstance(value, str) or not value.strip()
+                    for value in receipt_ids
+                ):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执包含空 id，拒绝完成快照"
+                    )
+                receipt_id_set = set(receipt_ids)
+                if (
+                    len(receipt_id_set) != len(receipt_ids)
+                    or not receipt_id_set.isdisjoint(seen_ids)
+                ):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执包含重复 id，拒绝完成快照"
+                    )
+                if receipt_ids != expected_ids:
+                    raise CloudSyncError(
+                        f"云端 {key} 快照批次回执 id 与提交行不一致，"
+                        "拒绝完成快照"
+                    )
+                ids.extend(receipt_ids)
+                seen_ids.update(receipt_id_set)
+                synced += count
+            snapshot_ids[key] = ids
+
+        for key in selected_snapshot_kinds:
             if key in finalize_kinds:
-                self._request("FINALIZE_SNAPSHOT", {"kind": key, "ids": ids})
+                finalize_result = self._request(
+                    "FINALIZE_SNAPSHOT",
+                    {"kind": key, "ids": snapshot_ids[key]},
+                )
+                removed = (
+                    finalize_result.get("removed")
+                    if isinstance(finalize_result, dict)
+                    else None
+                )
+                if (
+                    not isinstance(finalize_result, dict)
+                    or finalize_result.get("kind") != key
+                    or isinstance(removed, bool)
+                    or not isinstance(removed, int)
+                    or removed < 0
+                ):
+                    raise CloudSyncError(
+                        f"云端 {key} 快照完成回执无效，拒绝记录本次同步"
+                    )
         return synced
 
     @staticmethod
@@ -621,15 +897,27 @@ class CloudSyncWorker:
                 f"schemaVersion={REQUIRED_CLOUD_SCHEMA_VERSION}、"
                 f"schemaRevision={REQUIRED_CLOUD_SCHEMA_REVISION}。"
             )
-        if (
-            str(contract.capabilities.get("medicineStorageBoxes") or "").strip()
-            != REQUIRED_MEDICINE_STORAGE_BOXES_CAPABILITY
-        ):
-            raise CloudSyncError(
-                "云端同步协议不兼容：要求 "
-                "capabilities.medicineStorageBoxes=v1。"
-            )
+        for capability, required_version in REQUIRED_MEDICINE_SYNC_CAPABILITIES.items():
+            if (
+                str(contract.capabilities.get(capability) or "").strip()
+                != required_version
+            ):
+                raise CloudSyncError(
+                    "云端同步协议不兼容：要求 "
+                    f"capabilities.{capability}={required_version}。"
+                )
         return contract
+
+    @staticmethod
+    def _supports_capabilities(
+        contract: CloudContract,
+        required_capabilities: Mapping[str, str],
+    ) -> bool:
+        return all(
+            str(contract.capabilities.get(capability) or "").strip()
+            == required_version
+            for capability, required_version in required_capabilities.items()
+        )
 
     def _sync_snapshot_v1(self, snapshot: dict[str, list[dict[str, object]]]) -> int:
         synced = 0
@@ -691,6 +979,12 @@ class CloudSyncWorker:
             ],
         }
 
+    @staticmethod
+    def _medicine_sync_summary(
+        snapshot: dict[str, list[dict[str, object]]],
+    ) -> dict[str, object]:
+        return {"counts": {"medicines": len(snapshot.get("medicines", []))}}
+
     def _upload_legacy_item(
         self,
         kind: str,
@@ -720,21 +1014,64 @@ class CloudSyncWorker:
             return f"问询记录：{row.get('symptoms_summary') or row.get('risk_label') or ''}"
         return str(row.get("message") or "本地服务记录")
 
+    @staticmethod
+    def _remote_command_policy_error(command_type: str) -> str:
+        if command_type == "UPSERT_MEDICINE":
+            return REMOTE_MEDICINE_MUTATION_DISABLED_ERROR
+        if command_type == "OPEN_CABINET":
+            return REMOTE_CABINET_DISABLED_ERROR
+        if command_type not in REMOTE_COMMAND_ALLOWLIST:
+            return f"不支持的云端命令：{command_type}"
+        return ""
+
+    def _reject_remote_command(
+        self,
+        command_id: str,
+        command_type: str,
+        error: str,
+        *,
+        created_at: str,
+    ) -> None:
+        result = {"error": error}
+        self._save_command(
+            command_id,
+            command_type,
+            "failed_unacked",
+            result,
+            created_at,
+        )
+        self._ack(command_id, "failed", result)
+        self._save_command(
+            command_id,
+            command_type,
+            "failed",
+            result,
+            created_at,
+        )
+
     def _handle_command(self, command: dict[str, object]) -> None:
         command_id = str(command.get("_id") or command.get("id") or "").strip()
         command_type = str(command.get("type") or "").strip()
         if not command_id:
             return
         existing = self._command_history(command_id)
-        if command_type == "OPEN_CABINET":
-            result = {"error": REMOTE_CABINET_DISABLED_ERROR}
-            created_at = str(existing["created_at"] if existing else db.now_text())
-            self._save_command(command_id, command_type, "failed_unacked", result, created_at)
-            try:
-                self._ack(command_id, "failed", result)
-            except CloudSyncError:
-                raise
-            self._save_command(command_id, command_type, "failed", result, created_at)
+        created_at = str(existing["created_at"] if existing else db.now_text())
+        policy_error = self._remote_command_policy_error(command_type)
+        if policy_error:
+            self._reject_remote_command(
+                command_id,
+                command_type,
+                policy_error,
+                created_at=created_at,
+            )
+            return
+        if existing and str(existing["command_type"] or "") != command_type:
+            self._reject_remote_command(
+                command_id,
+                command_type,
+                REMOTE_COMMAND_IDENTITY_MISMATCH_ERROR,
+                created_at=created_at,
+            )
             return
         if existing and existing["status"] in {"done", "done_unacked", "failed", "failed_unacked"}:
             final_status = "done" if str(existing["status"]).startswith("done") else "failed"
@@ -778,12 +1115,14 @@ class CloudSyncWorker:
                 """
             ).fetchall()
         for row in rows:
-            if str(row["command_type"]) == "OPEN_CABINET":
+            command_type = str(row["command_type"] or "")
+            policy_error = self._remote_command_policy_error(command_type)
+            if policy_error:
                 final_status = "failed"
-                result = {"error": REMOTE_CABINET_DISABLED_ERROR}
+                result = {"error": policy_error}
                 self._save_command(
                     str(row["command_id"]),
-                    str(row["command_type"]),
+                    command_type,
                     "failed_unacked",
                     result,
                     str(row["created_at"]),
@@ -794,7 +1133,7 @@ class CloudSyncWorker:
             self._ack(str(row["command_id"]), final_status, result)
             self._save_command(
                 str(row["command_id"]),
-                str(row["command_type"]),
+                command_type,
                 final_status,
                 result,
                 str(row["created_at"]),
@@ -815,6 +1154,10 @@ class CloudSyncWorker:
             )
 
     def _execute_command(self, command_type: str, command: dict[str, object]) -> dict[str, object]:
+        policy_error = self._remote_command_policy_error(command_type)
+        if policy_error:
+            raise CloudSyncError(policy_error)
+
         payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
         if command_type in {"AI_CHAT", "UPSERT_SERVICE_USER", "UPSERT_TODAY_PLAN"}:
             self._require_current_command_persona(command_type, payload)
@@ -844,14 +1187,10 @@ class CloudSyncWorker:
             if not question:
                 raise CloudSyncError("AI_CHAT 缺少问题内容。")
             return AiService().chat(question)
-        if command_type == "UPSERT_MEDICINE":
-            return self._upsert_medicine(payload)
         if command_type == "UPSERT_SERVICE_USER":
             return self._upsert_service_user(payload)
         if command_type == "UPSERT_TODAY_PLAN":
             return self._upsert_today_plan(payload)
-        if command_type == "OPEN_CABINET":
-            raise CloudSyncError(REMOTE_CABINET_DISABLED_ERROR)
         raise CloudSyncError(f"不支持的云端命令：{command_type}")
 
     @staticmethod
@@ -1336,7 +1675,11 @@ class CloudSyncWorker:
         db.init_db()
         with db.connect() as conn:
             return conn.execute(
-                "SELECT status, result_json, created_at FROM cloud_command_history WHERE command_id=?",
+                """
+                SELECT command_type, status, result_json, created_at
+                FROM cloud_command_history
+                WHERE command_id=?
+                """,
                 (command_id,),
             ).fetchone()
 

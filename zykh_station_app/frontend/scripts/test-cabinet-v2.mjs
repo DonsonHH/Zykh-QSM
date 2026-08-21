@@ -24,7 +24,7 @@ const cabinets = [
   },
   {
     id: 3,
-    label: "慢病处方储备",
+    label: "慢病处方",
     description: "慢病固定用药、处方药与低频储备用药",
     medicine_ids: ["slot-09-bifid-triple"]
   }
@@ -45,7 +45,7 @@ assert.deepEqual(
     { id: "slot-13-ibuprofen", cabinet_id: 1, cabinet_label: "日常用药" },
     { id: "slot-18-budesonide-nasal", cabinet_id: 2, cabinet_label: "外用护理" },
     { id: "slot-22-cotton-swab", cabinet_id: 2, cabinet_label: "外用护理" },
-    { id: "slot-09-bifid-triple", cabinet_id: 3, cabinet_label: "慢病处方储备" }
+    { id: "slot-09-bifid-triple", cabinet_id: 3, cabinet_label: "慢病处方" }
   ]
 );
 

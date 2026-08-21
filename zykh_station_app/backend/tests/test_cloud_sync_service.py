@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,67 @@ from app.services.medicine_knowledge_repository import MedicineKnowledgeReposito
 from app.services.qsm_client import QsmClient  # noqa: E402
 
 
+MEDICINE_SYNC_CAPABILITIES = {
+    "snapshotBatch": "v2",
+    "explicitInventoryState": "v1",
+    "medicineStorageBoxes": "v1",
+}
+COMPATIBLE_SYNC_CAPABILITIES = {
+    **MEDICINE_SYNC_CAPABILITIES,
+    "medicationSafetyEvents": "v1",
+    "caregiverMembership": "v1",
+    "personaLifecycle": "v1",
+    "serviceUserPersonaTombstones": "v1",
+    "vitalsAttribution": "v1",
+}
+COMPATIBLE_PAIRING_CAPABILITIES = {
+    **COMPATIBLE_SYNC_CAPABILITIES,
+    "devicePairingIssue": "v1",
+}
+LATEST_MINIPROGRAM_CAPABILITIES = {
+    "medicationSafetyEvents": "v1",
+    "caregiverMembership": "v1",
+    "inquiryDetail": "v1",
+    "snapshotBatch": "v2",
+    "devicePairing": "v1",
+    "devicePairingIssue": "v1",
+    "caregiverNotificationOutbox": "v1",
+    "caregiverNotificationWorker": "v1",
+    "explicitInventoryState": "v1",
+    "medicineStorageBoxes": "v1",
+    "manualMedicationUse": "v1",
+    "medicationRiskRegistry": "v1",
+    "personaLifecycle": "v1",
+    "vitalsAttribution": "v1",
+}
+
+
+def expected_snapshot_id(kind: str, row: dict[str, object]) -> str:
+    def safe_id(value: object) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]", "-", str(value or "unknown"))
+
+    device_id = settings.cloud_sync_device_id
+    if kind == "medicines":
+        return f"{device_id}-medicine-{safe_id(row['medicineId'])}"
+    if kind == "serviceUsers":
+        return (
+            f"{device_id}-user-{safe_id(row['id'])}-generation-"
+            f"{safe_id(row['persona_generation'])}"
+        )
+    if kind == "plans":
+        return f"{device_id}-plan-{safe_id(row['id'])}"
+    if kind == "inquiries":
+        identity = row.get("inquiry_id") or row.get("session_id") or row.get("id")
+        return f"{device_id}-inquiry-{safe_id(identity)}"
+    if kind == "vitals":
+        identity = row.get("id") or row.get("measured_at") or row.get("createdAt")
+        return f"{device_id}-vitals-{safe_id(identity)}"
+    if kind == "records":
+        identity = row.get("id") or row.get("created_at") or row.get("createdAt")
+        return f"{device_id}-record-{safe_id(identity)}"
+    raise AssertionError(f"unexpected snapshot kind {kind}")
+
+
 class FakeCloudSyncWorker(CloudSyncWorker):
     def __init__(self) -> None:
         super().__init__()
@@ -36,7 +98,7 @@ class FakeCloudSyncWorker(CloudSyncWorker):
                 "ok": True,
                 "schemaVersion": 2,
                 "schemaRevision": "3.0-three-box-library",
-                "capabilities": {"medicineStorageBoxes": "v1"},
+                "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
             }
         if action == "PULL_COMMANDS":
             return []
@@ -56,6 +118,18 @@ class FakeV2CloudSyncWorker(FakeCloudSyncWorker):
         super().__init__()
         self.revision = revision
 
+    def _snapshot_batch_receipt(
+        self,
+        data: dict[str, object],
+    ) -> dict[str, object]:
+        rows = data.get("rows", [])
+        return {
+            "ok": True,
+            "kind": data.get("kind"),
+            "count": len(rows),
+            "ids": [expected_snapshot_id(str(data.get("kind")), row) for row in rows],
+        }
+
     def _call(self, action: str, data: dict[str, object]):
         self.calls.append((action, data))
         if action == "PING":
@@ -63,13 +137,23 @@ class FakeV2CloudSyncWorker(FakeCloudSyncWorker):
                 "ok": True,
                 "schemaVersion": 2,
                 "schemaRevision": self.revision,
-                "capabilities": {"medicineStorageBoxes": "v1"},
+                "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
             }
         if action == "PULL_COMMANDS":
             return []
         if action == "UPSERT_SNAPSHOT_BATCH":
-            rows = data.get("rows", [])
-            return {"ok": True, "count": len(rows), "ids": [f"id-{index}" for index, _ in enumerate(rows)]}
+            return self._snapshot_batch_receipt(data)
+        if action == "FINALIZE_SNAPSHOT":
+            return {"ok": True, "kind": data.get("kind"), "removed": 0}
+        if action == "REPORT_MEDICATION_SAFETY_EVENT":
+            event = data.get("event")
+            if not isinstance(event, dict):
+                raise AssertionError("test cloud expected an event object")
+            return {
+                "ok": True,
+                "eventId": event.get("event_id"),
+                "payloadDigest": data.get("payloadDigest"),
+            }
         return {"ok": True}
 
 
@@ -81,19 +165,22 @@ class FakeSafetyEventCloudSyncWorker(FakeV2CloudSyncWorker):
                 "ok": True,
                 "schemaVersion": 2,
                 "schemaRevision": "3.0-three-box-library",
-                "capabilities": {
-                    "medicineStorageBoxes": "v1",
-                    "medicationSafetyEvents": "v1",
-                },
+                "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
             }
         if action == "PULL_COMMANDS":
             return []
         if action == "UPSERT_SNAPSHOT_BATCH":
-            rows = data.get("rows", [])
+            return self._snapshot_batch_receipt(data)
+        if action == "FINALIZE_SNAPSHOT":
+            return {"ok": True, "kind": data.get("kind"), "removed": 0}
+        if action == "REPORT_MEDICATION_SAFETY_EVENT":
+            event = data.get("event")
+            if not isinstance(event, dict):
+                raise AssertionError("test cloud expected an event object")
             return {
                 "ok": True,
-                "count": len(rows),
-                "ids": [f"id-{index}" for index, _ in enumerate(rows)],
+                "eventId": event.get("event_id"),
+                "payloadDigest": data.get("payloadDigest"),
             }
         return {"ok": True}
 
@@ -132,15 +219,12 @@ class MedicineRoundTripWorker(FakeV2CloudSyncWorker):
                 "ok": True,
                 "schemaVersion": 2,
                 "schemaRevision": self.revision,
-                "capabilities": {"medicineStorageBoxes": "v1"},
+                "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
             }
         if action == "UPSERT_SNAPSHOT_BATCH":
-            rows = data.get("rows", [])
-            return {
-                "ok": True,
-                "count": len(rows),
-                "ids": [f"id-{data.get('kind')}-{index}" for index, _ in enumerate(rows)],
-            }
+            return self._snapshot_batch_receipt(data)
+        if action == "FINALIZE_SNAPSHOT":
+            return {"ok": True, "kind": data.get("kind"), "removed": 0}
         return {"ok": True}
 
 
@@ -156,7 +240,7 @@ class PauseAfterPullWorker(FakeCloudSyncWorker):
                 "ok": True,
                 "schemaVersion": 2,
                 "schemaRevision": "3.0-three-box-library",
-                "capabilities": {"medicineStorageBoxes": "v1"},
+                "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
             }
         if action == "PULL_COMMANDS":
             db.set_setting("network_mode", "local")
@@ -206,7 +290,10 @@ class CloudSyncServiceTest(unittest.TestCase):
                     "ok": True,
                     "schemaVersion": 2,
                     "schemaRevision": "3.0-three-box-library",
-                    "capabilities": {"medicineStorageBoxes": "v2"},
+                    "capabilities": {
+                        **COMPATIBLE_SYNC_CAPABILITIES,
+                        "medicineStorageBoxes": "v2",
+                    },
                 }
             return {"ok": True}
 
@@ -215,6 +302,137 @@ class CloudSyncServiceTest(unittest.TestCase):
                 worker.run_once()
 
         self.assertEqual([action for action, _ in worker.calls], ["PING"])
+
+    def test_missing_required_medicine_sync_capability_is_rejected_before_any_sync_side_effect(self) -> None:
+        for capability, required_version in MEDICINE_SYNC_CAPABILITIES.items():
+            with self.subTest(capability=capability):
+                worker = FakeCloudSyncWorker()
+                incompatible_capabilities = dict(LATEST_MINIPROGRAM_CAPABILITIES)
+                incompatible_capabilities.pop(capability)
+
+                def incompatible_ping(action: str, data: dict[str, object]):
+                    worker.calls.append((action, data))
+                    if action == "PING":
+                        return {
+                            "ok": True,
+                            "schemaVersion": 2,
+                            "schemaRevision": "3.0-three-box-library",
+                            "capabilities": incompatible_capabilities,
+                        }
+                    return {"ok": True}
+
+                with patch.object(worker, "_call", side_effect=incompatible_ping):
+                    with self.assertRaisesRegex(
+                        CloudSyncError,
+                        rf"{capability}={required_version}",
+                    ):
+                        worker.run_once()
+
+                self.assertEqual([action for action, _ in worker.calls], ["PING"])
+
+    def test_latest_miniprogram_contract_only_permits_non_person_device_and_medicine_sync(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        worker._save_command(
+            "latest-mini-unacked",
+            "AUDIO_BEEP",
+            "done_unacked",
+            {"ok": True},
+            db.now_text(),
+        )
+        safety_payload = {
+            "event_id": "latest-mini-pending-safety-event",
+            "check_id": "latest-mini-pending-safety-check",
+            "medicine_id": "slot-01-fufang-ganmaoling",
+            "check_status": "BLOCKED",
+        }
+        safety_payload_json = json.dumps(
+            safety_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        safety_digest = __import__("hashlib").sha256(
+            safety_payload_json.encode("utf-8")
+        ).hexdigest()
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO medication_safety_outbox(
+                  event_id, aggregate_id, event_type, payload_json, payload_digest,
+                  status, attempts, next_attempt_at, created_at, sent_at
+                ) VALUES (?, ?, 'MEDICATION_SAFETY_EVENT_RECORDED', ?, ?,
+                          'pending', 0, ?, ?, '')
+                """,
+                (
+                    safety_payload["event_id"],
+                    safety_payload["check_id"],
+                    safety_payload_json,
+                    safety_digest,
+                    db.now_text(),
+                    db.now_text(),
+                ),
+            )
+        original_call = worker._call
+
+        def latest_miniprogram_cloud(action: str, data: dict[str, object]):
+            if action == "PING":
+                worker.calls.append((action, data))
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(LATEST_MINIPROGRAM_CAPABILITIES),
+                }
+            return original_call(action, data)
+
+        with patch.object(worker, "_call", side_effect=latest_miniprogram_cloud):
+            _count, message = worker.run_once()
+
+        actions = [action for action, _ in worker.calls]
+        self.assertNotIn("PULL_COMMANDS", actions)
+        self.assertNotIn("ACK_COMMAND", actions)
+        self.assertNotIn("REPORT_MEDICATION_SAFETY_EVENT", actions)
+        self.assertEqual(
+            worker._command_history("latest-mini-unacked")["status"],
+            "done_unacked",
+        )
+        with db.connect() as conn:
+            safety_status = conn.execute(
+                """
+                SELECT status FROM medication_safety_outbox
+                WHERE event_id='latest-mini-pending-safety-event'
+                """
+            ).fetchone()["status"]
+        self.assertEqual(safety_status, "pending")
+
+        device_report = next(
+            payload
+            for action, payload in worker.calls
+            if action == "REPORT_DEVICE"
+        )
+        self.assertEqual(device_report["syncSummary"], {"counts": {"medicines": 23}})
+
+        snapshot_batches = [
+            payload
+            for action, payload in worker.calls
+            if action == "UPSERT_SNAPSHOT_BATCH"
+        ]
+        self.assertEqual({payload["kind"] for payload in snapshot_batches}, {"medicines"})
+        medicines = [row for payload in snapshot_batches for row in payload["rows"]]
+        self.assertEqual(len(medicines), 23)
+        probiotic = next(row for row in medicines if row["id"] == "slot-09-bifid-triple")
+        self.assertEqual(probiotic["storageBox"], "PRESCRIPTION")
+        self.assertEqual(SyncRepository().get_status().sync_status, "药库已同步（人物同步暂停）")
+        self.assertIn("药库限定同步完成", message)
+
+        finalizations = [
+            payload
+            for action, payload in worker.calls
+            if action == "FINALIZE_SNAPSHOT"
+        ]
+        self.assertEqual(len(finalizations), 1)
+        self.assertEqual(finalizations[0]["kind"], "medicines")
+        self.assertEqual(len(finalizations[0]["ids"]), 23)
 
     def test_each_sync_cycle_rechecks_contract_before_pulling_commands(self) -> None:
         worker = FakeCloudSyncWorker()
@@ -230,19 +448,29 @@ class CloudSyncServiceTest(unittest.TestCase):
                         "ok": True,
                         "schemaVersion": 2,
                         "schemaRevision": "3.0-three-box-library",
-                        "capabilities": {"medicineStorageBoxes": "v1"},
+                        "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
                     }
                 return {
                     "ok": True,
                     "schemaVersion": 2,
                     "schemaRevision": "2.9-stable-medicine-identity",
-                    "capabilities": {"medicineStorageBoxes": "v1"},
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
                 }
             if action == "PULL_COMMANDS":
                 return []
             if action == "UPSERT_SNAPSHOT_BATCH":
                 rows = data.get("rows", [])
-                return {"ok": True, "count": len(rows), "ids": []}
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows),
+                    "ids": [
+                        expected_snapshot_id(str(data.get("kind")), row)
+                        for row in rows
+                    ],
+                }
+            if action == "FINALIZE_SNAPSHOT":
+                return {"ok": True, "kind": data.get("kind"), "removed": 0}
             return {"ok": True}
 
         with patch.object(worker, "_call", side_effect=changing_contract):
@@ -254,6 +482,381 @@ class CloudSyncServiceTest(unittest.TestCase):
         self.assertEqual(
             [action for action, _ in worker.calls[second_cycle_start:]],
             ["PING"],
+        )
+
+    def test_nonempty_snapshot_batch_with_empty_receipt_ids_never_finalizes(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def empty_ids_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(data.get("rows", [])),
+                    "ids": [],
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=empty_ids_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_batch_receipt_ids_must_match_the_submitted_rows(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def wrong_row_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                return {
+                    "ok": True,
+                    "kind": data["kind"],
+                    "count": len(data["rows"]),
+                    "ids": ["wrong-cloud-row-id"],
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=wrong_row_receipt):
+            with self.assertRaisesRegex(CloudSyncError, "提交行不一致"):
+                worker._sync_snapshot(
+                    {"medicines": [{"medicineId": "slot-01-fufang-ganmaoling"}]},
+                    schema_version=2,
+                    snapshot_kinds=("medicines",),
+                )
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_batch_receipt_kind_must_match_the_submitted_partition(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def wrong_kind_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                return {
+                    "ok": True,
+                    "kind": "plans",
+                    "count": len(data["rows"]),
+                    "ids": [
+                        f"{settings.cloud_sync_device_id}-medicine-slot-01-fufang-ganmaoling"
+                    ],
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=wrong_kind_receipt):
+            with self.assertRaisesRegex(CloudSyncError, "kind"):
+                worker._sync_snapshot(
+                    {"medicines": [{"medicineId": "slot-01-fufang-ganmaoling"}]},
+                    schema_version=2,
+                    snapshot_kinds=("medicines",),
+                )
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_receipt_binding_mirrors_cloud_utf16_safe_id(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        expected_id = f"{settings.cloud_sync_device_id}-plan-plan---"
+
+        def utf16_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                return {
+                    "ok": True,
+                    "kind": "plans",
+                    "count": 1,
+                    "ids": [expected_id],
+                }
+            if action == "FINALIZE_SNAPSHOT":
+                return {"kind": "plans", "removed": 0}
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=utf16_receipt):
+            synced = worker._sync_snapshot(
+                {"plans": [{"id": "plan-😀"}]},
+                schema_version=2,
+                snapshot_kinds=("plans",),
+            )
+
+        self.assertEqual(synced, 1)
+        finalization = next(
+            payload for action, payload in worker.calls if action == "FINALIZE_SNAPSHOT"
+        )
+        self.assertEqual(finalization["ids"], [expected_id])
+
+    def test_finalize_receipt_must_match_the_submitted_partition(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def wrong_finalize_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data["rows"]
+                return {
+                    "kind": data["kind"],
+                    "count": len(rows),
+                    "ids": [
+                        expected_snapshot_id(str(data["kind"]), row)
+                        for row in rows
+                    ],
+                }
+            if action == "FINALIZE_SNAPSHOT":
+                return {"kind": "plans", "removed": 0}
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=wrong_finalize_receipt):
+            with self.assertRaisesRegex(CloudSyncError, "完成回执"):
+                worker._sync_snapshot(
+                    {"medicines": [{"medicineId": "slot-01-fufang-ganmaoling"}]},
+                    schema_version=2,
+                    snapshot_kinds=("medicines",),
+                )
+
+    def test_snapshot_batch_count_mismatch_never_finalizes(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def wrong_count_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows) + 1,
+                    "ids": [f"cloud-id-{index}" for index, _ in enumerate(rows)],
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=wrong_count_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_batch_id_count_mismatch_never_finalizes(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def missing_id_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows),
+                    "ids": [
+                        f"cloud-id-{index}"
+                        for index, _ in enumerate(rows[:-1])
+                    ],
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=missing_id_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_batch_blank_id_never_finalizes(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def blank_id_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                ids = [f"cloud-id-{index}" for index, _ in enumerate(rows)]
+                ids[0] = "   "
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows),
+                    "ids": ids,
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=blank_id_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_batch_duplicate_ids_never_finalizes(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def duplicate_ids_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows),
+                    "ids": ["duplicate-cloud-id"] * len(rows),
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=duplicate_ids_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_snapshot_ids_must_be_unique_across_batches(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        colliding_rows = [{"id": "人物甲"}, {"id": "人物乙"}]
+
+        with patch.object(
+            worker,
+            "_snapshot_batches",
+            return_value=[[colliding_rows[0]], [colliding_rows[1]]],
+        ):
+            with self.assertRaisesRegex(CloudSyncError, "重复 id"):
+                worker._sync_snapshot(
+                    {"plans": colliding_rows},
+                    schema_version=2,
+                    snapshot_kinds=("plans",),
+                )
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_late_snapshot_receipt_failure_prevents_every_finalize(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+
+        def late_bad_receipt(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
+                }
+            if action == "PULL_COMMANDS":
+                return []
+            if action == "UPSERT_SNAPSHOT_BATCH":
+                rows = data.get("rows", [])
+                ids = [
+                    expected_snapshot_id(str(data.get("kind")), row)
+                    for row in rows
+                ]
+                if data.get("kind") == "serviceUsers":
+                    ids = []
+                return {
+                    "ok": True,
+                    "kind": data.get("kind"),
+                    "count": len(rows),
+                    "ids": ids,
+                }
+            return {"ok": True}
+
+        with patch.object(worker, "_call", side_effect=late_bad_receipt):
+            with self.assertRaises(CloudSyncError):
+                worker.run_once()
+
+        self.assertNotIn(
+            "FINALIZE_SNAPSHOT",
+            [action for action, _ in worker.calls],
+        )
+
+    def test_authoritative_empty_snapshot_finalizes_without_fake_upsert_receipts(self) -> None:
+        worker = FakeV2CloudSyncWorker()
+        empty_snapshot = {
+            "medicines": [],
+            "serviceUsers": [],
+            "plans": [],
+            "inquiries": [],
+            "vitals": [],
+            "records": [],
+        }
+
+        with patch.object(worker, "_build_snapshot", return_value=empty_snapshot):
+            worker.run_once()
+
+        self.assertNotIn(
+            "UPSERT_SNAPSHOT_BATCH",
+            [action for action, _ in worker.calls],
+        )
+        finalized = {
+            data["kind"]: data["ids"]
+            for action, data in worker.calls
+            if action == "FINALIZE_SNAPSHOT"
+        }
+        self.assertEqual(
+            finalized,
+            {
+                "medicines": [],
+                "serviceUsers": [],
+                "plans": [],
+                "records": [],
+            },
         )
 
     def test_local_display_mode_pauses_miniprogram_realtime_calls(self) -> None:
@@ -305,6 +908,75 @@ class CloudSyncServiceTest(unittest.TestCase):
                 legacy_worker.issue_pairing_code_hash(payload)
         self.assertEqual(legacy_worker.calls, [("PING", {})])
 
+    def test_pairing_requires_device_pairing_issue_capability_before_publishing(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "codeHash": "c" * 64,
+            "serviceUserScopes": ["wang-nainai"],
+            "ttlSeconds": 600,
+        }
+        configured = replace(
+            settings,
+            cloud_sync_endpoint="https://cloud.example.test/pairing",
+            cloud_sync_device_secret="device-test-secret",
+        )
+
+        def ping_without_pairing_issue(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(COMPATIBLE_SYNC_CAPABILITIES),
+                }
+            return {"ok": True}
+
+        with (
+            patch("app.services.cloud_sync_service.settings", configured),
+            patch.object(worker, "_call", side_effect=ping_without_pairing_issue),
+        ):
+            with self.assertRaisesRegex(CloudSyncError, "devicePairingIssue=v1"):
+                worker.issue_pairing_code_hash(payload)
+
+        self.assertEqual(worker.calls, [("PING", {})])
+
+    def test_latest_miniprogram_contract_cannot_issue_pairing_without_full_persona_safety(self) -> None:
+        worker = FakeCloudSyncWorker()
+        payload = {
+            "codeHash": "d" * 64,
+            "serviceUserScopes": ["wang-nainai"],
+            "ttlSeconds": 600,
+        }
+        configured = replace(
+            settings,
+            cloud_sync_endpoint="https://cloud.example.test/pairing",
+            cloud_sync_device_secret="device-test-secret",
+        )
+
+        def latest_miniprogram_ping(action: str, data: dict[str, object]):
+            worker.calls.append((action, data))
+            if action == "PING":
+                return {
+                    "ok": True,
+                    "schemaVersion": 2,
+                    "schemaRevision": "3.0-three-box-library",
+                    "capabilities": dict(LATEST_MINIPROGRAM_CAPABILITIES),
+                }
+            return {"ok": True}
+
+        with (
+            patch("app.services.cloud_sync_service.settings", configured),
+            patch.object(worker, "_call", side_effect=latest_miniprogram_ping),
+        ):
+            with self.assertRaisesRegex(
+                CloudSyncError,
+                "serviceUserPersonaTombstones=v1",
+            ):
+                worker.issue_pairing_code_hash(payload)
+
+        self.assertEqual(worker.calls, [("PING", {})])
+
     def test_pairing_stops_if_local_mode_is_selected_after_contract_ping(self) -> None:
         worker = FakeCloudSyncWorker()
         payload = {
@@ -326,7 +998,7 @@ class CloudSyncServiceTest(unittest.TestCase):
                     "ok": True,
                     "schemaVersion": 2,
                     "schemaRevision": "3.0-three-box-library",
-                    "capabilities": {"medicineStorageBoxes": "v1"},
+                    "capabilities": dict(COMPATIBLE_PAIRING_CAPABILITIES),
                 }
             return {"ok": True}
 
@@ -1225,7 +1897,7 @@ class CloudSyncServiceTest(unittest.TestCase):
             ("slot-03-ibuprofen", "slot-03-ibuprofen", 3, 3, 3, 3),
         )
 
-    def test_snapshot_projects_the_confirmed_three_cabinet_distribution(self) -> None:
+    def test_snapshot_keeps_full_board_catalog_when_miniprogram_filters_unknown_items(self) -> None:
         rows = CloudSyncWorker._build_snapshot()["medicines"]
         counts: dict[str, int] = {}
         for row in rows:
@@ -1233,6 +1905,17 @@ class CloudSyncServiceTest(unittest.TestCase):
             counts[row["storageBox"]] = counts.get(row["storageBox"], 0) + 1
 
         self.assertEqual(counts, {"DAILY": 9, "CARE": 8, "PRESCRIPTION": 6})
+        self.assertEqual(len(rows), 23)
+        probiotic = next(row for row in rows if row["id"] == "slot-09-bifid-triple")
+        self.assertEqual(
+            (
+                probiotic["medicineId"],
+                probiotic["medicine_id"],
+                probiotic["legacySlot"],
+                probiotic["storageBox"],
+            ),
+            ("slot-09-bifid-triple", "slot-09-bifid-triple", 9, "PRESCRIPTION"),
+        )
 
     def test_snapshot_rejects_an_unmapped_historical_medicine(self) -> None:
         MedicineRepository().list_all()
@@ -1422,7 +2105,8 @@ class CloudSyncServiceTest(unittest.TestCase):
 
         self.assertTrue({"spec", "trace_code", "low_stock_line"}.issubset(columns))
 
-    def test_pulled_miniprogram_medicine_patch_round_trips_to_cloud_snapshot(self) -> None:
+    def test_pulled_miniprogram_medicine_patch_fails_closed_without_changing_board_library(self) -> None:
+        before = MedicineRepository().get_by_hardware_slot(1)
         worker = MedicineRoundTripWorker(
             {
                 "_id": "medicine-command-1",
@@ -1447,20 +2131,118 @@ class CloudSyncServiceTest(unittest.TestCase):
 
         worker.run_once()
 
-        medicine_batches = [
-            payload for action, payload in worker.calls
-            if action == "UPSERT_SNAPSHOT_BATCH" and payload.get("kind") == "medicines"
+        after = MedicineRepository().get_by_hardware_slot(1)
+        self.assertEqual(
+            (
+                after.id,
+                after.hardware_slot,
+                after.name,
+                after.category,
+                after.spec,
+                after.trace_code,
+                after.low_stock_line,
+                after.expire_date,
+            ),
+            (
+                before.id,
+                before.hardware_slot,
+                before.name,
+                before.category,
+                before.spec,
+                before.trace_code,
+                before.low_stock_line,
+                before.expire_date,
+            ),
+        )
+        self.assertNotEqual(after.inventory_state, "DEPLETED")
+        acknowledgements = [
+            payload
+            for action, payload in worker.calls
+            if action == "ACK_COMMAND"
         ]
-        synced = next(row for batch in medicine_batches for row in batch["rows"] if row["slot"] == 1)
-        self.assertEqual(synced["name"], "同步演示药")
-        self.assertEqual(synced["spec"], "0.3克×10袋")
-        self.assertEqual(synced["traceCode"], "TRACE-ROUNDTRIP")
-        self.assertEqual(synced["quantity"], 0)
-        self.assertEqual(synced["lowStockLine"], 2)
-        self.assertEqual(synced["expireDate"], "2030-02")
-        self.assertEqual(synced["expiryPrecision"], "month")
+        self.assertEqual(len(acknowledgements), 1)
+        self.assertEqual(acknowledgements[0]["status"], "failed")
+        self.assertIn(
+            "板端固定药库",
+            acknowledgements[0]["result"]["error"],
+        )
         history = worker._command_history("medicine-command-1")
-        self.assertEqual(history["status"], "done")
+        self.assertEqual(history["status"], "failed")
+
+    def test_blocked_medicine_command_cannot_replay_a_done_history_entry(self) -> None:
+        worker = FakeCloudSyncWorker()
+        worker._save_command(
+            "reused-command-id",
+            "AUDIO_BEEP",
+            "done",
+            {"ok": True},
+            db.now_text(),
+        )
+
+        worker._handle_command(
+            {
+                "_id": "reused-command-id",
+                "type": "UPSERT_MEDICINE",
+                "payload": {"medicineId": "slot-01-fufang-ganmaoling"},
+            }
+        )
+
+        acknowledgement = next(
+            payload for action, payload in worker.calls if action == "ACK_COMMAND"
+        )
+        self.assertEqual(acknowledgement["status"], "failed")
+        self.assertIn("板端固定药库", acknowledgement["result"]["error"])
+        with db.connect() as conn:
+            history = conn.execute(
+                "SELECT command_type, status FROM cloud_command_history WHERE command_id=?",
+                ("reused-command-id",),
+            ).fetchone()
+        self.assertEqual(history["command_type"], "AUDIO_BEEP")
+        self.assertEqual(history["status"], "failed")
+
+    def test_legacy_unacked_medicine_command_is_rewritten_as_failed(self) -> None:
+        worker = FakeCloudSyncWorker()
+        worker._save_command(
+            "legacy-medicine-command",
+            "UPSERT_MEDICINE",
+            "done_unacked",
+            {"ok": True},
+            db.now_text(),
+        )
+
+        worker._flush_unacked_commands()
+
+        acknowledgement = next(
+            payload for action, payload in worker.calls if action == "ACK_COMMAND"
+        )
+        self.assertEqual(acknowledgement["status"], "failed")
+        self.assertIn("板端固定药库", acknowledgement["result"]["error"])
+        history = worker._command_history("legacy-medicine-command")
+        self.assertEqual(history["status"], "failed")
+
+    def test_command_id_cannot_be_reused_for_a_different_allowed_type(self) -> None:
+        worker = FakeCloudSyncWorker()
+        worker._save_command(
+            "allowed-type-reuse",
+            "AUDIO_BEEP",
+            "done",
+            {"ok": True},
+            db.now_text(),
+        )
+
+        worker._handle_command(
+            {
+                "_id": "allowed-type-reuse",
+                "type": "AUDIO_SPEAK",
+                "payload": {"text": "不应播报"},
+            }
+        )
+
+        acknowledgement = next(
+            payload for action, payload in worker.calls if action == "ACK_COMMAND"
+        )
+        self.assertEqual(acknowledgement["status"], "failed")
+        self.assertIn("历史命令类型不一致", acknowledgement["result"]["error"])
 
     def test_snapshot_excludes_legacy_demo_spo2_records(self) -> None:
         repository = VitalsRepository()
@@ -1863,6 +2645,13 @@ class CloudSyncServiceTest(unittest.TestCase):
         }
 
         with patch("app.services.cloud_sync_service.SpeechService") as speech_factory:
+            missing_generation = dict(payload)
+            missing_generation.pop("persona_generation")
+            with self.assertRaisesRegex(CloudSyncError, "缺少当前人物代次"):
+                worker._execute_command(
+                    "AUDIO_SPEAK",
+                    {"payload": missing_generation},
+                )
             with self.assertRaisesRegex(CloudSyncError, "人物代次"):
                 worker._execute_command("AUDIO_SPEAK", {"payload": payload})
             speech_factory.assert_not_called()

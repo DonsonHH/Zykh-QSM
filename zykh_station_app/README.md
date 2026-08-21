@@ -31,18 +31,19 @@ canonical `medicineId`。`cabinet_v2_catalog.py` 只负责实体 `cabinet_id=1..
 | --- | --- |
 | 1号「日常用药」（9 项） | 复方感冒灵颗粒、蒙脱石散、蜜炼川贝枇杷膏、银黄颗粒、藿香正气丸、桂林西瓜霜、铝碳酸镁咀嚼片、布洛芬缓释胶囊、枸地氯雷他定胶囊 |
 | 2号「外用护理」（8 项） | 医用纱布敷料、莫匹罗星软膏、酮康唑乳膏、碘伏消毒液、布地奈德鼻喷雾剂、酮洛芬凝胶、创口贴、医用棉签 |
-| 3号「慢病处方储备」（6 项） | 多维元素片、阿莫西林胶囊、乳果糖口服液、双歧杆菌三联活菌肠溶胶囊、磷酸奥司他韦胶囊、苯磺酸氨氯地平片 |
+| 3号「慢病处方」（6 项） | 多维元素片、阿莫西林胶囊、乳果糖口服液、双歧杆菌三联活菌肠溶胶囊、磷酸奥司他韦胶囊、苯磺酸氨氯地平片 |
 
 双歧杆菌三联活菌肠溶胶囊（本地 S09）按现场确认实体放在 3 号柜，Station
-板端同步投影为 `storageBox=PRESCRIPTION`。因此实体柜和板端药库投影均为
+仍以稳定 `medicineId=slot-09-bifid-triple`、`storageBox=PRESCRIPTION`
+发送这条药品。实体柜与板端权威药库均为
 `DAILY/CARE/PRESCRIPTION = 9/8/6`，不再为 S09 生成单独的 `COLD` 分类；
 三个 `cabinet_id` 仍不会上传替代同步字段。按本次确认的现场分类，S09 无需
 单设冷藏柜或冷藏软件分类；更换实物批次或包装时仍须核对其标签与说明书。
 
-该变化没有修改 `cloudbase/` 或外部 Zykh-Miniprogram 代码。当前外部小程序
-`origin/main` 仍把 S09 固定为 `COLD`，所以本版本只能证明 Station 快照会发送
-`PRESCRIPTION`，不能宣称小程序界面已经同步。小程序目录、合同测试与发布必须
-在其仓库另行完成；在此之前跨仓端到端分类仍存在已知差异。
+该变化没有修改 `cloudbase/` 或外部 Zykh-Miniprogram 代码。小程序
+`origin/main@9dd43c7` 已改为固定 22 药（`DAILY/CARE/PRESCRIPTION=9/8/5`），
+并主动过滤它不识别的 S09。Station 不会因此删除第 23 种药：
+快照与 finalize 仍保留 S09，家属端暂时看不到它是现有小程序的明确限制。
 
 实体执行链路为 QSM USB Host → ST-LINK VCP `/dev/ttyACM0` → STM32 USART2，
 使用 115200 8N1、CRLF 文本协议。后端只发送 `CABINET 1|2|3` 点亮指示灯；
@@ -182,8 +183,8 @@ sh scripts/open_kiosk.sh
 ## 微信小程序与云同步
 
 FastAPI 后台按 2 秒周期向现有 CloudBase 环境上报药品、体征、服务对象、计划、问询和真实取药记录，并拉取允许的非物理执行命令。心跳中的近期问询只发送摘要和消息数；完整数据走独立快照集合。一次人物—药品核查只对应一条稳定安全事件：拦截/核查失败在核查终态进入 append-only outbox，通过项则等分类柜亮灯终态后把核查与物理结果合并上报为同一条 `medication_safety_events`，不会混入取药记录，也不会被 `FINALIZE_SNAPSHOT` 删除。网络中断不影响本地拦截，恢复后按 `event_id + payload_digest` 幂等补传。
-固定 23 项逻辑库存身份的库存值表示“是否还有药”，不是逐盒递减计数：正常状态稳定为 `stock=1 / AVAILABLE`，真实亮灯与人工取药不会自动减为零。现场用户可在“还有药吗”页面明确选择“还有药/已经用完”；前者保持 1，只有后者把库存写为 `stock=0 / DEPLETED`。确认操作与本次真实取药记录一起写入幂等账本；成功提示消失后系统自动执行 `OFF`，但不会替用户判断已经用完。板端快照把本地稳定身份转换为小程序 canonical `medicineId` 与兼容编号，并上传 `DAILY/CARE/PRESCRIPTION = 9/8/6` 的只读 `storageBox` 投影；S09 双歧杆菌实体在 3 号柜且板端对外投影为 `PRESCRIPTION`，实体 `cabinet_id` 不上传。S03 蒙脱石与 S13 布洛芬按小程序 canonical S13/S03 转换。外部小程序当前仍固定 S09 为 `COLD`，本仓未修改或发布该界面，跨仓一致性必须在小程序另行更新后重新验收。首页体征保持未归属；已登记人物的问询内体征由后端按持久化会话绑定人物和 `persona_generation`，访客问询内体征则只绑定该次问询与访客名快照，绝不伪装成登记人物。问询与体征上传的是有界历史窗口，因此只追加/更新，绝不对这两类调用 `FINALIZE_SNAPSHOT` 删除窗口外旧记录。
-Station 继续为人物、计划、取药记录、问询、体征和安全事件携带 `persona_generation`，并在带人物的板端命令执行前复核当前代次；`OPEN_CABINET` 和 `DISPENSE` 仍在板端失败关闭且不触碰 QSM。本轮不修改或部署 `cloudbase/` 与小程序代码，因此板端测试只能证明这些本地约束，不能替代对目标 3.0 CloudBase 的 membership、人物代次、append-only、通知收件人和设备密钥的独立安全验收。任一线上约束不满足时应停止上线，而不是由 Station 绕过。
+固定 23 项逻辑库存身份的库存值表示“是否还有药”，不是逐盒递减计数：正常状态稳定为 `stock=1 / AVAILABLE`，真实亮灯与人工取药不会自动减为零。现场用户可在“还有药吗”页面明确选择“还有药/已经用完”；前者保持 1，只有后者把库存写为 `stock=0 / DEPLETED`。确认操作与本次真实取药记录一起写入幂等账本；成功提示消失后系统自动执行 `OFF`，但不会替用户判断已经用完。板端快照为完整 23 种药生成 canonical `medicineId` 与兼容编号，并上传 `DAILY/CARE/PRESCRIPTION = 9/8/6` 的只读 `storageBox` 投影；S09 双歧杆菌实体在 3 号柜且板端对外投影为 `PRESCRIPTION`，实体 `cabinet_id` 不上传。S03 蒙脱石与 S13 布洛芬按小程序 canonical S13/S03 转换。小程序当前家属界面只合并固定 22 药，会保留云端未识别行作审计但不展示 S09；Station 不会用 22 药快照删除这条板端事实。首页体征保持未归属；已登记人物的问询内体征由后端按持久化会话绑定人物和 `persona_generation`，访客问询内体征则只绑定该次问询与访客名快照，绝不伪装成登记人物。问询与体征上传的是有界历史窗口，因此只追加/更新，绝不对这两类调用 `FINALIZE_SNAPSHOT` 删除窗口外旧记录。
+Station 继续为人物、计划、取药记录、问询、体征和安全事件携带 `persona_generation`，并在带人物的板端命令执行前复核当前代次；`UPSERT_MEDICINE`、`OPEN_CABINET` 和 `DISPENSE` 均在板端失败关闭且不触碰 QSM。本轮不修改或部署 `cloudbase/` 与小程序代码。具备 `snapshotBatch`、`explicitInventoryState` 和 `medicineStorageBoxes` 时，Station 只同步不含人物信息的设备摘要与 23 药；还要求 `personaLifecycle`、`serviceUserPersonaTombstones`、`vitalsAttribution`、`medicationSafetyEvents` 和 `caregiverMembership` 全部通过，才恢复人物相关分区、安全事件、配对和远程命令。限定模式在状态页明确显示“药库已同步（人物同步暂停）”。
 受保护的 Station 管理台可按服务对象生成一次性、限时家属配对码；原文只在当前页面显示一次，云端仅保存 SHA-256，并固定授予受范围约束的读取权限与最小 `CREATE_COMMAND` 权限。云端再按 `CAREGIVER` 角色收窄为上述三个非开柜命令。签发要求 `DEVICE_SECRETS` 中存在当前设备的独立密钥，并写管理员审计但不记录原码。微信端仍只用当前 OPENID 兑换，调用者输入的 deviceId、角色或权限不构成授权。
 安全事件上报会为当时有效的家属幂等写入最小化通知 outbox。仓内独立 worker 会在发送前重新核对事件、membership、人物范围、订阅授权和未读回执，并用不含姓名、药名或病史的中性文案发送；不确定结果不会自动重试。部署器默认让定时器保持关闭，只有明确提供已审核模板、真实页面路径并确认 OpenAPI 与订阅授权后才允许启用。本仓仍不包含外部 Windows 小程序页面、`requestSubscribeMessage` 授权流程或真实云规则/索引；代码与本地契约通过不等于已部署或已送达。
 小程序下发 `AUDIO_SPEAK` 时，终端会把姓名和药品名称整理成服药提醒并通过 QSM 喇叭播报；小程序端无需访问终端局域网地址。

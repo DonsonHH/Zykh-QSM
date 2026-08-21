@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 主应用源码 | `backend/app/`、`frontend/src/` | 业务实现 |
 | 实体柜目录 | `backend/app/services/cabinet_v2_catalog.py` | 维护本地 9/8/6 实体摆放和 `cabinet_id=1..3`；不生成小程序 `storageBox` |
-| Station 药品出站投影 | `backend/app/services/medicine_cloud_projection.py` | 维护 `DAILY/CARE/PRESCRIPTION = 9/8/6`、S09=`PRESCRIPTION` 与 S03/S13 canonical 身份适配；不控制实体柜 |
+| Station 药品出站投影 | `backend/app/services/medicine_cloud_projection.py` | 维护完整 23 药的 `DAILY/CARE/PRESCRIPTION = 9/8/6`、S09=`PRESCRIPTION` 与 S03/S13 canonical 身份适配；不控制实体柜 |
 | 自动化契约 | `backend/tests/`、`frontend/scripts/`、`qsm_gateway/tests/` | 回归验证 |
 | 部署与运维 | `scripts/`、`qsm_gateway/` | 本机与板端部署 |
 | 三分类柜固件资料 | `qsm_gateway/firmware/cabinet_v2_l432kc/` | 已验证源码、链接脚本、接线/协议、测试和可复现构建说明；不含生成二进制 |
@@ -16,9 +16,9 @@
 | 文档与示例配置 | `README.md`、`docs/`、`.env.example` | 部署、接口和边界说明 |
 | 兼容参考 | `../zykh_app/` | 旧板端网关及维护工具；主应用不依赖其源码 |
 
-S09 实体位于 3 号柜，Station 不再为它生成单独的 `COLD` 分类。当前外部
-Zykh-Miniprogram `origin/main` 仍固定为 `COLD`，且不属于本轮改动范围；因此仓内
-投影测试只证明 QSM 出站负载，不能作为小程序界面已同步的证据。
+S09 实体位于 3 号柜，Station 不再为它生成单独的 `COLD` 分类。外部
+Zykh-Miniprogram `origin/main@9dd43c7` 已是固定 22 药并隐藏 S09；Station 仍在快照和
+finalize 保留集中发送该稳定身份。仓内投影测试证明板端 23 药不丢失，但不能作为小程序 UI 已显示 S09 的证据。
 
 ## 只保留在本机或运行设备
 

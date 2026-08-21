@@ -90,7 +90,7 @@ when the result is `unknown` or a cabinet is unexpectedly lit.
 2. Verify the medicines page shows exactly three physical cabinet cards and all
    23 logical medicine items appear exactly once. Confirm that the original
    `hardware_slot=1..23` identities remain available through the API. The cards
-   must be `日常用药 / 外用护理 / 慢病处方储备` with 9/8/6 items. Confirm S09
+   must be `日常用药 / 外用护理 / 慢病处方` with 9/8/6 items. Confirm S09
    双歧杆菌 is physically in cabinet 3 only after its current package storage
    instructions have been checked; if it requires refrigeration, stop this item
    and do not place it in an ordinary cabinet.

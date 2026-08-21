@@ -53,12 +53,13 @@ class MedicineCloudProjectionTest(unittest.TestCase):
             },
         )
 
-    def test_projection_keeps_physical_cabinet_and_cloud_storage_separate(self) -> None:
+    def test_s09_keeps_stable_identity_and_prescription_projection(self) -> None:
         probiotic = cloud_projection_for_local_medicine_id("slot-09-bifid-triple")
 
         self.assertEqual(cabinet_for_medicine_id(probiotic.local_medicine_id).id, 3)
         self.assertEqual(probiotic.storage_box, "PRESCRIPTION")
         self.assertEqual(probiotic.cloud_medicine_id, "slot-09-bifid-triple")
+        self.assertEqual(probiotic.cloud_legacy_slot, 9)
 
     def test_projection_adapts_the_two_different_catalog_identities(self) -> None:
         montmorillonite = cloud_projection_for_local_medicine_id("slot-03-diosmectite")

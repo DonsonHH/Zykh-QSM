@@ -19,6 +19,17 @@ from app import db
 from app.services.medication_safety_outbox import MedicationSafetyOutbox
 
 
+def accepted_safety_receipt(payload: dict[str, object]) -> dict[str, object]:
+    event = payload["event"]
+    if not isinstance(event, dict):
+        raise AssertionError("test sender expected an event object")
+    return {
+        "ok": True,
+        "eventId": event["event_id"],
+        "payloadDigest": payload["payloadDigest"],
+    }
+
+
 class MedicationSafetyOutboxTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -104,7 +115,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
 
         def sender(action: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append((action, payload))
-            return {"ok": True, "replayed": False}
+            return accepted_safety_receipt(payload)
 
         outbox = MedicationSafetyOutbox()
         first = outbox.flush(
@@ -122,6 +133,54 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         self.assertEqual(calls[0][1]["payloadDigest"], digest)
         self.assertEqual(calls[0][1]["event"]["event_id"], "event-001")
         self.assertEqual(outbox.pending_count(), 0)
+
+    def test_mismatched_receipt_event_id_keeps_event_pending(self) -> None:
+        self._insert_pending_event()
+
+        def sender(_action: str, payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "ok": True,
+                "eventId": "different-event",
+                "payloadDigest": payload["payloadDigest"],
+            }
+
+        outbox = MedicationSafetyOutbox()
+        with self.assertRaisesRegex(ValueError, "eventId"):
+            outbox.flush(
+                sender,
+                capabilities={"medicationSafetyEvents": "v1"},
+            )
+
+        self.assertEqual(outbox.pending_count(), 1)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT status, attempts FROM medication_safety_outbox WHERE event_id='event-001'"
+            ).fetchone()
+        self.assertEqual((row["status"], row["attempts"]), ("pending", 1))
+
+    def test_mismatched_receipt_digest_keeps_event_pending(self) -> None:
+        self._insert_pending_event()
+
+        def sender(_action: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "ok": True,
+                "eventId": "event-001",
+                "payloadDigest": "0" * 64,
+            }
+
+        outbox = MedicationSafetyOutbox()
+        with self.assertRaisesRegex(ValueError, "payloadDigest"):
+            outbox.flush(
+                sender,
+                capabilities={"medicationSafetyEvents": "v1"},
+            )
+
+        self.assertEqual(outbox.pending_count(), 1)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT status, attempts FROM medication_safety_outbox WHERE event_id='event-001'"
+            ).fetchone()
+        self.assertEqual((row["status"], row["attempts"]), ("pending", 1))
 
     def test_flush_projects_local_medicine_identity_and_recomputes_cloud_digest(self) -> None:
         local_payload = {
@@ -142,8 +201,12 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         )
         calls: list[tuple[str, dict[str, object]]] = []
 
+        def sender(action: str, payload: dict[str, object]) -> dict[str, object]:
+            calls.append((action, payload))
+            return accepted_safety_receipt(payload)
+
         MedicationSafetyOutbox().flush(
-            lambda action, payload: calls.append((action, payload)),
+            sender,
             capabilities={"medicationSafetyEvents": "v1"},
         )
 
@@ -171,6 +234,41 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["payload_digest"], local_digest)
         self.assertEqual(row["status"], "sent")
+
+    def test_s09_keeps_stable_identity_in_safety_events(self) -> None:
+        event_id = "event-probiotic-001"
+        self._insert_pending_event(
+            event_id,
+            {
+                "event_id": event_id,
+                "medicine_id": "slot-09-bifid-triple",
+                "slot": "S09",
+                "medicine": {
+                    "id": "slot-09-bifid-triple",
+                    "name": "双歧杆菌三联活菌肠溶胶囊",
+                    "slot": 9,
+                },
+                "check_status": "PASSED",
+                "dispense_status": "DISPENSED",
+            },
+        )
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def sender(action: str, payload: dict[str, object]) -> dict[str, object]:
+            calls.append((action, payload))
+            return accepted_safety_receipt(payload)
+
+        sent = MedicationSafetyOutbox().flush(
+            sender,
+            capabilities={"medicationSafetyEvents": "v1"},
+        )
+
+        self.assertEqual(sent, 1)
+        event = calls[0][1]["event"]
+        self.assertEqual(event["medicine_id"], "slot-09-bifid-triple")
+        self.assertEqual(event["medicine"]["id"], "slot-09-bifid-triple")
+        self.assertEqual(event["slot"], 9)
+        self.assertEqual(event["medicine"]["slot"], 9)
 
     def test_retry_reuses_wire_payload_materialized_before_first_send(self) -> None:
         now = [datetime(2040, 1, 1, 12, 0, 0)]
@@ -210,6 +308,14 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
 
         now[0] += timedelta(seconds=6)
         retries: list[dict[str, object]] = []
+
+        def retry_sender(
+            _action: str,
+            payload: dict[str, object],
+        ) -> dict[str, object]:
+            retries.append(payload)
+            return accepted_safety_receipt(payload)
+
         with patch(
             "app.services.medication_safety_outbox._cloud_event_projection",
             return_value={
@@ -219,7 +325,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             },
         ):
             sent = MedicationSafetyOutbox(clock=lambda: now[0]).flush(
-                lambda _action, payload: retries.append(payload),
+                retry_sender,
                 capabilities={"medicationSafetyEvents": "v1"},
             )
 
@@ -242,6 +348,13 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
         )
         calls: list[dict[str, object]] = []
 
+        def sender(
+            _action: str,
+            payload: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append(payload)
+            return accepted_safety_receipt(payload)
+
         with patch(
             "app.services.medication_safety_outbox._cloud_event_projection",
             return_value={
@@ -251,7 +364,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             },
         ) as projector:
             sent = MedicationSafetyOutbox().flush(
-                lambda _action, payload: calls.append(payload),
+                sender,
                 capabilities={"medicationSafetyEvents": "v1"},
             )
 
@@ -293,6 +406,13 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             )
         calls: list[dict[str, object]] = []
 
+        def sender(
+            _action: str,
+            payload: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append(payload)
+            return accepted_safety_receipt(payload)
+
         with patch(
             "app.services.medication_safety_outbox._cloud_event_projection",
             return_value={
@@ -302,7 +422,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             },
         ) as projector:
             sent = MedicationSafetyOutbox().flush(
-                lambda _action, payload: calls.append(payload),
+                sender,
                 capabilities={"medicationSafetyEvents": "v1"},
             )
 
@@ -414,7 +534,7 @@ class MedicationSafetyOutboxTest(unittest.TestCase):
             calls.append(str(payload["event"]["event_id"]))
             first_sender_entered.set()
             allow_sender_to_finish.wait(timeout=2)
-            return {"ok": True}
+            return accepted_safety_receipt(payload)
 
         def run_worker() -> None:
             try:

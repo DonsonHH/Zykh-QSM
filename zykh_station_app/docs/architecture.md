@@ -12,14 +12,16 @@ service-user and medicine IDs, while display names remain snapshots; invalid
 legacy name-only rows and plans owned by archived people are quarantined with
 `archived=1` during migration instead of being deleted or appearing as valid plans.
 
-Cabinet v2 uses two identities at different boundaries. `hardware_slot=1..23`
-remains the durable logical inventory key in SQLite, records and CloudBase. A
-local catalog maps each stable medicine ID to one physical `cabinet_id=1..3`
-immediately before presentation or hardware execution. The physical ID is not a
-replacement database key and is not synchronized to CloudBase. Missing mappings
-fail closed. The three current category labels are local configuration proposals,
-not evidence that the real cabinet has already been stocked that way. No file in
-`cloudbase/` or cloud schema changes for this v2.0.0 hardware projection.
+Cabinet v2 uses three identities at different boundaries. `hardware_slot=1..23`
+remains the durable local compatibility key in SQLite and records. Stable local
+medicine IDs are projected to the mini-program canonical `medicineId`; S03/S13
+are translated at that wire boundary, while all 23 board medicines remain in the
+outbound snapshot. A separate local catalog maps each stable medicine ID to one
+physical `cabinet_id=1..3` immediately before presentation or hardware execution.
+The physical ID is not a replacement database key and is never synchronized to
+CloudBase. Missing mappings fail closed. The current board-authoritative cabinet
+distribution is 9/8/6; no file in `cloudbase/` or the external mini-program is
+changed by this adapter.
 
 ## Backend layers
 

@@ -207,7 +207,7 @@ async function fulfillApiRequest({ requestId, request }) {
         medicine_ids: [secondMedicine.id]
       }, {
         id: 3,
-        label: "慢病处方储备",
+        label: "慢病处方",
         description: "慢病固定用药、处方药与低频储备用药",
         medicine_ids: []
       }],

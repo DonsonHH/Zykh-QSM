@@ -11,10 +11,12 @@
 - 不开放远程开柜、远程点灯或自动出药。
 
 发布前必须只读记录线上 `PING`、小程序 commit 和 QSM commit。若线上 revision
-或能力与本契约不一致，停止 Station 同步适配上线，不得临时改 CloudBase 或小程序
-绕过差异。当前外部 Zykh-Miniprogram `origin/main` 仍把 S09 固定为 `COLD`；
-`PING` 能力名称无法证明其目录已经更新。本轮不修改或发布该仓库，因此新的 S09
-板端投影与现有小程序之间存在已知差异，不能宣称小程序界面已经同步。
+或药库基础三能力与本契约不一致，停止 Station 全部同步；若只缺人物安全能力，
+进入药库限定模式并停止人物分区与命令。不得临时改 CloudBase 或小程序绕过差异。
+当前外部 Zykh-Miniprogram `origin/main@9dd43c7` 是固定 22 药、
+`DAILY/CARE/PRESCRIPTION=9/8/5`；它已删除 S09 并在家属界面主动过滤未识别云端行。
+板端优先原则要求 Station 继续保留和发送完整 23 药；因此 S09 可在云端留作审计，
+但本轮不能宣称小程序已能展示它。
 
 ## 实体分类柜：9/8/6
 
@@ -25,7 +27,7 @@
 | --- | --- | --- | --- |
 | 1 | 日常用药 | S01、S03、S05、S07、S08、S11、S12、S13、S23 | 9 |
 | 2 | 外用护理 | S10、S15、S16、S17、S18、S19、S20、S22 | 8 |
-| 3 | 慢病处方储备 | S02、S04、S06、S09、S14、S21 | 6 |
+| 3 | 慢病处方 | S02、S04、S06、S09、S14、S21 | 6 |
 
 实体 3 号柜包含 S09 双歧杆菌三联活菌肠溶胶囊。这是现场摆放与 QSM
 `CABINET 3` 亮灯的权威映射；实体柜目录只由 `cabinet_v2_catalog.py` 维护。
@@ -40,15 +42,15 @@ Station 发出的 `storageBox` 是家庭药库显示分类，不是实体柜控�
 | --- | --- | --- | --- |
 | `DAILY` | 日常高频内服 | 1、3、5、7、8、11、12、13、23 | 9 |
 | `CARE` | 外用消毒护理 | 10、15、16、17、18、19、20、22 | 8 |
-| `PRESCRIPTION` | 慢病处方储备 | 2、4、6、9、14、21 | 6 |
+| `PRESCRIPTION` | 慢病处方 | 2、4、6、9、14、21 | 6 |
 
 S09 实体放在 3 号柜，Station 上传时也必须是 `storageBox=PRESCRIPTION`；板端
 不再生成 `COLD` 分类。实体 `cabinet_id=3` 仍不上传，也不能从 `storageBox`
 反推出物理控制目标。
 
-外部小程序当前固定目录仍把 S09 单独显示为 `COLD`。这是未在本轮修改的跨仓
-兼容差异，不是 Station 继续发送旧分类的理由。现有小程序在独立更新与发布前可能
-继续显示旧值；携带 `storageBox=COLD` 的反向药品负载会被新版 Station 失败关闭。
+小程序家属界面只接收其固定 22 药：`DAILY=9`、`CARE=8`、`PRESCRIPTION=5`。
+它对 S09 这类未识别行的规则是“云端保留审计、家属界面不增加药品”。Station 因此仍把
+S09 的稳定 ID 放入每次快照和 finalize 保留集；不得改成只发 22 药，否则会删除板端事实。
 
 ## Canonical 药品身份适配
 
@@ -66,15 +68,16 @@ Station 固定目录中 S03 是蒙脱石散、S13 是布洛芬缓释胶囊；小
 - Station 快照的 `medicineId` / `medicine_id` 使用小程序 canonical 身份；
 - `legacySlot`、`hardwareSlot`、`hardware_slot` 和 `slot` 使用小程序 canonical
   兼容编号，不能被解释为实体柜号；
-- 小程序反向命令携带 canonical `medicineId` 或兼容编号时，Station 先解析为本地
-  固定身份，再修改对应本地记录；
+- 板端药库是权威源；远程 `UPSERT_MEDICINE` 即使携带 canonical 身份也失败关闭，
+  不能修改本地药名、库存身份、安全资料或分类；
 - 命令同时携带身份、兼容编号或 `storageBox` 时，任一字段互相冲突都失败关闭；
 - 条码、追溯码、药名、标签和实体柜号都不能替代稳定药品身份；
 - 未配置投影的药品不得猜测 `medicineId`、`storageBox` 或实体柜。
 
 ## 快照与余量事实
 
-- 23 种固定药品每种只上传一条 canonical 行；`cabinet_id` 不上传。
+- 23 种固定药品每种只上传一条 canonical 行；`cabinet_id` 不上传。S09 必须在
+  finalize 保留 ID 中，即使当前小程序 UI 不展示它。
 - `inventoryState=STOCKED/DEPLETED/UNKNOWN` 是小程序余量事实。旧 `quantity` / `stock`
   只作为兼容字段，不能把未知余量静默解释为有药。
 - 只有本机“已经用完”确认的请求 ID 与确认时间同时匹配持久化记录时，才上传
@@ -87,8 +90,11 @@ Station 固定目录中 S03 是蒙脱石散、S13 是布洛芬缓释胶囊；小
 ## 人物、安全事件与远程命令边界
 
 Station 继续携带并复核人物代次、保持问询/体征发送侧 append-only，并使用既有
-设备密钥；本轮不修改目标 CloudBase，因此 membership 行过滤、云端人物代次、
-事件保留和通知收件人必须另行对实际部署验收，不能由板端测试或 `PING` 名称替代。
+设备密钥。药库分区只要求 `snapshotBatch:v2`、`explicitInventoryState:v1` 和
+`medicineStorageBoxes:v1`；人物分区、配对、远程命令与安全事件还须通过
+`medicationSafetyEvents:v1`、`caregiverMembership:v1`、`personaLifecycle:v1`、
+`serviceUserPersonaTombstones:v1` 和 `vitalsAttribution:v1` 的完整门禁；配对发码另需
+`devicePairingIssue:v1`。能力名仍不能替代对实际云端行为的安全验收。
 非自动出药的安全事件可继续使用
 `dispenseStatus=NOT_APPLICABLE`。配对家属的最小命令仍只允许：
 
@@ -98,7 +104,7 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 | `AUDIO_SPEAK` | 语音提醒 | 指定人物时复核当前人物代次 |
 | `READ_VITALS_ALL` | 发起体征读取 | 必须携带可核验人物，或明确使用允许的独立归属 |
 
-`OPEN_CABINET`、`DISPENSE` 与其他物理执行命令继续失败关闭。CloudBase 或小程序
+`UPSERT_MEDICINE`、`OPEN_CABINET`、`DISPENSE` 与其他物理执行命令继续失败关闭。CloudBase 或小程序
 不能代替现场用户完成身份核验、风险核查、点灯、开柜、余量确认或熄灯。
 
 ## 验证顺序
@@ -124,26 +130,28 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 测试必须证明：
 
 - 23 种药品在实体柜中恰好出现一次，数量为 9/8/6；
-- Station 出站投影中恰好出现一次，数量为 9/8/6，且不包含 `COLD`；
+- Station 出站投影中恰好出现 23 次，数量为 9/8/6，且不包含 `COLD`；
+- S09 的稳定 ID 进入快照和 finalize 保留集，不会因小程序只显示 22 药而被删除；
 - S09 实体为柜 3、Station 出站投影为 `PRESCRIPTION`；
-- S03/S13 快照和反向命令都按 canonical 身份正确转换；
+- S03/S13 出站快照按 canonical 身份正确转换，反向药品命令始终失败关闭；
 - 冲突身份、编号或 `storageBox` 失败关闭。
 
 ### 3. 只读联调
 
-1. 线上 `PING` 应为目标 `schemaRevision=3.0-three-box-library`，并包含
-   `medicineStorageBoxes=v1`；不满足时停止，不部署 QSM 仓库中的 CloudBase。
-   即使探针匹配，也必须单独核对小程序固定目录 commit。
-2. 用 fake adapter 检查 Station 完整快照为 `DAILY=9`、`CARE=8`、
-   `PRESCRIPTION=6`，不含 `COLD` 或 `cabinet_id`。
-3. 记录当前外部小程序仍把 S09 固定为 `COLD` 的已知差异，不把板端测试写成
-   “小程序已经显示三柜”。待小程序另行改为 S09=`PRESCRIPTION` 并发布后，再逐项
-   验收 S03 蒙脱石、S13 布洛芬和 S09 双歧杆菌的真实界面。
-4. 确认小程序不存在 23 仓、远程开柜、远程点灯、自动出药或替用户确认余量的入口。
+1. 线上 `PING` 应为目标 `schemaRevision=3.0-three-box-library`，并至少包含
+   `snapshotBatch:v2`、`explicitInventoryState:v1` 和 `medicineStorageBoxes:v1`。
+   三项基础能力不满足时只做 `PING` 并停止，不部署 QSM 仓库中的 CloudBase。
+2. 用 fake adapter 检查 Station 完整 23 药快照为 `DAILY=9`、`CARE=8`、
+   `PRESCRIPTION=6`，不含 `COLD` 或 `cabinet_id`；损坏任一批次回执时不得 finalize。
+3. 用最新小程序能力清单测试“药品限定模式”：只发设备无人物摘要和 medicines，
+   不拉命令，不发 serviceUsers/plans/inquiries/vitals/records 或安全事件。
+4. 记录当前外部小程序只显示固定 22 药并隐藏 S09 的已知限制，不把板端测试写成
+   “小程序已完整显示 23 药”。S09 仍须在云端保留，不得为迎合家属界面删除。
+5. 确认小程序不存在 23 仓、远程开柜、远程点灯、自动出药或替用户确认余量的入口。
 
 ### 4. 现场取药
 
-1. 本地药品页显示“日常用药 / 外用护理 / 慢病处方储备”，数量为 9/8/6。
+1. 本地药品页显示“日常用药 / 外用护理 / 慢病处方”，数量为 9/8/6。
 2. 用户只点击一次“确认身份并点亮药柜”；有冲突时进入原有拦截界面且 QSM
    调用数为零，无冲突时自动点亮正确实体柜并进入“还有药吗”确认页。
 3. 用户自行打开亮灯柜门取药。“还有药吗”页面结束后系统自动发送 `OFF`，并以
@@ -154,4 +162,4 @@ Station 继续携带并复核人物代次、保持问询/体征发送侧 append-
 本轮没有修改 CloudBase 或小程序，因此代码回滚只回滚 Station 投影。若已产生真实
 余量或安全事件，先停止同步并保留 SQLite、CloudBase 导出与日志，不得把程序回滚
 扩展为删除业务数据。实体映射验收失败时停止现场取药；Station 与外部小程序目录尚未
-完成独立兼容验收时停止端到端同步，不能通过改药名、旧编号或谎报小程序 UI 绕过差异。
+完成独立兼容验收时停止端到端同步，不能通过删除 S09、改药名、旧编号或谎报小程序 UI 绕过差异。
